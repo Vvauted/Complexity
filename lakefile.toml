@@ -1,0 +1,6 @@
+name = "ram"
+version = "0.1.0"
+defaultTargets = ["Ram"]
+
+[[lean_lib]]
+name = "Ram"
