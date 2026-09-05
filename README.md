@@ -36,9 +36,39 @@ def multiply : Func := ram_fun% (a, b) locals (answer) {
 The frontend assigns local register numbers. Programs contain no time ticks or
 operation-price annotations. `ram% { ... }` also supports array reads/writes,
 `if`, `while`, `read`, `write`, and `answer := call functionName(args);`.
-Function names denote entries in a fixed function table. A return expression
-comes at the end of a function; early return, break, and continue are not
-constructs of the present language.
+For complete programs, `ram_program%` resolves function names automatically,
+including forward calls and mutual recursion. Function names and local variables
+have separate scopes; embedded `const(t)` terms retain their enclosing Lean scope.
+A return expression comes at the end of a function; early return, break, and
+continue are not constructs of the present language.
+
+```lean
+import Ram.RunProgram
+
+open Ram Ram.DSL
+
+def exampleProgram : Named.Bundle := ram_program% {
+  fn multiply(a, b) locals (answer) {
+    answer := a * b;
+    return answer;
+  }
+  main locals (a, b, answer) {
+    read a;
+    read b;
+    answer := call multiply(a, b);
+    write answer;
+  }
+}
+```
+
+`exampleProgram.executable` checks and prepares the program once. Its `.run`
+method accepts a transition budget and encoded input and returns the final
+state, actual steps, and `halted`, `fault`, `invalidPC`, or `outOfFuel`.
+The first input word is the compiler's heap/stack boundary, followed by the
+program's input. The fast backend uses array code/registers and sparse tree-map
+memory; its entire run result is proved equal to the reference machine.
+The old `runExact` remains an exact-step mathematical interface, not the default
+budget runner.
 
 `Compiler.compileChecked` validates register bounds, function existence and
 arity, then emits code. `Compiler.compileChecked_runs_measured` connects the
@@ -53,11 +83,17 @@ proofs; without them multiplication and addition have modular word semantics.
 - `Source.MeasuredExec` retains the compiler-derived exact count. Every safe
   source execution has such a derivation; it is not a user price annotation.
 - `Source.Contract` combines total correctness with a proved budget. It has
-  sequential composition and loop invariant/variant/potential rules, and a
-  `compile` theorem connecting the budget to actual machine termination.
+  assignment, store, I/O, branch and call rules, sequential composition and loop
+  invariant/variant/potential rules. `RelContract` retains entry-state relations
+  during composition. `compile_heap` transfers bounded heap observations as
+  well as I/O to the actual halted machine, with a proved execution budget.
 - `UniformTimeBound` and `UniformBigO` fix the program before quantifying over
   word widths and inputs. The asymptotic interface also requires correctness
   and termination for small inputs, below the asymptotic threshold.
+- `Problem` fixes encoding, legal inputs, size and answers before submissions.
+  Concrete-budget certificates support finite domains; asymptotic problems must
+  supply arbitrarily large legal sizes. This does not replace semantic review of
+  the problem's encoding and statement.
 
 Checked examples use the real compiler, not separate executable specifications:
 
@@ -69,6 +105,22 @@ Checked examples use the real compiler, not separate executable specifications:
 - [Recursive factorial](Ram/Examples/Factorial.lean): a fixed 60-instruction
   program, `37 * k + 37` complete transitions, and proved factorial output.
   The linear bound is in the numeric value `k`, not its binary encoding length.
+- [Array fill](Ram/Examples/ContractFill.lean): public contracts prove a real
+  input/output loop fills the target heap with ones within `14 * length + 9`
+  transitions, including setup and halt.
+
+## Running an example
+
+On 0v0, `lake exe ram-demo fast 100000` runs a complete named array-write/sum
+program. `reference` selects the original representation with identical code,
+input and budget. The command reports the result, steps and execution time;
+it is an example/measurement driver, not a pass/fail performance test suite.
+See [measured results](docs/PERFORMANCE.md) for the workload and limits.
+
+The optional [CSLib integration](docs/CSLIB.md) imports the official compatible
+CSLib step-count relations and connects them to our exact execution and checked
+compiler. It also connects proved machine bounds to mathlib's `IsBigO`; it does
+not claim a RAM-to-Turing-machine simulation.
 
 ## Environment
 

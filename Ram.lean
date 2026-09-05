@@ -1,6 +1,8 @@
 import Ram.Word
 import Ram.Machine
 import Ram.Execution
+import Ram.Runner
+import Ram.Fast
 import Ram.Block
 import Ram.Expr
 import Ram.ExprCompile
@@ -25,7 +27,12 @@ import Ram.Program
 import Ram.Measured
 import Ram.Contracts
 import Ram.Complexity
+import Ram.Problem
 import Ram.Syntax
+import Ram.Named
+import Ram.RunProgram
 import Ram.Examples.Arithmetic
 import Ram.Examples.ArraySum
 import Ram.Examples.Factorial
+import Ram.Examples.ContractFill
+import Ram.Examples.ProblemArithmetic

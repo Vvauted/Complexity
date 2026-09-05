@@ -1,5 +1,44 @@
 # Progress
 
+## Active optimization work
+
+The previous verified checkpoint is `0016d68`. The next milestone is still in
+progress: separate function and local-variable name resolution, a practical
+budget runner and efficient execution backend, smaller call frames, reusable
+source contracts, fixed problem-owned complexity specifications, and an actual
+CSLib bridge on the existing rc1 baseline. The completed proofs listed below
+describe the previous checkpoint, not completion of these optimization goals.
+
+The following optimization work now has individual rc1 server verification:
+
+- `Runner`: tail-recursive maximum-budget execution, preserved final states and
+  stopping reasons, soundness/completeness for successful execution, and a
+  generic exact backend-correspondence theorem.
+- `Fast`, `RunProgram`: array/tree-map storage with full instruction, step and
+  runner equivalence; reusable prepared executables. Native performance evidence
+  for the same array workload is in `PERFORMANCE.md`.
+- `Syntax`, `Named`: explicit variable resolution, independent function names,
+  forward/recursive/mutually recursive programs, and actual linker correspondence.
+- `Contracts`, `ContractFill`: primitive and relational rules, entry-state
+  composition, and transfer of heap/I/O postconditions to a budgeted halted run.
+- `Problem`, `ProblemArithmetic`: fixed problem-owned specifications, concrete
+  budgets and genuinely unbounded asymptotic domains, with a real seven-step
+  arithmetic certificate.
+- `integrations/cslib`: the official exact rc1-compatible CSLib dependency,
+  exact/bounded execution and compiler bridges, and a separate mathlib `IsBigO`
+  bridge. The optional package's full server build has succeeded.
+
+The public `Ram` umbrella including these additions passed its checkpoint build
+on 0v0 (41 jobs, zero diagnostics). The native `ram-demo` executable also built
+and ran there. Axiom checks on the runner completeness, full fast-run equality,
+prepared executable, compiled heap contract, target array-fill theorem and
+unbounded-domain exclusion found only standard Lean axioms.
+
+Remaining: the callee-sized ABI/compiler/simulation pipeline is under active
+implementation. The default checked compiler still uses the previously proved
+global-register calling convention; the new local-frame helpers must not be
+presented as an integrated optimized compiler until its full simulation closes.
+
 The requested structured-language/compiler/proof stack is implemented and
 verified on 0v0 with Lean 4.28.0-rc1. The model boundaries below remain explicit;
 this does not claim compatibility with arbitrary source languages or word widths.

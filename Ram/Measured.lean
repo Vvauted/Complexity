@@ -299,4 +299,30 @@ theorem compileChecked_terminatesWithin {n heapLimit depth steps budget : Nat}
     compileChecked_runs_measured hcompile hcodefit hstackfit hx
   exact ⟨_, ⟨steps + 2, hbudget, hfull, hhalt⟩, hout, hin⟩
 
+/-- Checked execution also preserves every source-visible heap word in the
+halted target state. The private stack region is deliberately not included.
+The existing complete execution is aligned with its main-block simulation by
+determinism, so this adds an observation without changing the counted run. -/
+theorem compileChecked_terminatesWithin_heap {n heapLimit depth steps budget : Nat}
+    {program : Program} {main : Stmt} {code : Code} {input : List (Word w)}
+    {sourceFinal : Source.State w}
+    (hcompile : compileChecked n program main = some code)
+    (hcodefit : code.length < 2 ^ w)
+    (hstackfit : heapLimit + depth * ABI.frameSize n < 2 ^ w)
+    (hx : Source.MeasuredExec n program heapLimit depth main steps
+      (Source.State.initial input) sourceFinal)
+    (hbudget : steps + 2 ≤ budget) :
+    ∃ finish, TerminatesWithin code budget
+        (State.initial (BitVec.ofNat w heapLimit :: input)) finish ∧
+      HeapEqBelow heapLimit sourceFinal.mem finish.mem ∧
+      finish.output = sourceFinal.output ∧ finish.input = sourceFinal.input := by
+  obtain ⟨hvalid, rfl⟩ := compileChecked_some_iff.mp hcompile
+  obtain ⟨bodyFinish, hbody, hmatch, _, _⟩ :=
+    main_run_measured hvalid hcodefit hstackfit hx
+  obtain ⟨otherFinish, hother, hfull, hhalt, hout, hin⟩ :=
+    rawLink_runs_measured hvalid hcodefit hstackfit hx
+  have heq : bodyFinish = otherFinish := hbody.deterministic hother
+  subst otherFinish
+  exact ⟨_, ⟨steps + 2, hbudget, hfull, hhalt⟩, hmatch.heap, hout, hin⟩
+
 end Ram.Compiler

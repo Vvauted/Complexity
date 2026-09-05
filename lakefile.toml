@@ -4,3 +4,7 @@ defaultTargets = ["Ram"]
 
 [[lean_lib]]
 name = "Ram"
+
+[[lean_exe]]
+name = "ram-demo"
+root = "Demo"
