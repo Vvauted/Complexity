@@ -1,13 +1,12 @@
 # Progress
 
-## Active optimization work
+## Current optimization milestone
 
-The previous verified checkpoint is `0016d68`. The next milestone is still in
-progress: separate function and local-variable name resolution, a practical
-budget runner and efficient execution backend, smaller call frames, reusable
-source contracts, fixed problem-owned complexity specifications, and an actual
-CSLib bridge on the existing rc1 baseline. The completed proofs listed below
-describe the previous checkpoint, not completion of these optimization goals.
+The baseline compiler was verified at `0016d68`; `fdd0865` added the fast runner,
+named programs, proof interfaces and CSLib connection. The callee-sized compiler
+and its complete simulation are now implemented and selected by default by
+named programs and public contracts. All compilation and measurements took place
+on 0v0 with the unchanged Lean 4.28.0-rc1 toolchain.
 
 The following optimization work now has individual rc1 server verification:
 
@@ -27,17 +26,37 @@ The following optimization work now has individual rc1 server verification:
 - `integrations/cslib`: the official exact rc1-compatible CSLib dependency,
   exact/bounded execution and compiler bridges, and a separate mathlib `IsBigO`
   bridge. The optional package's full server build has succeeded.
+- `LocalABI`, `LocalEffects`, `LocalCallSetup`, `LocalCallReturn`: callee-sized
+  saved/initialized/restored intervals, actual SP arithmetic, and preserved
+  higher registers. Call overhead is derived as `7 * callee.locals + arity + 11`
+  in addition to argument, body and result-expression execution.
+- `LocalCompiler`, `LocalAtomic`, `LocalExact`, `LocalCall`, `LocalMeasured`,
+  `LocalProgram`: complete checked compilation and exact whole-program execution,
+  including recursion, without an unresolved call-simulation premise. Increasing
+  the reserved-register boundary does not increase the emitted operation counts.
+- `LocalCalls`: an observable call overwrites its parameter, restores its caller,
+  and preserves a higher caller variable. An unused 200-local function does not
+  change the complete 36-step run; the theorem is parameterized by larger bounds.
+- `Factorial`: the actual source is now a named recursive program and its final
+  execution proof uses the optimized compiler. The exact `37 * k + 37` complete
+  count, modular/natural result and uniform linear theorem remain verified.
 
-The public `Ram` umbrella including these additions passed its checkpoint build
-on 0v0 (41 jobs, zero diagnostics). The native `ram-demo` executable also built
-and ran there. Axiom checks on the runner completeness, full fast-run equality,
-prepared executable, compiled heap contract, target array-fill theorem and
-unbounded-domain exclusion found only standard Lean axioms.
+The public `Ram` umbrella passed the final server build (52 jobs, zero
+diagnostics). The native `ram-demo` executable built under the optimized default
+compiler (50 jobs) and ran the identical array workloads; see `PERFORMANCE.md`.
+Axiom checks on runner completeness, fast-run equality, local-call simulation,
+checked whole-program heap preservation, compiled contracts, array fill,
+heterogeneous calls, factorial and the complexity boundary found only standard
+Lean axioms. The optional CSLib package also passes its complete build.
 
-Remaining: the callee-sized ABI/compiler/simulation pipeline is under active
-implementation. The default checked compiler still uses the previously proved
-global-register calling convention; the new local-frame helpers must not be
-presented as an integrated optimized compiler until its full simulation closes.
+`Named.Bundle.compile` selects `LocalCompiler.compileChecked`; prepared
+executables select `Fast.run`. `Contract` and `RelContract` use `LocalMeasuredExec`,
+and compiled contracts and CSLib exports use `LocalProgram`. The older
+global-register compiler is retained explicitly as a reference, not selected by
+these default paths. Stack-capacity premises remain conservative in the global
+register bound; a tight space-complexity theorem is not claimed.
+
+## Earlier verified milestones
 
 The requested structured-language/compiler/proof stack is implemented and
 verified on 0v0 with Lean 4.28.0-rc1. The model boundaries below remain explicit;

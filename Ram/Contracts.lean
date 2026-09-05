@@ -1,4 +1,4 @@
-import Ram.Measured
+import Ram.LocalProgram
 
 /-!
 # Total-correctness contracts with proved execution budgets
@@ -7,6 +7,10 @@ A contract supplies a terminating measured execution, its postcondition, and
 an upper bound on that execution's compiler-derived machine count. The bound
 is a proposition to prove sufficient, never an operation price or a source
 annotation that changes the computation.
+
+The default contracts use the callee-local compiler: `n` locates reserved
+registers, while each function's declared local bound determines its actual
+save/restore work. Compilation produces that same optimized instruction stream.
 
 Loop rules combine invariant preservation with a decreasing natural variant.
 The simpler potential rule uses the remaining budget itself as the variant:
@@ -53,7 +57,7 @@ the budget may depend on the complete initial source state. -/
 def Contract (n : Nat) (program : Program) (heapLimit depth : Nat) (stmt : Stmt)
     (P Q : State w → Prop) (bound : State w → Nat) : Prop :=
   ∀ s, P s → ∃ steps t,
-    MeasuredExec n program heapLimit depth stmt steps s t ∧ Q t ∧ steps ≤ bound s
+    LocalMeasuredExec n program heapLimit depth stmt steps s t ∧ Q t ∧ steps ≤ bound s
 
 /-- A total contract whose postcondition keeps the actual entry state. This
 relation lets later budgets and assertions refer to the original input without
@@ -61,7 +65,7 @@ requiring a uniform bound over unrelated intermediate states. -/
 def RelContract (n : Nat) (program : Program) (heapLimit depth : Nat) (stmt : Stmt)
     (P : State w → Prop) (Q : State w → State w → Prop) (bound : State w → Nat) : Prop :=
   ∀ s, P s → ∃ steps t,
-    MeasuredExec n program heapLimit depth stmt steps s t ∧ Q s t ∧ steps ≤ bound s
+    LocalMeasuredExec n program heapLimit depth stmt steps s t ∧ Q s t ∧ steps ≤ bound s
 
 namespace Contract
 
@@ -108,7 +112,7 @@ the prologue read and halt. The source postcondition is retained on its own
 state; only the proved output and input observations are transferred directly. -/
 theorem compile {code : Code} {input : List (Word w)}
     (h : Contract n program heapLimit depth stmt P Q bound)
-    (hcompile : Compiler.compileChecked n program stmt = some code)
+    (hcompile : LocalCompiler.compileChecked n program stmt = some code)
     (hcodefit : code.length < 2 ^ w)
     (hstackfit : heapLimit + depth * ABI.frameSize n < 2 ^ w)
     (hp : P (State.initial input)) :
@@ -117,7 +121,7 @@ theorem compile {code : Code} {input : List (Word w)}
         (Ram.State.initial (BitVec.ofNat w heapLimit :: input)) targetFinal ∧
       targetFinal.output = sourceFinal.output ∧ targetFinal.input = sourceFinal.input := by
   obtain ⟨steps, sourceFinal, hx, hq, hb⟩ := h (State.initial input) hp
-  obtain ⟨targetFinal, ht, ho, hi⟩ := Compiler.compileChecked_terminatesWithin
+  obtain ⟨targetFinal, ht, ho, hi⟩ := LocalCompiler.compileChecked_terminatesWithin
     hcompile hcodefit hstackfit hx (Nat.add_le_add_right hb 2)
   exact ⟨sourceFinal, targetFinal, hq, ht, ho, hi⟩
 
@@ -126,7 +130,7 @@ postcondition about addresses below `heapLimit` can be transported to the
 halted target heap using the returned agreement; stack words remain private. -/
 theorem compile_heap {code : Code} {input : List (Word w)}
     (h : Contract n program heapLimit depth stmt P Q bound)
-    (hcompile : Compiler.compileChecked n program stmt = some code)
+    (hcompile : LocalCompiler.compileChecked n program stmt = some code)
     (hcodefit : code.length < 2 ^ w)
     (hstackfit : heapLimit + depth * ABI.frameSize n < 2 ^ w)
     (hp : P (State.initial input)) :
@@ -136,7 +140,7 @@ theorem compile_heap {code : Code} {input : List (Word w)}
       HeapEqBelow heapLimit sourceFinal.mem targetFinal.mem ∧
       targetFinal.output = sourceFinal.output ∧ targetFinal.input = sourceFinal.input := by
   obtain ⟨steps, sourceFinal, hx, hq, hb⟩ := h (State.initial input) hp
-  obtain ⟨targetFinal, ht, hm, ho, hi⟩ := Compiler.compileChecked_terminatesWithin_heap
+  obtain ⟨targetFinal, ht, hm, ho, hi⟩ := LocalCompiler.compileChecked_terminatesWithin_heap
     hcompile hcodefit hstackfit hx (Nat.add_le_add_right hb 2)
   exact ⟨sourceFinal, targetFinal, hq, ht, hm, ho, hi⟩
 
@@ -160,7 +164,8 @@ theorem assign {dst : Reg} {value : Expr}
     (reads : ∀ s, P s → value.ReadsBelow heapLimit s.regs s.mem)
     (post : ∀ s, P s → Q (s.setReg dst (s.eval value))) :
     Contract n program heapLimit depth (.assign dst value) P Q
-      (fun _ => Compiler.stmtSize n (.assign dst value)) := by
+      (fun _ => LocalCompiler.stmtSize n (LocalCompiler.calleeLocals program)
+        (.assign dst value)) := by
   intro s hs
   exact ⟨_, _, .assign (reads s hs), post s hs, Nat.le_refl _⟩
 
@@ -172,7 +177,8 @@ theorem store {address value : Expr}
     (destination : ∀ s, P s → (s.eval address).toNat < heapLimit)
     (post : ∀ s, P s → Q (s.setMem (s.eval address) (s.eval value))) :
     Contract n program heapLimit depth (.store address value) P Q
-      (fun _ => Compiler.stmtSize n (.store address value)) := by
+      (fun _ => LocalCompiler.stmtSize n (LocalCompiler.calleeLocals program)
+        (.store address value)) := by
   intro s hs
   exact ⟨_, _, .store (addressReads s hs) (valueReads s hs) (destination s hs),
     post s hs, Nat.le_refl _⟩
@@ -190,7 +196,8 @@ theorem write {value : Expr}
     (reads : ∀ s, P s → value.ReadsBelow heapLimit s.regs s.mem)
     (post : ∀ s, P s → Q { s with outputRev := s.eval value :: s.outputRev }) :
     Contract n program heapLimit depth (.write value) P Q
-      (fun _ => Compiler.stmtSize n (.write value)) := by
+      (fun _ => LocalCompiler.stmtSize n (LocalCompiler.calleeLocals program)
+        (.write value)) := by
   intro s hs
   exact ⟨_, _, .write (reads s hs), post s hs, Nat.le_refl _⟩
 
@@ -218,7 +225,8 @@ theorem ite {condition : Expr} {yes no : Stmt} {yesBound noBound : State w → N
 
 /-- Reuse a callee contract at a fresh local frame, then evaluate its return
 expression there and restore the caller. The budget includes argument setup,
-the entry jump, the body, the concrete return code, and the receive instruction. -/
+the entry jump, the body, the concrete return code, and the receive instruction.
+Save/restore work is determined by `f.locals`, not the global register bound. -/
 theorem call {dst fn : Nat} {args : List Expr} {f : Func}
     {bodyBound : State w → Nat}
     (lookup : program[fn]? = some f) (arity : args.length = f.params)
@@ -230,16 +238,17 @@ theorem call {dst fn : Nat} {args : List Expr} {f : Func}
         (fun finish => f.result.ReadsBelow heapLimit finish.regs finish.mem ∧
           Q (caller.leave finish dst f.result)) (fun _ => bodyBound caller)) :
     Contract n program heapLimit (depth + 1) (.call dst fn args) P Q
-      (fun caller => (ABI.callPrefix n args 0).length + 1 + bodyBound caller +
-        (ABI.returnCode n f.result).length + 1) := by
+      (fun caller => (ABI.callPrefixLocals n f.locals args 0).length + 1 + bodyBound caller +
+        (ABI.returnCodeLocals n f.locals f.result).length + 1) := by
   intro s hs
   obtain ⟨bodySteps, finish, hx, ⟨hr, hq⟩, hb⟩ :=
     callee s hs (s.enter (args.map s.eval)) rfl
   change bodySteps ≤ bodyBound s at hb
   refine ⟨_, _, .call lookup arity frame (arguments s hs) hx hr, hq, ?_⟩
   exact Nat.add_le_add_right
-    (Nat.add_le_add_right (Nat.add_le_add_left hb ((ABI.callPrefix n args 0).length + 1))
-      (ABI.returnCode n f.result).length) 1
+    (Nat.add_le_add_right
+      (Nat.add_le_add_left hb ((ABI.callPrefixLocals n f.locals args 0).length + 1))
+      (ABI.returnCodeLocals n f.locals f.result).length) 1
 
 /-- Sequential budgets are evaluated at their actual respective entry states.
 The compatibility premise relates the intermediate budget to the original one. -/
@@ -273,13 +282,13 @@ theorem while_variant {condition : Expr} {body : Stmt}
     (exitBudget : ∀ s, invariant s → s.eval condition = 0 →
       (condition.compile (ABI.scratch n)).length + 1 ≤ budget s)
     (iteration : ∀ s, invariant s → s.eval condition ≠ 0 →
-      ∃ bodySteps t, MeasuredExec n program heapLimit depth body bodySteps s t ∧
+      ∃ bodySteps t, LocalMeasuredExec n program heapLimit depth body bodySteps s t ∧
         invariant t ∧ variant t < variant s ∧
         (condition.compile (ABI.scratch n)).length + 1 + bodySteps + 1 + budget t ≤ budget s) :
     Contract n program heapLimit depth (.while condition body) invariant
       (fun t => invariant t ∧ t.eval condition = 0) budget := by
   have loop : ∀ k s, variant s = k → invariant s →
-      ∃ steps t, MeasuredExec n program heapLimit depth (.while condition body) steps s t ∧
+      ∃ steps t, LocalMeasuredExec n program heapLimit depth (.while condition body) steps s t ∧
         (invariant t ∧ t.eval condition = 0) ∧ steps ≤ budget s := by
     intro k
     induction k using Nat.strongRecOn with
@@ -306,7 +315,7 @@ theorem while_potential {condition : Expr} {body : Stmt}
     (exitBudget : ∀ s, invariant s → s.eval condition = 0 →
       (condition.compile (ABI.scratch n)).length + 1 ≤ budget s)
     (iteration : ∀ s, invariant s → s.eval condition ≠ 0 →
-      ∃ bodySteps t, MeasuredExec n program heapLimit depth body bodySteps s t ∧
+      ∃ bodySteps t, LocalMeasuredExec n program heapLimit depth body bodySteps s t ∧
         invariant t ∧
         (condition.compile (ABI.scratch n)).length + 1 + bodySteps + 1 + budget t ≤ budget s) :
     Contract n program heapLimit depth (.while condition body) invariant

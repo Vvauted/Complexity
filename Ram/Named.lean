@@ -1,5 +1,5 @@
 import Ram.Syntax
-import Ram.Compiler
+import Ram.LocalCompiler
 
 /-!
 # Named programs over the existing RAM language
@@ -30,15 +30,15 @@ structure Bundle where
 def Bundle.program (bundle : Bundle) : Program := bundle.declarations.map Prod.snd
 
 def Bundle.compile (bundle : Bundle) : Option Code :=
-  Compiler.compileChecked bundle.registers bundle.program bundle.main
+  LocalCompiler.compileChecked bundle.registers bundle.program bundle.main
 
 /-- Named compilation has exactly the pre-existing compiler's acceptance and
 generated code, with no alternative validity standard. -/
 theorem Bundle.compile_some_iff (bundle : Bundle) (code : Code) :
     bundle.compile = some code ↔
-      Compiler.Valid bundle.registers bundle.program bundle.main ∧
-        code = Compiler.rawLink bundle.registers bundle.program bundle.main :=
-  Compiler.compileChecked_some_iff
+      LocalCompiler.Valid bundle.registers bundle.program bundle.main ∧
+        code = LocalCompiler.rawLink bundle.registers bundle.program bundle.main :=
+  LocalCompiler.compileChecked_some_iff
 
 /-- Pairing a name and body preserves their common position in the emitted
 function table. This is the index that named calls use after resolution. -/
@@ -53,11 +53,12 @@ entry address, using the existing linker's proved layout theorem. -/
 theorem Bundle.compiled_function {bundle : Bundle} {code : Code} {index : Nat}
     {name : String} {f : Func} (hcompile : bundle.compile = some code)
     (hdecl : bundle.declarations[index]? = some (name, f)) :
-    CodeAt code (Compiler.entry bundle.registers bundle.program bundle.main index)
-      (Compiler.compileFunc bundle.registers
-        (Compiler.entry bundle.registers bundle.program bundle.main) f
-        (Compiler.entry bundle.registers bundle.program bundle.main index)) :=
-  Compiler.compileChecked_function hcompile (Bundle.declaration_lookup hdecl).2
+    CodeAt code (LocalCompiler.entry bundle.registers bundle.program bundle.main index)
+      (LocalCompiler.compileFunc bundle.registers
+        (LocalCompiler.calleeLocals bundle.program)
+        (LocalCompiler.entry bundle.registers bundle.program bundle.main) f
+        (LocalCompiler.entry bundle.registers bundle.program bundle.main index)) :=
+  LocalCompiler.compileChecked_function hcompile (Bundle.declaration_lookup hdecl).2
 
 end Ram.Named
 
@@ -155,10 +156,10 @@ theorem parity_expands : parity =
             (.assign 1 (.const 0)), .var 1⟩)]
       main := .seq (.read 0) (.seq (.call 1 0 [.var 0]) (.write (.var 1))) } := rfl
 
-theorem parity_valid : Compiler.Valid parity.registers parity.program parity.main := by decide
+theorem parity_valid : LocalCompiler.Valid parity.registers parity.program parity.main := by decide
 
 theorem parity_compiles : parity.compile =
-    some (Compiler.rawLink parity.registers parity.program parity.main) :=
+    some (LocalCompiler.rawLink parity.registers parity.program parity.main) :=
   (Bundle.compile_some_iff _ _).mpr ⟨parity_valid, rfl⟩
 
 /-- The same recursive declaration can be written without maintaining a `self`

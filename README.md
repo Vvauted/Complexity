@@ -70,17 +70,22 @@ memory; its entire run result is proved equal to the reference machine.
 The old `runExact` remains an exact-step mathematical interface, not the default
 budget runner.
 
-`Compiler.compileChecked` validates register bounds, function existence and
-arity, then emits code. `Compiler.compileChecked_runs_measured` connects the
+`LocalCompiler.compileChecked` validates register bounds, function existence and
+arity, then emits code. `LocalCompiler.compileChecked_runs_measured` connects the
 source execution to the exact full machine run. Its count includes the actual
 stack-boundary input read and final halt. Runtime heap safety, sufficient stack
 space, and representable return addresses are proof obligations, not hidden
 runtime checks. Natural arithmetic specifications require appropriate range
 proofs; without them multiplication and addition have modular word semantics.
 
+Named programs and public contracts use the callee-sized compiler by default.
+Each call saves and restores only the register interval that its callee can
+overwrite; an unrelated function's local count does not inflate that work.
+The older global-bound `Compiler` remains an explicit reference implementation.
+
 ## Proof interfaces and examples
 
-- `Source.MeasuredExec` retains the compiler-derived exact count. Every safe
+- `Source.LocalMeasuredExec` retains the compiler-derived exact count. Every safe
   source execution has such a derivation; it is not a user price annotation.
 - `Source.Contract` combines total correctness with a proved budget. It has
   assignment, store, I/O, branch and call rules, sequential composition and loop
@@ -108,6 +113,10 @@ Checked examples use the real compiler, not separate executable specifications:
 - [Array fill](Ram/Examples/ContractFill.lean): public contracts prove a real
   input/output loop fills the target heap with ones within `14 * length + 9`
   transitions, including setup and halt.
+- [Unequal call frames](Ram/Examples/LocalCalls.lean): a real call overwrites its
+  parameter while restoring the caller and retaining another caller variable.
+  The complete I/O run takes 36 transitions even with an unused 200-local
+  function, independently of a larger reserved-register boundary.
 
 ## Running an example
 

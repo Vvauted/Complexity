@@ -62,3 +62,9 @@ is `5352afccd6866369be9de43f5b7ec47203555f44`; imports can be added when needed.
 CSLib's step relations and the Lax Word RAM project are relevant references, but
 neither a moving main branch nor a reference project's advertised theorem is a
 substitute for compiling and checking this repository's corresponding theorem.
+
+The optional CSLib integration pins `232407ba9e7883e71aa57e046f130f52932fc9c8`,
+whose Lean and mathlib revisions exactly match this baseline. Its compiled
+bridge uses the official exact/bounded step relations; a separate mathlib
+`IsBigO` bridge simplifies proved RAM bounds. This does not assert a RAM-to-TM
+simulation or membership in a TM-based complexity class.

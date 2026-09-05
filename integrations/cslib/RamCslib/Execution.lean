@@ -1,4 +1,4 @@
-import Ram.Execution
+import Ram.Runner
 import Cslib.Foundations.Data.RelatesInSteps
 
 /-!
@@ -46,5 +46,22 @@ theorem terminatesWithin_iff_relatesWithinSteps {code : Code} {budget : Nat}
     exact ⟨⟨n, hn, exec_iff_relatesInSteps.mp he⟩, hhalt⟩
   · rintro ⟨⟨n, hn, he⟩, hhalt⟩
     exact ⟨n, hn, exec_iff_relatesInSteps.mpr he, hhalt⟩
+
+/-- The actual budget runner's endpoint is reached in exactly its reported
+number of machine transitions, whatever stopping reason it reports. -/
+theorem run_relatesInSteps (code : Code) (budget : Nat) (s : State w) :
+    Relation.RelatesInSteps (transition code) s (run code budget s).state
+      (run code budget s).steps :=
+  exec_iff_relatesInSteps.mp (run_exec code budget s).2
+
+/-- A successful budget run exports a CSLib bound and the same halted endpoint.
+Fuel exhaustion, invalid PCs and faults do not satisfy the success premise. -/
+theorem run_halted_relatesWithinSteps {code : Code} {budget : Nat} {s : State w}
+    (hhalt : (run code budget s).reason = .halted) :
+    Relation.RelatesWithinSteps (transition code) s (run code budget s).state budget ∧
+      (run code budget s).state.status = .halted := by
+  have houtcome := run_outcome code budget s
+  simp only [Runner.Outcome, hhalt] at houtcome
+  exact ⟨⟨_, (run_exec code budget s).1, run_relatesInSteps code budget s⟩, houtcome⟩
 
 end Ram.Cslib

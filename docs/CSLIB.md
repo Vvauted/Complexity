@@ -30,10 +30,22 @@ transition. It also connects `runExact` to that relation, and proves that
 `TerminatesWithin` is precisely `Relation.RelatesWithinSteps` together with a
 halted endpoint. Faults are not treated as successful termination.
 
-`RamCslib.Compiler` exports the existing checked-compiler measured simulation as
-CSLib exact and bounded execution certificates. These preserve the source
-output and remaining input, and count the actual header-read and halt steps.
-They do not let a caller supply an alternative operation-price table.
+The actual budget runner is also connected:
+`Ram.Cslib.run_relatesInSteps` uses its returned step count and final state;
+`Ram.Cslib.run_halted_relatesWithinSteps` exports the budget bound and halted
+endpoint when the runner reports success. An exhausted budget or fault does
+not become a successful CSLib execution certificate.
+
+`RamCslib.Compiler` exports the optimized, callee-local checked compiler through
+`Ram.Cslib.compileChecked_relatesInSteps` and
+`Ram.Cslib.compileChecked_relatesWithinSteps`. Their premises use
+`LocalCompiler.compileChecked` and `Source.LocalMeasuredExec`, so the measured
+calls use each callee's own frame rather than the former global frame size.
+These CSLib exact and bounded execution certificates preserve the source output
+and remaining input, and count the actual header-read and halt steps. They do
+not let a caller supply an alternative operation-price table. The stack-fit
+premise remains the compiler's sufficient global-depth bound; it does not
+change the local-frame execution count.
 
 This is a connection to CSLib's shared execution and step-bound infrastructure,
 not a RAM-to-Turing-machine simulation. In particular it does not claim
@@ -62,11 +74,11 @@ Dependency resolution must retain the above revisions. An existing checkout
 and normal Lake cache for that exact mathlib revision can be reused; do not
 silently resolve to a newer mathlib or Lean toolchain.
 
-Verified on 0v0 under the pinned rc1 toolchain: the three required upstream
-CSLib modules, `RamCslib.Execution`, `RamCslib.Compiler`,
-`RamCslib.Asymptotics`, and the complete `lake build RamCslib` all compiled
-successfully. The existing exact mathlib checkout and its normal artifacts
-were reused through a server-local path manifest; that manifest is ignored so
-absolute cache paths are not part of the portable package.
+Verified on 0v0 under the pinned rc1 toolchain: the optimized compiler exports,
+the actual budget-runner bridge, the mathlib asymptotic bridge, and the complete
+`lake build RamCslib` all compiled successfully. The existing exact mathlib
+checkout and its normal artifacts are reused through a server-local path
+manifest; that manifest is ignored so absolute cache paths are not part of the
+portable package.
 
 This checks the modules used by the integration, not every module in CSLib.

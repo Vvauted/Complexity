@@ -1,12 +1,12 @@
 # Function and recursive-call compilation protocol
 
 Status: implemented and individually checked on 0v0 with Lean 4.28.0-rc1.
-`ABI`, `Arguments`, `Frame`, `CallSetup`, and `CallReturn` implement the concrete
-protocol. `Compiler`, `Structural`, `Call`, and `Program` prove linked execution
-including recursion; `Exact` and `simulate_call_exact` retain exact step counts.
-The whole-program functional theorem no longer has an unresolved call-simulation
-premise. `Measured` retains exact counts, `Contracts` provides budget proofs, and
-the larger array-sum and recursive-factorial examples use the resulting compiler.
+`LocalABI`, `LocalCallSetup`, and `LocalCallReturn` implement the callee-sized
+protocol using the existing `Arguments` and `Frame` primitives. `LocalCompiler`,
+`LocalExact`, `LocalCall`, `LocalMeasured` and `LocalProgram` prove linked execution
+including recursion and exact step counts, with no unresolved call-simulation
+premise. Public named programs and `Contracts` use this compiler. The older
+global-bound ABI/compiler remains an explicit reference, not the default.
 
 The protocol uses the existing word-RAM only. A save, restore, argument copy,
 or address calculation is an actual sequence of its instructions, never a
@@ -48,11 +48,12 @@ names or expand another copy of the function's code.
 
 Let `H` be the source-visible heap boundary. Source memory accesses must use
 word addresses whose decoded values are below `H`. The stack grows upward from
-`H`. If the entry SP of a call is `b`, its frame has `F = N + 1` words:
+`H`. Let `l` be the called function's own local bound. If the entry SP is `b`,
+this call's frame has `F = l + 1` words, not `N + 1`:
 
 ```text
 address b         : return code address
-address b + 1 + i : caller local i, for 0 ≤ i < N
+address b + 1 + i : previous value of register i, for 0 ≤ i < l
 next free address : b + F
 ```
 
@@ -60,15 +61,20 @@ Use the relation already defined in `Ram/Memory.lean`:
 
 ```lean
 HeapEqBelow H source.mem target.mem
-Source.State.Matches H N source target
+Source.State.Matches H k source target
 ```
 
 Do not require `source.mem = target.mem`. Compiler-owned stack words differ from
 the source heap function, and popped frames may leave stale words behind.
-Only source locals below `N`, heap below `H`, input, output, and running status
+Here `k ≤ N` is the active source function's local bound. Only source locals
+below `k`, heap below `H`, input, output, and running status
 are related by `Matches`. Transferring a postcondition to the target must respect
 this observation boundary; arbitrary observations of inaccessible source heap
 words or registers outside the local bound are not justified by `Matches`.
+
+The simulation separately preserves registers `k ≤ r < N`. They can contain
+an older caller's live values even though the active callee cannot read them.
+This register frame rule is essential when nested calls have different sizes.
 
 `HeapEqBelow.setMem_above` is the existing fact that a compiler stack write
 preserves source-heap agreement. Existing `Expr.ReadsBelow`,
@@ -94,12 +100,12 @@ iteration over `i` emits individual instructions; it is not a runtime primitive.
    memory, and all previously buffered arguments. Do not overwrite source
    parameter registers while there are still caller arguments to evaluate.
 
-2. Save the return address and every caller local:
+2. Save the return address and exactly the registers the callee may overwrite:
 
    ```text
    const TMP returnPC
    store SP TMP
-   for i = 0, ..., N-1, emit:
+   for i = 0, ..., l-1, emit:
      const TMP (i + 1)
      binop add ADDR SP TMP
      store ADDR i
@@ -110,7 +116,7 @@ iteration over `i` emits individual instructions; it is not a runtime primitive.
    ```text
    for i = 0, ..., p-1, emit:
      move i ARG(i)
-   for i = p, ..., N-1, emit:
+   for i = p, ..., l-1, emit:
      const i 0
    ```
 
@@ -145,7 +151,7 @@ move RV scratch
 const TMP F
 binop sub SP SP TMP
 load RA SP
-for i = 0, ..., N-1, emit:
+for i = 0, ..., l-1, emit:
   const TMP (i + 1)
   binop add ADDR SP TMP
   load i ADDR
@@ -161,7 +167,7 @@ The callee's heap and input/output effects are retained.
 ## Resource and execution-safety obligations
 
 `Source.SafeExec` is the indexed safe-execution judgment, with an erasure theorem
-to `Source.Exec`. `Source.MeasuredExec` further retains compiler-derived counts.
+to `Source.Exec`. `Source.LocalMeasuredExec` retains compiler-derived counts.
 Neither is a user-supplied cost table or a replacement for source behavior.
 Their safety cases are:
 
@@ -182,12 +188,14 @@ use the sufficient arithmetic conditions
 ```text
 0 < w
 H ≤ b
-b + d*F < 2^w
+b + d*(N+1) < 2^w
 ```
 
 The strict last inequality ensures that even the exclusive-end SP is itself a
-representable word. At a call, require `d > 0`; the child resource condition is
-`(b+F) + (d-1)*F < 2^w`. Prove that encoding offsets and adding/subtracting the
+representable word. This is a conservative capacity bound: actual calls advance
+by their own `F = l+1 ≤ N+1`; it is not a claim of tight space complexity.
+At a call, require `d > 0`; the child sufficient condition is
+`(b+F) + (d-1)*(N+1) < 2^w`. Prove that encoding offsets and adding/subtracting the
 frame size agree with natural stack-address arithmetic under these hypotheses.
 No stack access may rely on modular wraparound accidentally reaching the desired
 cell. These conditions do not prohibit ordinary source modular arithmetic.
@@ -209,22 +217,24 @@ evidence that the unrestricted source and target heaps are globally equal.
 For a statement starting at target SP `b`, the simulation theorem should return
 an actual target execution `Ram.Exec code steps start finish` and establish:
 
-- `Source.State.Matches H N sourceFinal finish`.
+- `Source.State.Matches H k sourceFinal finish` for active locals `k`.
 - The specified linked continuation PC and running status.
 - The final SP equals the initial SP.
 - For every word address `a` with `H ≤ a.toNat < b`,
   `finish.mem a = start.mem a`.
+- For every register `r` with `k ≤ r < N`, `finish.regs r = start.regs r`.
 
 The final condition is a small frame rule; a separate inductive list of stack
 objects is not needed for the first proof. When applying the callee-body
 induction hypothesis with entry SP `b+F`, this condition protects both earlier
 frames and the new saved frame `[b,b+F)`. Return code can therefore reload the
-saved return address and every caller local. On returning to the caller, only
+saved return address and every overwritten caller register. Registers above
+the callee's local bound are preserved separately. On returning to the caller, only
 preservation below `b` is promised; stale data in the popped frame is irrelevant.
 
 The proofs use finite execution derivations, not an acyclic call graph.
-`Program` closes call simulation by strong induction on the available call depth;
-`Measured` uses induction on the measured execution. The call constructor has a
+`LocalMeasured` closes call simulation by induction on the measured execution.
+The call constructor has a
 smaller body derivation even for self-recursion or mutual recursion. The linker
 places all function bodies once in a shared code list, computes block lengths
 without following calls, and then resolves labels. Label values do not change
@@ -238,26 +248,26 @@ Nonlinear jump instructions are individual machine transitions, not part of a
 purported linear `execBlock` proof. Compose these with the compiled callee body
 and result-expression executions.
 
-For exactly the implemented sequences displayed here, `ABI.call_steps_eq` in
-`CodeLength.lean` proves the identity
+For exactly the implemented sequences displayed here, `ABI.callLocals_steps_eq`
+in `LocalABI.lean` proves the identity
 
 ```text
 sum of compiled argument lengths
 + actual compiled callee-body steps
 + compiled result length
-+ 7*N + p + 11
++ 7*l + p + 11
 ```
 
 The formula is derived from the lengths of the generated instruction lists.
-`Compiler.simulate_call_exact` proves execution of those blocks, including the
+`LocalCompiler.simulate_call_exact` proves execution of those blocks, including the
 entry jump, actual body, return jump, and receive instruction. Thus the formula
 can simplify a proved machine count; it does not define call cost separately.
 Changing emitted code requires proving the corresponding length identities and
 execution theorem again. No source constructor accepts a price from its author.
 
-`Compiler.compileChecked_runs` establishes a successful full run with matching
+`LocalCompiler.compileChecked_runs_measured` establishes a full run with matching
 output and remaining input. The fixed linked code is shared by every recursive
 invocation; call-depth bounds control stack capacity, not instruction counts.
-`Measured` and `Contracts` connect high-level budget proofs to these exact
+`LocalMeasured` and `Contracts` connect high-level budget proofs to these exact
 executions. `Examples/Factorial` exercises ordinary recursion through this ABI,
 including a proved nonconstant complete-program transition count.

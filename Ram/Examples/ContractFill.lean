@@ -7,10 +7,12 @@ The fixed program reads a length, fills that many heap words with one, and
 outputs the length. The loop proof uses the public invariant/potential rule;
 it does not construct an execution derivation separately for each input.
 
-The linear budget is derived from the generated instructions. The final
-checked-compiler theorems give actual halted machine execution and matching
-output. The heap-preserving interface additionally transfers the filled-prefix
-assertion to the target machine's own memory, using the explicit address bound.
+The contracts use the optimized local-frame compiler and its measured execution
+judgment. The linear budget is derived from that pipeline's generated
+instructions. The final checked-compiler theorems give actual halted machine
+execution and matching output. The heap-preserving interface additionally
+transfers the filled-prefix assertion to the target machine's own memory,
+using the explicit address bound.
 -/
 
 namespace Ram.Examples.ContractFill
@@ -69,9 +71,12 @@ def Post (len : Nat) (s : Source.State w) : Prop :=
   s.output = [BitVec.ofNat w len] ∧ s.input = []
 
 theorem store_code_size :
-    Compiler.stmtSize 2 (.store (.var 1) (.const 1)) = 3 := rfl
-theorem pointer_code_size : Compiler.stmtSize 2 (.assign 1 nextPointer) = 4 := rfl
-theorem count_code_size : Compiler.stmtSize 2 (.assign 0 nextCount) = 4 := rfl
+    LocalCompiler.stmtSize 2 (LocalCompiler.calleeLocals [])
+      (.store (.var 1) (.const 1)) = 3 := rfl
+theorem pointer_code_size :
+    LocalCompiler.stmtSize 2 (LocalCompiler.calleeLocals []) (.assign 1 nextPointer) = 4 := rfl
+theorem count_code_size :
+    LocalCompiler.stmtSize 2 (LocalCompiler.calleeLocals []) (.assign 0 nextCount) = 4 := rfl
 theorem condition_code_size : (condition.compile (ABI.scratch 2)).length = 1 := rfl
 
 /-- Three ordinary primitive contracts compose into the exact state
@@ -235,17 +240,17 @@ theorem main_contract {H len : Nat} (hw : 0 < w)
   intro s hs
   omega
 
-def machine : Code := Compiler.rawLink 2 [] main
+def machine : Code := LocalCompiler.rawLink 2 [] main
 
-theorem main_valid : Compiler.Valid 2 [] main := by
+theorem main_valid : LocalCompiler.Valid 2 [] main := by
   refine ⟨?_, ?_, ?_⟩
   · simp [main, loop, body, condition, nextPointer, nextCount,
       Stmt.WellFormed, Expr.Bounded]
   · simp [main, loop, body, Compiler.CallsValid]
   · simp
 
-theorem checked_machine : Compiler.compileChecked 2 [] main = some machine :=
-  Compiler.compileChecked_some_iff.mpr ⟨main_valid, rfl⟩
+theorem checked_machine : LocalCompiler.compileChecked 2 [] main = some machine :=
+  LocalCompiler.compileChecked_some_iff.mpr ⟨main_valid, rfl⟩
 
 theorem machine_code_size : machine.length = 21 := rfl
 

@@ -31,8 +31,10 @@ import Ram.Problem
 import Ram.Syntax
 import Ram.Named
 import Ram.RunProgram
+import Ram.LocalProgram
 import Ram.Examples.Arithmetic
 import Ram.Examples.ArraySum
 import Ram.Examples.Factorial
 import Ram.Examples.ContractFill
 import Ram.Examples.ProblemArithmetic
+import Ram.Examples.LocalCalls
