@@ -6,6 +6,9 @@ This is an independent research library, not part of NyaOJ-bench.
   on `vvauted@100.65.196.6` (`HostKeyAlias=0v0`).
 - Do not run Lean or Lake locally. Compile only on 0v0 with the pinned rc1 toolchain.
 - Root coordinates remote compilation. At most two Lean processes at once.
+- The completed checkpoint uses normal Lake artifacts. Run `lake env lean`
+  from the server repository for later file checks; source-root `.olean` files
+  were scratch outputs from development and are not the authoritative build.
 - Use `apply_patch` for edits. Preserve other agents' files. No benchmark edits.
 - No `sorry`, custom axioms, unsafe proof shortcuts, or unproved cost annotations in
   completed modules. Incomplete work must stay explicitly described as incomplete.

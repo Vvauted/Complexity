@@ -1,10 +1,12 @@
 # Function and recursive-call compilation protocol
 
-Status: implementation and proof design, not a completed compiler theorem.
-This document specifies the next function-compilation work against the existing
-`Ram.Machine`, `Ram.Source`, `Ram.ExprCompile`, and `Ram.Memory` interfaces.
-The save/restore blocks, linker, recursive-call simulation, and stack-resource
-theorems described below still have to be implemented and checked in Lean.
+Status: implemented and individually checked on 0v0 with Lean 4.28.0-rc1.
+`ABI`, `Arguments`, `Frame`, `CallSetup`, and `CallReturn` implement the concrete
+protocol. `Compiler`, `Structural`, `Call`, and `Program` prove linked execution
+including recursion; `Exact` and `simulate_call_exact` retain exact step counts.
+The whole-program functional theorem no longer has an unresolved call-simulation
+premise. `Measured` retains exact counts, `Contracts` provides budget proofs, and
+the larger array-sum and recursive-factorial examples use the resulting compiler.
 
 The protocol uses the existing word-RAM only. A save, restore, argument copy,
 or address calculation is an actual sequence of its instructions, never a
@@ -158,10 +160,10 @@ The callee's heap and input/output effects are retained.
 
 ## Resource and execution-safety obligations
 
-Introduce a Prop-valued safety predicate on a successful `Source.Exec` derivation
-(or an equivalent indexed safe-execution judgment with an erasure theorem).
-It is not a user-supplied cost and does not replace source execution. Required
-cases are:
+`Source.SafeExec` is the indexed safe-execution judgment, with an erasure theorem
+to `Source.Exec`. `Source.MeasuredExec` further retains compiler-derived counts.
+Neither is a user-supplied cost table or a replacement for source behavior.
+Their safety cases are:
 
 - Assignment/write/condition: the evaluated expression satisfies `ReadsBelow H`.
 - Store: both expressions satisfy `ReadsBelow H`, and the evaluated destination
@@ -220,13 +222,15 @@ frames and the new saved frame `[b,b+F)`. Return code can therefore reload the
 saved return address and every caller local. On returning to the caller, only
 preservation below `b` is promised; stale data in the popped frame is irrelevant.
 
-Induct on the finite successful `Source.Exec` derivation, not on the call graph.
-The call constructor supplies a strictly smaller body derivation even for
-self-recursion or mutual recursion. The linker must place all function bodies
-once in a shared code list. Compute block lengths without following calls, then
-resolve static labels; label values do not change emitted instruction counts.
+The proofs use finite execution derivations, not an acyclic call graph.
+`Program` closes call simulation by strong induction on the available call depth;
+`Measured` uses induction on the measured execution. The call constructor has a
+smaller body derivation even for self-recursion or mutual recursion. The linker
+places all function bodies once in a shared code list, computes block lengths
+without following calls, and then resolves labels. Label values do not change
+emitted instruction counts.
 
-## Machine-step accounting and remaining work
+## Machine-step accounting
 
 Use `CodeAt`, `execBlock_exec`, `Exec.single`, and `Exec.trans` to prove the
 generated setup, save, restore, jump, and receive sequences actually execute.
@@ -234,7 +238,8 @@ Nonlinear jump instructions are individual machine transitions, not part of a
 purported linear `execBlock` proof. Compose these with the compiled callee body
 and result-expression executions.
 
-For exactly the sequences displayed here, a manual candidate count is
+For exactly the implemented sequences displayed here, `ABI.call_steps_eq` in
+`CodeLength.lean` proves the identity
 
 ```text
 sum of compiled argument lengths
@@ -243,13 +248,16 @@ sum of compiled argument lengths
 + 7*N + p + 11
 ```
 
-This is not a verified theorem or a definition of call cost. It must be derived
-from the implemented code and the uniform machine-transition rule, and adjusted
-if the emitted sequence changes. No source constructor should accept this
-number or any replacement annotation from the program author.
+The formula is derived from the lengths of the generated instruction lists.
+`Compiler.simulate_call_exact` proves execution of those blocks, including the
+entry jump, actual body, return jump, and receive instruction. Thus the formula
+can simplify a proved machine count; it does not define call cost separately.
+Changing emitted code requires proving the corresponding length identities and
+execution theorem again. No source constructor accepts a price from its author.
 
-Implementation remains required for: ABI definitions and emitted blocks;
-word-address/frame access lemmas; the safe-execution/resource predicate;
-label/layout correctness; save, enter, leave, and call simulation; and the
-recursive whole-program correctness and step-count theorem. The existing
-partitioned-memory lemmas are reusable inputs to that work, not completion of it.
+`Compiler.compileChecked_runs` establishes a successful full run with matching
+output and remaining input. The fixed linked code is shared by every recursive
+invocation; call-depth bounds control stack capacity, not instruction counts.
+`Measured` and `Contracts` connect high-level budget proofs to these exact
+executions. `Examples/Factorial` exercises ordinary recursion through this ABI,
+including a proved nonconstant complete-program transition count.
