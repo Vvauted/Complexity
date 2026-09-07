@@ -161,6 +161,5 @@ import Ram.Word
 The word-RAM backend entry point. The project-wide public import is `Complexity`.
 Import a specific `Ram.*` topic to use a smaller dependency set. Example
 programs are separate in `Ram.Examples`; importing `Ram` does not import them.
-Mathematical foundations reuse the pinned mathlib. The CSLib execution bridge
-remains a separate optional integration.
+Mathematical foundations reuse the pinned mathlib.
 -/

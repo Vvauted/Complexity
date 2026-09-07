@@ -8,7 +8,7 @@ import Complexity.Doc.Verification
 import Complexity.Doc.Models
 import Complexity.Doc.Complexity
 import Complexity.Doc.Backend
-import Complexity.Doc.Integration
+import Complexity.Doc.Development
 
 /-!
 # Complexity manual
@@ -40,8 +40,8 @@ reproving their memory layout, calling convention or compiler simulation.
    recurrences, asymptotics, component composition and complete problem claims.
 5. [Execution backend](##Complexity.Doc.Backend): machine assumptions, compilation, calls,
    observation boundaries and resource measurements.
-6. [Dependencies and documentation](##Complexity.Doc.Integration): mathlib reuse, optional
-   CSLib integration, builds and documentation maintenance.
+6. [Dependencies and documentation](##Complexity.Doc.Development): mathlib reuse, builds
+   and documentation maintenance.
 
 Use `import Complexity` for the public library. The existing backend API remains under
 `Ram`; importing a particular `Ram` module gives a smaller dependency set. The manual is

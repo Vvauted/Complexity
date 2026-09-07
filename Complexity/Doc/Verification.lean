@@ -51,8 +51,8 @@ complete halted execution.
 
 ## Proof workflow
 
-1. Choose the ordinary mathematical object and the intended property. Reuse mathlib or
-   CSLib definitions and theorems where they fit.
+1. Choose the ordinary mathematical object and the intended property. Reuse Lean, Std and
+   mathlib definitions and theorems where they fit.
 2. Reuse an existing implementation refinement, or establish its representation relation
    with `ram_refine x s hs [facts]` or `ram_total_vc s hs [facts]`.
 3. Apply proved operations and function specifications with `ram_total_apply`. Keep their

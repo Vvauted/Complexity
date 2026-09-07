@@ -5,7 +5,7 @@ The goal is one high-level program with correctness and complexity proofs that
 compose above the execution model. The current `Ram` library is a verified
 backend and a collection of proof interfaces, not the finished frontend.
 
-- Reuse Lean, Std, mathlib and CSLib before introducing parallel definitions.
+- Reuse Lean, Std and mathlib before introducing parallel definitions.
 - Keep correctness and termination independent of a proposed time budget.
   Resource bounds must describe the same computation and be justified by
   execution. Never replace a cost proof with an unchecked annotation.
@@ -18,7 +18,7 @@ backend and a collection of proof interfaces, not the finished frontend.
   and automation over adding algorithms that repeat low-level bookkeeping.
 - Preserve unrelated work and coordinate file ownership with other contributors.
   Use `apply_patch` for edits; do not reset a dirty worktree.
-- Use the pinned Lean, mathlib and CSLib versions. Do not change dependencies
+- Use the pinned Lean and mathlib versions. Do not change dependencies
   incidentally or import a second incompatible mathlib.
 - For this development session, the user requires compilation on the designated
   build server, not the local workstation. The coordinating agent owns builds;

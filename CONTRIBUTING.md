@@ -7,7 +7,7 @@ describes the currently supported interfaces and development commands.
 
 ## Mathematical and semantic scope
 
-- Reuse Lean, mathlib and CSLib definitions and theorems before adding local ones.
+- Reuse Lean, Std and mathlib definitions and theorems before adding local ones.
 - State a mathematical result at the level where it is used. Keep compiler,
   representation and machine arguments reusable instead of repeating them in
   algorithm proofs.
@@ -35,8 +35,8 @@ infrastructure should not acquire a machine dependency without a reason.
 ## Checking a change
 
 Check changed modules and their affected consumers with Lean, and run the library
-build before submitting. CI builds the library, existing examples and CSLib
-integration; main-branch builds also generate LeanDocs, with website publication
+build before submitting. CI builds the library and existing examples;
+main-branch builds also generate LeanDocs, with website publication
 enabled separately by the repository owner. No separate test framework
 is required for a theorem whose statement and proof are checked by Lean.
 

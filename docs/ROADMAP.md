@@ -36,8 +36,7 @@ yet a compiler from arbitrary Lean or `StateM` programs.
 The complexity layer reuses mathlib's asymptotics, filters, sums and logarithms.
 It includes recurrence comparison, amortized reasoning, uniform and
 multivariate bounds, resource-aware composition and polynomial-time
-reductions. CSLib integration uses upstream execution relations and selected
-automata models; it does not prove equivalence to a Turing-machine cost model.
+reductions. These results do not prove equivalence to a Turing-machine cost model.
 
 Actual execution prefixes, address footprints and sufficient stack capacity
 are formalized. They are not interchangeable with peak live space. Tight
@@ -79,7 +78,6 @@ across algorithms and combinations of data structures.
 
 - Use ordinary Lean/mathlib objects wherever possible: sequences and arrays,
   records and products, finite functions, matrices, sets and partial maps.
-  Reuse CSLib structures where they supply the relevant semantic interface.
 - Make lookup, update, traversal, subviews and function boundaries compose
   without repeated pointwise heap proofs. Preserve unrelated state and
   account honestly for aliasing and scratch space.
@@ -162,7 +160,7 @@ resource their conclusions concern.
   bounds. Extend resource composition only with a corresponding execution
   interpretation, not by relabeling an existing address bound as space.
 - Develop explicit bit-level encodings and a costed simulation for comparison
-  with other computation models, reusing CSLib machinery where suitable.
+  with other computation models, reusing suitable existing mathematical results.
   Complexity-class claims require those simulations and their hypotheses.
 
 **Completion evidence:** resource and model-change theorems identify the same
@@ -172,7 +170,7 @@ connections; they do not inherit RAM theorems by terminology alone.
 
 ## 6. Library organization and documentation
 
-Follow mathlib/CSLib conventions where they fit this research library:
+Follow mathlib conventions throughout this research library:
 descriptive module and declaration names, small imports, documented public
 definitions, reusable lemmas before applications, and explicit dependency
 boundaries. Prefer upstream concepts to parallel local foundations.

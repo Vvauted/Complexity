@@ -20,6 +20,14 @@ jobs:
       LEAN_NUM_THREADS: 2
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .lake
+            docbuild/.lake
+          key: lean-${{ runner.os }}-${{ hashFiles('lean-toolchain', '**/lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: |
+            lean-${{ runner.os }}-${{ hashFiles('lean-toolchain', '**/lake-manifest.json') }}-
       - uses: leanprover/lean-action@v1
         with:
           auto-config: false
@@ -28,9 +36,7 @@ jobs:
           test: false
           lint: false
           use-mathlib-cache: true
-      - name: Build CSLib integration
-        working-directory: integrations/cslib
-        run: lake build RamCslib
+          use-github-cache: false
       - name: Build Lean documentation
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         working-directory: docbuild

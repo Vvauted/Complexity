@@ -9,8 +9,8 @@ import Complexity
 # Dependencies and documentation
 
 Complexity reuses existing mathematical and program-semantics infrastructure rather than
-maintaining parallel definitions. This chapter covers the pinned dependencies, optional
-CSLib package and ordinary development entry points.
+maintaining parallel definitions. This chapter covers the pinned Lean and mathlib dependencies
+and ordinary development entry points.
 
 ## Lean and mathlib
 
@@ -25,58 +25,7 @@ representation wrapper. A bridge belongs here when it connects an existing mathe
 object to the implemented semantics or discharges repeated proof obligations at that boundary.
 
 For native stateful specifications, the library uses `Std.Do.Triple` and `mvcgen` from the
-pinned Lean distribution. This does not depend on CSLib or introduce another WP instance.
-
-## Optional CSLib package
-
-`integrations/cslib` is a separate Lake package depending on the local `complexity` package.
-It pins CSLib to `232407ba9e7883e71aa57e046f130f52932fc9c8`,
-whose Lean and mathlib revisions match the root baseline. It imports official CSLib
-definitions instead of copying them. CSLib is Apache-2.0 licensed; retain its upstream
-attribution when reusing source.
-
-The integration has its existing `RamCslib` entry point:
-
-```sh
-cd integrations/cslib
-lake build RamCslib
-```
-
-Dependency resolution should retain the checked revisions. Use normal Lake dependency and
-cache mechanisms; machine-specific cache paths and local manifests do not belong in the
-portable package configuration. Building this integration checks the imported CSLib modules,
-not every module in CSLib.
-
-### Execution relations
-
-`RamCslib.Execution` connects `Ram.Exec` to CSLib's `Relation.RelatesInSteps` at exactly the
-same step count. Its bounded form connects `TerminatesWithin` to `RelatesWithinSteps` with
-a halted endpoint. Faults are not accepted as successful termination.
-
-The runner bridges use the returned step count and state. The bounded successful-run
-theorem requires that the runner actually reports halt, not exhaustion or fault.
-`RamCslib.Compiler` exports checked callee-sized compilation through the same exact and
-bounded relations, retaining output, remaining input and the actual entry/halt steps.
-
-This is a connection to shared execution infrastructure, not a RAM-to-Turing-machine
-simulation. It does not establish `SingleTapeTM.PolyTimeComputable` or
-`MultiTapeTM.ComputableInTimeAndSpace`.
-
-### Functional models
-
-`RamCslib.Verification` reuses CSLib's labelled-transition and deterministic-automaton
-models. `Refines.flts_mtr` composes supplied label implementations into CSLib's existing
-extended transition `FLTS.mtr`. That particular statement list is a finite syntax unfolding
-for the supplied labels, not a uniform interpreter for unbounded runtime input.
-
-`Refines.finAcc_accepts` transfers the automaton's acceptance predicate through a represented
-implementation, covering both acceptance and rejection. It can consume a separately proved
-uniform implementation of the extended transition function. Neither bridge assigns one
-RAM instruction to one abstract automaton transition: implementation time is proved with the
-same `TimeBound` interface as other programs.
-
-The `RamCslib.Asymptotics` and `RamCslib.Polynomial` modules reexport the root library's
-mathlib-based interfaces for existing users. They do not maintain another growth theory.
+pinned Lean distribution, without introducing another WP instance.
 
 ## Building and checking changes
 
@@ -132,7 +81,6 @@ checked source declarations they reference.
 The style follows the
 [mathlib library conventions](https://leanprover-community.github.io/contribute/style.html):
 copyright and license headers, module summaries, conventional names, focused imports and
-reusable lemmas. CSLib's organization offers complementary guidance for semantic models and
-computer-science interfaces. These conventions guide maintainability; they do not justify
-adding redundant abstractions or a large testing framework to a research library.
+reusable lemmas. These conventions guide maintainability; they do not justify adding redundant
+abstractions or a large testing framework to a research library.
 -/

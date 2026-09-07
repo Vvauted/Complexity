@@ -9,7 +9,7 @@ Lean, while connecting their conclusions to a precisely specified execution
 model through verified compilation.
 
 The intended workflow starts from one high-level program. Users reason about
-ordinary values and data structures, reuse Lean, mathlib and CSLib theorems,
+ordinary values and data structures, reuse Lean, Std and mathlib theorems,
 and establish resource bounds through compositional rules. Registers, memory
 layouts and calling conventions belong in reusable implementation proofs, not
 in every algorithm proof. The current word-RAM is an execution backend, not
@@ -31,7 +31,7 @@ links above are the configured deployment URLs; hosting requires Pages to be ena
   and resource arguments should compose without repeatedly unfolding machine
   execution. Backend-specific representation and cost assumptions remain
   explicit at the abstraction boundary.
-- **Reuse existing mathematics.** Ordinary Lean data and mathlib/CSLib
+- **Reuse existing mathematics.** Ordinary Lean data and mathlib
   interfaces are the basis for specifications. Representation relations
   connect them to implementations without assuming that every observation
   is a bijection.
@@ -46,8 +46,7 @@ imperative syntax, verified compilation with recursive function calls,
 separate total-correctness and time-bound interfaces, and reusable data
 representation and framing results. Its complexity layer includes asymptotic
 bounds based on mathlib, recurrence and amortized-analysis tools, and
-composition of programs and polynomial-time reductions. An optional CSLib
-integration connects shared execution relations and selected functional models.
+composition of programs and polynomial-time reductions.
 
 Existing array, matrix and finite-map developments exercise these interfaces.
 They demonstrate parts of the verified chain; they do not establish that
