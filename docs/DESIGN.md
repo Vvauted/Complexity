@@ -1,8 +1,16 @@
-# Design contract
+# Execution and refinement design
+
+The project-level goal and development priorities are in [ROADMAP.md](ROADMAP.md).
+Users should write one high-level program and reason about ordinary mathematical
+objects and compositional resource bounds. Both kinds of proof should hide
+reusable representation and machine details. The word-RAM described here is the
+current backend, not a requirement that users manually write a second program
+or prove every algorithm directly over registers. `StateM` is an optional model
+interface; it is not a mandatory second source language.
 
 ## Scope and completion obligations
 
-The end state is an executable, structured first-order programming language with
+The backend-facing layer supports an executable, structured first-order language with
 functions, recursive calls, local variables, arrays and control flow. We must
 prove the program layer agrees with the specified RAM machine, not merely build
 an interpreter or verify a manually instrumented cost function.
@@ -19,8 +27,10 @@ Required layers:
 5. Derived proof rules and useful arithmetic, array and function-frame lemmas.
 6. Source syntax and examples that use the same program for execution and proof.
 
-The expression compiler, straight-line code, or an annotated while language
-alone does not satisfy these completion obligations.
+These are backend obligations. Meeting them is necessary but does not by itself
+provide the general single-source frontend or high-level proof automation in the
+roadmap. An expression compiler, straight-line code, or an annotated while
+language alone is also insufficient.
 
 ## Cost model
 

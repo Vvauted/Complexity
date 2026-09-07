@@ -1,9 +1,23 @@
-name = "ram"
+name = "complexity"
 version = "0.1.0"
-defaultTargets = ["Ram"]
+description = "Verified programming and complexity proofs in Lean"
+homepage = "https://github.com/Vvauted/Complexity"
+license = "Apache-2.0"
+keywords = ["formal-verification", "complexity", "programming-languages"]
+defaultTargets = ["Complexity"]
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "5352afccd6866369be9de43f5b7ec47203555f44"
 
 [[lean_lib]]
 name = "Ram"
+globs = ["Ram.*"]
+
+[[lean_lib]]
+name = "Complexity"
+globs = ["Complexity.*"]
 
 [[lean_exe]]
 name = "ram-demo"

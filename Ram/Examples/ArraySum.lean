@@ -1,6 +1,12 @@
+/-
+Copyright (c) 2026 vvauted. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: vvauted
+-/
 import Ram.Array
 import Ram.SafeSource
 import Ram.Measured
+import Ram.Verification.StateMTraversal
 
 /-!
 # A fixed while program summing a preloaded array
@@ -116,6 +122,90 @@ theorem body_safe {program : Program} {H depth : Nat} (s : Source.State w)
   · exact ⟨trivial, trivial⟩
   · exact ⟨trivial, trivial⟩
 
+theorem bodyResult_count_toNat (hw : 0 < w) (s : Source.State w)
+    (hz : s.regs 1 ≠ 0) :
+    ((bodyResult s).regs 1).toNat = (s.regs 1).toNat - 1 := by
+  have hp : 0 < (s.regs 1).toNat := Nat.pos_of_ne_zero
+    (fun h => hz ((Word.toNat_eq_zero_iff _).mp h))
+  have hone : (1 : Word w).toNat = 1 := BitVec.toNat_one hw
+  have hle : (1 : Word w).toNat ≤ (s.regs 1).toNat := by
+    rw [hone]
+    exact hp
+  rw [bodyResult_count]
+  change (BinOp.eval .sub (s.regs 1) 1).toNat = (s.regs 1).toNat - 1
+  rw [BinOp.eval_sub_toNat_of_le _ _ hle, hone]
+
+-- Only the accumulator is native model state. The remaining list describes
+-- memory, while the pointer endpoint and untouched state stay in the relation.
+private structure LoopRep (H : Nat) (entry : Source.State w) (target : Word w)
+    (remaining : List (Word w)) (acc : Word w) (s : Source.State w) : Prop where
+  array : ArrayRep s.mem (s.regs 0) remaining
+  count : (s.regs 1).toNat = remaining.length
+  heap : (s.regs 0).toNat + remaining.length ≤ H
+  fit : (s.regs 0).toNat + remaining.length < 2 ^ w
+  sum : s.regs 2 = acc
+  endpoint : arrayAddr (s.regs 0) remaining.length = target
+  mem : s.mem = entry.mem
+  input : s.input = entry.input
+  output : s.outputRev = entry.outputRev
+  other : ∀ r, 3 ≤ r → s.regs r = entry.regs r
+
+private theorem body_refines {program : Program} {H depth : Nat}
+    {entry : Source.State w} {target : Word w} (hw : 0 < w)
+    (x : Word w) (xs : List (Word w)) :
+    Source.Refines program H depth body (LoopRep H entry target (x :: xs))
+      (fun result => LoopRep H entry target xs result.2)
+      (modify (fun acc => acc + x) : StateM (Word w) PUnit).run := by
+  intro acc s represented
+  have hnext : (s.regs 0 + 1).toNat = (s.regs 0).toNat + 1 :=
+    arrayAddr_toNat (base := s.regs 0) (i := 1)
+      (by have := represented.fit; simp only [List.length_cons] at this; omega)
+  have hnonzero : s.regs 1 ≠ 0 := by
+    intro hz
+    have hzero := (Word.toNat_eq_zero_iff (s.regs 1)).mpr hz
+    rw [represented.count] at hzero
+    simp at hzero
+  have hload : s.mem (s.regs 0) = x := by
+    simpa [arrayAddr] using represented.array.lookup 0 (by simp)
+  refine ⟨bodyResult s, body_safe s ?_, ?_⟩
+  · have := represented.heap
+    simp only [List.length_cons] at this
+    omega
+  · change LoopRep H entry target xs (acc + x) (bodyResult s)
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, represented.mem,
+      represented.input, represented.output, ?_⟩
+    · simpa only [bodyResult_mem, bodyResult_pointer] using
+        arrayRep_tail represented.array represented.fit
+    · rw [bodyResult_count_toNat hw s hnonzero, represented.count]
+      simp
+    · rw [bodyResult_pointer, hnext]
+      have := represented.heap
+      simp only [List.length_cons] at this
+      omega
+    · rw [bodyResult_pointer, hnext]
+      have := represented.fit
+      simp only [List.length_cons] at this
+      omega
+    · rw [bodyResult_sum, represented.sum, hload]
+    · rw [bodyResult_pointer, shifted_address]
+      exact represented.endpoint
+    · intro r hr
+      exact (bodyResult_other s r hr).trans (represented.other r hr)
+
+-- This is an ordinary native StateM equation; it mentions no RAM execution.
+private theorem sum_forM_run (xs : List (Word w)) (acc : Word w) :
+    ((List.forM xs (fun x => modify (fun a => a + x)) :
+      StateM (Word w) PUnit).run acc).2 = acc + wordSum xs := by
+  induction xs generalizing acc with
+  | nil =>
+      change acc = acc + wordSum []
+      simp
+  | cons x xs ih =>
+      change ((List.forM xs (fun x => modify (fun a => a + x)) :
+        StateM (Word w) PUnit).run (acc + x)).2 = acc + wordSum (x :: xs)
+      rw [ih, wordSum_cons]
+      exact BitVec.add_assoc _ _ _
+
 /-- The loop consumes precisely the represented suffix, constructing one
 `SafeExec.whileTrue` per list element and a final `whileFalse`. This is a
 termination and semantic theorem, not an assigned per-iteration time cost. -/
@@ -130,59 +220,28 @@ theorem loop_safe {program : Program} {H depth : Nat} (hw : 0 < w)
       t.regs 0 = arrayAddr base xs.length ∧ t.regs 1 = 0 ∧
       t.mem = s.mem ∧ t.input = s.input ∧ t.outputRev = s.outputRev ∧
       ∀ r, 3 ≤ r → t.regs r = s.regs r := by
-  induction xs generalizing s base with
-  | nil =>
-      have hz : s.regs 1 = 0 := Word.toNat_eq_zero_iff _ |>.mp hcount
-      refine ⟨s, .whileFalse trivial hz, by simp, ?_, hz, rfl, rfl, rfl, ?_⟩
-      · simpa [arrayAddr] using hptr
-      · intro r _
-        rfl
-  | cons x xs ih =>
-      have hnext : (base + 1).toNat = base.toNat + 1 :=
-        arrayAddr_toNat (base := base) (i := 1)
-          (by simp only [List.length_cons] at hfit; omega)
-      have htail : ArrayRep (bodyResult s).mem (base + 1) xs :=
-        arrayRep_tail hrep hfit
-      have hptr' : (bodyResult s).regs 0 = base + 1 := by
-        rw [bodyResult_pointer, hptr]
-      have hone : (1 : Word w).toNat = 1 := BitVec.toNat_one hw
-      have hsub : (1 : Word w).toNat ≤ (s.regs 1).toNat := by
-        rw [hone, hcount]
-        simp
-      have hcount' : ((bodyResult s).regs 1).toNat = xs.length := by
-        rw [bodyResult_count]
-        change (BinOp.eval .sub (s.regs 1) 1).toNat = xs.length
-        rw [BinOp.eval_sub_toNat_of_le _ _ hsub, hone, hcount]
-        simp
-      have hheap' : (base + 1).toNat + xs.length ≤ H := by
-        rw [hnext]
-        simp only [List.length_cons] at hheap
-        omega
-      have hfit' : (base + 1).toNat + xs.length < 2 ^ w := by
-        rw [hnext]
-        simp only [List.length_cons] at hfit
-        omega
-      obtain ⟨t, hloop, hsum, hptrFinal, hzero, hmem, hin, hout, hother⟩ :=
-        ih (bodyResult s) (base + 1) htail hptr' hcount' hheap' hfit'
-      have hcond : s.eval condition ≠ 0 := by
-        change s.regs 1 ≠ 0
-        intro hz
-        have hn := (Word.toNat_eq_zero_iff _).mpr hz
-        rw [hcount] at hn
-        simp at hn
-      have hload : s.mem (s.regs 0) = x := by
-        rw [hptr]
-        simpa [arrayAddr] using hrep.lookup 0 (by simp)
-      have hbody := body_safe (program := program) (H := H) (depth := depth) s
-        (by rw [hptr]; simp only [List.length_cons] at hheap; omega)
-      refine ⟨t, .whileTrue trivial hcond hbody hloop, ?_, ?_, hzero,
-        hmem, hin, hout, ?_⟩
-      · rw [hsum, bodyResult_sum, hload, wordSum_cons]
-        exact BitVec.add_assoc _ _ _
-      · rw [hptrFinal, shifted_address]
-        rfl
-      · intro r hr
-        exact (hother r hr).trans (bodyResult_other s r hr)
+  have traversal := Source.Refines.stateM_forM
+    (program := program) (heapLimit := H) (depth := depth)
+    (condition := condition) (body := body)
+    (rep := LoopRep H s (arrayAddr base xs.length))
+    (fun x : Word w => modify (fun acc => acc + x))
+    (by intros; trivial)
+    (by
+      intro remaining acc current represented
+      change current.regs 1 ≠ 0 ↔ remaining ≠ []
+      apply not_congr
+      exact (Word.toNat_eq_zero_iff (current.regs 1)).symm.trans
+        (by rw [represented.count]; exact List.length_eq_zero_iff))
+    (body_refines hw) xs
+  have start : LoopRep H s (arrayAddr base xs.length) xs (s.regs 2) s :=
+    ⟨by simpa only [hptr] using hrep, hcount,
+      by simpa only [hptr] using hheap, by simpa only [hptr] using hfit,
+      rfl, by rw [hptr], rfl, rfl, rfl, by intros; rfl⟩
+  obtain ⟨t, execution, result⟩ := traversal (s.regs 2) s start
+  refine ⟨t, execution, result.sum.trans (sum_forM_run xs (s.regs 2)), ?_, ?_,
+    result.mem, result.input, result.output, result.other⟩
+  · simpa [arrayAddr] using result.endpoint
+  · exact (Word.toNat_eq_zero_iff _).mp result.count
 
 /-- The fixed block computes the modular array sum for arbitrary preloaded
 contents, preserving the full source memory, I/O, and all other registers. -/
@@ -259,19 +318,6 @@ theorem body_measured {program : Program} {H depth : Nat} {s t : Source.State w}
                   cases third with
                   | assign hcount =>
                       exact .seq (.assign hsum) (.seq (.assign hptr) (.assign hcount))
-
-theorem bodyResult_count_toNat (hw : 0 < w) (s : Source.State w)
-    (hz : s.regs 1 ≠ 0) :
-    ((bodyResult s).regs 1).toNat = (s.regs 1).toNat - 1 := by
-  have hp : 0 < (s.regs 1).toNat := Nat.pos_of_ne_zero
-    (fun h => hz ((Word.toNat_eq_zero_iff _).mp h))
-  have hone : (1 : Word w).toNat = 1 := BitVec.toNat_one hw
-  have hle : (1 : Word w).toNat ≤ (s.regs 1).toNat := by
-    rw [hone]
-    exact hp
-  rw [bodyResult_count]
-  change (BinOp.eval .sub (s.regs 1) 1).toNat = (s.regs 1).toNat - 1
-  rw [BinOp.eval_sub_toNat_of_le _ _ hle, hone]
 
 /-- Any successful execution of this loop has the derived exact linear count.
 The proof follows the actual loop derivation and the strictly decreasing word

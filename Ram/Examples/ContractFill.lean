@@ -1,4 +1,12 @@
+/-
+Copyright (c) 2026 vvauted. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: vvauted
+-/
 import Ram.Contracts
+import Ram.Verification
+import Ram.Loop
+import Ram.Tactic
 
 /-!
 # An input/output array-fill program verified with contracts
@@ -85,36 +93,7 @@ theorem body_contract {H depth : Nat} (s : Source.State w)
     (haddr : (s.regs 1).toNat < H) :
     Contract 2 [] H depth body (fun t => t = s)
       (fun t => t = bodyResult s) (fun _ => 11) := by
-  have hs : Contract 2 [] H depth (.store (.var 1) (.const 1))
-      (fun t => t = s) (fun t => t = stored s) (fun _ => 3) := by
-    apply Contract.store
-    · intro t ht
-      trivial
-    · intro t ht
-      trivial
-    · intro t ht
-      subst t
-      exact haddr
-    · intro t ht
-      subst t
-      rfl
-  have hp : Contract 2 [] H depth (.assign 1 nextPointer)
-      (fun t => t = stored s) (fun t => t = advanced s) (fun _ => 4) := by
-    apply Contract.assign
-    · intro t ht
-      exact ⟨trivial, trivial⟩
-    · intro t ht
-      subst t
-      rfl
-  have hc : Contract 2 [] H depth (.assign 0 nextCount)
-      (fun t => t = advanced s) (fun t => t = bodyResult s) (fun _ => 4) := by
-    apply Contract.assign
-    · intro t ht
-      exact ⟨trivial, trivial⟩
-    · intro t ht
-      subst t
-      rfl
-  exact hs.seq_const (hp.seq_const hc)
+  ram_vc t ht [body, nextPointer, nextCount, bodyResult, advanced, stored, ht, haddr]
 
 theorem bodyResult_preserves {H len : Nat} (hw : 0 < w)
     (hlen : len ≤ H) (hfit : H < 2 ^ w) (s : Source.State w)
@@ -161,28 +140,26 @@ theorem loop_contract {H len : Nat} (hw : 0 < w)
     (hlen : len ≤ H) (hfit : H < 2 ^ w) :
     Contract (w := w) 2 [] H 0 loop (Invariant len)
       (fun t => Invariant len t ∧ t.eval condition = 0) remaining := by
-  apply Contract.while_contract (Invariant len) remaining (fun _ => 11)
-  · intro s hs
-    trivial
-  · intro s hs hz
-    change 1 + 1 ≤ 14 * (s.regs 0).toNat + 2
-    omega
-  · intro s hs hz
-    have hpos : 0 < (s.regs 0).toNat := by
-      have hn : (s.regs 0).toNat ≠ 0 := by
-        intro he
-        exact hz ((Word.toNat_eq_zero_iff _).mp he)
-      omega
-    have haddr : (s.regs 1).toNat < H := by
-      have hsum := hs.1
-      omega
-    have hnext := bodyResult_preserves hw hlen hfit s hs hz
-    apply (body_contract s haddr).mono_post
-    intro t ht
-    subst t
-    refine ⟨hnext.1, ?_⟩
-    change 1 + 1 + 11 + 1 + remaining (bodyResult s) ≤ remaining s
-    omega
+  have hloop : Contract (w := w) 2 [] H 0 loop (Invariant len)
+      (fun t => Invariant len t ∧ t.eval condition = 0)
+      (fun s => (s.regs 0).toNat * 14 + 2) := by
+    apply Contract.while_linear (Invariant len) (fun s => (s.regs 0).toNat) 11
+    · intro s hs
+      trivial
+    · intro s hs hz
+      have hnext := bodyResult_preserves hw hlen hfit s hs hz
+      have hdecrease : ((bodyResult s).regs 0).toNat < (s.regs 0).toNat := by
+        have hbudget := hnext.2
+        dsimp [remaining] at hbudget
+        omega
+      have haddr : (s.regs 1).toNat < H := by
+        have hsum := hs.1
+        omega
+      apply (body_contract s haddr).mono_post
+      intro t ht
+      subst t
+      exact ⟨hnext.1, hdecrease⟩
+  exact hloop.mono_budget (fun s _ => by simp [remaining, Nat.mul_comm])
 
 def InputReady (len : Nat) (s : Source.State w) : Prop :=
   s.input = [BitVec.ofNat w len] ∧ s.outputRev = []
@@ -198,20 +175,10 @@ theorem main_contract {H len : Nat} (hw : 0 < w)
   have hlenfit : len < 2 ^ w := Nat.lt_of_le_of_lt hlen hfit
   have hr : Contract (w := w) 2 [] H 0 (.read 0) (InputReady len)
       (CountReady len) (fun _ => 1) := by
-    apply Contract.read
-    intro s hs
-    refine ⟨BitVec.ofNat w len, [], hs.1, ?_⟩
-    exact ⟨by simpa using Word.ofNat_toNat_of_lt hlenfit, rfl, hs.2⟩
+    ram_vc s hs [CountReady, hs.1, hs.2, Word.ofNat_toNat_of_lt hlenfit]
   have hi : Contract (w := w) 2 [] H 0 (.assign 1 (.const 0)) (CountReady len)
       (Invariant len) (fun _ => 2) := by
-    apply Contract.assign
-    · intro s hs
-      trivial
-    · intro s hs
-      refine ⟨?_, ?_, hs.2.1, hs.2.2⟩
-      · simpa [Source.State.setReg, Source.State.eval, Expr.eval] using hs.1
-      · intro i hi
-        simp [Source.State.setReg, Source.State.eval, Expr.eval] at hi
+    ram_vc s hs [Invariant, hs.1, hs.2.1, hs.2.2]
   have hl : Contract (w := w) 2 [] H 0 loop (Invariant len)
       (fun t => Invariant len t ∧ t.eval condition = 0) (fun _ => 14 * len + 2) := by
     apply (loop_contract hw hlen hfit).mono_budget
@@ -221,20 +188,16 @@ theorem main_contract {H len : Nat} (hw : 0 < w)
     omega
   have ho : Contract (w := w) 2 [] H 0 (.write (.var 1))
       (fun t => Invariant len t ∧ t.eval condition = 0) (Post len) (fun _ => 2) := by
-    apply Contract.write
-    · intro s hs
-      trivial
-    · intro s hs
-      have hzero : (s.regs 0).toNat = 0 := (Word.toNat_eq_zero_iff _).mpr hs.2
-      have hptr : (s.regs 1).toNat = len := by
-        have hsum := hs.1.1
-        omega
-      have hword : s.regs 1 = BitVec.ofNat w len := by
-        rw [← hptr, Word.ofNat_toNat_self]
-      refine ⟨?_, ?_, hs.1.2.2.1⟩
-      · intro i hi
-        exact hs.1.2.1 i (by omega)
-      · simp [Source.State.output, Source.State.eval, Expr.eval, hs.1.2.2.2, hword]
+    ram_vc s hs [Post]
+    have hzero : (s.regs 0).toNat = 0 := (Word.toNat_eq_zero_iff _).mpr hs.2
+    have hptr : (s.regs 1).toNat = len := by
+      have hsum := hs.1.1
+      omega
+    have hword : s.regs 1 = BitVec.ofNat w len := by
+      rw [← hptr, Word.ofNat_toNat_self]
+    ram_simp [hword, hs.1.2.2.1, hs.1.2.2.2]
+    intro i hi
+    exact hs.1.2.1 i (by omega)
   have hall := hr.seq_const (hi.seq_const (hl.seq_const ho))
   apply hall.mono_budget
   intro s hs

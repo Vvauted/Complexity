@@ -1,145 +1,80 @@
-# ram-lean
+# Complexity
 
-A Lean 4 library for structured imperative programs whose functional correctness,
-termination, and running time are tied to a fixed word-RAM execution semantics.
+**Verified programming and complexity proofs in Lean.**
 
-The structured language, compiler, and initial proof library are implemented
-and checked against the target machine, including ordinary recursive calls.
-This is a research library with explicit word-size and memory-safety premises;
-see the verification evidence and boundaries in [progress](docs/PROGRESS.md).
+Complexity is a research library for developing executable programs together
+with proofs of their functional correctness and resource complexity. Its goal
+is to make both kinds of proof resemble ordinary mathematical reasoning in
+Lean, while connecting their conclusions to a precisely specified execution
+model through verified compilation.
 
-## Intended contract
+The intended workflow starts from one high-level program. Users reason about
+ordinary values and data structures, reuse Lean, mathlib and CSLib theorems,
+and establish resource bounds through compositional rules. Registers, memory
+layouts and calling conventions belong in reusable implementation proofs, not
+in every algorithm proof. The current word-RAM is an execution backend, not
+the intended limit of the programming interface.
 
-A submission is one finite program, uniform across input sizes and admissible
-word widths. A successful certificate proves that this program terminates with
-an output satisfying the mathematical specification, within a stated number of
-RAM transitions. Source-level costs are derived from compiled machine execution;
-there is no user `tick` primitive or arbitrary host-language computation escape.
+[User guide](https://vvauted.github.io/Complexity/Complexity/Doc.html) ·
+[API reference](https://vvauted.github.io/Complexity/) ·
+[Roadmap](docs/ROADMAP.md)
 
-The language includes expressions, named local variables, mutable word arrays,
-structured control flow, ordinary first-order function calls, and recursion.
-Every compiled operation is drawn from the same finite instruction set.
+The guide is maintained in [LeanDoc modules](Complexity/Doc.lean). The website
+links above are the configured deployment URLs; hosting requires Pages to be enabled.
 
-## Writing a function
+## Research direction
 
-```lean
-import Ram.Syntax
+- **Separate behavior from cost.** Functional correctness and termination
+  should not require a proposed time budget. Complexity analysis can reuse
+  functional invariants and is connected to the same implemented computation.
+- **Prove at the appropriate abstraction level.** Mathematical specifications
+  and resource arguments should compose without repeatedly unfolding machine
+  execution. Backend-specific representation and cost assumptions remain
+  explicit at the abstraction boundary.
+- **Reuse existing mathematics.** Ordinary Lean data and mathlib/CSLib
+  interfaces are the basis for specifications. Representation relations
+  connect them to implementations without assuming that every observation
+  is a bijection.
+- **Justify execution and resources together.** High-level operations need
+  verified implementations. Their costs must be derived from execution, not
+  assigned by unchecked annotations or arbitrary host-language callbacks.
 
-open Ram Ram.DSL
+## Current state
 
-def multiply : Func := ram_fun% (a, b) locals (answer) {
-  answer := a * b;
-  return answer;
-}
-```
+The library currently contains an executable word-RAM semantics, structured
+imperative syntax, verified compilation with recursive function calls,
+separate total-correctness and time-bound interfaces, and reusable data
+representation and framing results. Its complexity layer includes asymptotic
+bounds based on mathlib, recurrence and amortized-analysis tools, and
+composition of programs and polynomial-time reductions. An optional CSLib
+integration connects shared execution relations and selected functional models.
 
-The frontend assigns local register numbers. Programs contain no time ticks or
-operation-price annotations. `ram% { ... }` also supports array reads/writes,
-`if`, `while`, `read`, `write`, and `answer := call functionName(args);`.
-For complete programs, `ram_program%` resolves function names automatically,
-including forward calls and mutual recursion. Function names and local variables
-have separate scopes; embedded `const(t)` terms retain their enclosing Lean scope.
-A return expression comes at the end of a function; early return, break, and
-continue are not constructs of the present language.
+Existing array, matrix and finite-map developments exercise these interfaces.
+They demonstrate parts of the verified chain; they do not establish that
+arbitrary ordinary Lean programs can already be compiled or verified
+automatically. A uniform high-level, single-source programming interface and
+more backend-independent proof interfaces remain central development goals.
 
-```lean
-import Ram.RunProgram
+Current time theorems count transitions of the specified word-RAM, including
+its fixed-width arithmetic and calling convention. They are not claims about
+wall-clock time, bit complexity or a Turing-machine complexity class. Memory
+capacity, cumulative address footprint and peak live storage are distinct;
+a full treatment of the latter remains unfinished.
 
-open Ram Ram.DSL
+## AI-generated content (AIGC)
 
-def exampleProgram : Named.Bundle := ram_program% {
-  fn multiply(a, b) locals (answer) {
-    answer := a * b;
-    return answer;
-  }
-  main locals (a, b, answer) {
-    read a;
-    read b;
-    answer := call multiply(a, b);
-    write answer;
-  }
-}
-```
+Substantial portions of the source, proofs and documentation are AI-generated
+or AI-assisted. This is an experimental research artifact; no comprehensive
+human semantic review is claimed. Lean checks formal proofs against their
+stated definitions and assumptions. That check does not establish that a
+definition captures the intended problem, that a cost model is appropriate,
+or that an informal description accurately states a theorem's scope.
 
-`exampleProgram.executable` checks and prepares the program once. Its `.run`
-method accepts a transition budget and encoded input and returns the final
-state, actual steps, and `halted`, `fault`, `invalidPC`, or `outOfFuel`.
-The first input word is the compiler's heap/stack boundary, followed by the
-program's input. The fast backend uses array code/registers and sparse tree-map
-memory; its entire run result is proved equal to the reference machine.
-The old `runExact` remains an exact-step mathematical interface, not the default
-budget runner.
+The documentation records the interfaces and model limitations; the
+[roadmap](docs/ROADMAP.md) distinguishes established foundations from the
+remaining research and implementation work.
 
-`LocalCompiler.compileChecked` validates register bounds, function existence and
-arity, then emits code. `LocalCompiler.compileChecked_runs_measured` connects the
-source execution to the exact full machine run. Its count includes the actual
-stack-boundary input read and final halt. Runtime heap safety, sufficient stack
-space, and representable return addresses are proof obligations, not hidden
-runtime checks. Natural arithmetic specifications require appropriate range
-proofs; without them multiplication and addition have modular word semantics.
+## Contributing and license
 
-Named programs and public contracts use the callee-sized compiler by default.
-Each call saves and restores only the register interval that its callee can
-overwrite; an unrelated function's local count does not inflate that work.
-The older global-bound `Compiler` remains an explicit reference implementation.
-
-## Proof interfaces and examples
-
-- `Source.LocalMeasuredExec` retains the compiler-derived exact count. Every safe
-  source execution has such a derivation; it is not a user price annotation.
-- `Source.Contract` combines total correctness with a proved budget. It has
-  assignment, store, I/O, branch and call rules, sequential composition and loop
-  invariant/variant/potential rules. `RelContract` retains entry-state relations
-  during composition. `compile_heap` transfers bounded heap observations as
-  well as I/O to the actual halted machine, with a proved execution budget.
-- `UniformTimeBound` and `UniformBigO` fix the program before quantifying over
-  word widths and inputs. The asymptotic interface also requires correctness
-  and termination for small inputs, below the asymptotic threshold.
-- `Problem` fixes encoding, legal inputs, size and answers before submissions.
-  Concrete-budget certificates support finite domains; asymptotic problems must
-  supply arbitrarily large legal sizes. This does not replace semantic review of
-  the problem's encoding and statement.
-
-Checked examples use the real compiler, not separate executable specifications:
-
-- [Multiplication](Ram/Examples/Arithmetic.lean): a complete seven-step I/O run,
-  with modular and no-overflow natural-number results.
-- [Array sum](Ram/Examples/ArraySum.lean): `16 * length + 4` block transitions,
-  plus one for halt. This contract starts with a preloaded array; it does not
-  include an input loader or output writer.
-- [Recursive factorial](Ram/Examples/Factorial.lean): a fixed 60-instruction
-  program, `37 * k + 37` complete transitions, and proved factorial output.
-  The linear bound is in the numeric value `k`, not its binary encoding length.
-- [Array fill](Ram/Examples/ContractFill.lean): public contracts prove a real
-  input/output loop fills the target heap with ones within `14 * length + 9`
-  transitions, including setup and halt.
-- [Unequal call frames](Ram/Examples/LocalCalls.lean): a real call overwrites its
-  parameter while restoring the caller and retaining another caller variable.
-  The complete I/O run takes 36 transitions even with an unused 200-local
-  function, independently of a larger reserved-register boundary.
-
-## Running an example
-
-On 0v0, `lake exe ram-demo fast 100000` runs a complete named array-write/sum
-program. `reference` selects the original representation with identical code,
-input and budget. The command reports the result, steps and execution time;
-it is an example/measurement driver, not a pass/fail performance test suite.
-See [measured results](docs/PERFORMANCE.md) for the workload and limits.
-
-The optional [CSLib integration](docs/CSLIB.md) imports the official compatible
-CSLib step-count relations and connects them to our exact execution and checked
-compiler. It also connects proved machine bounds to mathlib's `IsBigO`; it does
-not claim a RAM-to-Turing-machine simulation.
-
-## Environment
-
-Lean is pinned to **4.28.0-rc1**, matching the existing evaluation/search baseline.
-The initial kernel uses Lean/Std only; introducing a newer CSLib or mathlib must
-not silently change this baseline.
-
-Compilation takes place on 0v0, in `/home/vvauted/ram-lean`, not on the user's
-local computer. A normal checkout builds with `lake build` under the pinned Lean.
-
-See [the design contract](docs/DESIGN.md),
-[literature and architectural choices](docs/LITERATURE.md), and
-[progress](docs/PROGRESS.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Complexity is released under the
+[Apache License 2.0](LICENSE).

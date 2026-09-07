@@ -1,9 +1,11 @@
-name = "ramCslib"
+name = "complexityCslib"
 version = "0.1.0"
+description = "CSLib integration for Complexity"
+license = "Apache-2.0"
 defaultTargets = ["RamCslib"]
 
 [[require]]
-name = "ram"
+name = "complexity"
 path = "../.."
 
 [[require]]

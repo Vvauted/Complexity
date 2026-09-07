@@ -108,6 +108,29 @@ initialization must execute the corresponding stores; array access needs address
 and representation lemmas. Clients should use those proved contracts without
 reopening the compiler.
 
+## 6. Separate behavior and cost without changing the machine
+
+Yue Niu, Jonathan Sterling, Harrison Grodin and Robert Harper,
+**A cost-aware logical framework**, POPL 2022.
+[Author-deposited paper](https://arxiv.org/abs/2107.04663) and
+[official Agda implementation](https://github.com/calfproject/agda-calf).
+
+CALF distinguishes extensional behavior from intensional cost within a
+dependent type theory. Its internal noninterference property prevents a
+program's input/output behavior from depending on cost. The framework supports
+ordinary mathematical libraries, recurrence reasoning and potential-based
+amortized analysis. Its cost operations are an abstract cost semantics, not
+by themselves a simulation theorem for our particular RAM instruction set.
+
+Our interface adopts the separation principle: `TotalWP` and `TotalSpec`
+establish safe terminating behavior without time fuel, and `TimeBound`
+separately bounds compiler-derived execution counts. Their combination proves
+the existing total costed contract. `Refines` connects the behavior to ordinary
+Lean functions and mathlib properties through representation relations.
+This is not an implementation of CALF's modal type theory, nor a claim to have
+formalized its internal noninterference metatheorem. No CALF dependency or
+abstract tick primitive is added; target adequacy remains our compiler proof.
+
 ## Consequences for this library
 
 One machine transition contributes one step. Source syntax cannot accept a cost

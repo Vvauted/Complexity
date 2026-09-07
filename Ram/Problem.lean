@@ -1,3 +1,8 @@
+/-
+Copyright (c) 2026 vvauted. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: vvauted
+-/
 import Ram.Complexity
 
 /-!
@@ -109,7 +114,7 @@ structure AsymptoticCertificate (p : AsymptoticProblem Input) (growth : Nat → 
 namespace AsymptoticCertificate
 
 theorem correct (c : AsymptoticCertificate p growth) : c.toSubmission.Correct :=
-  c.verified.1
+  c.verified.correct
 
 /-- Reuse a proved concrete bound without reproving functional correctness. -/
 def ofBound {p : AsymptoticProblem Input}
@@ -119,6 +124,21 @@ def ofBound {p : AsymptoticProblem Input}
     AsymptoticCertificate p growth where
   code := c.code
   verified := UniformTimeBound.bigO c.verified hc hb
+
+/-- Use mathlib's asymptotic analysis of a proved machine bound directly. -/
+def ofIsBigO {Input : Type} {p : AsymptoticProblem Input}
+    {bound growth : Nat → Nat} (c : Certificate p.toProblem bound)
+    (hO : Asymptotics.IsBigO Filter.atTop
+      (fun n => (bound n : ℝ)) (fun n => (growth n : ℝ))) :
+    AsymptoticCertificate p growth where
+  code := c.code
+  verified := c.verified.bigO_of_isBigO hO
+
+@[simp] theorem ofIsBigO_code {Input : Type} {p : AsymptoticProblem Input}
+    {bound growth : Nat → Nat} (c : Certificate p.toProblem bound)
+    (hO : Asymptotics.IsBigO Filter.atTop
+      (fun n => (bound n : ℝ)) (fun n => (growth n : ℝ))) :
+    (ofIsBigO c hO).code = c.code := rfl
 
 end AsymptoticCertificate
 
@@ -141,7 +161,8 @@ theorem TerminatesWithin.initial_pos {code : Code} {bound : Nat}
 choosing a threshold beyond all inputs: some legal input crosses every one. -/
 theorem AsymptoticProblem.not_bigO_zero (p : AsymptoticProblem Input) (code : Code) :
     ¬ UniformBigO code p.encode p.admissible p.size p.post (fun _ => 0) := by
-  rintro ⟨_, constant, threshold, _, h⟩
+  intro hO
+  obtain ⟨_, constant, threshold, _, h⟩ := uniformBigO_iff_eventual.mp hO
   obtain ⟨w, input, ha, hs⟩ := p.unbounded threshold
   obtain ⟨finish, hr, _⟩ := h w input ha hs
   have hp := hr.initial_pos

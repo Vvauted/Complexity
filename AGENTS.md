@@ -1,27 +1,30 @@
-# RAM library development
+# Working on Complexity
 
-This is an independent research library, not part of NyaOJ-bench.
+Read `README.md` for the project scope and `docs/ROADMAP.md` for priorities.
+The goal is one high-level program with correctness and complexity proofs that
+compose above the execution model. The current `Ram` library is a verified
+backend and a collection of proof interfaces, not the finished frontend.
 
-- Local checkout: `/tmp/ram-lean`. Durable server repository: `/home/vvauted/ram-lean`
-  on `vvauted@100.65.196.6` (`HostKeyAlias=0v0`).
-- Do not run Lean or Lake locally. Compile only on 0v0 with the pinned rc1 toolchain.
-- Root coordinates remote compilation. At most two Lean processes at once.
-- The completed checkpoint uses normal Lake artifacts. Run `lake env lean`
-  from the server repository for later file checks; source-root `.olean` files
-  were scratch outputs from development and are not the authoritative build.
-- Use `apply_patch` for edits. Preserve other agents' files. No benchmark edits.
-- No `sorry`, custom axioms, unsafe proof shortcuts, or unproved cost annotations in
-  completed modules. Incomplete work must stay explicitly described as incomplete.
-- The user goal is the whole programming-language layer, including ordinary
-  functions/recursion and arrays, with result-preserving compilation and costs
-  derived from target execution. A working expression compiler is a milestone,
-  not completion of that goal.
-- Fix a finite instruction vocabulary; every machine transition contributes one
-  step. Do not define source operation costs by a user-supplied table or ticks.
-- Prove reusable semantic properties and representative programs. Do not add
-  unrelated test frameworks, checksum machinery, or deployment infrastructure.
-- Keep references and model limitations in `docs/`. Existing libraries are
-  references, not evidence that our code is verified.
-- Current compatible mathlib baseline, if needed:
-  `5352afccd6866369be9de43f5b7ec47203555f44` (Lean 4.28.0-rc1).
-  Keep the machine kernel dependent only on Lean/Std when possible.
+- Reuse Lean, Std, mathlib and CSLib before introducing parallel definitions.
+- Keep correctness and termination independent of a proposed time budget.
+  Resource bounds must describe the same computation and be justified by
+  execution. Never replace a cost proof with an unchecked annotation.
+- Preserve theorem statements, safety assumptions and executable semantics when
+  simplifying proofs. No `sorry`, custom axioms or unsafe proof shortcuts in
+  completed results. State incomplete interfaces and model limitations honestly.
+- Follow `CONTRIBUTING.md` and mathlib naming and documentation conventions.
+  Usage documentation belongs in `Complexity/Doc/`; keep README project-focused.
+- Keep reusable results separate from examples. Prefer improving abstraction
+  and automation over adding algorithms that repeat low-level bookkeeping.
+- Preserve unrelated work and coordinate file ownership with other contributors.
+  Use `apply_patch` for edits; do not reset a dirty worktree.
+- Use the pinned Lean, mathlib and CSLib versions. Do not change dependencies
+  incidentally or import a second incompatible mathlib.
+- For this development session, the user requires compilation on the designated
+  build server, not the local workstation. The coordinating agent owns builds;
+  allow at most two concurrent Lean processes. Do not add unrelated test
+  frameworks, checksum machinery or audit pipelines.
+- Check changed modules and affected consumers with Lean. A successful build
+  validates the formal statements, not their match to the intended semantics.
+- Disclose substantial AI assistance. Do not claim human review that did not
+  happen or describe a planned abstraction as an implemented one.
