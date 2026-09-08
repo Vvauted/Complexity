@@ -55,7 +55,17 @@ allocate memory. General array-valued local bindings, returned array values and 
 loading of Lean lists are not supplied by this parameter syntax. See
 [array references](##Complexity.Computability.Ram.Array.Ref) for the representation rules.
 
-## Fold through a proved function
+## Fold through an expression or a proved function
+
+Sum and count both use a scoped `for` with one expression update to a scalar
+accumulator. The [expression function rule](##Complexity.Computability.Ram.Array.ForIn.Expression)
+derives private slots from the generated body and return equations and proves an
+ordinary `List.foldl` result. It accepts an array first, followed by word parameters,
+and preserves the complete `array.args ++ captures` parameter prefix. Thus count's
+target needs no separate preservation invariant. Clients still prove the actual
+expression's read safety and evaluation equation, with those parameter equalities
+available, and provide the represented array and non-wrapping address premises.
+The mathematical fold identity then recovers the standard list sum or count.
 
 The [array-fold sample](##Examples.Ram.ArrayFold) writes its traversal directly:
 
@@ -87,11 +97,13 @@ as the encoded ordinary sum `(xs.map (fun x => x.toNat ^ 2)).sum` and preserve c
 state. `eval_toNat` recovers the exact natural-number result when that sum fits;
 the general equation retains modular word arithmetic.
 
-The public function rule covers this read-only fold shape, not arbitrary `for` bodies
-or automatic proofs of every source loop. Mathematical steps are specifications of
-real calls, not free Lean callbacks. Represented input, non-wrapping addresses and
-callee safety remain required; mutable-fold contracts and automatic list loading
-are not supplied by this rule. The lower-level
+This call-based function rule covers the fixed-helper shape above. Together with
+the expression rule it handles specific read-only scalar folds, not arbitrary
+`for` bodies or automatic proofs of every source loop. Mathematical steps describe
+actual expressions or calls, not free Lean callbacks. Represented input,
+non-wrapping addresses and callee safety remain required. Richer bodies, multiple
+accumulators, short-circuiting and mutable-fold contracts are not supplied by these
+rules; neither are returned array values or automatic list loading. The lower-level
 [call-based fold](##Complexity.Computability.Ram.Array.Fold.Call) remains available
 for explicitly configured cursor loops.
 

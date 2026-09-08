@@ -100,7 +100,7 @@ theorem function_timeBound {program : Program} {control heapLimit depth : Nat}
       (fun args entry =>
         args = sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩ ∧
         ArrayAt heapLimit base (adjacencyRow G v w) entry)
-      (fun _ _ => 16 * n + 4) := by
+      (fun _ _ => 18 * n + 8) := by
   simpa only [length_adjacencyRow] using
     (sum_function_timeBound (control := control) (program := program) (depth := depth)
       (base := base) (xs := adjacencyRow G v w) hw (by simpa using hfit))
@@ -113,7 +113,7 @@ theorem function_runs_with_timeBound {program : Program} {control heapLimit dept
     ∃ bodySteps value,
       FunctionMeasuredExec control program heapLimit depth sumFunctions.function.sum
         (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) bodySteps entry value entry ∧
-      value.toNat = G.degree v ∧ bodySteps ≤ 16 * n + 4 := by
+      value.toNat = G.degree v ∧ bodySteps ≤ 18 * n + 8 := by
   obtain ⟨bodySteps, value, finish, execution, ⟨correct, rfl⟩, bound⟩ :=
     (function_contract G v (program := program) (depth := depth) hw hfit).with_timeBound
       (function_timeBound G v (control := control) hw hfit)

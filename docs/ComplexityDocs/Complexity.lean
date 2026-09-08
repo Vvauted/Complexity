@@ -40,15 +40,38 @@ calls need their own rules: their code length is not their execution length.
 See [time bounds](##Complexity.Computability.Ram.Verification.Time.Basic) and
 [straight-line costs](##Complexity.Computability.Ram.Verification.Time.StraightLine).
 
+## Count an expression-based array fold
+
+`Ram.Source.Array.ForIn.Expression.function_measured` recovers an exact count
+from the same completed function execution as its budget-free correctness proof.
+Its `function_bodyTime` consequence observes that count through `Part`.
+For an update expression compiling to `E` instructions, the body count is
+`(E + 15) * n + 8`. This includes assignment, actual element loads and bindings,
+cursor updates, guards, accumulator initialization and both descriptor copies.
+The expression's instruction length comes from compilation, not a supplied price.
+
+The [sum](##Examples.Ram.ArraySum) and [count](##Examples.Ram.ArrayCount) clients
+reuse this rule and the actual compiled-call bridge:
+
+| Declared function | Body steps | Full invocation, including halt |
+| --- | --- | --- |
+| `sum(xs)` | `18 * n + 8` | `18 * n + 67` |
+| `count(xs, target)` | `20 * n + 8` | `20 * n + 76` |
+
+Count passes its target as an additional runtime word parameter; parameter and
+frame instructions are part of its full count. These runners execute the declared
+functions, not the noncomputable `Part` observations. Input representation and
+stack capacity remain premises, and host-side preloading is not a counted RAM loader.
+
 ## Compose function costs
 
 The [two-array example](##Examples.Ram.ArrayArguments) calls the existing `sum`
 function twice. For represented lists of lengths `n` and `m`, the sum body takes
-`16 * n + 4` steps. Its call site adds 37 steps derived from the actual argument,
+`18 * n + 8` steps. Its call site adds 58 steps derived from the actual argument,
 frame and return instruction blocks. Thus the pair body has exact count
 
 ```text
-(16 * n + 4 + 37) + (16 * m + 4 + 37) = 16 * (n + m) + 82
+(18 * n + 8 + 58) + (18 * m + 8 + 58) = 18 * (n + m) + 132
 ```
 
 `Ram.Source.Array.sumPair_bodyTime_eq` proves that equation about the program's
@@ -57,7 +80,7 @@ The independent correctness contract supplies the returned list sum and unchange
 shared state, with no proposed time bound.
 
 The executable `runSumPair_eq` theorem also counts the outer pair invocation and
-final halt, obtaining `16 * (n + m) + 147` for the same returned value. The runtime
+final halt, obtaining `18 * (n + m) + 197` for the same returned value. The runtime
 call takes no instruction limit. The represented input heap and sufficient code
 and stack capacity remain explicit; loading or concatenating the lists is not
 part of this program. Concatenation appears only in its mathematical specification.

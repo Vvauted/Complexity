@@ -177,18 +177,30 @@ does not prove its representation or execute a list loader. The
 Its explicit heap and stack premises are separate from any time estimate; the
 mathematical list concatenation does not allocate a new runtime array.
 
-For a read-only scalar accumulation, [the shared fold](##Complexity.Computability.Ram.Array.Fold)
-provides cursor progress, termination and framing. A client proves that its actual
-source expression implements the mathematical fold step, that its reads are safe,
-and that any extra read-only parameter remains unchanged. Sum and count both use
-this rule. The separate measured rule derives iteration costs from the expression's
-compiled instructions; a host-language callback is not accepted as a free operation.
+For a scoped `for` with one scalar expression update,
+[the source-derived rule](##Complexity.Computability.Ram.Array.ForIn.Expression)
+`Ram.Source.Array.ForIn.Expression.function_contract` uses the generated body and
+return equations to infer the private slots. Sum and count share its cursor progress,
+termination and framing proof. The first argument is an array; additional word
+parameters are retained automatically as the full `array.args ++ captures` prefix.
+Count therefore needs no separate invariant to preserve its target.
+The client still proves the actual expression's read safety and evaluation as the
+mathematical fold step, using the supplied parameter equalities where needed.
+Array representation, address range and the ordinary `List.foldl` identity also
+remain mathematical obligations. The separate measured rule derives iteration
+costs from compiled instructions; a host-language callback is not a free operation.
 The [count client](##Examples.Ram.ArrayCount) then derives permutation invariance
 directly from `List.Perm.count_eq`. It uses the typed reference contract for
 `count(xs : array, target)`, with independently represented arrays that may live in
 different heaps. The theorem equates returned counts, not the states or the work needed
-to construct those arrays. Mutating, short-circuiting and call-based folds still require
-further interfaces.
+to construct those arrays. Its `runCount_eq` theorem also covers an actual compiled
+call with the target word as a runtime argument, returning the count independently
+of stream output. The [sum client](##Examples.Ram.ArraySum) likewise reuses the function
+contract and measured execution for its value equation and runner, without another
+raw loop proof. Fixed verified helper calls have their own
+[source-derived rule](##Complexity.Computability.Ram.Array.ForIn.Function);
+richer bodies, multiple accumulators, mutation and short-circuiting still need
+further proof interfaces.
 
 These rules operate on fixed source statements. They do not turn an arbitrary mathematical
 function into executable code. See [data models](##ComplexityDocs.Models) for array, matrix,

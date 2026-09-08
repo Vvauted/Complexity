@@ -101,6 +101,17 @@ evaluation order, while frontend freshness makes the copied descriptor stable.
 All copies, bindings and enlarged call frames retain their compiler-derived cost.
 For the single-array scalar-call pattern, a function rule reads the body/result
 equations to infer those slots, reusing the same traversal and callee contract.
+The expression-update rule uses the same generated equations for an array-first
+function with additional word parameters. It maintains the entire
+`array.args ++ captures` parameter prefix, so sum and count share traversal,
+termination and framing without a client-written cursor or target invariant.
+The client still proves the actual expression's read safety and mathematical
+evaluation using those parameter equalities. A separate measured rule counts
+the compiled expression and traversal instructions in that same invocation.
+These rules cover one initialized scalar accumulator with an expression update
+or the supported fixed helper call. Richer bodies, multiple accumulators,
+short-circuiting, mutation and array-valued results need further interfaces;
+acceptance by the source parser alone does not supply their proofs.
 
 ## The current machine model
 

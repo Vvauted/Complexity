@@ -26,9 +26,12 @@ be a read-only source expression or a real call to an already proved function.
 The call-based exact-count rule currently requires a constant callee-body count.
 Lexical `let`, `let mut` and call-result bindings allocate locals at their
 declaration sites. Scoped `for x in xs` binds each loaded element and manages
-private cursor locals. For the single-array scalar-call fold, a function rule
-infers those locals from generated body and return equations; clients provide
-the helper's mathematical contract and array representation premises.
+private cursor locals. Source-derived function rules infer those locals from
+generated body and return equations for expression updates and fixed helper calls.
+The expression rule retains the array descriptor and all additional word parameters;
+sum and count need no hand-written cursor or target-preservation invariant.
+Clients still prove the expression's read safety and evaluation, or supply the
+actual helper's contract, together with the array representation premises.
 Factorial's main correctness proof directly inducts on its argument/result
 contract using ordinary natural-number induction and the existing parameter
 verification rules. More general clients and the remaining low-level adapters
@@ -80,10 +83,12 @@ refinement has been supplied; it does not derive that refinement automatically.
   implement a graph loader or compile a Lean adjacency predicate.
 - Reuse can avoid machine-level proofs: the graph client never opens the sum
   loop, register assignments or frame handling. Sum and count now share those
-  traversal arguments through `Array.Fold`; count's permutation-invariance proof
-  is ordinary `List.Perm.count_eq`. The reusable rules handle one word accumulator
-  with a read-only expression or a fixed verified function call, not arbitrary
-  Lean callbacks, short-circuiting or mutable traversals.
+  traversal arguments through the source-derived `ForIn.Expression` rule and its
+  shared cursor infrastructure; count's permutation-invariance proof is ordinary
+  `List.Perm.count_eq`. The array-sum example reuses the function's value and measured
+  execution rather than maintaining a second raw-block loop proof. The reusable
+  rules handle one word accumulator with a read-only expression or a fixed verified
+  function call, not arbitrary Lean callbacks, short-circuiting or mutable traversals.
 - Function-value equations make later mathematical proofs natural, but do not
   make the implementation proof automatic. Semantic `Part` observations and
   executable function application are distinct interfaces, now connected for both
@@ -121,15 +126,20 @@ refinement has been supplied; it does not derive that refinement automatically.
   two-array sample states its result using list concatenation, although the
   program only adds two returned sums and never allocates a concatenated array.
   Read-only references may overlap. Mixed array/word arguments also work for count.
-- The pair's separate cost proof reuses sum's exact count and composes its actual
-  call blocks. The unbounded executable application additionally includes the outer
-  call and halt. This is a checked path from mathematical list contents to both
-  the implementation's returned value and its full call count, not a new loader.
-- The source-derived traversal rule currently handles one array parameter, one
-  scalar accumulator and a fixed verified two-argument helper. The source syntax
-  accepts richer bodies, but their proofs do not yet receive the same convenience.
-  Other fold clients, richer recursive implementations and some cost proofs
-  still identify source locals.
+- The expression-fold body counts are `18 * n + 8` for sum and `20 * n + 8` for
+  count; their executable calls take `18 * n + 67` and `20 * n + 76`, including halt.
+  Count's target is a real runtime parameter, not stream input or a proof-only value.
+  The pair's cost proof reuses sum's exact count and 58 steps of actual overhead
+  per inner call: its body takes `18 * (n + m) + 132`, and its full invocation takes
+  `18 * (n + m) + 197`. Descriptor copies, element bindings and enlarged frames are
+  charged. These claims concern the represented data, not an unimplemented loader.
+- The source-derived traversal rules currently handle an array-first expression
+  fold with additional word parameters, or a single-array fold through a fixed
+  verified two-argument helper, each with one initialized scalar accumulator.
+  The source syntax accepts richer bodies, but their proofs do not yet receive
+  the same convenience. Single-step expression proofs still discharge read safety
+  and evaluation and may use generated parameter names. Other fold clients,
+  richer recursive implementations and some cost proofs still identify source locals.
   Simplification carries array representations across parameter and scalar-result
   binding in the pair's correctness proof. Generated verification conditions
   should handle more of this bookkeeping without hiding genuine data invariants.
@@ -146,11 +156,12 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
   entry points. Generate source-facing semantic equations that make larger body
   proofs compositional; keep the input/output driver as an optional executable
   adapter. Producing the entry points alone does not prove an algorithm's contract.
-- Extend the scoped traversal's source-derived proof rule beyond its first
-  single-array scalar-call pattern. Mixed parameters, local helper-result bindings
-  and richer updates should reuse the same cursor and framing proofs. Bring
-  existing expression-fold and recursive consumers to this source-facing interface,
-  without making clients extract expressions or assemble register roles.
+- Extend the scoped traversal rules beyond the expression-update and fixed-helper
+  shapes. Sum and count now use the source-derived expression interface, including
+  count's additional word parameter. Local helper-result bindings and richer updates
+  should reuse the same cursor and framing proofs. Bring richer existing traversal
+  and recursive consumers to this source-facing interface, without making clients
+  extract expressions or assemble register roles.
 - Build on typed array calls and the executable function adapter: support useful
   local data bindings and return values through that same compiled call path.
   Do not confuse proof-level `Part` observations with a runnable frontend, or

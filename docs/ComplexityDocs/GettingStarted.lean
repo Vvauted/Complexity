@@ -138,10 +138,8 @@ An array parameter groups its base address and length. The
 ram_def sumFunctions := ram_functions% {
   fn sum(xs : array) {
     let mut accumulator := 0;
-    while xs.length {
-      accumulator := accumulator + load[xs.base];
-      xs.base := xs.base + 1;
-      xs.length := xs.length - 1;
+    for x in xs {
+      accumulator += x;
     }
     return accumulator;
   }
@@ -164,6 +162,10 @@ Array and scalar parameters can be mixed: the
 [counter](##Complexity.Computability.Ram.Array.Count) declares `fn count(xs : array, target)`.
 Its generated argument builder takes an `ArrayRef` and one word, and its mathematical
 contract identifies the decoded result with the ordinary `xs.count target`.
+Its loop uses `for x in xs { accumulator += (x == target); }`. The
+[sum runner](##Examples.Ram.ArraySum) and [count runner](##Examples.Ram.ArrayCount)
+execute these same declared functions; `runCount` takes the target as a real word
+argument, not an input-stream element or a proof-only constant.
 
 `Ram.ArrayRef.Rep` connects a reference to the represented list and the heap boundary.
 The sum contract proves the modular list sum and unchanged shared state. The pair contract
@@ -196,9 +198,16 @@ For this single-array scalar-call pattern,
 equations, the helper's contract and the mathematical array premises. It infers
 the private slots; a decidable layout fact replaces hand-written cursor setup.
 The sample then uses an ordinary `List.foldl` identity to state its sum of squares.
-The [separate cost rule](##ComplexityDocs.Complexity) charges the descriptor copies,
-element bindings and real calls. More general loop bodies still need their own
-invariants and implementation proofs; this is not an arbitrary Lean compiler.
+The [expression rule](##Complexity.Computability.Ram.Array.ForIn.Expression)
+`Ram.Source.Array.ForIn.Expression.function_contract` handles the sum and count
+shape: one array first, optional additional word parameters, one initialized
+accumulator and one expression update. It preserves those parameters, including
+count's target, without a client-written cursor or parameter-preservation invariant.
+The client still proves the actual expression's read safety and mathematical step.
+The [separate cost rules](##ComplexityDocs.Complexity) charge descriptor copies,
+element bindings, expression instructions and real calls. Richer bodies, multiple
+accumulators and short-circuiting still need further proof interfaces; general
+source `for` syntax is not automatic loop verification or an arbitrary Lean compiler.
 
 ## State properties of a function value
 

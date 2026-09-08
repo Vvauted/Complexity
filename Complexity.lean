@@ -21,6 +21,7 @@ import Complexity.Computability.Ram.Array.Fold
 import Complexity.Computability.Ram.Array.Fold.Call
 import Complexity.Computability.Ram.Array.ForIn
 import Complexity.Computability.Ram.Array.ForIn.Call
+import Complexity.Computability.Ram.Array.ForIn.Expression
 import Complexity.Computability.Ram.Array.ForIn.Function
 import Complexity.Computability.Ram.Array.Sum
 import Complexity.Computability.Ram.Array.Indexed

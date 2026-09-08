@@ -55,13 +55,13 @@ theorem runSumPair_eq {heapLimit : Nat} {left right : ArrayRef 32}
     (leftArray : left.Rep heapLimit xs entry) (rightArray : right.Rep heapLimit ys entry) :
     runSumPair left right heapLimit entry =
       some (((xs ++ ys).map BitVec.toNat).sum % 2 ^ 32,
-        16 * (xs.length + ys.length) + 147, .halted) := by
+        18 * (xs.length + ys.length) + 197, .halted) := by
   let code := LocalCompiler.rawLink sumFunctions.registers sumFunctions.program
     (LocalCompiler.Function.trampoline sumFunctions.functionIndex.sumPair
       sumFunctions.function.sumPair.params)
   have hcompile : LocalCompiler.Function.compile sumFunctions.registers sumFunctions.program
       sumFunctions.functionIndex.sumPair sumFunctions.function.sumPair.params = some code := by
-    decide
+    set_option maxRecDepth 4096 in decide
   have hcode : code.length < 2 ^ 32 := by
     set_option maxRecDepth 4096 in decide
   have execution := sumPair_function_runs (depth := 0)
@@ -72,8 +72,8 @@ theorem runSumPair_eq {heapLimit : Nat} {left right : ArrayRef 32}
     LocalCompiler.Function.runUntil_eq_of_execution hcompile
       sumFunctions.function_lookup.sumPair hcode hstack execution time
   have count : LocalCompiler.Function.callSteps sumFunctions.registers
-      sumFunctions.function.sumPair (16 * (xs.length + ys.length) + 82) + 1 =
-        16 * (xs.length + ys.length) + 147 := by
+      sumFunctions.function.sumPair (18 * (xs.length + ys.length) + 132) + 1 =
+        18 * (xs.length + ys.length) + 197 := by
     simp [LocalCompiler.Function.callSteps_eq, Nat.add_assoc]
     decide
   simp only [runSumPair, sumFunctions.run.sumPair,
