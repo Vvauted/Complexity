@@ -1,75 +1,88 @@
-# Execution and refinement design
+# Design
 
-The project-level goal and development priorities are in [ROADMAP.md](ROADMAP.md).
-Users should write one high-level program and reason about ordinary mathematical
-objects and compositional resource bounds. Both kinds of proof should hide
-reusable representation and machine details. The word-RAM described here is the
-current backend, not a requirement that users manually write a second program
-or prove every algorithm directly over registers. `StateM` is an optional model
-interface; it is not a mandatory second source language.
+The [roadmap](ROADMAP.md) sets development priorities.
+This note records the decisions those changes should preserve.
+The [backend manual](https://vvauted.github.io/Complexity/ComplexityDocs/Backend.html)
+describes the current machine and compiler interfaces.
 
-## Scope and completion obligations
+## One program, several proof views
 
-The backend-facing layer supports an executable, structured first-order language with
-functions, recursive calls, local variables, arrays and control flow. We must
-prove the program layer agrees with the specified RAM machine, not merely build
-an interpreter or verify a manually instrumented cost function.
+The executable source is a fixed first-order program, with structured control
+flow, named functions and recursive calls. The existing compiler lowers it to
+word-RAM instructions. Improving the proof interface should reuse that source
+and compilation chain, not introduce a second independently maintained program.
 
-Required layers:
+Intermediate functions are the primary programming interface. Their arguments,
+return values and shared-data effects must be available without a stream-based
+`main`. Reading and writing external input belong to an optional outer driver.
+Parameter binding and result observations should be derived from the same source
+declaration, not restated by each caller.
 
-1. A fixed word-RAM instruction set and deterministic executable transition.
-2. A single transition-counting relation, compositional execution lemmas, and
-   an executable bounded runner agreeing with that relation.
-3. Structured expressions/statements and first-order function declarations,
-   with a clear source semantics (including effects and termination).
-4. Compilation to the machine, with result/memory/control preservation and
-   a machine-step theorem for every supported construct, including calls.
-5. Derived proof rules and useful arithmetic, array and function-frame lemmas.
-6. Source syntax and examples that use the same program for execution and proof.
+A functional specification may be a relation, an ordinary Lean function or a
+native `StateM` computation. These are proof views. A sorting specification need
+not implement another sorting algorithm, and a loop need not be translated into
+a total pure function before its termination can be proved.
 
-These are backend obligations. Meeting them is necessary but does not by itself
-provide the general single-source frontend or high-level proof automation in the
-roadmap. An expression compiler, straight-line code, or an annotated while
-language alone is also insufficient.
+Representation predicates relate mathematical values to visible machine state.
+Use mathlib equivalences when information is preserved, and relations when a
+view forgets information. An entire heap is not in bijection with one observed
+list. Mathematical functions used in specifications are not executable primitives.
 
-## Cost model
+## Behavior first, cost second
 
-We adopt a word-RAM, not an unlimited-integer unit-cost RAM. A word is a
-`BitVec w`; arithmetic, addressing and comparison have explicit bit-vector
-semantics. The finite instruction vocabulary includes word multiplication.
-This is a public machine-model choice, not a claim that multiplication was
-derived in constant time from addition. Exact mathematical multiplication is
-recovered under a proved no-overflow condition; without it the result is modular.
+Safe total correctness establishes an actual terminating execution without a
+proposed time bound. A separate conditional time theorem bounds that execution.
+Publishing and composing reusable implementations should preserve this separation.
 
-The only unit-time rule is one executed machine transition. No constructor of
-the source language accepts a cost. Source expressions and statements lower to
-finite target code, and their costs follow from executions of that code. Source
-function calls may not copy an unbounded frame or argument list for one step;
-such work must be represented by actual target instructions.
+The returned value and execution count are observations of the program, not
+fields filled in by its correctness proof. Specifications and asymptotic bounds
+describe those observations. An ordinary functional view must therefore come
+with its connection to that implementation; declaring a mathematical reference
+function alone does not make it the executable program.
 
-Machine time is not the wall-clock time of the Lean interpreter. Any optimized
-execution representation needs a correspondence theorem before replacing the
-reference interpreter in the claimed verified chain.
+Heap and call-depth capacities are safety premises, not instruction budgets.
+Output-size guarantees support subsequent operations. Time analysis may reuse
+these facts and functional invariants, but correctness must not depend on the
+particular time estimate chosen later.
 
-## Semantics boundaries
+The source language does not accept a pricing table, arbitrary host-language
+callbacks or unchecked ticks. Operation costs come from proved executions of
+emitted instructions, including argument evaluation, frame save/restore and
+control-flow overhead.
 
-- Source operators are fixed constructors, not arbitrary `Lean` callbacks.
-- Proofs, specifications, invariants and potentials cannot affect runtime data.
-- A cost certificate includes termination; a conditional statement about an
-  execution that may not exist is insufficient.
-- A whole program and its compilation layout are fixed before input size and
-  word width are quantified. Constants cannot conceal input-dependent layouts.
-- The benchmark, not the submitter, fixes legal inputs and admissible word widths.
-- Input encoding and preparation costs are explicit per benchmark contract.
-  Text decoding may be external; algorithmic preprocessing is not implicitly free.
-- Assertions describe mathematical relations on outputs, not necessarily equality
-  to a designated reference implementation.
+## The current machine model
 
-## Library/version policy
+Words and addresses are finite bit vectors. Arithmetic has the specified modular
+semantics; exact natural-number arithmetic requires no-overflow hypotheses.
+Multiplication and division are primitives of this word-RAM model.
 
-Keep the base Lean/Std dependency small and pinned. The matching mathlib revision
-is `5352afccd6866369be9de43f5b7ec47203555f44`; imports can be added when needed.
-Neither a moving upstream branch nor a reference project's advertised theorem
-is a substitute for checking this repository's corresponding theorem. The
-asymptotic layer uses mathlib's `IsBigO` directly. RAM-to-Turing-machine simulation
-and membership in a Turing-machine complexity class require additional proofs.
+One executed transition costs one step. This is neither the runtime of the Lean
+interpreter nor a claim about bit complexity. The optimized runner has a
+correspondence theorem with the reference execution.
+
+Address-space capacity, cumulative accessed addresses and peak live storage are
+different resources. A new space claim needs its own observation of the same
+execution, including allocation or reclamation if it refers to live heap.
+
+## Complete claims
+
+A problem fixes its encoding, admissible inputs, width policy and size measure
+before an implementation is certified. Composition must preserve that original
+domain and the actual intermediate representation.
+
+Reading, initializing or converting data is runtime work when the implementation
+performs it. A proof-only change of mathematical view is not a data conversion.
+Preloaded-memory contracts state their entry state explicitly.
+
+The compiler, representation and cost theorems connect to one fixed program
+uniformly over legal inputs. Cross-model complexity claims additionally need a
+costed simulation; payload-size arithmetic alone is not one.
+
+## Reuse and scope
+
+Reuse Lean, Std and mathlib definitions and theorems. Keep their pinned versions
+consistent, and extend ordinary mathematical namespaces for generic results.
+Backend-specific statements stay under the RAM topic.
+
+The [literature notes](LITERATURE.md) explain the sources behind these choices.
+They motivate the design; the guarantees are the theorems in this repository.

@@ -64,7 +64,7 @@ syntax:50 ramExpr:51 " > " ramExpr:51 : ramExpr
 syntax:50 ramExpr:51 " >= " ramExpr:51 : ramExpr
 
 /-- Quote a RAM expression; identifiers denote registers and numerals denote
-word constants. The result is the existing `Complexity.Computability.Ram.Source.Expr` AST. -/
+word constants. The result is the existing `Ram.Expr` AST. -/
 syntax:max "ram_expr% " ramExpr : term
 
 declare_syntax_cat ramStmt
@@ -232,11 +232,11 @@ macro_rules
         localsKeyword body result
 
 /-!
-## Executable language examples and their AST meaning
+### Examples
 
-The equalities below are definitional expansion lemmas, not a second semantics
-or a testing framework. These functions can be supplied directly to the
-existing compiler and correctness judgments.
+See `Examples.Ram.Syntax` for source programs and their definitional expansions.
+The resulting functions use the same compiler and correctness judgments as
+handwritten syntax trees.
 -/
 
 end Ram.DSL

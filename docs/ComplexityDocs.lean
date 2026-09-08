@@ -11,55 +11,49 @@ import ComplexityDocs.Models
 import ComplexityDocs.Verification
 
 /-!
-# Complexity manual
+# Complexity
 
-Complexity develops programming and proof infrastructure for functional correctness and
-resource complexity in Lean. This manual explains the implemented interfaces; the
-[roadmap](https://github.com/Vvauted/Complexity/blob/main/docs/ROADMAP.md) describes the larger goal
-of ordinary high-level programming with verified lowering and reusable cost proofs.
+Complexity is a Lean library for verified programming and complexity analysis.
+This manual explains how to use its current interfaces. The API reference is generated
+from the same source files; use the search box to find a declaration or the module tree
+to browse a topic.
 
-The current executable language is a structured word-RAM language. Its compiler, mathematical
-model interfaces and complexity library support useful separation between algorithmic
-reasoning and machine reasoning. A general single-source high-level frontend is not yet
-implemented: arbitrary Lean functions do not automatically become executable machine code.
+## Start here
 
-An ordinary `StateM` computation is an optional mathematical model, not a required second
-program that every user must write and maintain. Pure Lean functions and direct contracts
-are also supported. Model implementations supplied by the library can be reused without
-reproving their memory layout, calling convention or compiler simulation.
+1. [Getting started](##ComplexityDocs.GettingStarted): install the library, run a program
+   and follow a complete checked example.
+2. [Proving correctness](##ComplexityDocs.Verification): specifications, total correctness,
+   calls, loops and reuse of ordinary Lean proofs.
+3. [Working with data](##ComplexityDocs.Models): arrays, mathematical views and memory frames.
+4. [Proving complexity](##ComplexityDocs.Complexity): separate cost proofs, mathematical bounds
+   and complete executable certificates.
 
-## Reading the manual
+For machine assumptions and compiler details, see
+[the execution backend](##ComplexityDocs.Backend). For builds, module layout and contributing
+documentation, see [development](##ComplexityDocs.Development).
 
-1. [Getting started](##ComplexityDocs.GettingStarted): installation, imports, source syntax,
-   execution and existing examples.
-2. [Functional verification](##ComplexityDocs.Verification): total correctness, mathematical
-   specifications, native Lean verification, calls, control flow and proof automation.
-3. [Data models and memory](##ComplexityDocs.Models): choosing mathlib objects, updating them,
-   composing stateful operations and preserving unrelated data.
-4. [Complexity proofs](##ComplexityDocs.Complexity): separate time bounds, amortization,
-   recurrences, asymptotics, component composition and complete problem claims.
-5. [Execution backend](##ComplexityDocs.Backend): machine assumptions, compilation, calls,
-   observation boundaries and resource measurements.
-6. [Dependencies and documentation](##ComplexityDocs.Development): mathlib reuse, builds
-   and documentation maintenance.
+## What is available
 
-Use `import Complexity` for the public library, or a specific `Complexity.*` module for
-a smaller dependency set. RAM declarations use the namespace `Ram`, but belong to this
-same library. The manual and examples are separate consumers, not required imports.
+Programs currently use a structured word-RAM language with named variables, functions and
+recursion. Correctness proofs can use mathematical relations, pure Lean functions or native
+`StateM` specifications. The implementation-to-model connection is still an explicit proof;
+ordinary Lean functions are not automatically compiled into RAM programs.
 
-## Choosing an entry point
+Functions can be declared without a `main` and verified through their arguments,
+returned value and shared effects. Start with the
+[function contracts](##Complexity.Computability.Ram.Verification.Function);
+[function costs](##Complexity.Computability.Ram.Source.Function.Time) observe the same
+implementation separately from a proposed bound.
 
-| Task | Start with |
-| --- | --- |
-| Prove what a program computes | `Ram.Source.TotalContract`, `Ram.Source.Refines` |
-| Verify a mathematical stateful model | `Std.Do.Triple`, [native refinement](##Complexity.Computability.Ram.Verification.StateM.Basic) |
-| Reuse an array, matrix or map implementation | [Data models](##ComplexityDocs.Models) |
-| Prove a time bound independently | `Ram.Source.TimeBound` |
-| Analyze numerical bounds | [Recurrences](##Complexity.Computability.Recurrence.Basic), [polynomial growth](##Complexity.Analysis.Asymptotics.Polynomial) |
-| Connect a bound to machine runtime | [Uniform time bounds](##Complexity.Computability.Ram.Time.Basic) |
-| Link separately verified implementations | `Ram.Component` |
-| Understand the machine/compiler boundary | [Execution backend](##ComplexityDocs.Backend) |
+Reusable programs can be packaged and linked without a time budget using
+[total components](##Complexity.Computability.Ram.Component.Total), then receive separate
+time proofs for the same code.
 
-For project status and provenance, see the
-[README](https://github.com/Vvauted/Complexity).
+Numerical bounds can be used independently of the machine. Start with
+[polynomial growth](##Complexity.Analysis.Asymptotics.Polynomial),
+[recurrences](##Complexity.Computability.Recurrence.Basic) or
+[amortized sums](##Complexity.Analysis.Amortized).
+
+The [roadmap](https://github.com/Vvauted/Complexity/blob/main/docs/ROADMAP.md) describes
+the remaining work on source-level proof interfaces, operation composition and resource theory.
 -/

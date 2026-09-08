@@ -6,34 +6,45 @@ Authors: vvauted
 import Complexity
 
 /-!
-# Functional verification
+# Proving correctness
 
-Functional correctness should describe what a program computes without requiring a proposed
-instruction bound. Time analysis can then reuse its invariants and observations independently.
-The implementation-to-model connection remains a theorem, not an assumption introduced by a tactic.
+Start with the mathematical result you want, then connect it to the implementation.
+The correctness interface includes safety and termination, but asks for no time budget.
+A separate [complexity proof](##ComplexityDocs.Complexity) can reuse the same invariants.
 
-## Total contracts and specifications
+## Choose a specification
 
-`Ram.Source.TotalContract` proves safe terminating execution from a precondition to a
-postcondition. `Ram.Source.TotalRelContract` also lets the postcondition refer to the entry
-state. Neither contains a time budget. Heap capacity and permitted call depth are safety
-parameters: they justify the implementation's memory accesses and call stack, not its runtime.
+For an intermediate function, start with `Ram.Source.FunctionContract`. Its precondition
+describes arguments and caller state; its postcondition describes the actual returned
+word and shared-state effects. It requires neither a `main` nor stream input/output.
+`Ram.Source.FunctionExec` defines those observations through the function's real body and
+return expression. It does not take a proposed mathematical result as a parameter.
 
-`Ram.Source.Refines` connects one fixed source statement to an ordinary Lean function
-through input and output representation predicates. Its form is:
+The [factorial example](##Examples.Ram.Factorial) returns a word and preserves caller state.
+The [array-copy function](##Complexity.Computability.Ram.Array.Function) instead changes
+represented arrays in shared memory. Its public contract hides parameter registers but
+retains genuine address-range, length and non-overlap assumptions.
+`Ram.Source.FunctionContract.wp_call` reuses a contract at another function's call site;
+the continuation receives the returned word, the proved postcondition and preserved caller locals.
+
+Use `Ram.Source.TotalContract` when the precondition and postcondition directly describe
+the source state. `Ram.Source.TotalRelContract` also lets the postcondition refer to the
+entry state, which is useful for framing unchanged data.
+
+Use `Ram.Source.Refines` when an ordinary Lean function is the clearest description of the
+result. Its arguments have the following shape:
 
 ```lean
 Refines program heapLimit depth stmt inputRep outputRep f
 ```
 
-For every mathematical input `x`, represented concrete inputs terminate in a state
-representing `f x`. The representation may include safety, encoding and frame facts.
-`Ram.Source.Refines.spec` transfers an ordinary theorem about `f` to the actual result.
-`Ram.Source.Refines.seq` composes implementations through the shared mathematical model;
-the second program is executed on the real intermediate state.
+For every mathematical input `x`, an entry state satisfying `inputRep x` safely terminates
+in a state satisfying `outputRep (f x)`. The predicates connect words and memory to the
+mathematical values; they may also carry encoding, capacity and frame assumptions.
+They do not require a bijection between an entire heap and a value.
 
-The following proof is taken from `Examples.Ram.Verification`. There, `main` reads a word,
-increments it, and writes the result; `increment` is its source addition expression:
+Here is the refinement proof from [the small I/O example](##Examples.Ram.Verification).
+Its `main` reads a word, increments it, and writes the result:
 
 ```lean
 theorem main_refines (rest out : List (Word w)) :
@@ -44,38 +55,52 @@ theorem main_refines (rest out : List (Word w)) :
   ram_refine x s ⟨hin, hout⟩ [main, increment, hin, hout]
 ```
 
-It describes modular word addition and retains the unconsumed input and previous output.
-No instruction budget appears in this correctness proof. The same module proves
-`main_timeBound` separately and combines them with `with_timeBound` before exporting the
-complete halted execution.
+This is modular word addition. The proof also retains the input tail and prior output;
+it does not silently reinterpret the computation as unbounded natural-number addition.
 
-## Proof workflow
+## Use mathematical theorems at the interface
 
-1. Choose the ordinary mathematical object and the intended property. Reuse Lean, Std and
-   mathlib definitions and theorems where they fit.
-2. Reuse an existing implementation refinement, or establish its representation relation
-   with `ram_refine x s hs [facts]` or `ram_total_vc s hs [facts]`.
-3. Apply proved operations and function specifications with `ram_total_apply`. Keep their
-   implementations opaque at the use site.
-4. Prove loop invariants and recursion progress in ordinary Lean. Supply the implementation's
-   guard, body and safety connections at their respective boundaries.
-5. Transfer the mathematical property through `Refines.spec`, or retain it for further
-   composition with `with_postcondition`.
-6. Prove time separately and export the same result to the compiled execution.
+Once you have a refinement, prove properties of `f` using ordinary Lean and mathlib.
+`Ram.Source.Refines.spec` transfers a theorem about `f x` to the implemented result.
+`Ram.Source.Refines.with_postcondition` retains the property in the representation for
+subsequent composition.
 
-A costed contract's `.total` projection remains available for existing results, but it is
-not an independent correctness proof. New functional developments should use the total
-interfaces directly when the necessary implementation lemmas are available.
+Reuse an operation's existing contract before unfolding its body. In particular:
 
-## Optional native stateful models
+- `Ram.Source.Refines.seq` composes two refinements through their shared intermediate model.
+- `Ram.Source.Refines.congr_fun` changes the model by a proved equality of functions.
+- `Ram.Source.Refines.equiv` changes mathematical coordinates through an equivalence.
+- `Ram.Source.Refines.transfer` handles related, possibly lossy models when the functions
+  respect the chosen relations.
 
-An ordinary `StateM σ α` computation maps an initial mathematical state to a returned value
-and final state. It is useful for specifications involving several updates, but is optional:
-pure functions and direct contracts are equally valid interfaces. Users should reuse supplied
-models and refinements, rather than reproduce a second version of every program.
+These rules operate on fixed source statements. They do not turn an arbitrary mathematical
+function into executable code. See [data models](##ComplexityDocs.Models) for array, matrix,
+partial-map and framing interfaces.
 
-The native proof interface is Lean's `Std.Do.Triple`; `import Std.Tactic.Do` supplies `mvcgen`.
-For example, `Examples.Ram.Verification` contains:
+## Loops and recursive calls
+
+For a loop, choose a mathematical invariant and a well-founded progress argument.
+`Ram.Source.Refines.while_wellFounded` relates the real guard and body to an abstract step
+and eventual result. If a decreasing natural number is enough,
+`Ram.Source.Verification.TotalWP.while_variant` provides a direct total-correctness rule.
+The guard, representation and safety obligations remain at the implementation boundary.
+
+For recursive functions, use `Ram.Source.Recursion.TotalSpec`. Its verification rule makes
+correct smaller calls available without unfolding their bodies or assigning them time
+budgets. `Ram.Source.Refines.call` packages a proved function specification as a refinement
+of a call. Argument binding and return adaptation are handled at this boundary; shared heap
+and I/O effects survive return, while the call theorem restores the caller's other locals.
+
+The API chapters on [control flow](##Complexity.Computability.Ram.Verification.Control),
+[total recursion](##Complexity.Computability.Ram.Verification.Recursion.Total) and
+[calls](##Complexity.Computability.Ram.Verification.Call) give the exact premises.
+
+## Stateful mathematical models
+
+Use `StateM σ α` when a sequence of updates is easier to describe with state and a returned
+value. It is an optional semantic model, not a second program every user must write.
+Lean's `Std.Do.Triple` and `mvcgen` can prove its mathematical specification.
+The same I/O example contains:
 
 ```lean
 def incrementState : StateM (Word w) PUnit := do
@@ -90,91 +115,61 @@ theorem incrementState_spec (x : Word w) :
   simp_all
 ```
 
-`Ram.Source.Refines.stateM_spec` transfers such a triple through a proved implementation
-refinement of `model.run`. `stateM_spec_refines` retains the native postcondition alongside
-the output representation, so subsequent operations can use it without reconstructing an
-execution witness. The pure counterpart is `with_postcondition`.
+`Ram.Source.Refines.stateM_spec` transfers such a triple through a proved refinement of
+`model.run`. `Ram.Source.Refines.stateM_spec_refines` keeps the native postcondition for
+later operations. `Ram.Source.Refines.stateM_bind` composes returned values and state;
+its mathematical continuation may depend on a returned value, but the corresponding source
+statement is fixed and must obtain that value through its representation.
 
-`stateM_bind` composes both the returned value and state using native bind. Its second
-mathematical computation may depend on the returned value, but the second source statement
-is fixed: its representation explains how runtime registers or memory supply that value.
-It does not generate executable syntax from a proof-only input.
+There are also [call](##Complexity.Computability.Ram.Verification.StateM.Call) and
+[finite traversal](##Complexity.Computability.Ram.Verification.StateM.Traversal) bridges.
+`mvcgen` verifies the mathematical model: it does not compile arbitrary Lean code or discharge
+the model-to-memory connection. Reuse an existing bridge where one is available.
 
-Native `mvcgen` proves the mathematical computation. It does not compile arbitrary Lean
-code, infer the representation, or prove RAM overflow, heap or stack safety. The pinned Lean
-version labels `mvcgen` experimental; the transfer uses its standard verified triple semantics.
+## Automate the routine work
 
-## Control flow and recursion
+`ram_refine x s hs [facts]` starts a refinement proof;
+`ram_total_vc s hs [facts]` starts a total-contract proof.
+Use `ram_total_apply h` to apply a supplied operation or function contract.
+`ram_model [facts]` simplifies observations, and `ram_word [facts]` normalizes word arithmetic
+with the available range conditions. Remaining obligations are ordinary Lean goals.
 
-`Ram.Source.Refines.ite` relates an actual source guard to an ordinary predicate. Each branch
-requires a refinement only on its reachable mathematical domain. `while_wellFounded` uses
-an abstract state, invariant, continuation predicate, step and result function. Preservation,
-well-founded progress and the equation saying a step preserves the eventual result are
-ordinary Lean propositions. Guard/body representation and endpoint observations connect them
-to source execution.
+Supply representation equations and mathematical facts through these tactic arguments or
+Lean's usual `simp` mechanism. The tactics do not infer loop invariants, invent no-overflow
+hypotheses or turn modular arithmetic into exact arithmetic. Their API is under
+[total verification](##Complexity.Tactic.Ram.Total) and
+[model simplification](##Complexity.Tactic.Ram.Model).
 
-`TotalWP.while_variant` is the direct functional rule for a decreasing natural variant.
-For a native traversal, `Refines.stateM_forM` connects `List.forM xs action` to one fixed RAM
-while. A representation of the remaining visits and current mathematical state relates the
-guard to nonemptiness and each real body step to `action head`. It handles a fixed finite
-traversal, not early returns or dynamically growing worklists.
+## Publish and link a verified implementation
 
-Recursive specifications use `Ram.Source.Recursion.TotalSpec`. Its well-founded verification
-rule supplies correct smaller calls without unfolding their bodies or adding time bounds.
-`Correct.wp_call` and `ram_total_apply` reuse these calls. Natural measures, lexicographic
-orders and other existing Lean well-founded relations are suitable.
+Use `Ram.TotalComponent.ofNamed` to package a fixed named program with its
+`Ram.Source.TotalContract`, shared input/output representations and safety capacities.
+There is no time-bound field. `Ram.TotalComponent.comp` links independent function tables
+and composes their total correctness on the actual intermediate representation.
 
-`Refines.call` packages a function specification as a refinement of a fixed call statement.
-Argument binding, return adaptation and the function's lookup/arity facts are established at
-that boundary. `Refines.stateM_call` provides the analogous bridge from a native stateful
-body without requiring another specification record. Shared heap and I/O effects survive
-return; caller locals other than the destination are restored by the call theorem.
+Heap and call-depth capacities are still required for safety, and the output-size guarantee
+supports later composition. These are not proposed instruction budgets.
+`Ram.TotalComponent.runs_observed` exports an actual halted execution before time analysis.
+See [budget-free components](##Complexity.Computability.Ram.Component.Total).
 
-For low-level adapters, `State.enter_regs_getElem` exposes standard parameter indexing,
-and `State.leave_eq_setReg_of_frame` simplifies a return when heap and I/O preservation have
-actually been proved. These are implementation lemmas, not facts each mathematical client
-should have to reproduce.
+## Attach time and export the result
 
-## Changing and combining models
+`Ram.Source.TimeBound` bounds completed measured executions; alone, it does not prove that
+one exists. Combine it with the correctness proof using
+`Ram.Source.TotalContract.with_timeBound` or `Ram.Source.Refines.with_timeBound`.
+The resulting contract bounds the same safe terminating execution.
 
-Use `Refines.congr_fun` for an equality of mathematical functions. `equiv` changes genuinely
-equivalent models using ordinary mathlib equivalences. `transfer` uses `Relator.LiftFun` for
-related or lossy models: representatives must exist and the computation must respect the
-chosen relations. A set observation cannot automatically replace a multiset computation.
+For a reusable program, establish a scalar, input-size-based time envelope through
+`Ram.TotalComponent.TimeBoundOn`, then use `Ram.TotalComponent.withTimeBound` to obtain
+a resource-aware `Ram.Component`. A bound depending on the full input can first be
+majorized by such an envelope.
+The generated code and non-time guarantees are unchanged; existing component certificates
+and polynomial-time interfaces remain available.
 
-`map_output` changes the output observation; `comap_input` reparameterizes represented
-inputs. `TotalContract.and`, `TotalRelContract.and` and `Refines.prod` combine independent
-facts about the same statement. Determinism identifies the final state: these are not parallel
-runs or claims of disjoint memory. Ghost witnesses can be moved with `TotalWP.exists_iff`.
-The universal form requires a nonempty index type, because an empty family cannot witness
-termination.
-
-For product states, changed subviews and unrelated heap objects, see
-[data models and memory](##ComplexityDocs.Models).
-
-## Focused automation
-
-| Tactic | Purpose |
-| --- | --- |
-| `ram_total_vc s hs [facts]` | Generate budget-free verification conditions |
-| `ram_refine x s hs [facts]` | Start a refinement for a represented mathematical input |
-| `ram_total_apply h` | Apply a supplied functional contract or call specification |
-| `ram_model [facts]` | Rewrite model observations using ordinary simplification and word facts |
-| `ram_word [facts]` | Normalize unsigned word arithmetic with justified range conditions |
-| `ram_bound [facts]` | Normalize proved instruction bounds and arithmetic obligations |
-
-The introduction forms accept ordinary patterns, including `⟨hmodel, hbounds⟩` and ghost
-witnesses. `ram_model`, `ram_word` and `ram_bound` accept simplifier locations such as
-`at h`, `at h ⊢` and `at *`. Model simplification reuses the native `StateT.run_*` rules and
-the identity-monad definition so returned state observations can simplify normally.
-
-Representation equations and mathematical facts must be supplied or registered with Lean's
-ordinary `simp` mechanism. There is no separate model registry. Program bodies, unknown
-invariants and supplied contracts remain opaque unless explicitly unfolded. Residual goals
-are ordinary Lean goals for `simp`, `omega`, `ring`, `grind` or other appropriate tactics.
-
-Word normalization uses proved no-wrap facts when available, otherwise it retains modular
-semantics. It does not invent ordering assumptions for subtraction or natural interpretations
-of overflowing multiplication. Signed, bitwise and nonlinear reasoning may need additional
-mathlib facts. None of these tactics synthesizes algorithmic invariants or infers a Big-O claim.
+Correctness can also be exported without a time estimate.
+`Ram.Source.Refines.compile_observed` transports represented outputs to an actual halted
+target execution; `Ram.Source.Refines.compile_observed_with_timeBound` adds the separate
+time bound. Code fit, stack capacity and output-observation transport are explicit premises.
+The [backend chapter](##ComplexityDocs.Backend) explains these premises and the extra
+instructions counted at the whole-program boundary.
 -/

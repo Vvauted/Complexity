@@ -6,136 +6,83 @@ Authors: vvauted
 import Complexity
 
 /-!
-# Dependencies and documentation
+# Development
 
-Complexity reuses existing mathematical and program-semantics infrastructure rather than
-maintaining parallel definitions. This chapter covers the pinned Lean and mathlib dependencies
-and ordinary development entry points.
+Complexity uses the Lean toolchain and mathlib revision pinned in the repository.
+Start with the [contribution guide](https://github.com/Vvauted/Complexity/blob/main/CONTRIBUTING.md)
+and [roadmap](https://github.com/Vvauted/Complexity/blob/main/docs/ROADMAP.md).
 
-## Library organization
+## Building
 
-`Complexity` is the single main Lean library. Subject directories follow the same distinction
-as mathlib between analysis, computability, data lemmas and tactics:
-
-```text
-Complexity.lean                         Public umbrella import
-Complexity/
-  Analysis/                            Numerical and asymptotic bounds
-  Computability/
-    Recurrence/                        Arithmetic recurrence theorems
-    Ram/
-      Basic.lean, Word.lean             The machine and finite words
-      Execution/                       Runs, prefixes, resource observations and runners
-      Source/                          Syntax and structured source semantics
-      Compiler/                        Compilation, simulation and calling conventions
-      Verification/                    Contracts, refinements, loops and recursion
-      Array/, Matrix/, Memory/         Implementations and representation proofs
-      Time/, Problem/, Component/      Machine bounds and verified composition
-  Data/, LinearAlgebra/                Extensions of ordinary Lean/mathlib objects
-  Tactic/Ram/                          RAM proof automation
-Examples/                              Programs and proof consumers
-docs/ComplexityDocs.lean                Manual entry point
-docs/ComplexityDocs/                    Manual chapters
-docbuild/                              Pinned documentation generator
-```
-
-The main umbrella imports reusable modules, not `Examples` or `ComplexityDocs`. These development
-targets are ordinary consumers of the same library. `docbuild` only isolates the HTML
-generator's dependencies; it contains no second implementation of the library.
-
-Inside a topic, `Basic.lean` establishes its foundation and named extension files import
-the needed results. Compiler-local frame proofs are grouped under `Compiler/Local`, and
-native stateful refinement rules under `Verification/StateM`. No reusable module imports
-the all-library umbrella.
-
-Module names locate code; declaration namespaces identify mathematical objects. Thus
-`Complexity.Computability.Ram.Basic` defines `Ram.State`, while
-`Complexity.LinearAlgebra.Matrix.Update` extends `Matrix`. This is the same distinction as
-mathlib's `Mathlib.Computability.TuringMachine` using `Turing`. Keeping a `Ram` namespace
-does not create a second library or an independently versioned package.
-
-Pure recurrence, sum and asymptotic lemmas do not import RAM definitions. Conversely,
-interfaces that still mention RAM states, words or compiled execution remain in the RAM
-topic. Moving a file cannot make such a theorem independent of its computational model.
-
-## Lean and mathlib
-
-The toolchain is Lean `4.28.0-rc1`; mathlib is pinned to
-`5352afccd6866369be9de43f5b7ec47203555f44`.
-The machine kernel can use Lean/Std-only imports, while the main proof library directly
-depends on mathlib. Smaller topic imports keep dependencies appropriate to a module.
-
-The mathematical layer uses mathlib's actual functions, collections, equivalences, filters,
-sums, logarithms and asymptotic relations. Search those APIs before adding a new lemma or
-representation wrapper. A bridge belongs here when it connects an existing mathematical
-object to the implemented semantics or discharges repeated proof obligations at that boundary.
-
-For native stateful specifications, the library uses `Std.Do.Triple` and `mvcgen` from the
-pinned Lean distribution, without introducing another WP instance.
-
-## Building and checking changes
-
-Use a development environment with the pinned toolchain. The ordinary targets are:
+After installing the pinned toolchain and downloading the mathlib cache:
 
 ```sh
 lake build
 lake build Examples ComplexityDocs ram-demo
 ```
 
-For a focused source check, run `lake env lean path/to/File.lean` from the package root after
-its imported dependencies have normal Lake artifacts. A file check is useful feedback; the
-library build checks dependency integration. There is no separate generated pass/fail
-framework required to establish a theorem.
+For a focused change, build the affected module by name, for example
+`lake build Complexity.Computability.Ram.Array.Traversal`, then check its consumers.
+Use `lake env lean path/to/File.lean` for a file check after its imports have been built.
 
-Completed proofs must be accepted by Lean without `sorry`, custom axioms or unproved cost
-annotations. Preserve theorem statements and executable behavior when refactoring proofs.
-Compiling a theorem does not determine whether its specification captures the intended
-algorithm, size convention or resource claim; those need semantic review.
+The default target is the reusable library. Examples and the manual are separate consumers.
+A successful build checks formal statements; the choice of specification, legal inputs and
+cost model still needs mathematical review.
 
-## Writing and reading LeanDocs
+## Finding the right module
 
-The manual lives in ordinary Markdown module docstrings under `docs/`. The
-`ComplexityDocs` module imports the chapters as a documentation-only entry point;
-`Complexity` itself does not depend on the manual. doc-gen4 renders these pages together
-with the library API.
+```text
+Complexity/
+  Analysis/Asymptotics/   Growth bounds over ordinary functions
+  Analysis/Amortized.lean Potential inequalities over finite histories
+  Computability/
+    Recurrence/          Numerical recurrence comparison and asymptotics
+    Ram/                 Source programs, execution, compilation and program proofs
+  Data/                  Supporting Nat and List lemmas
+  LinearAlgebra/         Supporting matrix lemmas
+  Tactic/Ram/            Proof automation
+Examples/                Checked programs and uses of the library
+docs/ComplexityDocs/      User manual
+docbuild/                Pinned doc-gen4 build package
+```
 
-The documentation generator is isolated in the `docbuild` Lake package and pinned to
-the matching toolchain. Build the HTML manual and API reference with:
+Use the smallest relevant import. Pure mathematics must not import RAM, and reusable modules
+must not import the `Complexity` umbrella, examples or the manual.
+
+Module paths locate code; declaration namespaces identify its objects.
+For example, `Complexity.Computability.Ram.Basic` defines `Ram.State`, while
+`Complexity.LinearAlgebra.Matrix.Update` extends `Matrix`.
+The `Ram` namespace is not a separate package.
+
+## Writing documentation
+
+Follow mathlib's [documentation conventions](https://leanprover-community.github.io/contribute/doc.html):
+a module comment explains the subject and main results; declaration comments explain meaning
+and assumptions. Keep detailed API descriptions beside the definitions and proofs.
+The manual explains workflows across modules rather than repeating every theorem.
+
+Use fully qualified declaration names in backticks for API links. Module links use doc-gen4's
+`##Module.Name` syntax. Refer readers to checked examples when illustrating a complete proof;
+a Markdown code fence is explanatory text, not a checked theorem.
+
+The manual entry point is `docs/ComplexityDocs.lean`. Its modules have a distinct name because
+mathlib already owns `docs.*`; they use the same module-comment format and generator.
+No separate documentation language or website framework is needed.
+
+## Building and publishing the site
+
+As in the [mathlib documentation build](https://github.com/leanprover-community/mathlib4_docs),
+doc-gen4 is a development dependency in its own Lake package. From the repository root:
 
 ```sh
 cd docbuild
 lake build complexity/Complexity:docs complexity/Examples:docs complexity/ComplexityDocs:docs
 ```
 
-The package prefix selects this project's targets explicitly. The manual uses
-`ComplexityDocs` module names to avoid colliding with mathlib's own `docs` modules;
-both use ordinary module comments and the same documentation generator.
+The generated HTML is in `docbuild/.lake/build/doc`. It includes the manual, API search,
+module tree, examples and links to the corresponding source.
 
-The generated site is in `docbuild/.lake/build/doc`. Main-branch CI builds and uploads
-the HTML as a workflow artifact. Website publication is opt-in: enable GitHub Pages with
-the **GitHub Actions** source, then set the repository Actions variable `PUBLISH_DOCS` to
-`true`. The deployment target is [the documentation site](https://vvauted.github.io/Complexity/).
-Check the intended website visibility before enabling publication from a private repository.
-
-Keep usage guidance here and declaration-level behavior in the relevant API docstring.
-The root README describes the project, its status and AIGC provenance; the roadmap describes
-goals and missing capabilities. Development history should not be embedded in API reference
-pages as repeated progress reports.
-
-Use descriptive headings, precise declaration references and small source-grounded examples.
-Examples involving existing declarations should identify their module and preserve their
-actual semantics. Documentation code fences are explanatory text, not a substitute for the
-checked source declarations they reference.
-
-API documentation follows the
-[mathlib documentation conventions](https://leanprover-community.github.io/contribute/doc.html).
-After the copyright header and imports, a `/-! ... -/` module comment explains the subject,
-important declarations, notation and relevant implementation choices. Declaration comments
-use `/-- ... -/`, and section comments group related results. The manual gives explanations
-that span modules; it does not replace documentation alongside the definitions and proofs.
-
-Use names and focused imports following the
-[mathlib library conventions](https://leanprover-community.github.io/contribute/style.html).
-The pinned toolchain's syntax remains authoritative; changing the directory layout does
-not require a Lean upgrade, a second mathematical library, or a new testing framework.
+Main-branch CI builds and publishes that directory through GitHub Pages. The repository's
+Pages source is **GitHub Actions**. Pull requests compile the library, examples and manual;
+they do not deploy. Generated HTML stays out of the source repository.
 -/

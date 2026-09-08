@@ -1,203 +1,140 @@
 # Roadmap
 
-## Objective
+The goal is to write a program once, with its result and execution cost as properties
+of that same program, and prove them using ordinary Lean mathematics. Reusable
+functions are the primary unit: a function should not need an input/output `main`
+to be defined, called or verified. This roadmap closes the gap between that
+functional-programming experience and the interfaces available today.
 
-Complexity aims to support ordinary programming in Lean with machine-checked
-proofs of both functional correctness and resource complexity. Users should
-write one high-level program and reason primarily about its mathematical
-behavior, data structures and resource requirements. Verified compilation
-and representation theorems must connect those proofs to actual execution.
+## Where we are
 
-The objective is not simply a convenient notation for RAM instructions, an
-analyzer for user-assigned ticks, or a collection of separately verified
-algorithms. The word-RAM is the first backend. Both functional and complexity
-proofs should become substantially independent of its registers, instruction
-sequences and stack layout, without hiding model-dependent assumptions.
+The word-RAM backend already has a structured source language, named locals and
+functions, recursive calls, verified compilation and executable runners.
+Budget-free total correctness, separate time bounds, mathematical refinement
+and bridges to native `StateM` verification are implemented.
 
-This roadmap distinguishes existing foundations from the interfaces still
-needed to achieve that experience. A checked low-level theorem or a working
-example does not by itself complete a high-level programming milestone.
+Function-only declarations and generated word-parameter lists support independent
+function contracts. Return values, shared effects and body counts are observations
+of the existing execution, with actual call overhead added at call sites. Factorial
+and array-copy expose this interface; their internal representation proofs still
+show why the source-facing work below is unfinished.
 
-## Established foundation and present limits
+`TotalComponent` carries that separation through reusable program packaging and
+linking. A separate time proof recovers the same code through the resource-aware
+component interface; migrating richer data-operation clients remains part of the work below.
 
-The repository already provides a fixed word-RAM semantics and executable
-runner, structured expressions and statements, named first-order functions
-and recursion, checked compilation, and execution-preservation theorems with
-compiler-derived transition counts. Calls, independent module linking and
-complete halted executions are part of this foundation.
+The mathematical layer already covers polynomial growth, finite sums,
+logarithmic and branching recurrences, Akra–Bazzi and amortized analysis.
+Executable component composition, polynomial-time reductions and fixed-problem
+certificates also exist. These are RAM results under explicit encoding and
+word-width assumptions, not a simulation into a bit-level machine.
 
-Safe total-correctness contracts are separate from time bounds. Representation
-relations connect implementations to ordinary Lean values, and existing
-stateful bridges reuse native `StateM`, `Std.Do.Triple` and `mvcgen`. Array,
-matrix and finite-map developments show that mathematical properties can be
-proved separately from memory and call bookkeeping. These bridges are not
-yet a compiler from arbitrary Lean or `StateM` programs.
+The main obstacle is proof composition at the source level. Names currently
+resolve to registers, but many proofs still manipulate those registers and
+memory layouts. Some examples maintain a named program alongside a separate
+AST. Native `mvcgen` verifies mathematical models after an implementation
+refinement has been supplied; it does not derive that refinement automatically.
 
-The complexity layer reuses mathlib's asymptotics, filters, sums and logarithms.
-It includes recurrence comparison, amortized reasoning, uniform and
-multivariate bounds, resource-aware composition and polynomial-time
-reductions. These results do not prove equivalence to a Turing-machine cost model.
+## 1. Prove the program that the user writes
 
-Actual execution prefixes, address footprints and sufficient stack capacity
-are formalized. They are not interchangeable with peak live space. Tight
-stack histories, allocation-aware space semantics and bit-cost simulation
-remain incomplete.
+Build the proof-facing interface around the existing first-order source language
+and compiler. The immediate target is word and array programs with local state,
+branches, loops and named recursive calls, not arbitrary Lean compilation.
 
-## 1. A single-source high-level programming interface
+- Make the source declaration the single executable definition. Expose parameters,
+  local variables and returned values to proofs without register arithmetic.
+- Publish and call intermediate functions without an I/O entry point. Generate
+  parameter binding, return observations and semantic equations from the same
+  declaration; keep the input/output driver as an optional executable adapter.
+- Derive verification conditions from that declaration using existing total
+  correctness rules. Keep relations and mathematical specifications available;
+  a loop need not first become a total pure function.
+- Make the new source-facing interfaces and existing operation clients use
+  budget-free program packaging and linking. Attach time certificates later to
+  the same code, without requiring a bound to publish functional correctness.
+- Keep `Refines`, mathlib equivalences and `StateM` as optional proof interfaces.
+  A property such as sortedness is a specification, not a second algorithm that
+  the user should have to implement.
+- Define result and cost observations through the implementation's actual
+  execution. A proposed result function or time bound is something to prove,
+  not the definition of what the implementation computes or costs.
 
-**Highest priority.** Complete a compositional front end for local variables,
-structured control flow, functions and recursion, and typed data operations.
-Its surface should support ordinary program construction without requiring
-users to assign registers, choose stack slots or duplicate a program as a
-handwritten reference implementation.
+**Done when:** an existing array-loop consumer and an existing recursive consumer
+each have one executable source definition; their algorithmic correctness proofs
+do not use register numbers or stack layouts. Each can be called and verified
+without a `main` or stream I/O. They can be linked and used before
+choosing time bounds, then receive time proofs without changing the program.
 
-- Give supported constructs a clear high-level semantics and reusable
-  lowering rules with preservation proofs. Existing source syntax and
-  compiler results should be reused rather than replaced without need.
-- Make parameter passing, return values, local state and data access compose
-  through the same interface, including inside loops and recursive calls.
-- Derive the semantic view needed by verification from the program. Pure
-  functions and native `StateM` are useful semantic interfaces, not mandatory
-  second programs that users must author and relate to RAM by hand.
-- Keep the supported executable fragment explicit. Mathematical definitions
-  used in specifications are not automatically executable primitives;
-  unbounded work cannot enter the language as a constant-cost Lean callback.
+## 2. Compose existing data operations without reopening their implementations
 
-**Completion evidence:** existing nontrivial programs can be expressed once,
-proved through their high-level interfaces, and compiled to the actual
-backend. Their algorithm proofs do not reconstruct registers, call frames or
-a second implementation. This requires the whole path, not just expression
-compilation or attractive syntax.
+Start with the existing arrays, slices, copy and merge operations. Reuse their
+representation, framing and call theorems, together with ordinary Lean and mathlib
+objects. Do not add more data-structure wrappers merely to expand a feature list.
 
-## 2. Reusable data structures and representation proofs
+- Expose each operation's mathematical effect, safety assumptions and unchanged
+  state through a reusable call interface.
+- Handle subarrays, two live data objects and caller data that must survive a
+  call. Keep genuine range, overflow and non-aliasing obligations visible.
+- Separate changes of mathematical view from actual data conversion.
+  Initialization, copying and conversion must have executable implementations.
+- Describe the existing finite-map representation accurately: it is a
+  direct-address table over a finite key universe, not a general hash table.
 
-Build a standard library in which an operation exposes its mathematical
-meaning, safety requirements and justified resource behavior together.
-Representation proofs belong to implementations and should be reusable
-across algorithms and combinations of data structures.
+**Done when:** the recursive merge-sort proof composes array and function
+specifications without expanding call entry/return or proving frame preservation
+cell by cell. A second existing consumer reuses the same rules.
 
-- Use ordinary Lean/mathlib objects wherever possible: sequences and arrays,
-  records and products, finite functions, matrices, sets and partial maps.
-- Make lookup, update, traversal, subviews and function boundaries compose
-  without repeated pointwise heap proofs. Preserve unrelated state and
-  account honestly for aliasing and scratch space.
-- Use relations, equivalences or quotient observations according to what
-  the representation actually preserves. Forgetting order or multiplicity
-  must not turn an implementation into a stronger specification.
-- Treat conversions, initialization, allocation and resizing as implemented
-  operations when they perform runtime work. A proof-only change of view
-  and a data conversion must not acquire the same resource specification.
+## 3. Turn verified operations into usable cost arguments
 
-**Completion evidence:** existing operations compose over multiple ordinary
-data models without new per-use adapters. Adding a representation requires
-its operation laws once; clients reuse those laws and upstream mathematics.
-The target is not a growing inventory of thin type-specific wrappers.
+The numerical analysis tools are already substantial. The next work is to connect
+them to source programs with less mechanical bookkeeping.
 
-## 3. Verification at the program level
+- Derive local costs from compiled operations and compose them at actual
+  intermediate values. Reuse functional invariants and output-size facts.
+- Expose the implementation's loop sums, recursive-call sizes and nonrecursive
+  work without rebuilding the machine simulation in an algorithm proof.
+- Keep the choice of recurrence, invariant or potential as a mathematical
+  obligation. Use mathlib to solve the resulting bounds.
+- Reuse `Component.Realization` to discharge complete-program obligations:
+  fixed legal inputs, encoding, representability, sufficient capacities and
+  output observations. Count any implemented loader or representation adapter.
 
-Functional correctness should concern returned values and changes to abstract
-data. Termination may require a variant or well-founded relation, but must
-not require selecting an instruction-count budget first.
+**Done when:** the same loop and recursive consumers admit separate cost proofs
+using operation contracts and sums, recurrences or potentials. Their final
+certificates describe complete executions on the original legal input domain,
+including actual call and entry/exit overhead. Correctness proofs remain
+independent of the selected bound.
 
-- Generate verification conditions from supported high-level programs,
-  reusing Lean's native verification infrastructure where applicable.
-- Normalize represented observations and apply operation/function contracts
-  without exposing backend states. Keep loop invariants and recursive
-  hypotheses in ordinary mathematical form.
-- Package reusable safety and framing arguments at library and compiler
-  boundaries. Preserve genuine bounds, overflow and non-aliasing obligations
-  rather than treating them as automatically true.
-- Automate routine substitution, state updates, frame transport and justified
-  arithmetic. Fail with the remaining mathematical obligation visible; do
-  not hide failure behind unproved annotations or a second trusted verifier.
+## 4. Give space bounds their own execution meaning
 
-**Completion evidence:** refactoring an implementation's register layout does
-not require rewriting its high-level correctness proof. Existing consumers
-use mathematical specifications and ordinary Lean tactics; custom automation
-removes mechanical work without guessing an invariant or changing a goal.
+Prefix resource bounds, maximum composition and partial save/restore facts
+already exist. Capacity and the largest accessed address are not live-space
+measurements.
 
-## 4. Compositional complexity proofs above the machine
+First connect the actual nested call history to every execution prefix,
+including partially saved and restored frames. Then derive peak stack usage from
+those histories and actual frame sizes. General heap-space claims come after
+executable allocation, reclamation and reuse have been specified.
 
-Complexity analysis needs the same abstraction discipline as correctness.
-Users should prove bounds over input sizes, traversals, recurrences and
-potentials, using verified operation costs rather than expanding compiled
-instruction lists at every step.
+**Done when:** a whole-run peak theorem measures live stack slots on the same
+machine execution, rather than relabeling a sufficient address-space bound.
+A live-heap theorem additionally accounts for allocated and reclaimed storage.
 
-- Expose resource contracts for high-level operations and preserve them
-  through compilation with a proved relation to target execution.
-- Compose sequential, branching, looping and recursive bounds at the actual
-  intermediate values. Reuse functional invariants and output-size facts
-  without making functional correctness depend on a proposed cost bound.
-- Improve the existing finite-sum, logarithmic, recurrence and amortized
-  interfaces around real proof friction. Retain initial/final potential and
-  generated work, including repeated occurrences in dynamic worklists.
-- Automate routine bound normalization and application of established
-  recurrence/asymptotic results. The programmer still supplies the essential
-  recurrence, potential or mathematical argument when it is not derivable.
+## Later theory work
 
-**Completion evidence:** an algorithm's resource proof is expressed in
-abstract operation contracts and standard mathematical bounds. Backend
-instantiation supplies justified costs, representation assumptions and
-overhead theorems. This is independence from machine bookkeeping, not a claim
-that every machine model gives the same complexity.
+Cross-model complexity needs an explicit bit encoding, a justified width policy
+and a costed simulation of each RAM instruction. Payload bit-size bounds alone
+do not supply that simulation. Standard complexity-class claims should follow
+those results, not precede them.
 
-## 5. Complexity-theoretic and resource foundations
+Matching lower bounds and tight asymptotics should be added when a concrete
+analysis needs them, reusing mathlib's asymptotic relations. An upper recurrence
+does not establish a matching lower bound.
 
-Maintain foundational work alongside the programming interface. Higher-level
-proofs need a sound way to state which problem, size measure and computational
-resource their conclusions concern.
+## How we work
 
-- Extend reusable size and encoding interfaces, including costs of genuine
-  representation changes. Preserve uniform programs, admissible inputs and
-  word-width assumptions through composition and reductions.
-- Reuse mathlib asymptotic relations and filters directly. Distinguish
-  concrete bounds, asymptotic upper bounds and tighter claims; an upper-bound
-  recurrence alone does not establish a matching lower bound.
-- Complete actual nested-call histories for tighter peak-stack results,
-  accounting for partially saved and restored frames. Distinguish capacity,
-  cumulative footprint and live storage throughout the public interface.
-- Specify allocation and reclamation before claiming general live-heap
-  bounds. Extend resource composition only with a corresponding execution
-  interpretation, not by relabeling an existing address bound as space.
-- Develop explicit bit-level encodings and a costed simulation for comparison
-  with other computation models, reusing suitable existing mathematical results.
-  Complexity-class claims require those simulations and their hypotheses.
-
-**Completion evidence:** resource and model-change theorems identify the same
-implemented computation and state their encoding, simulation and uniformity
-conditions. New backends reuse high-level proof interfaces through verified
-connections; they do not inherit RAM theorems by terminology alone.
-
-## 6. Library organization and documentation
-
-Follow mathlib conventions throughout this research library:
-descriptive module and declaration names, small imports, documented public
-definitions, reusable lemmas before applications, and explicit dependency
-boundaries. Prefer upstream concepts to parallel local foundations.
-
-The README explains the project, research scope and AI-generated content.
-The [Lean documentation](https://vvauted.github.io/Complexity/ComplexityDocs.html)
-contains the user guide; the [API reference](https://vvauted.github.io/Complexity/)
-documents public interfaces. Both should state supported programming
-constructs, proof interfaces and model limitations. Architectural notes should
-explain decisions rather than grow into chronological lists of declarations.
-
-Keep builds reproducible under pinned dependencies and check changed Lean
-modules with the compiler. Avoid unrelated test frameworks, bookkeeping
-machinery or a proof-count scoreboard. AIGC disclosure and semantic review
-remain necessary: successful type checking proves formal statements, not
-their fidelity to an intended algorithm or cost interpretation.
-
-## Work order and criterion for progress
-
-Use existing algorithm developments to drive priorities 1–4 together: expose
-an actual programming or proof obstacle, improve the reusable interface, and
-carry the same program through correctness, complexity and execution again.
-Do not substitute more benchmark solutions for the missing abstractions.
-
-Advance priority 5 where it supports that work, while keeping incomplete
-space and cross-model results visible. Maintain priority 6 continuously.
-Progress means that ordinary programs require fewer implementation-specific
-proofs while retaining their verified execution and resource guarantees.
-The goal is not complete until that experience works across program
-composition and data structures, for both correctness and complexity.
+Advance the first three milestones together through existing consumers.
+Prefer a reusable rule that removes repeated proof work over another algorithm
+example or a new parallel abstraction. Keep module documentation beside the code,
+and keep the [manual](https://vvauted.github.io/Complexity/ComplexityDocs.html)
+accurate about which interfaces are ready to use.

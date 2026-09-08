@@ -26,8 +26,9 @@ Follow mathlib's [style](https://leanprover-community.github.io/contribute/style
 
 Check changed modules and affected consumers with the pinned toolchain, then
 build the library. Update `Complexity.lean` when adding a reusable module and
-update the [manual](docs/ComplexityDocs.lean) when an interface changes.
-[Development instructions](docs/ComplexityDocs/Development.lean) list the build commands.
+update the [manual](https://vvauted.github.io/Complexity/ComplexityDocs.html) when an interface changes.
+[Development instructions](https://vvauted.github.io/Complexity/ComplexityDocs/Development.html)
+list the build commands.
 
 Keep commits focused. Briefly describe the change and what was checked.
 A successful Lean build proves the stated theorem, not that its specification
