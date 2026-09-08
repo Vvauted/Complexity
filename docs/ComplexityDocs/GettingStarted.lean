@@ -193,12 +193,20 @@ ram_def functions := ram_functions% {
   include copyFunctions as Copy;
   include sumFunctions as Sum;
   fn copyThenSum(source : array, destination : array) {
-    let copied ← call Copy.copy(source.base, destination.base, source.length);
+    call Copy.copy(source.base, destination.base, source.length);
     let answer ← call Sum.sum(destination);
     return answer;
   }
 }
 ```
+
+`call f(...);` executes a call for its effects without introducing a source name
+for the returned word; `let _ ← call f(...);` is the explicit discard form.
+Both work in scoped function and `main` bodies, including their nested blocks.
+The frontend allocates a private destination in the inferred frame and uses the
+same word-returning call compiler. Discarding the result does not skip the call,
+its shared-state effects or its costs, and does not add a `Unit` return signature.
+Raw `ram%` and `ram_stmt%` quotations have no inferred frame and require an explicit destination.
 
 The earlier declarations' stored word/array signatures determine argument lowering:
 `Copy.copy` takes three words, while `Sum.sum` takes one array reference. The frontend
@@ -215,6 +223,10 @@ and sufficient code/stack capacity remain required. The mathematical result is t
 modular sum and copied destination contents. A
 [separate time proof](##Examples.Ram.FunctionCompositionTime) bounds that same invocation;
 correctness and termination require no proposed time bound.
+Its source-facing time tactics infer both call sites, including the anonymous copy
+destination. The proof supplies callee contracts, array facts and a bound for the
+remaining sum call; it does not reconstruct either callee loop or local-register roles.
+See [separate call costs](##ComplexityDocs.Complexity) for that interface.
 
 ## Iterate with an element binding
 

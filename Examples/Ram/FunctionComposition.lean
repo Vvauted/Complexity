@@ -13,9 +13,11 @@ import Complexity.Computability.Ram.Compiler.Local.Function.Total
 # Composing imported functions in one executable source
 
 `functions` imports the existing copy and sum implementations and calls them
-from a new function. No callee body is duplicated. The copy's mathematical
-postcondition supplies the destination representation needed by sum, and their
-previously proved contracts are transported through the generated embeddings.
+from a new function. Copy is called for its shared-memory effect, without a
+dummy source binding for its return value. No callee body is duplicated. The
+copy's mathematical postcondition supplies the destination representation needed
+by sum, and their previously proved contracts are transported through the
+generated embeddings.
 
 This is one compiled RAM invocation, not two host-level runner calls. The
 arrays are preloaded and disjoint; allocation and loading are not implemented
@@ -31,7 +33,7 @@ ram_def functions := ram_functions% {
   include copyFunctions as Copy;
   include sumFunctions as Sum;
   fn copyThenSum(source : array, destination : array) {
-    let copied ← call Copy.copy(source.base, destination.base, source.length);
+    call Copy.copy(source.base, destination.base, source.length);
     let answer ← call Sum.sum(destination);
     return answer;
   }

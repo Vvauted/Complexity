@@ -40,6 +40,40 @@ calls need their own rules: their code length is not their execution length.
 See [time bounds](##Complexity.Computability.Ram.Verification.Time.Basic) and
 [straight-line costs](##Complexity.Computability.Ram.Verification.Time.StraightLine).
 
+## Start a separate function time proof
+
+The [source-facing time tactics](##Complexity.Tactic.Ram.Time) operate on the same
+generated body used by the correctness proof:
+
+- `ram_time_vc args entry pattern [facts]` starts a `FunctionTimeBound` at the actual
+  parameter-bound state. Supply the generated body equation among the facts.
+- `ram_time_call time [facts]` applies an independent callee bound to a final call.
+- `ram_time_apply correct time reserving N [facts]` handles a leading call and
+  continues with a bound of `N` on the remainder. Its functional contract supplies
+  the actual returned value, shared-state postcondition and preserved caller locals.
+
+Call expressions and destinations are inferred from the source body, including
+anonymous destinations of discarded calls. Generated lookup, `params_eq` and
+`locals_eq` equations let proved call-length formulas account for the actual
+argument, frame and return costs without unfolding the callee's implementation.
+Supply the generated `result_eq` equation when the return expression remains
+abstract. Other supplied facts handle mathematical argument values and
+representations; remaining obligations are ordinary Lean goals.
+
+These tactics are transparent applications of
+`Ram.Source.FunctionTimeBound.of_body_at`, `call_at` and `call_seq_at` in the
+[function-time interface](##Complexity.Computability.Ram.Verification.Time.Function).
+The final-call rule is conditional and needs no correctness premise. Sequencing
+also uses an independently proved functional contract to establish facts about
+the state where the remainder executes. The theorem `call_seq_at` permits the
+remaining bound to depend on the actual returned value and shared state; the
+convenience tactic uses the supplied `N` independently of that returned pair.
+
+`N` is a bound to justify in the proof, not an operational budget or an unchecked
+cost annotation. The tactics neither choose it nor prove a callee's cost from
+its functional specification. Correctness and termination still have no time-bound
+premise; these rules compose separately proved costs of the same implementation.
+
 ## Keep actual steps with ordinary application
 
 The executable `p.apply.f` returns a word from `p.runTotal.f`; the latter retains
@@ -129,15 +163,21 @@ execution rather than requiring backwards transport through the index map.
 
 `Ram.Source.FunctionTimeBound.call` applies the imported body bound at actual
 argument values and adds the generated argument, frame, return and jump costs.
-The [source-composition time proof](##Examples.Ram.FunctionCompositionTime) uses this
-rule for copy and sum, with copy's budget-free contract supplying the intermediate
-array representation. For `n = xs.length`, `function_timeBound` bounds the body by
+The [source-composition time proof](##Examples.Ram.FunctionCompositionTime) uses
+the source-facing tactics above for copy and sum. It reserves `18 * xs.length + 66`
+for the remaining sum invocation, then proves that bound from the existing sum
+time theorem. Copy's budget-free contract supplies the intermediate destination
+representation, while the call rules retain the source body's real anonymous
+destination and caller locals. No call expression list, discarded-result name or
+intermediate register invariant is reconstructed by this body proof.
+
+For `n = xs.length`, `function_timeBound` bounds the body by
 `37 * n + 107`, and `runTotal_steps_le` bounds the actual complete invocation by
 `37 * n + 170`. These are upper bounds, not general exact step-count equations.
 The full bound includes both inner calls, the outer call and halt, but no host-side
 heap preloading. This is a cost argument for one compiled source function, distinct
-from adding claims about two host-level runners; the current proof still names
-generated call arguments.
+from adding claims about two host-level runners. Discarding copy's returned word
+changes neither its execution nor the cost charged for its private destination.
 
 ## Count calls inside an array fold
 

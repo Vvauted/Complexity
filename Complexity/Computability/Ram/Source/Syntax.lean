@@ -14,6 +14,9 @@ import Lean
 can be introduced with `let`, `let mut`, or a call-result binding. The explicit
 `locals (locals)` header is also supported. Function syntax assigns local register numbers only at
 variable occurrences, not by introducing Lean bindings around the body.
+`call f(args);` and `let _ ← call f(args);` execute a call without binding its
+returned word. They allocate an anonymous destination slot in the same frame;
+the call and frame costs remain part of the compiled execution.
 Outside that syntax, identifiers refer to ordinary Lean bindings of type
 `Ram.Reg`; legacy call targets refer to Lean `Nat` bindings. Function targets
 and `const(t)` retain their enclosing Lean scope, even when a parameter has
@@ -99,6 +102,10 @@ syntax "store[" ramExpr "]" " := " ramExpr ";" : ramStmt
 syntax "read " ident ";" : ramStmt
 syntax "write " ramExpr ";" : ramStmt
 syntax ident " := " "call " ident "(" ramExpr,* ")" ";" : ramStmt
+/-- Execute a source call and discard its returned word using a fresh frame slot. -/
+syntax "call " ident "(" ramExpr,* ")" ";" : ramStmt
+/-- Execute a source call without introducing a lexical result binding. -/
+syntax "let " "_" " ← " "call " ident "(" ramExpr,* ")" ";" : ramStmt
 /-- Bind a fresh immutable word local for the rest of the enclosing block. -/
 syntax "let " ident " := " ramExpr ";" : ramStmt
 /-- Bind a fresh mutable word local for the rest of the enclosing block. -/
@@ -288,6 +295,12 @@ partial def lowerStmt (scope : LocalScope) (strict : Bool) (function : FunctionR
   | `(ramStmt| $x:ident := call $f:ident($args:ramExpr,*);) =>
       let (fn, es) ← function scope strict f args.getElems
       `(Ram.Stmt.call $(← resolveVar x) $fn [$es,*])
+  | `(ramStmt| call $_f:ident($_args:ramExpr,*);) =>
+      Lean.Macro.throwErrorAt stmt
+        "discarding a call result requires a function or named main frame; use 'dst := call' here"
+  | `(ramStmt| let _ ← call $_f:ident($_args:ramExpr,*);) =>
+      Lean.Macro.throwErrorAt stmt
+        "discarding a call result requires a function or named main frame; use 'dst := call' here"
   | `(ramStmt| if $c:ramExpr { $yes:ramStmt* }) =>
       `(Ram.Stmt.ite $(← expr c) $(← block yes) Ram.Stmt.skip)
   | `(ramStmt| if $c:ramExpr { $yes:ramStmt* } else { $no:ramStmt* }) =>
@@ -333,6 +346,10 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
   let mut nextRegister := nextRegister
   let mut statements : Array (Lean.TSyntax `term) := #[]
   for stmt in body do
+    let lowerCall (fn : Lean.TSyntax `ident) (args : Array (Lean.TSyntax `ramExpr)) := do
+      let register ← registerTerm nextRegister
+      let (fn, args) ← function scope strict fn args
+      `(Ram.Stmt.call $register $fn [$args,*])
     let bindLocal (name : Lean.TSyntax `ident) (mutable : Bool)
         (value : Lean.TSyntax `term) := do
       if (arrayField? scope name.getId).isSome then
@@ -344,9 +361,7 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
         (fn : Lean.TSyntax `ident) (args : Array (Lean.TSyntax `ramExpr)) := do
       if (arrayField? scope name.getId).isSome then
         Lean.Macro.throwErrorAt name "assign to an array field instead of declaring it with 'let'"
-      let register := Lean.Syntax.mkNumLit (toString nextRegister)
-      let (fn, args) ← function scope strict fn args
-      let invocation ← `(Ram.Stmt.call $register:num $fn [$args,*])
+      let invocation ← lowerCall fn args
       pure (name, mutable, invocation)
     let binding ← match stmt with
       | `(ramStmt| let $name:ident := $value:ramExpr;) =>
@@ -368,6 +383,14 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
         statements := statements.push statement
     | none =>
         let statement ← match stmt with
+          | `(ramStmt| call $fn:ident($args:ramExpr,*);) => do
+              let invocation ← lowerCall fn args.getElems
+              nextRegister := nextRegister + 1
+              pure invocation
+          | `(ramStmt| let _ ← call $fn:ident($args:ramExpr,*);) => do
+              let invocation ← lowerCall fn args.getElems
+              nextRegister := nextRegister + 1
+              pure invocation
           | `(ramStmt| if $condition:ramExpr { $yes:ramStmt* }) => do
               let yes ← lowerScopedBlock scope immutable nextRegister strict function yes
               nextRegister := yes.nextRegister

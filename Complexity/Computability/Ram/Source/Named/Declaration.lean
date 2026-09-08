@@ -18,6 +18,7 @@ Lean declarations for its functions and source names:
 * `p.function.f` is the actual `Ram.Func` in the table;
 * `p.functionIndex.f` is the function-table index of `f`;
 * `p.function_lookup.f` proves that this entry is `p.function.f`;
+* `p.params_eq.f` and `p.locals_eq.f` simplify its parameter and frame-slot counts;
 * `p.body_eq.f` and `p.result_eq.f` expose the lowered body and return expression;
 * `p.arguments.f` takes word or `Ram.ArrayRef` parameters and constructs their word argument list;
 * `p.arguments_length.f` proves that this list has the function's declared arity;
@@ -224,17 +225,28 @@ private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
   return #[evalDeclaration.raw, timeDeclaration.raw, runDeclaration.raw,
     runTotalDeclaration.raw, applyDeclaration.raw, applyStateDeclaration.raw]
 
+private def layoutEquations (name fn functionName : Lean.TSyntax `ident)
+    (params locals : Lean.TSyntax `term) : Lean.MacroM (Array Lean.Syntax) := do
+  let paramsName := Lean.mkIdentFrom fn (name.getId ++ `params_eq ++ fn.getId)
+  let paramsEquation ← `(command| @[simp] theorem $paramsName:ident :
+    ($functionName:ident).params = $params := rfl)
+  let localsName := Lean.mkIdentFrom fn (name.getId ++ `locals_eq ++ fn.getId)
+  let localsEquation ← `(command| @[simp] theorem $localsName:ident :
+    ($functionName:ident).locals = $locals := rfl)
+  return #[paramsEquation.raw, localsEquation.raw]
+
 private def functionEquations (name fn functionName : Lean.TSyntax `ident)
     (lowered : Lean.TSyntax `term) : Lean.MacroM (Array Lean.Syntax) := do
   match lowered with
-  | `(($_label:str, Ram.Func.mk $_params:term $_locals:term $body:term $result:term)) =>
+  | `(($_label:str, Ram.Func.mk $params:term $locals:term $body:term $result:term)) =>
       let bodyName := Lean.mkIdentFrom fn (name.getId ++ `body_eq ++ fn.getId)
       let bodyEquation ← `(command| theorem $bodyName:ident :
         ($functionName:ident).body = $body := rfl)
       let resultName := Lean.mkIdentFrom fn (name.getId ++ `result_eq ++ fn.getId)
       let resultEquation ← `(command| theorem $resultName:ident :
         ($functionName:ident).result = $result := rfl)
-      return #[bodyEquation.raw, resultEquation.raw]
+      return (← layoutEquations name fn functionName params locals) ++
+        #[bodyEquation.raw, resultEquation.raw]
   | _ => Lean.Macro.throwErrorAt lowered "expected a lowered RAM function"
 
 private def functionDeclarations (name : Lean.TSyntax `ident)
@@ -265,7 +277,8 @@ private def functionDeclarations (name : Lean.TSyntax `ident)
     index := index + 1
   return declarations
 
-private def importDeclarations (name : Lean.TSyntax `ident) (lowered : LoweredNamed) :
+private def importDeclarations (name : Lean.TSyntax `ident) (lowered : LoweredNamed)
+    (sourceNames : Array Lean.Name) :
     Lean.MacroM (Array Lean.Syntax) := do
   let mut declarations := #[]
   for position in [:lowered.imports.size] do
@@ -314,6 +327,10 @@ private def importDeclarations (name : Lean.TSyntax `ident) (lowered : LoweredNa
         $embeddingName:ident (show ($src:ident).program[$literal:num]? = some $original from rfl))
       declarations := declarations ++
         #[indexDeclaration.raw, functionDeclaration.raw, lookupDeclaration.raw]
+      let originalName := Lean.mkCIdentFrom src
+        (sourceNames[position]! ++ `function ++ signature.name)
+      declarations := declarations ++ (← layoutEquations name fn functionName
+        (← `(($originalName:ident).params)) (← `(($originalName:ident).locals)))
       let params : Array Parameter := signature.params.map fun (parameter, kind) =>
         { name := Lean.mkIdent parameter, kind := kind }
       declarations := declarations ++ (← argumentDeclarations name fn params functionName)
@@ -328,6 +345,7 @@ elab_rules : command
   | `(command| $[$doc:docComment]? ram_def $name:ident := $source:term) => do
       let parsed ← Lean.Elab.liftMacroM (parseNamed source)
       let mut imports : Array FunctionImport := #[]
+      let mut sourceNames : Array Lean.Name := #[]
       for dependency in parsed.includes do
         match dependency with
         | `(ramInclude| include $src:ident as $importAlias:ident;) =>
@@ -335,12 +353,14 @@ elab_rules : command
             let some signatures := (functionSignatures.getState (← Lean.getEnv)).find? resolved
               | Lean.throwErrorAt src "included collection must be declared with 'ram_def'"
             imports := imports.push ⟨src, importAlias, signatures⟩
+            sourceNames := sourceNames.push resolved
         | _ => Lean.throwErrorAt dependency "expected 'include collection as Alias;'"
       let lowered ← Lean.Elab.liftMacroM (lowerNamed source imports)
       let declarations ← Lean.Elab.liftMacroM do
         let declaration ← `(command| $[$doc:docComment]? def $name:ident :
           $(lowered.type) := $(lowered.term))
-        let mut declarations := #[declaration.raw] ++ (← importDeclarations name lowered)
+        let mut declarations := #[declaration.raw] ++
+          (← importDeclarations name lowered sourceNames)
         declarations := declarations ++ (← functionDeclarations name
           lowered.parsed lowered.functions lowered.functionScopes lowered.localOffset)
         declarations := declarations ++ (← localRegisterDeclarations

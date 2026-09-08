@@ -348,7 +348,10 @@ this embedding, retaining its arguments, returned value and shared-state postcon
 Apply that contract with `ram_total_apply` and the generated
 `functions.function_lookup.Copy.copy` fact, then reuse the sum contract through
 `functions.embeds.Sum`. Copy's postcondition supplies the destination representation
-needed by sum. Relocation does not discharge representation, equal-length or
+needed by sum. The standalone `call Copy.copy(...);` discards only its scalar
+result binding: its postcondition and shared-memory effects still reach the
+continuation through the same call rule. It is not a `Unit`-returning function.
+Relocation does not discharge representation, equal-length or
 disjointness premises. The proof composes the existing contracts without expanding
 either callee loop; the generated `applyState` result belongs to one compiled run,
 unlike the host-level sequencing in `ArrayCopyFunction`.
@@ -358,6 +361,12 @@ through `functions.embeds.Sum` to `functions.eval.Sum.sumPair`. This also exerci
 relocation of the imported function's own two calls to sum, without reopening them
 or their loops. Imported aliases export lookup, argument and all six observation/run
 interfaces; body equations and local-register names remain with the original declaration.
+Generated `params_eq` and `locals_eq` equations are also available under imported
+aliases. They expose calling-convention sizes without unfolding the callee body.
+The separate time proof reuses the same functional postcondition: `ram_time_apply`
+passes copy's destination representation to the remaining sum-call bound. Its
+`reserving` argument belongs only to that time proof, not this correctness contract
+or the executable call. See [proving complexity](##ComplexityDocs.Complexity).
 
 ## Publish and link a verified implementation
 

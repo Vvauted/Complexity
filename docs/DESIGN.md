@@ -31,6 +31,13 @@ imports, not host callbacks, runtime module loading or arbitrary Lean compilatio
 All six generated observation/run interfaces are available under imported aliases.
 Stored signatures survive further imports; bare term quotations cannot resolve includes.
 
+Scoped `call f(...);` and `let _ ← call f(...);` discard the returned word without
+giving it a source binding. They still lower to the existing call operation with
+a fresh anonymous destination, included in the inferred local frame and charged
+by the same compiler-derived call costs. This is not a new `Unit`-returning ABI or
+an effect-erasing optimization. Raw `ram%` and `ram_stmt%` quotations do not infer
+a frame; their calls retain explicit destinations.
+
 The generic execution state retains input and output fields because functions
 may have effects. Merely carrying those fields does not execute stream operations.
 A pure function's contract must establish independence from their initial contents
@@ -104,6 +111,15 @@ composition into one RAM program or supply a combined RAM-cost theorem.
 Source composition is separate: including copy and sum and calling them inside a
 new function produces one compiled invocation. Its cost proof reuses independent
 callee bounds and counts the actual inner and outer calling conventions.
+
+Source-facing time rules start at the actual parameter-bound state and infer the
+call expressions and destination from the source body. A supplied correctness
+contract exposes the returned value, shared-state postcondition and preserved
+caller locals to the rest of the independent time proof. A remaining bound is
+proved against that continuation, not passed to the implementation as fuel.
+Generated parameter/local-count equations and proved call-length formulas reduce
+overhead without reopening callee bodies. This automation does not choose the
+mathematical bounds, infer invariants or remove representation and safety premises.
 
 An `array` parameter is a typed by-value pair of words, not a newly allocated
 descriptor. Its base and length are passed by the same call compiler as scalar

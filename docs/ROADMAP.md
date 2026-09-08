@@ -26,9 +26,13 @@ progress, termination, framing and compiler-derived loop costs. A fold step can
 be a read-only source expression or a real call to an already proved function.
 The call-based exact-count rule currently requires a constant callee-body count.
 Lexical `let`, `let mut` and call-result bindings allocate locals at their
-declaration sites. Scoped `for x in xs` binds each loaded element and manages
-private cursor locals. Source-derived function rules infer those locals from
-generated body and return equations for expression updates and fixed helper calls.
+declaration sites. Scoped `call f(...);` and `let _ ← call f(...);` discard a
+returned word without a dummy source binding, retaining its actual call and effects.
+The private destination still contributes to the inferred frame and cost;
+`Unit` return signatures are not implemented. Scoped `for x in xs` binds each loaded
+element and manages private cursor locals. Source-derived function rules infer
+those locals from generated body and return equations for expression updates and
+fixed helper calls.
 The expression rule retains the array descriptor and all additional word parameters;
 sum and count need no hand-written cursor or target-preservation invariant.
 Clients still prove the expression's read safety and evaluation, or supply the
@@ -77,6 +81,10 @@ Stored word/array signatures guide their calls; generated function-table embeddi
 transport contracts after linking and relocation. The copy-then-sum source client
 uses the existing copy and sum implementations inside one compiled invocation,
 with an independent cost proof rather than host-side runner sequencing.
+Source-facing time rules infer call arguments and destinations from the generated
+body, including discarded results, and reuse correctness postconditions to continue
+the separate cost argument on actual shared state. Bounds and reserves remain
+proof obligations, not execution fuel or supplied prices.
 
 `TotalComponent` carries that separation through reusable program packaging and
 linking. A separate time proof recovers the same code through the resource-aware
@@ -135,7 +143,7 @@ refinement has been supplied; it does not derive that refinement automatically.
   A separate conditional body bound gives at most `19 * n + 42` steps for the actual
   single copy invocation, including call and halt, without entering its termination proof.
 - Cross-module source calls use `include copyFunctions as Copy` and
-  `include sumFunctions as Sum`. The new `FunctionComposition` client transports
+  `include sumFunctions as Sum`. The `FunctionComposition` client transports
   their contracts through generated embeddings and calls them from one declared
   `copyThenSum`. Its ordinary result retains the modular sum, copied destination
   and framing; no callee loop is reimplemented. This is a different executable
@@ -145,8 +153,12 @@ refinement has been supplied; it does not derive that refinement automatically.
   Separate timing bounds the body by `37 * n + 107` and the full invocation by
   `37 * n + 170`, where `n` is the represented list length. These are upper bounds,
   not general exact equalities. The full bound includes both inner calls, the outer
-  call and halt, but not host-side heap preloading. The proof still configures
-  generated call arguments and local bindings.
+  call and halt, but not host-side heap preloading. The body's separate proof uses
+  `ram_time_vc`, `ram_time_apply` and `ram_time_call`; it no longer assembles call
+  expressions, names the discarded result slot or writes an intermediate register
+  invariant. Generated header equations and proved call-length rules normalize
+  actual overhead without expanding callee bodies. The author still supplies the
+  callee contracts, array facts and a sufficient bound for the remaining call.
 - The recursive factorial contract uses ordinary induction, generated parameter
   binding and the recursive call's argument/result contract. Its algorithmic
   proof names no registers or callee frames. A separate one-step bridge retains
@@ -202,9 +214,9 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
 
 - Make the source declaration the single executable definition. Expose parameters,
   local variables and returned values to proofs without register arithmetic.
-- Support effect-only calls without dummy scalar bindings. Calls currently require
-  an assignment or binding such as `let copied ← call Copy.copy(...)`; there is no
-  standalone call/discard statement or `Unit` result.
+- Build on discarded call results for effectful programming. Scoped standalone
+  calls no longer require dummy source bindings, but callees still return words;
+  useful typed result signatures, including `Unit`, remain separate work.
 - Build on the generated parameter binding, return/time observations and runtime
   entry points. Generate source-facing semantic equations that make larger body
   proofs compositional; keep the input/output driver as an optional executable
@@ -281,6 +293,12 @@ them to source programs with less mechanical bookkeeping.
 
 - Derive local costs from compiled operations and compose them at actual
   intermediate values. Reuse functional invariants and output-size facts.
+- Extend the source-facing separate-time rules beyond leading/final calls.
+  The copy-then-sum body uses its callee bounds and postconditions without local
+  register roles or inner-frame arithmetic. State-dependent remaining bounds are
+  available through `FunctionTimeBound.call_seq_at`; the convenience tactic takes
+  an explicitly chosen reserve. Richer bodies should expose their mathematical
+  cost obligations without reconstructing source statements or frame metadata.
 - Expose the implementation's loop sums, recursive-call sizes and nonrecursive
   work without rebuilding the machine simulation in an algorithm proof.
 - Extend the constant-cost call fold to data-dependent step bounds using the
