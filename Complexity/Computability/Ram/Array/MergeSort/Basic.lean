@@ -9,6 +9,7 @@ import Complexity.Computability.Ram.Array.MergeSort.Ordering
 import Complexity.Computability.Ram.Array.TwoBuffer
 import Complexity.Computability.Ram.Verification.Recursion.Basic
 import Complexity.Computability.Ram.Verification.Recursion.Time
+import Complexity.Computability.Ram.Verification.Time.StraightLine
 import Complexity.Computability.Recurrence.Balanced
 import Complexity.Tactic.Ram.Total
 
@@ -115,7 +116,8 @@ theorem initialize_total_contract {heapLimit depth : Nat} {functions : Program}
 theorem initialize_contract {control heapLimit depth : Nat} {functions : Program}
     (s : State w) : Contract control functions heapLimit depth setup
       (fun t => t = s) (fun t => t = initialized s) (fun _ => 10) := by
-  ram_vc t ht [setup, initialized, ht]
+  exact (initialize_total_contract s).with_timeBound
+    (TimeBound.of_isStraightLine (by simp [setup, Stmt.IsStraightLine]))
 
 private theorem half_toNat {heapLimit : Nat} {base scratch : Word w} {xs : List (Word w)}
     {s : State w} (hw : 2 ≤ w) (h : Pre heapLimit base scratch xs s) :

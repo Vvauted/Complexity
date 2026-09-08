@@ -139,6 +139,7 @@ import Complexity.Computability.Ram.Source.Named.Basic
 import Complexity.Computability.Ram.Source.Named.Declaration
 import Complexity.Computability.Ram.Source.Safe
 import Complexity.Computability.Ram.Source.State
+import Complexity.Computability.Ram.Source.StraightLine
 import Complexity.Computability.Ram.Source.Syntax
 import Complexity.Computability.Ram.Time.Basic
 import Complexity.Computability.Ram.Time.Logarithm
@@ -180,6 +181,7 @@ import Complexity.Computability.Ram.Verification.StateM.Traversal
 import Complexity.Computability.Ram.Verification.Time.Basic
 import Complexity.Computability.Ram.Verification.Time.Capacity
 import Complexity.Computability.Ram.Verification.Time.Composition
+import Complexity.Computability.Ram.Verification.Time.StraightLine
 import Complexity.Computability.Ram.Verification.Total
 import Complexity.Computability.Ram.Word
 import Complexity.Computability.Recurrence.AkraBazzi

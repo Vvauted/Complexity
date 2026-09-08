@@ -137,11 +137,12 @@ theorem recursive_timeBound (hw : 2 ≤ w)
           (fun _ => budget left.length + 81 + (budget right.length + 87 + (53 * n + 26))) :=
         TimeBound.seq (leftCall.mono_depth leftDepth) leftCost rightRest
           (fun _ _ _ _ => Nat.le_refl _)
-      have setupContract := initialize_contract (control := control) (functions := functions)
-        (heapLimit := heapLimit) (depth := Nat.clog 2 n) entry
+      have setupCost : TimeBound control functions heapLimit (Nat.clog 2 n) setup
+          (fun s => s = entry) (fun _ => 10) :=
+        TimeBound.of_isStraightLine (by simp [setup, Stmt.IsStraightLine])
       have setupTotal := initialize_total_contract (functions := functions)
         (heapLimit := heapLimit) (depth := Nat.clog 2 n) entry
-      have bodyCost := TimeBound.seq setupTotal setupContract.timeBound leftRest
+      have bodyCost := TimeBound.seq setupTotal setupCost leftRest
         (bound := fun _ => 10 + (budget left.length + 81 +
           (budget right.length + 87 + (53 * n + 26))))
         (fun _ _ _ _ => Nat.le_refl _)

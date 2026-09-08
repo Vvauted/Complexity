@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.Contracts
 import Complexity.Computability.Ram.Verification.Time.Composition
+import Complexity.Computability.Ram.Verification.Time.StraightLine
 import Complexity.Tactic.Ram.Total
 import Init.Data.List.Nat.TakeDrop
 
@@ -118,7 +119,8 @@ theorem copy_body_contract {control heapLimit depth : Nat} {program : Program}
     (hdestination : (s.regs 1).toNat < heapLimit) :
     Contract control program heapLimit depth copyBody (fun t => t = s)
       (fun t => t = copyStep s) (fun _ => 16) := by
-  ram_vc t ht [copyBody, copyStep, ht, hsource, hdestination]
+  exact (copy_body_total_contract s hsource hdestination).with_timeBound
+    (TimeBound.of_isStraightLine (by simp [copyBody, Stmt.IsStraightLine]))
 
 /-- Preloaded input arrays and the three runtime operands. Destination
 contents are arbitrary but its allocated interval has the source length. -/
@@ -327,10 +329,7 @@ theorem copy_timeBound {control heapLimit depth : Nat} {program : Program}
     apply TimeBound.while_linear (CopyInvariant heapLimit source destination xs ys entry)
       (fun s => (s.regs 2).toNat) 16
     · exact copy_iteration_total_contract hw hlen hdisjoint entry
-    · intro s ⟨hs, hz⟩ bodySteps t bodyExecution
-      have addresses := copy_addresses hlen hs hz
-      exact (copy_body_contract s addresses.1 addresses.2).timeBound s rfl
-        bodySteps t bodyExecution
+    · exact TimeBound.of_isStraightLine (by simp [copyBody, Stmt.IsStraightLine])
   have bound := hloop entry (copy_start hpre) steps finish execution
   simpa only [hpre.count, Nat.mul_comm] using bound
 
