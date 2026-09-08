@@ -49,10 +49,8 @@ ram_def functions := ram_functions% {
   }
   fn sumSquares(xs : array) {
     let mut accumulator := 0;
-    while xs.length {
-      accumulator := call addSquare(accumulator, load[xs.base]);
-      xs.base += 1;
-      xs.length -= 1;
+    for x in xs {
+      accumulator := call addSquare(accumulator, x);
     }
     return accumulator;
   }

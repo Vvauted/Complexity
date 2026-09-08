@@ -57,26 +57,43 @@ loading of Lean lists are not supplied by this parameter syntax. See
 
 ## Fold through a proved function
 
-The [call-based fold](##Complexity.Computability.Ram.Array.Fold.Call) connects a fixed
-source function call at each array element to ordinary `List.foldl`.
-`Ram.Source.Array.Fold.Call.loop_safe` reuses the existing cursor, termination and
-framing rules. The client supplies the actual callee's `FunctionContract`, its lookup
-and argument adapter, and safe-read premises. That contract must return the mathematical
-step value and preserve shared state; the calling convention restores caller locals.
-No time bound is needed for this correctness proof.
+The [array-fold sample](##Examples.Ram.ArrayFold) writes its traversal directly:
 
-The [array-fold sample](##Examples.Ram.ArrayFold) reuses `sumSquares` from the same
-`LocalBindings.functions` declaration. Each iteration calls `addSquare`, which calls
+```lean
+for x in xs {
+  accumulator := call addSquare(accumulator, x);
+}
+```
+
+The frontend lowers `for` to [ordinary source instructions](##Complexity.Computability.Ram.Source.ForIn).
+It copies the array's base and length into two fresh private cursor locals, then
+loads each element into a third local. The source binding `x` is immutable and
+scoped to the body. Loop control does not advance the original array descriptor;
+array contents are read on each visit, not copied into a snapshot.
+
+`Ram.Source.Array.ForIn.function_contract` packages this single-array, scalar-accumulator,
+fixed-helper shape as an ordinary `List.foldl`. Generated body and return equations
+determine the slots and call target; the sample discharges the layout premise with `decide`.
+The client supplies the actual helper's `FunctionContract`, lookup and array premises,
+without constructing a register record or a separate list of call expressions.
+The helper must return the mathematical step value and preserve shared state.
+This [function-level rule](##Complexity.Computability.Ram.Array.ForIn.Function)
+reuses cursor safety, termination and framing, with no time bound.
+
+The sample reuses `sumSquares` from the same `LocalBindings.functions` declaration.
+Each iteration calls `addSquare`, which calls
 the existing `square`. Its contract and `eval_eq` theorem describe the returned word
 as the encoded ordinary sum `(xs.map (fun x => x.toNat ^ 2)).sum` and preserve caller
 state. `eval_toNat` recovers the exact natural-number result when that sum fits;
 the general equation retains modular word arithmetic.
 
-This is a read-only scalar fold, not a free Lean callback or a new `for` construct.
-The source still contains an explicit `while`, call and cursor updates. The proof
-configures the named pointer, remaining-length and accumulator locals and relates
-the declared body to the fold rule. Represented input, non-wrapping addresses and
-callee safety remain required; mutable folds and automatic list loading are not supplied.
+The public function rule covers this read-only fold shape, not arbitrary `for` bodies
+or automatic proofs of every source loop. Mathematical steps are specifications of
+real calls, not free Lean callbacks. Represented input, non-wrapping addresses and
+callee safety remain required; mutable-fold contracts and automatic list loading
+are not supplied by this rule. The lower-level
+[call-based fold](##Complexity.Computability.Ram.Array.Fold.Call) remains available
+for explicitly configured cursor loops.
 
 ## Choose what the proof needs to observe
 

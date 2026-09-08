@@ -19,6 +19,9 @@ import Complexity.Computability.Ram.Array.Function
 import Complexity.Computability.Ram.Array.Count
 import Complexity.Computability.Ram.Array.Fold
 import Complexity.Computability.Ram.Array.Fold.Call
+import Complexity.Computability.Ram.Array.ForIn
+import Complexity.Computability.Ram.Array.ForIn.Call
+import Complexity.Computability.Ram.Array.ForIn.Function
 import Complexity.Computability.Ram.Array.Sum
 import Complexity.Computability.Ram.Array.Indexed
 import Complexity.Computability.Ram.Array.Insertion.Basic
@@ -143,6 +146,7 @@ import Complexity.Computability.Ram.Problem.Encoding
 import Complexity.Computability.Ram.Reduction
 import Complexity.Computability.Ram.Source.Basic
 import Complexity.Computability.Ram.Source.Expr
+import Complexity.Computability.Ram.Source.ForIn
 import Complexity.Computability.Ram.Source.Function.Basic
 import Complexity.Computability.Ram.Source.Function.Eval
 import Complexity.Computability.Ram.Source.Function.Time

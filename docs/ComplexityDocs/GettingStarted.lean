@@ -170,6 +170,35 @@ reuses it twice, without reopening the loop proof. Range and overflow premises s
 belong to the operation contract. See [data models](##ComplexityDocs.Models) for the
 representation boundary and current limits on array-valued source expressions.
 
+## Iterate with an element binding
+
+The [array-fold sample](##Examples.Ram.ArrayFold) uses the same callable helpers
+from the local-binding example:
+
+```lean
+fn sumSquares(xs : array) {
+  let mut accumulator := 0;
+  for x in xs {
+    accumulator := call addSquare(accumulator, x);
+  }
+  return accumulator;
+}
+```
+
+`for` copies the descriptor into private cursor locals and loads an immutable,
+block-local `x` on each visit. Its generated control code does not advance `xs`
+itself. Array contents are read during the traversal, not copied beforehand.
+The same scoped block syntax supports local declarations, branches and calls.
+
+For this single-array scalar-call pattern,
+`Ram.Source.Array.ForIn.function_contract` takes the generated body and return
+equations, the helper's contract and the mathematical array premises. It infers
+the private slots; a decidable layout fact replaces hand-written cursor setup.
+The sample then uses an ordinary `List.foldl` identity to state its sum of squares.
+The [separate cost rule](##ComplexityDocs.Complexity) charges the descriptor copies,
+element bindings and real calls. More general loop bodies still need their own
+invariants and implementation proofs; this is not an arbitrary Lean compiler.
+
 ## State properties of a function value
 
 The [local-binding sample](##Examples.Ram.LocalBindings) states its result directly

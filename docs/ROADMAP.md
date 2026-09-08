@@ -24,8 +24,11 @@ Array sum, occurrence counting and the call-based sum of squares share cursor
 progress, termination, framing and compiler-derived loop costs. A fold step can
 be a read-only source expression or a real call to an already proved function.
 The call-based exact-count rule currently requires a constant callee-body count.
-Lexical `let`,
-`let mut` and call-result bindings allocate locals at their declaration sites.
+Lexical `let`, `let mut` and call-result bindings allocate locals at their
+declaration sites. Scoped `for x in xs` binds each loaded element and manages
+private cursor locals. For the single-array scalar-call fold, a function rule
+infers those locals from generated body and return equations; clients provide
+the helper's mathematical contract and array representation premises.
 The implementations' internal representation proofs still show why the
 source-facing work below is unfinished.
 
@@ -97,10 +100,12 @@ refinement has been supplied; it does not derive that refinement automatically.
   used by the two-argument sample. Its proof reuses that contract and an ordinary
   `List.foldl` identity; it never expands the helper's implementation. Its result
   is the encoded natural-number sum of squared decoded words. A separate body
-  equation proves `74 * n + 4`, and executable application proves `74 * n + 42`
+  equation proves `76 * n + 8`, and executable application proves `76 * n + 67`
   including all calls and halt. These are properties of one implementation, not
-  supplied results or cost annotations. The source still spells out a `while`
-  and cursor updates, and the body proof still identifies those named locals.
+  supplied results or cost annotations. The source uses `for x in xs`; its
+  function proof does not name private cursors, extract call expressions or
+  assemble register roles. Descriptor copies, actual element loads and the
+  larger local frame all contribute to the count.
 - Array arguments remove pointer/length assembly at typed call sites. The
   two-array sample states its result using list concatenation, although the
   program only adds two returned sums and never allocates a concatenated array.
@@ -109,12 +114,13 @@ refinement has been supplied; it does not derive that refinement automatically.
   call blocks. The unbounded executable application additionally includes the outer
   call and halt. This is a checked path from mathematical list contents to both
   the implementation's returned value and its full call count, not a new loader.
-- The convenience boundary is still inside implementation proofs: fold clients
-  identify their accumulator and cursor, and exact call-cost proofs still name
-  source locals. Simplification now carries array representations across parameter
-  and scalar-result binding in the pair's correctness proof. Generated verification
-  conditions should carry more of this bookkeeping; typed parameters alone do not
-  make loops or recursive proofs feel like ordinary Lean.
+- The source-derived traversal rule currently handles one array parameter, one
+  scalar accumulator and a fixed verified two-argument helper. The source syntax
+  accepts richer bodies, but their proofs do not yet receive the same convenience.
+  Other fold clients and recursive proofs still identify source locals.
+  Simplification carries array representations across parameter and scalar-result
+  binding in the pair's correctness proof. Generated verification conditions
+  should handle more of this bookkeeping without hiding genuine data invariants.
 
 ## 1. Prove the program that the user writes
 
@@ -128,10 +134,11 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
   entry points. Generate source-facing semantic equations that make larger body
   proofs compositional; keep the input/output driver as an optional executable
   adapter. Producing the entry points alone does not prove an algorithm's contract.
-- Use the shared expression/call fold as the first traversal interface: source
-  bindings should identify the element and accumulator, while the library handles
-  cursor setup and advancement. Derive the proof rule from that declaration so
-  clients do not separately extract its call expressions or assemble register roles.
+- Extend the scoped traversal's source-derived proof rule beyond its first
+  single-array scalar-call pattern. Mixed parameters, local helper-result bindings
+  and richer updates should reuse the same cursor and framing proofs. Bring
+  existing expression-fold and recursive consumers to this source-facing interface,
+  without making clients extract expressions or assemble register roles.
 - Build on typed array calls and the executable function adapter: support useful
   local data bindings and return values through that same compiled call path.
   Do not confuse proof-level `Part` observations with a runnable frontend, or

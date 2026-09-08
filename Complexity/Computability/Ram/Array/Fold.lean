@@ -313,7 +313,9 @@ private theorem step_refines (registers : Registers) {body : Stmt} {program : Pr
   · intro r hp hc ha
     exact (advanceState_other registers _ s hp hc ha).trans (represented.other r hp hc ha)
 
-private theorem forM_modify_run (step : Word w → Word w → Word w)
+/-- The native word-accumulator model is the ordinary list fold. Both explicit
+cursor loops and scoped element traversals reuse this same model equation. -/
+theorem forM_modify_run (step : Word w → Word w → Word w)
     (xs : List (Word w)) (acc : Word w) :
     ((List.forM xs (fun x => modify (fun a => step a x)) :
       StateM (Word w) PUnit).run acc).2 = xs.foldl step acc := by

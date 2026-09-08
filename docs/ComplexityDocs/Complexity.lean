@@ -71,27 +71,31 @@ Neither lemma supplies an unproved cost or removes the stack-capacity premise.
 
 ## Count calls inside an array fold
 
-`Ram.Source.Array.Fold.Call.loop_localMeasured` adds an exact count to the same
-completed loop established by the budget-free fold rule. It requires a proof that
-every completed callee-body execution has the constant count `bodySteps`.
-`callSteps` includes that body, evaluated arguments, frame handling and the return
-expression. With `n` remaining elements, the loop count is `(callSteps + 11) * n + 2`:
-eight cursor instructions, the true guard and back edge are included per iteration,
-and the final false guard is counted even for an empty array.
+`Ram.Source.Array.ForIn.function_bodyTime` observes the same completed invocation
+established by the budget-free function contract. For its single-array, scalar-accumulator,
+fixed-helper shape, it requires a proof that every completed helper-body execution has
+the constant count `bodySteps`. `Fold.Call.callSteps` includes that body, evaluated
+arguments, frame handling and the return expression. The function-body count is
+`(callSteps + 14) * n + 8`: each iteration includes the element load and binding,
+cursor updates, guard and back edge. The constant term includes accumulator
+initialization, both descriptor copies and the final false guard, also for an empty array.
 
 In [the array-fold sample](##Examples.Ram.ArrayFold), `sumSquares` calls `addSquare`
 for each word, and `addSquare` calls the existing `square`. The separate helper-body
-proof gives 23 steps; its complete call at this loop site takes 63. Including
-accumulator initialization, `bodyTime_eq` gives `74 * n + 4` for the function body.
-`runSumSquares_eq` adds the outer call, return and halt, giving `74 * n + 42` on
+proof gives 23 steps; its complete call on the accumulator and loaded element takes 62.
+Thus `bodyTime_eq` gives `76 * n + 8` for the function body.
+`runSumSquares_eq` adds the outer call, return and halt, giving `76 * n + 67` on
 the same represented input. These are real compiled calls, not priced mathematical
-callbacks. Code and stack must fit, and host-side heap preloading is not a RAM loader
-included in this count.
+callbacks. The outer frame includes the three private iteration locals; those slots
+are not free merely because the source syntax hides them. Code and stack must fit,
+and host-side heap preloading is not a RAM loader included in this count.
 
 This specialized rule covers constant callee-body counts. Data-dependent step costs
 are not yet packaged as a dedicated call-fold rule; use the general time-bound and
 loop-composition interfaces below. The mathematical `List.foldl` view supplies neither
-free execution nor a cost annotation.
+free execution nor a cost annotation. The lower-level `Fold.Call.loop_localMeasured`
+still describes its explicit cursor loop, without the `for` descriptor copies
+and element-binding step; that count is not the current `sumSquares` body count.
 
 ## Choose the argument that matches the loop
 

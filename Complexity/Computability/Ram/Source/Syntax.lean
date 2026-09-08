@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Source.Basic
+import Complexity.Computability.Ram.Source.ForIn
 import Lean
 
 /-!
@@ -25,6 +25,10 @@ two ordinary word parameters, exposed as `xs.base` and `xs.length`; `xs[i]`
 loads from its base. Named calls check the declared parameter kinds and pass
 both fields for an array argument. An array handle is not a word expression.
 The standalone `ram_fun%` form and lexical `let` bindings remain word-valued.
+`for x in xs { ... }` traverses a named array parameter. It copies the base and
+length into fresh cursor locals and loads an immutable `x` for each iteration;
+the generated cursor updates do not modify the array descriptor. Elements are
+read from memory at each iteration, not snapshotted before the loop.
 
 Lexical declarations allocate fresh frame slots, including when shadowing an
 outer name. An initializer sees the previous scope; branch and loop bindings
@@ -105,6 +109,8 @@ syntax "let " "mut " ident " ← " "call " ident "(" ramExpr,* ")" ";" : ramStmt
 syntax "if " ramExpr " {" ramStmt* "}" : ramStmt
 syntax "if " ramExpr " {" ramStmt* "}" " else " "{" ramStmt* "}" : ramStmt
 syntax "while " ramExpr " {" ramStmt* "}" : ramStmt
+/-- Traverse a typed array parameter with an immutable block-local element. -/
+syntax "for " ident " in " ident " {" ramStmt* "}" : ramStmt
 
 /-- Quote a RAM statement block. Braces delimit control-flow bodies; atomic
 statements end in semicolons. Empty blocks are `Stmt.skip`. -/
@@ -288,6 +294,9 @@ partial def lowerStmt (scope : LocalScope) (strict : Bool) (function : FunctionR
       `(Ram.Stmt.ite $(← expr c) $(← block yes) $(← block no))
   | `(ramStmt| while $c:ramExpr { $body:ramStmt* }) =>
       `(Ram.Stmt.while $(← expr c) $(← block body))
+  | `(ramStmt| for $_element:ident in $_array:ident { $_body:ramStmt* }) =>
+      Lean.Macro.throwErrorAt stmt
+        "'for' requires a function frame and a typed array parameter"
   | _ => Lean.Macro.throwErrorAt stmt "unsupported RAM statement"
 
 partial def lowerBlock (scope : LocalScope) (strict : Bool) (function : FunctionResolver)
@@ -372,6 +381,25 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
               let loop ← lowerScopedBlock scope immutable nextRegister strict function loop
               nextRegister := loop.nextRegister
               `(Ram.Stmt.while $(← lowerExpr scope strict condition) $(loop.term))
+          | `(ramStmt| for $element:ident in $array:ident { $loop:ramStmt* }) => do
+              let some arrayBinding := scope.find? (fun entry =>
+                  entry.name == array.getId && entry.kind == .array)
+                | Lean.Macro.throwErrorAt array "expected an array parameter"
+              if (arrayField? scope element.getId).isSome then
+                Lean.Macro.throwErrorAt element "a loop variable cannot shadow an array field"
+              let pointer ← registerTerm nextRegister
+              let remaining ← registerTerm (nextRegister + 1)
+              let elementRegister := nextRegister + 2
+              let elementTerm ← registerTerm elementRegister
+              let loopScope := (scope.filter (fun entry => entry.name != element.getId)).push
+                ⟨element.getId, elementRegister, .word⟩
+              let loopImmutable := (immutable.filter (· != element.getId)).push element.getId
+              let loop ← lowerScopedBlock loopScope loopImmutable (nextRegister + 3)
+                strict function loop
+              nextRegister := loop.nextRegister
+              `(Ram.Stmt.forIn $pointer $remaining $elementTerm
+                (Ram.Expr.var $(← registerTerm arrayBinding.register))
+                (Ram.Expr.var $(← registerTerm (arrayBinding.register + 1))) $(loop.term))
           | _ => do
               match stmt with
               | `(ramStmt| $name:ident := $_value:ramExpr;) => checkMutable immutable name

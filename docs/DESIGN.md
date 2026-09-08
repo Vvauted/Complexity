@@ -92,6 +92,16 @@ unchanged shared state. Its separate exact-count rule adds the real call and
 loop instructions to a proved constant callee-body count. This does not make
 ordinary Lean callbacks executable or provide a data-dependent fold-cost rule.
 
+Scoped `for x in xs` lowers to the same statements: two fresh cursor locals copy
+the descriptor, and a third local receives each actual element load. The source
+element binding is immutable and does not escape the body. Generated control
+code leaves the original descriptor alone; array contents are read at each
+visit, not snapshotted. The generic AST helper retains its actual sequential
+evaluation order, while frontend freshness makes the copied descriptor stable.
+All copies, bindings and enlarged call frames retain their compiler-derived cost.
+For the single-array scalar-call pattern, a function rule reads the body/result
+equations to infer those slots, reusing the same traversal and callee contract.
+
 ## The current machine model
 
 Words and addresses are finite bit vectors. Arithmetic has the specified modular
