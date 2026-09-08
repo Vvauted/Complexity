@@ -3,10 +3,9 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Array.Slice
+import Complexity.Computability.Ram.Array.Fold
 import Complexity.Computability.Ram.Source.Function.Time
 import Complexity.Computability.Ram.Source.Named.Declaration
-import Complexity.Computability.Ram.Verification.StateM.Traversal
 
 /-!
 # A callable function summing a represented array
@@ -42,8 +41,8 @@ theorem wordSum_toNat (xs : List (Word w)) :
 
 /-- A reusable function over an existing array, with no input/output driver. -/
 ram_def sumFunctions := ram_functions% {
-  fn sum(pointer, remaining) locals (accumulator) {
-    accumulator := 0;
+  fn sum(pointer, remaining) {
+    let mut accumulator := 0;
     while remaining {
       accumulator := accumulator + load[pointer];
       pointer := pointer + 1;
@@ -91,17 +90,20 @@ def nextCount : Expr :=
   | .seq _ (.seq _ (.assign _ value)) => value
   | _ => .const 0
 
+private def foldRegisters : Fold.Registers where
+  pointer := sumFunctions.localReg.sum.pointer
+  remaining := sumFunctions.localReg.sum.remaining
+  accumulator := sumFunctions.localReg.sum.accumulator
+  pointer_ne_remaining := by decide
+  pointer_ne_accumulator := by decide
+  remaining_ne_accumulator := by decide
+
 theorem block_wellFormed : block.WellFormed 3 := by
   simp [block, sumFunctions.body_eq.sum, Stmt.WellFormed, Expr.Bounded]
 
 /-- The body has no calls, so its contract is independent of the function table. -/
 theorem block_callsValid (program : Program) : Compiler.CallsValid program block := by
   simp [block, sumFunctions.body_eq.sum, Compiler.CallsValid]
-
-private theorem shifted_address (base : Word w) (i : Nat) :
-    arrayAddr (base + 1) i = arrayAddr base (i + 1) := by
-  change arrayAddr (arrayAddr base 1) i = arrayAddr base (i + 1)
-  rw [arrayAddr_add, Nat.add_comm 1 i]
 
 /-- Removing the first logical element advances the represented base by one
 actual word address. This is the standard array suffix view. -/
@@ -116,6 +118,9 @@ def bodyResult (s : Source.State w) : Source.State w :=
   let a := s.setReg 2 (s.eval sumValue)
   let b := a.setReg 0 (a.eval nextPointer)
   b.setReg 1 (b.eval nextCount)
+
+private theorem bodyResult_eq_stepState (s : Source.State w) :
+    bodyResult s = Fold.stepState foldRegisters sumValue s := rfl
 
 @[simp] theorem bodyResult_pointer (s : Source.State w) :
     (bodyResult s).regs 0 = s.regs 0 + 1 := by
@@ -148,93 +153,23 @@ theorem bodyResult_other (s : Source.State w) (r : Reg) (hr : 3 ≤ r) :
 theorem body_safe {program : Program} {H depth : Nat} (s : Source.State w)
     (haddr : (s.regs 0).toNat < H) :
     Source.SafeExec program H depth body s (bodyResult s) := by
-  refine .seq (.assign ?_) (.seq (.assign ?_) (.assign ?_))
-  · exact ⟨trivial, trivial, haddr⟩
-  · exact ⟨trivial, trivial⟩
-  · exact ⟨trivial, trivial⟩
+  simpa only [bodyResult_eq_stepState] using
+    (Fold.body_safe foldRegisters (program := program) (heapLimit := H) (depth := depth)
+      (value := sumValue) s ⟨trivial, trivial, haddr⟩)
 
 theorem bodyResult_count_toNat (hw : 0 < w) (s : Source.State w)
     (hz : s.regs 1 ≠ 0) :
     ((bodyResult s).regs 1).toNat = (s.regs 1).toNat - 1 := by
-  have hp : 0 < (s.regs 1).toNat := Nat.pos_of_ne_zero
-    (fun h => hz ((Word.toNat_eq_zero_iff _).mp h))
-  have hone : (1 : Word w).toNat = 1 := BitVec.toNat_one hw
-  have hle : (1 : Word w).toNat ≤ (s.regs 1).toNat := by
-    rw [hone]
-    exact hp
-  rw [bodyResult_count]
-  change (BinOp.eval .sub (s.regs 1) 1).toNat = (s.regs 1).toNat - 1
-  rw [BinOp.eval_sub_toNat_of_le _ _ hle, hone]
+  simpa only [bodyResult_eq_stepState] using
+    (Fold.stepState_remaining_toNat foldRegisters (value := sumValue) hw s hz)
 
--- Only the accumulator is native model state. The remaining list describes
--- memory, while the pointer endpoint and untouched state stay in the relation.
-private structure LoopRep (H : Nat) (entry : Source.State w) (target : Word w)
-    (remaining : List (Word w)) (acc : Word w) (s : Source.State w) : Prop where
-  array : ArrayRep s.mem (s.regs 0) remaining
-  count : (s.regs 1).toNat = remaining.length
-  heap : (s.regs 0).toNat + remaining.length ≤ H
-  fit : (s.regs 0).toNat + remaining.length < 2 ^ w
-  sum : s.regs 2 = acc
-  endpoint : arrayAddr (s.regs 0) remaining.length = target
-  mem : s.mem = entry.mem
-  input : s.input = entry.input
-  output : s.outputRev = entry.outputRev
-  other : ∀ r, 3 ≤ r → s.regs r = entry.regs r
-
-private theorem body_refines {program : Program} {H depth : Nat}
-    {entry : Source.State w} {target : Word w} (hw : 0 < w)
-    (x : Word w) (xs : List (Word w)) :
-    Source.Refines program H depth body (LoopRep H entry target (x :: xs))
-      (fun result => LoopRep H entry target xs result.2)
-      (modify (fun acc => acc + x) : StateM (Word w) PUnit).run := by
-  intro acc s represented
-  have hnext : (s.regs 0 + 1).toNat = (s.regs 0).toNat + 1 :=
-    arrayAddr_toNat (base := s.regs 0) (i := 1)
-      (by have := represented.fit; simp only [List.length_cons] at this; omega)
-  have hnonzero : s.regs 1 ≠ 0 := by
-    intro hz
-    have hzero := (Word.toNat_eq_zero_iff (s.regs 1)).mpr hz
-    rw [represented.count] at hzero
-    simp at hzero
-  have hload : s.mem (s.regs 0) = x := by
-    simpa [arrayAddr] using represented.array.lookup 0 (by simp)
-  refine ⟨bodyResult s, body_safe s ?_, ?_⟩
-  · have := represented.heap
-    simp only [List.length_cons] at this
-    omega
-  · change LoopRep H entry target xs (acc + x) (bodyResult s)
-    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, represented.mem,
-      represented.input, represented.output, ?_⟩
-    · simpa only [bodyResult_mem, bodyResult_pointer] using
-        arrayRep_tail represented.array represented.fit
-    · rw [bodyResult_count_toNat hw s hnonzero, represented.count]
-      simp
-    · rw [bodyResult_pointer, hnext]
-      have := represented.heap
-      simp only [List.length_cons] at this
-      omega
-    · rw [bodyResult_pointer, hnext]
-      have := represented.fit
-      simp only [List.length_cons] at this
-      omega
-    · rw [bodyResult_sum, represented.sum, hload]
-    · rw [bodyResult_pointer, shifted_address]
-      exact represented.endpoint
-    · intro r hr
-      exact (bodyResult_other s r hr).trans (represented.other r hr)
-
--- This is an ordinary native StateM equation; it mentions no RAM execution.
-private theorem sum_forM_run (xs : List (Word w)) (acc : Word w) :
-    ((List.forM xs (fun x => modify (fun a => a + x)) :
-      StateM (Word w) PUnit).run acc).2 = acc + wordSum xs := by
+-- Ordinary list algebra is the only algorithm-specific induction.
+private theorem sum_foldl (xs : List (Word w)) (acc : Word w) :
+    xs.foldl (fun a x => a + x) acc = acc + wordSum xs := by
   induction xs generalizing acc with
-  | nil =>
-      change acc = acc + wordSum []
-      simp
+  | nil => simp
   | cons x xs ih =>
-      change ((List.forM xs (fun x => modify (fun a => a + x)) :
-        StateM (Word w) PUnit).run (acc + x)).2 = acc + wordSum (x :: xs)
-      rw [ih, wordSum_cons]
+      rw [List.foldl_cons, ih, wordSum_cons]
       exact BitVec.add_assoc _ _ _
 
 /-- The loop consumes precisely the represented suffix, constructing one
@@ -251,28 +186,22 @@ theorem loop_safe {program : Program} {H depth : Nat} (hw : 0 < w)
       t.regs 0 = arrayAddr base xs.length ∧ t.regs 1 = 0 ∧
       t.mem = s.mem ∧ t.input = s.input ∧ t.outputRev = s.outputRev ∧
       ∀ r, 3 ≤ r → t.regs r = s.regs r := by
-  have traversal := Source.Refines.stateM_forM
-    (program := program) (heapLimit := H) (depth := depth)
-    (condition := condition) (body := body)
-    (rep := LoopRep H s (arrayAddr base xs.length))
-    (fun x : Word w => modify (fun acc => acc + x))
-    (by intros; trivial)
-    (by
-      intro remaining acc current represented
-      change current.regs 1 ≠ 0 ↔ remaining ≠ []
-      apply not_congr
-      exact (Word.toNat_eq_zero_iff (current.regs 1)).symm.trans
-        (by rw [represented.count]; exact List.length_eq_zero_iff))
-    (body_refines hw) xs
-  have start : LoopRep H s (arrayAddr base xs.length) xs (s.regs 2) s :=
-    ⟨by simpa only [hptr] using hrep, hcount,
-      by simpa only [hptr] using hheap, by simpa only [hptr] using hfit,
-      rfl, by rw [hptr], rfl, rfl, rfl, by intros; rfl⟩
-  obtain ⟨t, execution, result⟩ := traversal (s.regs 2) s start
-  refine ⟨t, execution, result.sum.trans (sum_forM_run xs (s.regs 2)), ?_, ?_,
-    result.mem, result.input, result.output, result.other⟩
-  · simpa [arrayAddr] using result.endpoint
-  · exact (Word.toNat_eq_zero_iff _).mp result.count
+  obtain ⟨t, execution, result, pointer, count, _, memory, input, output, other⟩ :=
+    Fold.loop_safe foldRegisters (value := sumValue) (program := program) (depth := depth)
+      (step := fun acc x => acc + x) (R := fun _ => True) hw
+      (by intro current _ address; exact ⟨trivial, trivial, address⟩)
+      (by intro current _; rfl) (by intros; trivial)
+      s base xs trivial hrep hptr hcount hheap hfit
+  refine ⟨t, execution, result.trans (sum_foldl xs _), pointer, count,
+    memory, input, output, ?_⟩
+  intro r hr
+  apply other r
+  · have hbound : foldRegisters.pointer < 3 := by decide
+    exact Ne.symm (Nat.ne_of_lt (Nat.lt_of_lt_of_le hbound hr))
+  · have hbound : foldRegisters.remaining < 3 := by decide
+    exact Ne.symm (Nat.ne_of_lt (Nat.lt_of_lt_of_le hbound hr))
+  · have hbound : foldRegisters.accumulator < 3 := by decide
+    exact Ne.symm (Nat.ne_of_lt (Nat.lt_of_lt_of_le hbound hr))
 
 /-- The fixed block computes the modular array sum for arbitrary preloaded
 contents, preserving the full source memory, I/O, and all other registers. -/
@@ -315,32 +244,14 @@ theorem block_modular {program : Program} {H depth : Nat} (hw : 0 < w)
 
 theorem body_result {program : Program} {H depth : Nat} {s t : Source.State w}
     (h : Source.SafeExec program H depth body s t) : t = bodyResult s := by
-  cases h with
-  | seq first rest =>
-      cases first with
-      | assign _ =>
-          cases rest with
-          | seq second third =>
-              cases second with
-              | assign _ =>
-                  cases third with
-                  | assign _ => rfl
+  exact (Fold.body_result foldRegisters (value := sumValue) h).trans
+    (bodyResult_eq_stepState s).symm
 
 /-- One iteration's count is the sum of the three emitted assignment blocks. -/
 theorem body_localMeasured {program : Program} {control H depth : Nat} {s t : Source.State w}
     (h : Source.SafeExec program H depth body s t) :
     Source.LocalMeasuredExec control program H depth body 13 s t := by
-  cases h with
-  | seq first rest =>
-      cases first with
-      | assign hsum =>
-          cases rest with
-          | seq second third =>
-              cases second with
-              | assign hptr =>
-                  cases third with
-                  | assign hcount =>
-                      exact .seq (.assign hsum) (.seq (.assign hptr) (.assign hcount))
+  exact Fold.body_localMeasured (control := control) foldRegisters (value := sumValue) h
 
 /-- Any successful execution of this loop has the derived exact linear count.
 The proof follows the actual loop derivation and the strictly decreasing word
@@ -348,38 +259,7 @@ counter; it does not assume an iteration count annotation. -/
 theorem loop_localMeasured {program : Program} {control H depth : Nat} (hw : 0 < w)
     {s t : Source.State w} (h : Source.SafeExec program H depth loop s t) :
     Source.LocalMeasuredExec control program H depth loop (16 * (s.regs 1).toNat + 2) s t := by
-  generalize hc : (s.regs 1).toNat = count
-  induction count using Nat.strongRecOn generalizing s t with
-  | ind count ih =>
-      cases h with
-      | whileFalse reads hz =>
-          have hzero : count = 0 := by
-            rw [← hc]
-            exact (Word.toNat_eq_zero_iff _).mpr hz
-          have hrun : Source.LocalMeasuredExec control program H depth loop 2 s s :=
-            .whileFalse reads hz
-          simpa only [hzero, Nat.mul_zero, Nat.zero_add] using hrun
-      | whileTrue reads hz hb hr =>
-          have hpos : 0 < (s.regs 1).toNat := Nat.pos_of_ne_zero
-            (fun he => hz ((Word.toNat_eq_zero_iff _).mp he))
-          have hm := body_result hb
-          cases hm
-          have hcount' : ((bodyResult s).regs 1).toNat = (s.regs 1).toNat - 1 :=
-            bodyResult_count_toNat hw s hz
-          have hlt : ((bodyResult s).regs 1).toNat < count := by
-            rw [hcount', ← hc]
-            omega
-          have hrest := ih ((bodyResult s).regs 1).toNat hlt hr rfl
-          have hrun : Source.LocalMeasuredExec control program H depth loop
-              ((condition.compile (ABI.scratch control)).length + 1 + 13 + 1 +
-                (16 * ((bodyResult s).regs 1).toNat + 2)) s t :=
-            .whileTrue reads hz (body_localMeasured hb) hrest
-          have hsteps : (condition.compile (ABI.scratch control)).length + 1 + 13 + 1 +
-              (16 * ((bodyResult s).regs 1).toNat + 2) = 16 * count + 2 := by
-            change 1 + 1 + 13 + 1 + (16 * ((bodyResult s).regs 1).toNat + 2) = _
-            rw [hcount', ← hc]
-            omega
-          simpa only [hsteps] using hrun
+  exact Fold.loop_localMeasured (control := control) foldRegisters (value := sumValue) hw h
 
 /-- Initialization and the final false guard are included in the block count. -/
 theorem block_localMeasured {program : Program} {control H depth : Nat} (hw : 0 < w)

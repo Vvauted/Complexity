@@ -10,13 +10,23 @@ import Lean
 # A surface language for the verified RAM AST
 
 `ram_expr%` quotes an expression, `ram% { ... }` quotes a statement block, and
-`ram_fun% (parameters) locals (locals) { ... return expression; }` quotes a
-function. Function syntax assigns successive local register numbers only at
+`ram_fun% (parameters) { ... return expression; }` quotes a function. Its locals
+can be introduced with `let`, `let mut`, or a call-result binding. The explicit
+`locals (locals)` header is also supported. Function syntax assigns local register numbers only at
 variable occurrences, not by introducing Lean bindings around the body.
 Outside that syntax, identifiers refer to ordinary Lean bindings of type
 `Ram.Reg`; legacy call targets refer to Lean `Nat` bindings. Function targets
 and `const(t)` retain their enclosing Lean scope, even when a parameter has
-the same spelling. `Complexity.Computability.Ram.Source.Named.Basic` adds a separately resolved named function table.
+the same spelling. `Complexity.Computability.Ram.Source.Named.Basic` adds a
+separately resolved named function table.
+
+Lexical declarations allocate fresh frame slots, including when shadowing an
+outer name. An initializer sees the previous scope; branch and loop bindings
+do not escape their blocks. `let` bindings reject later assignment, while
+parameters, header locals and `let mut` bindings are mutable. Allocation is
+static: a loop-local initializer executes again each iteration, without growing
+the frame. Raw `ram%` and `ram_stmt%` have no function frame to allocate and
+continue to use caller-provided register names.
 
 The macros produce only the existing `Expr`, `Stmt`, and `Func` constructors.
 There is no host-language callback, implicit bulk operation, cost annotation,
@@ -79,6 +89,13 @@ syntax "store[" ramExpr "]" " := " ramExpr ";" : ramStmt
 syntax "read " ident ";" : ramStmt
 syntax "write " ramExpr ";" : ramStmt
 syntax ident " := " "call " ident "(" ramExpr,* ")" ";" : ramStmt
+/-- Bind a fresh immutable word local for the rest of the enclosing block. -/
+syntax "let " ident " := " ramExpr ";" : ramStmt
+/-- Bind a fresh mutable word local for the rest of the enclosing block. -/
+syntax "let " "mut " ident " := " ramExpr ";" : ramStmt
+/-- Bind the result of a real source call, not a host-language computation. -/
+syntax "let " ident " ← " "call " ident "(" ramExpr,* ")" ";" : ramStmt
+syntax "let " "mut " ident " ← " "call " ident "(" ramExpr,* ")" ";" : ramStmt
 syntax "if " ramExpr " {" ramStmt* "}" : ramStmt
 syntax "if " ramExpr " {" ramStmt* "}" " else " "{" ramStmt* "}" : ramStmt
 syntax "while " ramExpr " {" ramStmt* "}" : ramStmt
@@ -202,17 +219,118 @@ partial def lowerBlock (scope : LocalScope) (strict : Bool) (function : Function
   return result
 end
 
+/-- A lowered lexical block and the bindings visible after it. Branch-local
+bindings are discarded on exit, but their allocated slots remain in the frame. -/
+structure LoweredBlock where
+  term : Lean.TSyntax `term
+  scope : LocalScope
+  immutable : Array Lean.Name
+  nextRegister : Nat
+  deriving Inhabited
+
+private def checkMutable (immutable : Array Lean.Name) (name : Lean.TSyntax `ident) :
+    Lean.MacroM Unit := do
+  if immutable.contains name.getId then
+    Lean.Macro.throwErrorAt name "cannot assign to an immutable RAM local; use 'let mut'"
+
+/-- Lower lexical declarations with the same expression and statement translator.
+Each declaration gets one fresh frame slot; a shadowed binding remains untouched. -/
+partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
+    (nextRegister : Nat) (strict : Bool) (function : FunctionResolver)
+    (body : Array (Lean.TSyntax `ramStmt)) : Lean.MacroM LoweredBlock := do
+  let mut scope := scope
+  let mut immutable := immutable
+  let mut nextRegister := nextRegister
+  let mut statements : Array (Lean.TSyntax `term) := #[]
+  for stmt in body do
+    let bindLocal (name : Lean.TSyntax `ident) (mutable : Bool)
+        (value : Lean.TSyntax `term) := do
+      let register := Lean.Syntax.mkNumLit (toString nextRegister)
+      let assignment ← `(Ram.Stmt.assign $register:num $value)
+      pure (name, mutable, assignment)
+    let bindCall (name : Lean.TSyntax `ident) (mutable : Bool)
+        (fn : Lean.TSyntax `ident) (args : Array (Lean.TSyntax `ramExpr)) := do
+      let register := Lean.Syntax.mkNumLit (toString nextRegister)
+      let args ← args.mapM (lowerExpr scope strict)
+      let invocation ← `(Ram.Stmt.call $register:num $(← function fn) [$args,*])
+      pure (name, mutable, invocation)
+    let binding ← match stmt with
+      | `(ramStmt| let $name:ident := $value:ramExpr;) =>
+          pure (some (← bindLocal name Bool.false (← lowerExpr scope strict value)))
+      | `(ramStmt| let mut $name:ident := $value:ramExpr;) =>
+          pure (some (← bindLocal name Bool.true (← lowerExpr scope strict value)))
+      | `(ramStmt| let $name:ident ← call $fn:ident($args:ramExpr,*);) =>
+          pure (some (← bindCall name Bool.false fn args.getElems))
+      | `(ramStmt| let mut $name:ident ← call $fn:ident($args:ramExpr,*);) =>
+          pure (some (← bindCall name Bool.true fn args.getElems))
+      | _ => pure none
+    match binding with
+    | some (name, mutable, statement) =>
+        scope := (scope.filter (fun entry => entry.1 != name.getId)).push
+          (name.getId, nextRegister)
+        immutable := immutable.filter (· != name.getId)
+        if !mutable then immutable := immutable.push name.getId
+        nextRegister := nextRegister + 1
+        statements := statements.push statement
+    | none =>
+        let statement ← match stmt with
+          | `(ramStmt| if $condition:ramExpr { $yes:ramStmt* }) => do
+              let yes ← lowerScopedBlock scope immutable nextRegister strict function yes
+              nextRegister := yes.nextRegister
+              `(Ram.Stmt.ite $(← lowerExpr scope strict condition) $(yes.term) Ram.Stmt.skip)
+          | `(ramStmt| if $condition:ramExpr { $yes:ramStmt* } else { $no:ramStmt* }) => do
+              let yes ← lowerScopedBlock scope immutable nextRegister strict function yes
+              let no ← lowerScopedBlock scope immutable yes.nextRegister strict function no
+              nextRegister := no.nextRegister
+              `(Ram.Stmt.ite $(← lowerExpr scope strict condition) $(yes.term) $(no.term))
+          | `(ramStmt| while $condition:ramExpr { $loop:ramStmt* }) => do
+              let loop ← lowerScopedBlock scope immutable nextRegister strict function loop
+              nextRegister := loop.nextRegister
+              `(Ram.Stmt.while $(← lowerExpr scope strict condition) $(loop.term))
+          | _ => do
+              match stmt with
+              | `(ramStmt| $name:ident := $_value:ramExpr;) => checkMutable immutable name
+              | `(ramStmt| $name:ident += $_value:ramExpr;) => checkMutable immutable name
+              | `(ramStmt| $name:ident -= $_value:ramExpr;) => checkMutable immutable name
+              | `(ramStmt| $name:ident *= $_value:ramExpr;) => checkMutable immutable name
+              | `(ramStmt| $name:ident := call $_fn:ident($_args:ramExpr,*);) =>
+                  checkMutable immutable name
+              | `(ramStmt| read $name:ident;) => checkMutable immutable name
+              | _ => pure ()
+              lowerStmt scope strict function stmt
+        statements := statements.push statement
+  let term ← if statements.isEmpty then `(Ram.Stmt.skip) else do
+    let mut term := statements[statements.size - 1]!
+    for offset in [:statements.size - 1] do
+      term ← `(Ram.Stmt.seq $(statements[statements.size - 2 - offset]!) $term)
+    pure term
+  return ⟨term, scope, immutable, nextRegister⟩
+
+/-- The function term and source bindings produced by one lowering. -/
+structure LoweredFunction where
+  term : Lean.TSyntax `term
+  scope : LocalScope
+  registers : Nat
+
+/-- Lower a function and retain its lexical bindings for generated proof names. -/
+def lowerFunctionWithScope (strict : Bool) (function : FunctionResolver)
+    (params localNames : Array (Lean.TSyntax `ident)) (body : Array (Lean.TSyntax `ramStmt))
+    (result : Lean.TSyntax `ramExpr) : Lean.MacroM LoweredFunction := do
+  let scope ← makeLocalScope (params ++ localNames)
+  let body ← lowerScopedBlock scope #[] scope.size strict function body
+  let paramCount := Lean.Syntax.mkNumLit (toString params.size)
+  let localCount := Lean.Syntax.mkNumLit (toString body.nextRegister)
+  let term ← `(Ram.Func.mk $paramCount $localCount $(body.term)
+    $(← lowerExpr body.scope strict result))
+  return ⟨term, body.scope, body.nextRegister⟩
+
 def lowerFunction (strict : Bool) (function : FunctionResolver)
     (params localNames : Array (Lean.TSyntax `ident))
     (localsKeyword : Lean.TSyntax `ident) (body : Array (Lean.TSyntax `ramStmt))
     (result : Lean.TSyntax `ramExpr) : Lean.MacroM (Lean.TSyntax `term) := do
   if localsKeyword.getId != `locals then
     Lean.Macro.throwErrorAt localsKeyword "expected 'locals' followed by local register names"
-  let scope ← makeLocalScope (params ++ localNames)
-  let paramCount := Lean.Syntax.mkNumLit (toString params.size)
-  let localCount := Lean.Syntax.mkNumLit (toString scope.size)
-  `(Ram.Func.mk $paramCount $localCount
-    $(← lowerBlock scope strict function body) $(← lowerExpr scope strict result))
+  return (← lowerFunctionWithScope strict function params localNames body result).term
 
 macro_rules
   | `(ram_expr% $expr:ramExpr) => do return ← lowerExpr #[] Bool.false expr
@@ -225,11 +343,18 @@ The final return expression is exactly the existing `Func.result`. -/
 syntax:max "ram_fun% " "(" ident,* ")" ident "(" ident,* ")" "{"
   ramStmt* "return " ramExpr ";" "}" : term
 
+/-- Function locals may instead be introduced where used with `let` or `let mut`. -/
+syntax:max "ram_fun% " "(" ident,* ")" "{"
+  ramStmt* "return " ramExpr ";" "}" : term
+
 macro_rules
   | `(ram_fun% ($params:ident,*) $localsKeyword:ident ($localNames:ident,*) {
       $body:ramStmt* return $result:ramExpr; }) => do
       return ← lowerFunction Bool.false externalFunction params.getElems localNames.getElems
         localsKeyword body result
+  | `(ram_fun% ($params:ident,*) { $body:ramStmt* return $result:ramExpr; }) => do
+      return (← lowerFunctionWithScope Bool.true externalFunction params.getElems #[]
+        body result).term
 
 /-!
 ### Examples

@@ -83,6 +83,28 @@ also exports lookup facts and source-local names for implementation proofs.
 Generated body and return equations let verification unfold the same declaration.
 These names do not yet hide every register-level obligation inside those proofs.
 
+Locals may also be introduced where they are used. The
+[function-composition sample](##Examples.Ram.LocalBindings) contains:
+
+```lean
+ram_def functions := ram_functions% {
+  fn square(x) {
+    return x * x;
+  }
+  fn squaredNorm(x, y) {
+    let sx ← call square(x);
+    let sy ← call square(y);
+    return sx + sy;
+  }
+}
+```
+
+`let x := expression;` and `let x ← call f(...);` bind immutable local values;
+`let mut` permits later assignment. Branch and loop locals stay inside their block,
+and shadowing allocates a fresh slot without overwriting the old binding.
+The frame size is inferred from the declarations. Array sum and count use `let mut`
+for their accumulators. These remain first-order word functions, not arbitrary Lean callbacks.
+
 ## State properties of a function value
 
 [The function-value factorial sample](##Examples.Ram.FactorialFunction) exposes
@@ -103,6 +125,30 @@ This uses mathlib's `Part` as a noncomputable semantic view, not a new interpret
 It does not mean arbitrary ordinary Lean definitions can already be compiled by the library.
 The underlying [function observations](##Complexity.Computability.Ram.Source.Function.Eval)
 are defined from execution, independently of the mathematical factorial or its proposed cost.
+
+## Execute a function without a driver
+
+The [function runner sample](##Examples.Ram.FunctionRun) calls the same factorial
+implementation directly:
+
+```lean
+#eval runFactorial (BitVec.ofNat 32 5) 300
+-- some (120, 218, Ram.StopReason.halted)
+```
+
+Its adapter is `Ram.LocalCompiler.Function.run`. It compiles a fixed call-and-halt
+sequence, places runtime arguments in parameter registers, and returns the result
+without reading or writing an input/output stream. The 218 transitions include the
+enclosing call, return and halt, unlike the separate function-body observation.
+The limit of 300 makes this execution interruptible; it is not a premise of the
+function's correctness or termination proof. An unbounded executable application
+interface is still future work.
+
+The [compiler bridge](##Complexity.Computability.Ram.Compiler.Local.Function)
+relates the runtime value, visible shared state and step count to the function
+proofs. Code and stack must fit the word address space. Heap contents are preloaded
+explicitly, and host-side preparation is not counted as a RAM loader. This low-level
+adapter does not yet turn arbitrary Lean lists into executable function arguments.
 
 ## Add an executable driver when needed
 
@@ -155,8 +201,11 @@ Continue with [proving correctness](##ComplexityDocs.Verification).
 | --- | --- |
 | Linking independently verified programs | [Composition](##Examples.Ram.Composition) |
 | Array traversal and an ordinary list model | [Array sum](##Examples.Ram.ArraySum) |
+| Reusing a fold and ordinary permutation invariance | [Array count](##Examples.Ram.ArrayCount) |
 | Recursive mathematical specifications | [Factorial](##Examples.Ram.Factorial) |
 | Function-value equations and separate cost observations | [Factorial function](##Examples.Ram.FactorialFunction) |
+| Executing a function with no input/output main | [Function runner](##Examples.Ram.FunctionRun) |
+| Composing calls with lexical value bindings | [Local bindings](##Examples.Ram.LocalBindings) |
 | Reusing a list operation for a mathlib graph property | [Graph degree](##Examples.Ram.GraphDegree) |
 | A logarithmic time bound | [Bit length](##Examples.Ram.BitLength) |
 | Potential-based amortized analysis | [Amortized clearing](##Examples.Ram.AmortizedClear) |

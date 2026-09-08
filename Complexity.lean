@@ -16,6 +16,8 @@ import Complexity.Computability.Ram.Array.Finset
 import Complexity.Computability.Ram.Array.Footprint
 import Complexity.Computability.Ram.Array.Frame
 import Complexity.Computability.Ram.Array.Function
+import Complexity.Computability.Ram.Array.Count
+import Complexity.Computability.Ram.Array.Fold
 import Complexity.Computability.Ram.Array.Sum
 import Complexity.Computability.Ram.Array.Indexed
 import Complexity.Computability.Ram.Array.Insertion.Basic
@@ -86,6 +88,7 @@ import Complexity.Computability.Ram.Compiler.Local.Exact.MemoryBasic
 import Complexity.Computability.Ram.Compiler.Local.Exact.Stack
 import Complexity.Computability.Ram.Compiler.Local.Exact.Writes
 import Complexity.Computability.Ram.Compiler.Local.Exact.WritesBasic
+import Complexity.Computability.Ram.Compiler.Local.Function
 import Complexity.Computability.Ram.Compiler.Local.Measured.Basic
 import Complexity.Computability.Ram.Compiler.Local.Measured.Deterministic
 import Complexity.Computability.Ram.Compiler.Local.Measured.Memory

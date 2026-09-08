@@ -105,6 +105,8 @@ declare_syntax_cat ramDecl (behavior := symbol)
 
 syntax &"fn " ident "(" ident,* ")" ident "(" ident,* ")" "{"
   ramStmt* "return " ramExpr ";" "}" : ramDecl
+syntax &"fn " ident "(" ident,* ")" "{"
+  ramStmt* "return " ramExpr ";" "}" : ramDecl
 
 /-- A collection of callable functions, without a required main statement.
 Calls share the same named function table, including recursive and forward calls. -/
@@ -115,9 +117,32 @@ each function and `main locals (...)` has its own independent variable table.
 The global register bound is inferred from the largest local frame. -/
 syntax:max "ram_program% " "{" ramDecl*
   &"main " ident "(" ident,* ")" "{" ramStmt* "}" "}" : term
+syntax:max "ram_program% " "{" ramDecl*
+  &"main " "{" ramStmt* "}" "}" : term
+
+/-- A parsed function, shared by term quotations and proof-facing declarations. -/
+structure FunctionDeclaration where
+  name : Lean.TSyntax `ident
+  params : Array (Lean.TSyntax `ident)
+  locals : Array (Lean.TSyntax `ident)
+  body : Array (Lean.TSyntax `ramStmt)
+  result : Lean.TSyntax `ramExpr
+
+private def parseFunction (decl : Lean.TSyntax `ramDecl) : Lean.MacroM FunctionDeclaration := do
+  match decl with
+  | `(ramDecl| fn $name:ident($params:ident,*) $keyword:ident($locals:ident,*) {
+      $body:ramStmt* return $result:ramExpr; }) =>
+      if keyword.getId != `locals then
+        Lean.Macro.throwErrorAt keyword "expected 'locals' followed by local register names"
+      return ⟨name, params.getElems, locals.getElems, body, result⟩
+  | `(ramDecl| fn $name:ident($params:ident,*) { $body:ramStmt* return $result:ramExpr; }) =>
+      return ⟨name, params.getElems, #[], body, result⟩
+  | _ => Lean.Macro.throwErrorAt decl "expected a RAM function declaration"
 
 private structure LoweredFunctions where
   declarations : Array (Lean.TSyntax `term)
+  parsed : Array FunctionDeclaration
+  scopes : Array LocalScope
   registers : Nat
   resolveFunction : FunctionResolver
 
@@ -125,15 +150,12 @@ private structure LoweredFunctions where
 the existing expression, statement and function lowering. -/
 private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl)) :
     Lean.MacroM LoweredFunctions := do
+  let parsed ← decls.mapM parseFunction
   let mut functionNames : Array (Lean.Name × Nat) := #[]
-  for decl in decls do
-    match decl with
-    | `(ramDecl| fn $name:ident($_params:ident,*) $_keyword:ident($_locals:ident,*) {
-        $_body:ramStmt* return $_result:ramExpr; }) =>
-        if functionNames.any (fun entry => entry.1 == name.getId) then
-          Lean.Macro.throwErrorAt name "duplicate RAM function name"
-        functionNames := functionNames.push (name.getId, functionNames.size)
-    | _ => Lean.Macro.throwErrorAt decl "expected a RAM function declaration"
+  for decl in parsed do
+    if functionNames.any (fun entry => entry.1 == decl.name.getId) then
+      Lean.Macro.throwErrorAt decl.name "duplicate RAM function name"
+    functionNames := functionNames.push (decl.name.getId, functionNames.size)
   let resolveFunction : FunctionResolver := fun name => do
     match functionNames.find? (fun entry => entry.1 == name.getId) with
     | some (_, index) =>
@@ -141,35 +163,66 @@ private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl)) :
         `($index:num)
     | none => Lean.Macro.throwErrorAt name "unknown RAM function name"
   let mut declarations : Array (Lean.TSyntax `term) := #[]
+  let mut scopes := #[]
   let mut registers := 0
-  for decl in decls do
-    match decl with
-    | `(ramDecl| fn $name:ident($params:ident,*) $keyword:ident($localNames:ident,*) {
-        $body:ramStmt* return $result:ramExpr; }) =>
-        let f ← lowerFunction Bool.true resolveFunction params.getElems localNames.getElems
-          keyword body result
-        let label := Lean.Syntax.mkStrLit name.getId.toString
-        declarations := declarations.push (← `(($label:str, $f)))
-        registers := max registers (params.getElems.size + localNames.getElems.size)
-    | _ => Lean.Macro.throwErrorAt decl "expected a RAM function declaration"
-  return ⟨declarations, registers, resolveFunction⟩
+  for decl in parsed do
+    let f ← lowerFunctionWithScope Bool.true resolveFunction decl.params decl.locals
+      decl.body decl.result
+    let label := Lean.Syntax.mkStrLit decl.name.getId.toString
+    declarations := declarations.push (← `(($label:str, $(f.term))))
+    scopes := scopes.push f.scope
+    registers := max registers f.registers
+  return ⟨declarations, parsed, scopes, registers, resolveFunction⟩
+
+/-- One named lowering, retaining the bindings needed by `ram_def`. -/
+structure LoweredNamed where
+  type : Lean.TSyntax `term
+  term : Lean.TSyntax `term
+  parsed : Array FunctionDeclaration
+  functions : Array (Lean.TSyntax `term)
+  functionScopes : Array LocalScope
+  mainScope : LocalScope
+
+/-- Quotation and command forms share this single lowering, including allocation
+of lexical locals and the inferred maximum frame size. -/
+def lowerNamed (source : Lean.TSyntax `term) : Lean.MacroM LoweredNamed := do
+  let (decls, main) ← match source with
+    | `(ram_functions% { $decls:ramDecl* }) => pure (decls, none)
+    | `(ram_program% { $decls:ramDecl*
+        main $mainLocals:ident ($mainNames:ident,*) { $mainBody:ramStmt* } }) => do
+      if mainLocals.getId != `locals then
+        Lean.Macro.throwErrorAt mainLocals "expected 'locals' followed by main's local register names"
+      pure (decls, some (mainNames.getElems, mainBody))
+    | `(ram_program% { $decls:ramDecl* main { $mainBody:ramStmt* } }) =>
+        pure (decls, some (#[], mainBody))
+    | _ =>
+      Lean.Macro.throwErrorAt source
+        "expected ram_functions% { ... } or ram_program% { ... }"
+  let functions ← lowerFunctions decls
+  let declarations := functions.declarations
+  match main with
+  | none =>
+      let registerCount := Lean.Syntax.mkNumLit (toString functions.registers)
+      let term ← `(Ram.Named.Functions.mk $registerCount [$declarations,*])
+      return ⟨← `(Ram.Named.Functions), term, functions.parsed, declarations, functions.scopes, #[]⟩
+  | some (names, body) =>
+      let scope ← makeLocalScope names
+      let main ← lowerScopedBlock scope #[] scope.size Bool.true functions.resolveFunction body
+      let registerCount := Lean.Syntax.mkNumLit
+        (toString (max main.nextRegister functions.registers))
+      let term ← `(Ram.Named.Bundle.mk $registerCount [$declarations,*] $(main.term))
+      return ⟨← `(Ram.Named.Bundle), term, functions.parsed, declarations,
+        functions.scopes, main.scope⟩
 
 macro_rules
   | `(ram_functions% { $decls:ramDecl* }) => do
-      let functions ← lowerFunctions decls
-      let registerCount := Lean.Syntax.mkNumLit (toString functions.registers)
-      let declarations := functions.declarations
-      `(Ram.Named.Functions.mk $registerCount [$declarations,*])
+      return (← lowerNamed (← `(ram_functions% { $decls:ramDecl* }))).term
   | `(ram_program% { $decls:ramDecl*
-      main $mainLocals:ident ($mainNames:ident,*) { $mainBody:ramStmt* } }) => do
-      if mainLocals.getId != `locals then
-        Lean.Macro.throwErrorAt mainLocals "expected 'locals' followed by main's local register names"
-      let functions ← lowerFunctions decls
-      let mainScope ← makeLocalScope mainNames.getElems
-      let main ← lowerBlock mainScope Bool.true functions.resolveFunction mainBody
-      let registerCount := Lean.Syntax.mkNumLit
-        (toString (max mainNames.getElems.size functions.registers))
-      let declarations := functions.declarations
-      `(Ram.Named.Bundle.mk $registerCount [$declarations,*] $main)
+      main $locals:ident ($names:ident,*) { $body:ramStmt* } }) => do
+      return (← lowerNamed (← `(ram_program% { $decls:ramDecl*
+        main $locals:ident ($names:ident,*) { $body:ramStmt* } }))).term
+  | `(ram_program% { $decls:ramDecl* main { $body:ramStmt* } }) => do
+      return (← lowerNamed (← `(ram_program% { $decls:ramDecl*
+        main { $body:ramStmt* } }))).term
 
 end Ram.DSL

@@ -15,9 +15,10 @@ returned value and shared state. It requires neither a `main` program nor a
 second mathematical implementation. Ordinary mathematical properties and
 representation predicates can be used directly in the postcondition.
 
-The body introduction rule reuses `Ram.Source.TotalRelContract`; the call rule
-uses the same executable function through `Ram.Source.FunctionExec.call`.
-Neither rule imposes a time bound or assumes unchanged memory or input/output.
+`FunctionContract.of_wp` proves the desired postcondition directly from the body;
+`of_body` reuses an existing `Ram.Source.TotalRelContract`. The call rule uses the
+same executable function through `Ram.Source.FunctionExec.call`. These rules
+impose no time bound and do not assume unchanged memory or input/output.
 -/
 
 namespace Ram.Source
@@ -44,6 +45,21 @@ namespace FunctionContract
 variable {w heapLimit depth : Nat} {program : Program} {f : Func}
 variable {P P' : List (Word w) → State w → Prop}
 variable {Q Q' : List (Word w) → State w → Word w → State w → Prop}
+
+/-- Prove a function directly from its arguments and desired postcondition.
+The body starts with the actual parameter bindings, and its return expression
+and shared effects are substituted into the same postcondition. No separate
+body representation relation or time budget is required. -/
+theorem of_wp (arity : ∀ args entry, P args entry → args.length = f.params)
+    (frame : f.params ≤ f.locals)
+    (body : ∀ args entry, P args entry →
+      Verification.TotalWP program heapLimit depth f.body
+        (fun callee => f.result.ReadsBelow heapLimit callee.regs callee.mem ∧
+          Q args entry (callee.eval f.result) (entry.restore callee)) (entry.enter args)) :
+    FunctionContract program heapLimit depth f P Q := by
+  intro args entry hp
+  obtain ⟨callee, execution, reads, result⟩ := body args entry hp
+  exact ⟨_, _, FunctionExec.of_body (arity args entry hp) frame execution reads, result⟩
 
 /-- Reuse a body contract with a representation adapter at entry and return.
 The adapter proves a property of the actual return expression, not a separate

@@ -26,6 +26,14 @@ represented arrays in shared memory. Its public contract hides parameter registe
 retains genuine address-range, length and non-overlap assumptions.
 `Ram.Source.FunctionContract.wp_call` reuses a contract at another function's call site;
 the continuation receives the returned word, the proved postcondition and preserved caller locals.
+The [local-binding sample](##Examples.Ram.LocalBindings) uses that rule twice to
+prove a sum of squares from the contract of `square`, without expanding callee
+frames or maintaining a second syntax tree. `Ram.Source.FunctionContract.of_wp`
+starts a direct body proof with the declared arguments bound and the desired
+postcondition applied to the actual return value and shared state. The sample
+needs no separately specified intermediate state relation. `of_body` remains
+useful when a body refinement or invariant is already available. Automatic
+discovery of invariants and reusable operation contracts is not supplied.
 
 For function-value equations, use `Ram.Func.eval`. It observes an actual safe invocation
 through mathlib's `Part`; `eval = Part.some result` includes termination. The
@@ -94,6 +102,16 @@ The graph proof only identifies the represented row's list sum with mathlib's
 `SimpleGraph.degree` and applies the existing function contract. It does not reprove
 the traversal, register updates or unchanged-memory facts. The row is explicitly
 preloaded; converting an abstract graph to that layout would need its own implementation.
+
+For a read-only scalar accumulation, [the shared fold](##Complexity.Computability.Ram.Array.Fold)
+provides cursor progress, termination and framing. A client proves that its actual
+source expression implements the mathematical fold step, that its reads are safe,
+and that any extra read-only parameter remains unchanged. Sum and count both use
+this rule. The separate measured rule derives iteration costs from the expression's
+compiled instructions; a host-language callback is not accepted as a free operation.
+The [count client](##Examples.Ram.ArrayCount) then derives permutation invariance
+directly from `List.Perm.count_eq`. Mutating, short-circuiting and call-based folds
+still require further interfaces.
 
 These rules operate on fixed source statements. They do not turn an arbitrary mathematical
 function into executable code. See [data models](##ComplexityDocs.Models) for array, matrix,

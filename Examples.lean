@@ -7,12 +7,15 @@ import Examples.Ram.AmortizedClear
 import Examples.Ram.Arithmetic
 import Examples.Ram.ArrayCopy
 import Examples.Ram.ArraySum
+import Examples.Ram.ArrayCount
 import Examples.Ram.BinarySearch
 import Examples.Ram.BitLength
 import Examples.Ram.Composition
 import Examples.Ram.ContractFill
 import Examples.Ram.Factorial
 import Examples.Ram.FactorialFunction
+import Examples.Ram.FunctionRun
+import Examples.Ram.LocalBindings
 import Examples.Ram.GraphDegree
 import Examples.Ram.InsertionSort
 import Examples.Ram.LocalCalls

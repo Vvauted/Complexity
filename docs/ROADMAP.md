@@ -18,6 +18,9 @@ function contracts. Return values, shared effects and body counts are observatio
 of the existing execution, with actual call overhead added at call sites. Factorial,
 array-copy and array-sum expose this interface. A graph-degree client reuses the
 sum contract and mathlib's `SimpleGraph.degree` without register or stack proofs.
+Array sum and occurrence counting share a read-only expression-fold rule, including
+cursor progress, termination, framing and compiler-derived costs. Lexical `let`,
+`let mut` and call-result bindings allocate locals at their declaration sites.
 The implementations' internal representation proofs still show why the
 source-facing work below is unfinished.
 
@@ -25,6 +28,11 @@ source-facing work below is unfinished.
 The factorial function-value sample states result equations and mathematical
 properties without carrying source state in each proposition. These are
 noncomputable semantic observations, not yet executable ordinary Lean functions.
+The compiled function-call adapter additionally executes intermediate functions
+without a stream driver, using runtime word arguments and a preloaded shared state.
+Its correctness bridge needs no time budget; its runnable interface currently
+takes an operational step limit. Typed data application and an unbounded executable
+function interface remain unfinished.
 
 `TotalComponent` carries that separation through reusable program packaging and
 linking. A separate time proof recovers the same code through the resource-aware
@@ -49,15 +57,24 @@ refinement has been supplied; it does not derive that refinement automatically.
   from a list-sum contract. It assumes a represented adjacency row; it does not
   implement a graph loader or compile a Lean adjacency predicate.
 - Reuse can avoid machine-level proofs: the graph client never opens the sum
-  loop, register assignments or frame handling. The sum implementation still
-  repeats cursor, remaining-length and unchanged-memory arguments. A reusable
-  read-only array fold is the next missing data-operation foundation.
+  loop, register assignments or frame handling. Sum and count now share those
+  traversal arguments through `Array.Fold`; count's permutation-invariance proof
+  is ordinary `List.Perm.count_eq`. The reusable rule currently handles one word
+  accumulator and a read-only source expression, not arbitrary callbacks,
+  short-circuiting or mutable traversals.
 - Function-value equations make later mathematical proofs natural, but do not
   make the implementation proof automatic. Semantic `Part` observations and
   executable function application are distinct interfaces.
-- Source functions still take words and pointer/length pairs. Typed data views,
-  parameter binding and local-state verification conditions need to carry more
-  of the routine work before programming feels like ordinary functional Lean.
+- The sum-of-squares sample composes two helper calls with lexical value bindings.
+  Its direct `FunctionContract.of_wp` proof needs no separate intermediate-state
+  specification, register names or stack layouts. Call-contract selection and
+  proof obligations are still explicit; richer array and recursive clients must
+  reach the same level of convenience.
+- Inline locals remove the separate local-variable list, but source functions
+  still take words and pointer/length pairs. Fold clients manually identify their
+  accumulator and cursor in the declaration and publish entry/return adapters.
+  Typed data views and local-state verification conditions need to carry more of
+  this work before programming and implementation proofs feel like ordinary Lean.
 
 ## 1. Prove the program that the user writes
 
@@ -100,10 +117,11 @@ objects. Do not add more data-structure wrappers merely to expand a feature list
 
 - Expose each operation's mathematical effect, safety assumptions and unchanged
   state through a reusable call interface.
-- Factor array cursor and read-only fold reasoning out of the sum implementation.
-  Reuse ordinary `List` folds and their algebraic properties, while requiring a
-  proved source implementation of each fold step. Mathematical callbacks are
-  not executable primitives, and their work must not be silently free.
+- Extend the shared array cursor and read-only expression-fold interface to
+  verified call-based steps and richer existing consumers. Reuse ordinary `List`
+  folds and their algebraic properties, while requiring a proved source
+  implementation of each step. Mathematical callbacks are not executable
+  primitives, and their work must not be silently free.
 - Handle subarrays, two live data objects and caller data that must survive a
   call. Keep genuine range, overflow and non-aliasing obligations visible.
 - Separate changes of mathematical view from actual data conversion.

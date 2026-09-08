@@ -49,6 +49,15 @@ are noncomputable; executable application remains on the verified runtime path.
 Heap capacity can affect the domain, and shared entry state cannot be hidden
 without proving the relevant result and cost independence.
 
+The executable function adapter uses the existing compiler and machine runner.
+It places runtime arguments in parameter registers, launches a fixed call-and-halt
+sequence and returns the value separately from stream output. Preloading shared
+state is explicit; no loader or host-side data conversion is silently included.
+The measured call includes argument evaluation, frame handling, the body, return
+and halt. An operational runner limit is distinct from the budget-free theorem
+that a function terminates. Source shared memory is related only to visible
+target heap cells, not to the private stack left behind by the call.
+
 Heap and call-depth capacities are safety premises, not instruction budgets.
 Output-size guarantees support subsequent operations. Time analysis may reuse
 these facts and functional invariants, but correctness must not depend on the

@@ -16,9 +16,9 @@ namespace Examples
 /-- Scale an array in place and accumulate its new elements. Word arithmetic
 wraps as usual; an exact-integer specification additionally needs range proofs. -/
 def scaleAndSum : Func :=
-  ram_fun% (base, size, factor) locals (i, total) {
-    i := 0;
-    total := 0;
+  ram_fun% (base, size, factor) {
+    let mut i := 0;
+    let mut total := 0;
     while i < size {
       base[i] := base[i] * factor;
       total += base[i];
