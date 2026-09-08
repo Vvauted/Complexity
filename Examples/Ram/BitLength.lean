@@ -6,7 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Verification.Control
 import Complexity.Computability.Ram.Verification.Loop.Logarithmic
 import Complexity.Computability.Ram.Verification.Time.Composition
-import Complexity.Tactic.Ram.Basic
+import Complexity.Tactic.Ram.Total
 
 /-!
 # A bit-length program with a logarithmic machine budget
@@ -16,10 +16,11 @@ an answer register, and writes the answer. Its mathematical result is directly
 mathlib's `Nat.clog 2 (input + 1)`, including zero input. There is no separate
 bit-length function or input-dependent unrolling in the source language.
 
-The body is verified with `ram_vc`. Loop correctness is transferred from an
-ordinary pair of naturals by `Refines.while_wellFounded`; the result equation
-is a mathlib logarithm identity, independent of machine states. A separate
-time-potential proof supplies the budget of that same execution. The word
+The body's functional behavior and instruction bound are proved separately.
+Loop correctness is transferred from an ordinary pair of naturals by
+`Refines.while_wellFounded`; the result equation is a mathlib logarithm identity,
+independent of machine states. A shared dividing-variant rule supplies the
+separate time bound of that same execution. The word
 adapter proves that division is faithful and the answer increment cannot wrap.
 
 The complete bound includes input, initialization, every evaluated guard,
@@ -56,6 +57,12 @@ def bodyResult (s : Source.State w) : Source.State w :=
 
 @[simp] theorem bodyResult_outputRev (s : Source.State w) :
     (bodyResult s).outputRev = s.outputRev := rfl
+
+/-- The actual assignments implement one division and one answer increment,
+without selecting an instruction budget. -/
+theorem body_total {H depth : Nat} (s : Source.State w) :
+    TotalContract [] H depth body (fun t => t = s) (fun t => t = bodyResult s) := by
+  ram_total_vc t ht [body, halve, increment, bodyResult, ht]
 
 /-- These two actual assignments compile to eight primitive instructions. -/
 theorem body_contract {H depth : Nat} (s : Source.State w) :
@@ -179,7 +186,7 @@ theorem loop_refines {H depth : Nat} (hw : 2 ≤ w) :
       have hvalue := represented.1
       omega
   · intro state fits positive s represented
-    apply (body_contract s).total.mono_post ?_ s rfl
+    apply (body_total s).mono_post ?_ s rfl
     intro t ht
     subst t
     exact bodyResult_rep hw positive fits s represented
@@ -208,29 +215,22 @@ theorem loop_total {H depth input : Nat} (hw : 2 ≤ w) (hinput : input < 2 ^ w)
   exact ⟨t, execution, answer.trans hs.1, io⟩
 
 /-- The cost proof is independent of the loop's final-answer specification.
-Its potential pays for each actual guard, body and back-edge instruction. -/
+The shared logarithmic rule accounts for every guard, body and back-edge. -/
 theorem loop_timeBound {H depth input : Nat} (hw : 2 ≤ w) (hinput : input < 2 ^ w) :
     TimeBound (w := w) 2 [] H depth loop (Invariant input)
       (fun _ => 11 * Nat.clog 2 (input + 1) + 2) := by
   have cost : TimeBound (w := w) 2 [] H depth loop (Invariant input)
       (fun s => Nat.clog 2 ((s.regs 0).toNat + 1) * 11 + 2) := by
-    apply TimeBound.while_potential (Invariant input) _ (fun _ => 8)
-      (R := fun s t => t = bodyResult s)
+    apply TimeBound.while_div 2 (by decide) (Invariant input)
+      (fun s => (s.regs 0).toNat) 8
+    · intro s _ hz
+      exact positive_value s hz
     · intro s hs
-      exact (body_contract s).total s rfl
+      obtain ⟨t, execution, result⟩ := body_total s s rfl
+      subst t
+      exact ⟨bodyResult s, execution, bodyResult_preserves hw hinput s hs.1 hs.2⟩
     · intro s hs steps t hx
       exact (body_contract s).timeBound s rfl steps t hx
-    · intro s hs hz
-      change 2 ≤ Nat.clog 2 ((s.regs 0).toNat + 1) * 11 + 2
-      omega
-    · intro s t hs hz ht
-      subst t
-      refine ⟨(bodyResult_preserves hw hinput s hs hz).1, ?_⟩
-      have hlog := Nat.clog_div_succ_add_one (by decide : 1 < 2) (positive_value s hz)
-      change 2 + 8 + 1 + (Nat.clog 2 (((bodyResult s).regs 0).toNat + 1) * 11 + 2) ≤
-        Nat.clog 2 ((s.regs 0).toNat + 1) * 11 + 2
-      rw [bodyResult_div hw s]
-      omega
   apply cost.mono_budget
   intro s hs
   have hsum := hs.1

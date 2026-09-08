@@ -46,6 +46,9 @@ import Complexity.Computability.Ram.Array.Range
 import Complexity.Computability.Ram.Array.Ref
 import Complexity.Computability.Ram.Array.Refinement
 import Complexity.Computability.Ram.Array.Search
+import Complexity.Computability.Ram.Array.Search.Function
+import Complexity.Computability.Ram.Array.Search.Time
+import Complexity.Computability.Ram.Array.Search.Total
 import Complexity.Computability.Ram.Array.Slice
 import Complexity.Computability.Ram.Array.Sort.Basic
 import Complexity.Computability.Ram.Array.Sort.Complexity

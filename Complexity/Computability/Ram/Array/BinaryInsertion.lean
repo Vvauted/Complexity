@@ -37,7 +37,7 @@ theorem wellFormed {locals : Nat} (h : 7 ≤ locals) : program.WellFormed locals
 
 /-- Both linked blocks use only ordinary expressions, branches and loops. -/
 theorem callsValid (functions : Program) : Compiler.CallsValid functions program := by
-  simp [program, lowerBound, lowerBoundLoop, lowerBoundBody,
+  simp [program, lowerBound,
     Insertion.program, Insertion.loop, Insertion.body, Compiler.CallsValid]
 
 structure Pre (heapLimit : Nat) (base key : Word w)

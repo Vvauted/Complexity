@@ -24,6 +24,7 @@ import Examples.Ram.FactorialFunction
 import Examples.Ram.FactorialStream
 import Examples.Ram.FunctionRun
 import Examples.Ram.LocalBindings
+import Examples.Ram.LowerBound
 import Examples.Ram.GraphDegree
 import Examples.Ram.InsertionSort
 import Examples.Ram.LocalCalls

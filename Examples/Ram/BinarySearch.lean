@@ -40,9 +40,7 @@ theorem named_body : named.main = Source.Array.lowerBound := rfl
 
 theorem valid : LocalCompiler.Valid 5 [] Source.Array.lowerBound := by
   simp [LocalCompiler.Valid, Compiler.Valid, Source.Array.lowerBound,
-    Source.Array.lowerBoundLoop, Source.Array.lowerBoundBody,
-    Source.Array.lowerBoundCondition, Source.Array.lowerBoundMidpoint,
-    Source.Array.lowerBoundComparison, Source.Array.address,
+    Source.Array.Search.fixedRegisters, Source.Array.address,
     Stmt.WellFormed, Expr.Bounded, Compiler.CallsValid]
 
 def code : Code := LocalCompiler.rawLink 5 [] Source.Array.lowerBound

@@ -98,6 +98,14 @@ not a second recursive proof framework. We retain proved RAM primitive and
 calling costs rather than importing its function-call counting convention;
 abstract interfaces must be backed by our existing execution theorems.
 
+The introduction also points out a modularity cost of exposing exact numerical
+constants in client specifications: implementation changes can force client
+proof changes. We should retain concrete transition theorems for executable
+accounting while allowing mathematical clients to use derived mathlib `IsBigO`
+statements. Hiding constants must not hide the input domain, word-width policy
+or an unproved representation cost. This does not require a second asymptotics
+library or weakening the counted execution theorem.
+
 ## 5. Separate algorithmic reasoning from representation proofs
 
 Maximilian P. L. Haslbeck and Peter Lammich, **Refinement with Time — Refining the

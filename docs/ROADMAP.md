@@ -20,6 +20,7 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves correctness and a single exact-cost recurrence. The upper bound and measured endpoint reuse these proofs; executable values rewrite to mathlib factorial. | Publishing the runtime equation still assembles source observations and justified word/stack conditions; general state-dependent exact composition needs more rules. |
 | [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. Uniform and actual element/prefix-dependent cost rules are available, exercised by an adapter around the existing factorial. | The caller still supplies the mathematical update, element domain and accumulator invariant. Mutable or richer-accumulator traversals are not covered by this read-only scalar rule. |
 | [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Its time continuation receives that reference directly and bounds summation using its actual length. | The author still selects the typed input, transports representation facts and justifies the mathematical continuation bound. |
+| [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. | The implementation adapter still proves local-slot separation, initialization and shared-state restoration; the short client theorem does not remove that work. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls, with independently reusable correctness and time proofs. | Clients transport contracts through imports, rebuild representations, unpack register preservation, and choose numeric continuation reserves. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
 
@@ -196,8 +197,24 @@ factorial adapter supplies real input-dependent cost, an explicit element bound
 and sufficient recursive capacity. Standard list operations supply the sum;
 there is one small generic prefix-sum identity, not a new cost monad.
 
+`TimeBound.while_div` now specializes the existing linear-loop rule using
+ordinary `Nat.clog` lemmas. Bit length and named lower-bound search both use it
+instead of repeating logarithmic-potential arithmetic. Search shares one
+budget-free interval-halving iteration relation between termination and the
+separate time proof. The costs still include every compiled guard and back-edge;
+the shared rule does not assign an abstract constant price to the whole loop.
+
 **Remaining work:**
 
+- Make local-block proofs follow the source structure without exposing numeric
+  slots. Search's scoped midpoint must remain local to its loop body; exporting
+  it as a function-level variable would misrepresent the language's scope.
+  Reuse `TotalWP.while_variant`, ordinary-model `Refines.while_wellFounded`,
+  and existing statement rules. First remove
+  repeated binding, initialization and shared-state framing in real consumers;
+  do not replace the loop framework or accumulate whole-sample AST recognizers.
+  A small binder tactic is worthwhile only if the resulting proof is actually
+  clearer than the existing substitution rules.
 - Extend the exact-cost interface beyond state-independent continuations.
   Correctness, exact costs and upper bounds should share source-facing call and
   sequence decomposition even when a returned value determines later work.
@@ -257,25 +274,29 @@ Adding an unused wrapper would not yet shorten its multi-buffer binding proof.
 Copy already has a direct `Unit`/shared-state specification, so do not invent a
 duplicate stateful copy model just to demonstrate another interface.
 
+**Checked lower-bound step:** search is now a named callable function, with
+ordinary endpoint initialization and a loop-scoped midpoint. Its shared interval
+and exit proofs are register-parametric; the old binary-insertion specialization
+remains usable. Budget-free termination uses interval decrease, correctness
+reuses `LowerBoundSpec.eq_findIdx`, and the separate full-run bound is
+`25 * Nat.clog 2 (xs.length + 1) + 69`. The additional initialization, call,
+return and halt costs come from this actual function, not the old block.
+The admitted data includes empty arrays and duplicates without an extra strict
+array-endpoint condition. Normal execution still needs its genuine stack capacity.
+
+This completes one source-to-runtime consumer, not the full high-level interface.
+Its private binding adapter is a temporary localized cost to proof authors, not
+a new public verification framework. Address repeated binding and multi-buffer
+representation work during the typed merge-sort migration above. Do not add dummy
+parameters or whole-program renaming merely to preserve old numeric slots.
+
 The language itself is also unfinished. Word, borrowed-array and `Unit` results,
 with only end-of-function returns, are not a complete high-level programming
-experience. The existing lower-bound search exposes a more immediate gap: it
-still uses a preloaded register block and observes its result in a machine
-register. Make it a named callable function and reuse `LowerBoundSpec.eq_findIdx`.
-Its result is naturally an insertion index, including `xs.length`; that legitimate
-mathematical sentinel is not evidence that this algorithm needs `Option` or an
-early return. Use an actual structured-result or early-exit consumer to justify
-those subsequent features. Source lowering, correctness, costs and runtime
-observations must arrive together; parser acceptance alone is not completion.
-
-Take this named lower-bound function before the full typed multi-buffer sort
-migration. Parameterize the existing search proof's register roles, retaining
-its old specialization for binary insertion; do not add dummy parameters or a
-general whole-program renaming framework just for this consumer. Reuse the
-interval-decrease and exit facts for a budget-free loop-variant proof and a
-separate logarithmic time bound. Normal local initialization and the enclosing
-function call have real additional costs. Neither the old block's constant nor
-its result-register observation is already the new function's runtime theorem.
+experience. Search's insertion index, including `xs.length`, is a legitimate
+mathematical result, not evidence that it needs `Option` or early return.
+Use an actual structured-result or early-exit consumer to justify those features.
+Source lowering, correctness, costs and runtime observations must arrive together;
+parser acceptance alone is not completion.
 
 ## Priority 4: publish mathematical statements once per declaration
 

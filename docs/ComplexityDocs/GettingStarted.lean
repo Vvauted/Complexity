@@ -434,6 +434,21 @@ below `2 ^ 32`. `sum_eq` gives the modular list sum; `sum_eq_of_sum_lt`
 recovers the exact natural sum when it fits. The
 [graph-degree client](##Examples.Ram.GraphDegree) reuses this ordinary value equation
 to prove `sum_eq_degree`, without reopening the implementation's loop or call frame.
+
+The [lower-bound sample](##Examples.Ram.LowerBound) also provides an ordinary
+`lowerBound array key heapLimit entry safe hstack : Nat`. Its value theorem states
+that this executable result equals
+`xs.findIdx (fun x => decide (key.toNat ≤ x.toNat))`. The borrowed array must
+represent the sorted list; an absent key returns its insertion position, possibly
+`xs.length`. Empty arrays and repeated values need no special interface.
+The [function declaration](##Complexity.Computability.Ram.Array.Search.Function)
+uses ordinary `lo` and `hi` locals and a loop-scoped `mid`; it neither consumes
+an input stream nor writes an output stream. Its separate `runTotal_steps_le`
+bounds the complete invocation by `25 * Nat.clog 2 (xs.length + 1) + 69`,
+including the real call, return and halt but not host-side memory loading.
+The implementation proof remains more detailed than this client equation:
+it establishes the sorted interval invariant, safe word arithmetic and termination.
+
 Factorial, sum and the [slice sample](##Examples.Ram.ArraySlice) use
 `ram_run_apply theorem [facts]` to connect their function proofs to these executable values.
 This use-site tactic applies an existing runtime theorem and checks the standard

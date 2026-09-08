@@ -288,7 +288,7 @@ cover several common forms of remaining work:
 | --- | --- |
 | A decreasing natural variant and constant body bound | `Ram.Source.TimeBound.while_linear` |
 | Body work depending on the current variant | [finite-sum loops](##Complexity.Computability.Ram.Verification.Loop.Sum) |
-| A positive measure decreases by a factor greater than one | [logarithmic loops](##Complexity.Computability.Ram.Verification.Loop.Logarithmic) |
+| A positive measure decreases by a factor greater than one | `Ram.Source.TimeBound.while_div` |
 | A list of actual visits, including repetitions | [traversal rules](##Complexity.Computability.Ram.Verification.Loop.Traversal) |
 | Work creates further tasks | [worklists](##Complexity.Computability.Ram.Verification.Amortized.Worklist) |
 
@@ -302,6 +302,17 @@ v * (G + B + 1) + G
 The back edge and final false guard are included, also when the body never runs.
 List traversal counts occurrences rather than distinct values. Queue manipulation, address
 calculation and any generated work must be part of the implemented body.
+
+For division by a fixed `base > 1`, `TimeBound.while_div` replaces the iteration
+count by `Nat.clog base (measure s + 1)`. Supply the same budget-free successor
+relation as in the correctness proof, positivity on active iterations, and a
+separate body bound. The rule reuses the linear rule and existing logarithm
+lemmas; clients do not repeat the ceiling-logarithm potential calculation.
+Both [bit length](##Examples.Ram.BitLength) and
+[callable lower-bound search](##Complexity.Computability.Ram.Array.Search.Time)
+use it. Search shares one interval-halving iteration theorem between its
+termination and time proofs; its [executable consumer](##Examples.Ram.LowerBound)
+then uses `ram_run_bound` to include the outer calling overhead.
 
 ## Amortized analysis
 

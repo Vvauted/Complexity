@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Verification.Time.Basic
+import Complexity.Data.Nat.Log
 
 /-!
 # Compositional time bounds without fuel
@@ -208,5 +209,28 @@ theorem while_linear {condition : Expr} {body : Stmt}
       (Nat.succ_le_of_lt ht.2)
     rw [Nat.succ_mul] at hmul
     omega
+
+/-- Dividing a positive natural measure gives a logarithmic bound on completed
+iterations. The functional relation and the body instruction bound are supplied
+separately. The condition, back-edge and final false guard retain their actual
+compiler-derived costs; this conditional rule does not assert loop termination. -/
+theorem while_div {condition : Expr} {body : Stmt} (base : Nat) (hb : 1 < base)
+    (invariant : State w → Prop) (measure : State w → Nat) (bodyBudget : Nat)
+    (positive : ∀ s, invariant s → s.eval condition ≠ 0 → 0 < measure s)
+    (functional : TotalRelContract program heapLimit depth body
+      (fun s => invariant s ∧ s.eval condition ≠ 0)
+      (fun s t => invariant t ∧ measure t ≤ measure s / base))
+    (cost : TimeBound control program heapLimit depth body
+      (fun s => invariant s ∧ s.eval condition ≠ 0) (fun _ => bodyBudget)) :
+    TimeBound control program heapLimit depth (.while condition body) invariant
+      (fun s => Nat.clog base (measure s + 1) *
+        ((condition.compile (ABI.scratch control)).length + 1 + bodyBudget + 1) +
+        ((condition.compile (ABI.scratch control)).length + 1)) := by
+  refine while_linear invariant (fun s => Nat.clog base (measure s + 1)) bodyBudget
+    (functional.consequence (fun _ hs => hs) ?_) cost
+  intro s t hs ht
+  exact ⟨ht.1, lt_of_le_of_lt
+    (Nat.clog_mono_right base (Nat.add_le_add_right ht.2 1))
+    (Nat.clog_div_succ_lt hb (positive s hs.1 hs.2))⟩
 
 end Ram.Source.TimeBound
