@@ -5,6 +5,8 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Source.Function.Eval
 import Complexity.Computability.Ram.Source.Named.Declaration
+import Complexity.Computability.Ram.Verification.Time.Exact
+import Complexity.Tactic.Ram.Budget
 import Complexity.Tactic.Ram.Total
 
 /-!
@@ -104,16 +106,18 @@ private theorem square_call_steps {control heapLimit depth steps dst arg : Nat}
     (execution : Source.LocalMeasuredExec control functions.program heapLimit depth
       (.call [dst] functions.functionIndex.square [.var arg]) steps entry finish) :
     steps = 23 := by
-  cases execution with
-  | «call» lookup _ _ _ _ body _ =>
-      have found : _ = functions.function.square :=
-        Option.some.inj (lookup.symm.trans functions.function_lookup.square)
-      cases found
-      rw [functions.body_eq.square] at body
-      cases body
-      simp only [ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length]
-      change (1 + 1 + 4 * 1 + 4) + 1 + 0 + (3 + 1 + 3 * 1 + 4) + 1 = 23
-      decide
+  have body : Source.TimeExact (w := w) control functions.program heapLimit depth
+      functions.function.square.body (fun _ => True) (fun _ => 0) := by
+    rw [functions.body_eq.square]
+    exact Source.TimeExact.of_isStraightLine trivial
+  have cost : Source.TimeExact (w := w) control functions.program heapLimit (depth + 1)
+      (.call [dst] functions.functionIndex.square [.var arg])
+      (fun _ => True) (fun _ => 23) := by
+    apply Source.TimeExact.congr_cost
+    · exact Source.TimeExact.call functions.function_lookup.square (fun _ _ => trivial) body
+    · intro s hs
+      ram_bound [functions.result_eq.square]
+  exact cost entry trivial steps finish (execution.mono (Nat.le_succ depth))
 
 /-- The fold step's body makes one actual square call. Its final addition and
 the enclosing call are counted by its caller, independently of this body equation. -/
@@ -132,9 +136,13 @@ theorem squaredNorm_body_steps {control heapLimit depth steps : Nat}
     (execution : Source.LocalMeasuredExec control functions.program heapLimit depth
       functions.function.squaredNorm.body steps entry finish) :
     steps = 46 := by
-  rw [functions.body_eq.squaredNorm] at execution
-  cases execution with
-  | seq first second => rw [square_call_steps first, square_call_steps second]
+  have cost : Source.TimeExact (w := w) control functions.program heapLimit depth
+      functions.function.squaredNorm.body (fun _ => True) (fun _ => 46) := by
+    rw [functions.body_eq.squaredNorm]
+    exact Source.TimeExact.seq_const (firstCost := fun _ => 23) (secondCost := 23)
+      (fun _ _ _ _ execution => square_call_steps execution)
+      (fun _ _ _ _ execution => square_call_steps execution)
+  exact cost entry trivial steps finish execution
 
 /-- The exact count yields an independent conditional bound on invocations.
 Termination is supplied separately by `squaredNorm_contract`. -/

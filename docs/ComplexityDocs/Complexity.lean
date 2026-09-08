@@ -42,6 +42,18 @@ calls need their own rules: their code length is not their execution length.
 See [time bounds](##Complexity.Computability.Ram.Verification.Time.Basic) and
 [straight-line costs](##Complexity.Computability.Ram.Verification.Time.StraightLine).
 
+For an exact equation, use
+[`Ram.Source.TimeExact`](##Complexity.Computability.Ram.Verification.Time.Exact).
+It is an equality about the same completed measured execution, not another
+interpreter. Its straight-line, branch, call and constant-cost continuation
+rules follow the source decomposition. `TimeExact.timeBound` forgets equality;
+`SafeExec.measured_of_timeExact` attaches the count to an independently proved
+safe execution, retaining its actual endpoint.
+The factorial sample proves its `37 * k + 4` recurrence once with ordinary
+induction, then derives both its upper bound and measured body execution.
+Neither proof rebuilds a recursive machine trace. A conditional exact count
+does not by itself establish termination or justify changing safety capacities.
+
 ## Start a separate function time proof
 
 The [source-facing time tactics](##Complexity.Tactic.Ram.Time) operate on the same
@@ -229,12 +241,29 @@ callbacks. The outer frame includes the three private iteration locals; those sl
 are not free merely because the source syntax hides them. Code and stack must fit,
 and host-side heap preloading is not a RAM loader included in this count.
 
-This specialized rule covers constant callee-body counts. Data-dependent step costs
-are not yet packaged as a dedicated call-fold rule; use the general time-bound and
-loop-composition interfaces below. The mathematical `List.foldl` view supplies neither
-free execution nor a cost annotation. The lower-level `Fold.Call.loop_localMeasured`
-still describes its explicit cursor loop, without the `for` descriptor copies
-and element-binding step; that count is not the current `sumSquares` body count.
+Use `ForIn.function_timeBound` for a uniform conditional helper bound without
+requiring its exact count or totality. For actual element-dependent work,
+`ForIn.function_timeBound_of_step` combines a separate read-only helper contract
+and a bound `C accumulator element`. Its mathematical work sum is:
+
+```text
+a_i = (xs.take i).foldl step seed
+work = (xs.mapIdx (fun i x => C a_i x)).sum
+body bound = work + (helper call overhead + 14) * xs.length + 8
+```
+
+The accumulator invariant and admitted element domain are explicit. Correctness
+is required only for actual iterations, not for the empty endpoint. The helper
+must preserve shared state for this list-prefix rule; the more general problem
+of changing unread array contents is not hidden by the mathematical fold.
+
+The same sample's `Factorials` section imports the existing recursive factorial
+and calls it through a two-argument adapter. The helper body costs at most
+`37 * x.toNat + 32`; the full array invocation is bounded by the sum of those
+costs plus `53 * xs.length + 67`. An explicit element bound supplies recursive
+depth and sufficient stack capacity. Ordinary typed value/state equations and
+the independent time theorem describe the same compiled invocation.
+The mathematical `List.foldl` and finite sum supply no free execution or pricing.
 
 ## Choose the argument that matches the loop
 

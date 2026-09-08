@@ -146,14 +146,23 @@ without making the client first extract a returned value and execution witness.
 For these runtime bridges, use `ram_run_apply theorem [facts]` from
 [runner proof automation](##Complexity.Tactic.Ram.Run). It applies the supplied theorem,
 selects the same standard compiled call-and-halt code used by the runner, and checks
-static compilation, lookup and code-fit obligations at that use site. Supplied facts
-are used only for those static goals; unresolved goals remain explicit.
+static compilation, lookup and code-fit obligations at that use site. Generated
+declaration bindings and supplied facts are used only for those static goals;
+unresolved goals remain explicit.
 The [factorial](##Examples.Ram.FunctionRun), [sum](##Examples.Ram.ArraySum) and
 [slice](##Examples.Ram.ArraySlice) clients use it for halt, value and separate step proofs
 without maintaining private `rawLink`, compilation and code-length declarations.
 Stack capacity, representation, overflow and the supplied correctness or time theorem
 remain explicit proof obligations. This is proof automation, not another runtime wrapper
 or a guarantee that every `ram_def` compiles and fits every word width.
+
+For a complete invocation's upper bound, `ram_run_bound theorem [facts]` also
+compares the bridge's proved bound with the requested one. It reuses `ram_bound`
+to normalize actual argument, return, frame and halt overhead; supply the
+generated return-expression equation where needed. The copy, slice and
+source-composition consumers no longer hand-expand those instruction counts.
+Unresolved stack and mathematical obligations remain visible, and the requested
+bound is never passed to the runner as fuel.
 
 `runTotal` performs `Option.get` on the actual runner output; generated `apply` decodes
 its returned fields using the declared result shape. The proof argument is in `Prop`
@@ -389,8 +398,12 @@ the model-to-memory connection. Reuse an existing bridge where one is available.
 Precondition patterns include `rfl` and `⟨rfl, hbound⟩`. Closed frame bounds may
 be discharged automatically; unresolved obligations remain ordinary Lean goals.
 Use `ram_total_apply contract [facts]` to apply a supplied operation, function or
-recursive specification while keeping its implementation opaque. The facts can
-include generated lookup equations and known arity or local-frame facts.
+recursive specification while keeping its implementation opaque. The dedicated
+`ram_bindings` set supplies declaration-generated argument fields, lookups and
+static parameter/result/local counts, including imported functions. Authors
+still choose the contract and typed input, but need not repeat caller/callee
+argument-builder definitions. Bodies, return expressions and mathematical
+representation lemmas are not registered in this set.
 `ram_model [facts]` simplifies observations, and `ram_word [facts]` normalizes word arithmetic
 with the available range conditions. Remaining obligations are ordinary Lean goals.
 

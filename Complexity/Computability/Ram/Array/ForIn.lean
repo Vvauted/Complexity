@@ -105,11 +105,12 @@ private structure LoopRep (registers : Registers) (heapLimit : Nat)
 private theorem step_refines (registers : Registers) {iteration : Stmt} {program : Program}
     {heapLimit depth : Nat} {entry : State w} {target : Word w}
     {step : Word w → Word w → Word w} {R : State w → Prop} (hw : 0 < w)
-    (implementation : ∀ s, R s → (s.regs registers.pointer).toNat < heapLimit →
+    (implementation : ∀ s, R s → s.regs registers.remaining ≠ 0 →
+      (s.regs registers.pointer).toNat < heapLimit →
       SafeExec program heapLimit depth iteration s
         (stepState registers
           (step (s.regs registers.accumulator) (s.mem (s.regs registers.pointer))) s))
-    (preserve : ∀ s, R s → R (stepState registers
+    (preserve : ∀ s, R s → s.regs registers.remaining ≠ 0 → R (stepState registers
       (step (s.regs registers.accumulator) (s.mem (s.regs registers.pointer))) s))
     (x : Word w) (xs : List (Word w)) :
     Refines program heapLimit depth iteration
@@ -117,27 +118,29 @@ private theorem step_refines (registers : Registers) {iteration : Stmt} {program
       (fun result => LoopRep registers heapLimit entry target R xs result.2)
       (modify (fun accumulator => step accumulator x) : StateM (Word w) PUnit).run := by
   intro accumulator s represented
-  refine ⟨_, implementation s represented.invariant represented.cursor.address_lt, ?_⟩
+  refine ⟨_, implementation s represented.invariant represented.cursor.nonzero
+    represented.cursor.address_lt, ?_⟩
   change LoopRep registers heapLimit entry target R xs (step accumulator x) _
   refine ⟨represented.cursor.advance hw rfl
       (stepState_pointer registers _ s) (stepState_remaining registers _ s),
-    ?_, preserve s represented.invariant, represented.memory,
+    ?_, preserve s represented.invariant represented.cursor.nonzero, represented.memory,
     represented.input, represented.output, ?_⟩
   · rw [stepState_accumulator, represented.accumulator, represented.cursor.head]
   · intro r hp hc ha he
     exact (stepState_other registers _ s hp hc ha he).trans (represented.other r hp hc ha he)
 
-/-- Reuse the existing list-traversal rule with an explicit element binding.
-Every iteration must execute the stated body, load the current word and update
-the accumulator and cursor. The frame excludes the loaded element local. -/
-theorem loop_safe_of_step (registers : Registers) {iteration : Stmt} {program : Program}
+/-- Reuse the list-traversal rule on actual nonempty suffixes. The implementation
+and invariant preservation are required only when the loop guard is true, not
+at the unexecuted empty endpoint. The frame excludes the loaded element local. -/
+theorem loop_safe_of_step_guarded (registers : Registers) {iteration : Stmt} {program : Program}
     {heapLimit depth : Nat} {step : Word w → Word w → Word w} {R : State w → Prop}
     (hw : 0 < w)
-    (implementation : ∀ s, R s → (s.regs registers.pointer).toNat < heapLimit →
+    (implementation : ∀ s, R s → s.regs registers.remaining ≠ 0 →
+      (s.regs registers.pointer).toNat < heapLimit →
       SafeExec program heapLimit depth iteration s
         (stepState registers
           (step (s.regs registers.accumulator) (s.mem (s.regs registers.pointer))) s))
-    (preserve : ∀ s, R s → R (stepState registers
+    (preserve : ∀ s, R s → s.regs registers.remaining ≠ 0 → R (stepState registers
       (step (s.regs registers.accumulator) (s.mem (s.regs registers.pointer))) s))
     (s : State w) (base : Word w) (xs : List (Word w)) (invariant : R s)
     (represented : ArrayRep s.mem base xs) (pointer : s.regs registers.pointer = base)
@@ -173,6 +176,30 @@ theorem loop_safe_of_step (registers : Registers) {iteration : Stmt} {program : 
     result.invariant, result.memory, result.input, result.output, result.other⟩
   · simpa [arrayAddr] using result.cursor.endpoint
   · exact (Word.toNat_eq_zero_iff _).mp result.cursor.count
+
+/-- The unconditional step interface is a specialization of the guarded
+traversal rule. Existing implementations need not mention the guard. -/
+theorem loop_safe_of_step (registers : Registers) {iteration : Stmt} {program : Program}
+    {heapLimit depth : Nat} {step : Word w → Word w → Word w} {R : State w → Prop}
+    (hw : 0 < w)
+    (implementation : ∀ s, R s → (s.regs registers.pointer).toNat < heapLimit →
+      SafeExec program heapLimit depth iteration s
+        (stepState registers
+          (step (s.regs registers.accumulator) (s.mem (s.regs registers.pointer))) s))
+    (preserve : ∀ s, R s → R (stepState registers
+      (step (s.regs registers.accumulator) (s.mem (s.regs registers.pointer))) s))
+    (s : State w) (base : Word w) (xs : List (Word w)) (invariant : R s)
+    (represented : ArrayRep s.mem base xs) (pointer : s.regs registers.pointer = base)
+    (count : (s.regs registers.remaining).toNat = xs.length)
+    (heap : base.toNat + xs.length ≤ heapLimit) (fit : base.toNat + xs.length < 2 ^ w) :
+    ∃ t, SafeExec program heapLimit depth (.while (.var registers.remaining) iteration) s t ∧
+      t.regs registers.accumulator = xs.foldl step (s.regs registers.accumulator) ∧
+      t.regs registers.pointer = arrayAddr base xs.length ∧ t.regs registers.remaining = 0 ∧
+      R t ∧ t.mem = s.mem ∧ t.input = s.input ∧ t.outputRev = s.outputRev ∧
+      ∀ r, r ≠ registers.pointer → r ≠ registers.remaining →
+        r ≠ registers.accumulator → r ≠ registers.element → t.regs r = s.regs r :=
+  loop_safe_of_step_guarded registers hw (fun s h _ => implementation s h)
+    (fun s h _ => preserve s h) s base xs invariant represented pointer count heap fit
 
 /-- Load the actual next element, execute its implemented scalar update, then
 reuse the existing cursor assignments. No list element is supplied for free. -/

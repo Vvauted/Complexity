@@ -72,8 +72,7 @@ theorem slice_contract {w heapLimit depth : Nat} {array : ArrayRef w}
   · decide
   · rintro _ entry ⟨rfl, represented⟩
     ram_total_vc [functions.body_eq.slice, functions.result_eq.slice,
-      functions.arguments.slice, Source.State.enter, Source.State.restore, DSL.ValueKind.decode,
-      ArrayRef.subslice]
+      DSL.ValueKind.decode, ArrayRef.subslice]
     simpa [ArrayRef.subslice] using represented.subslice offset count span
 
 /-- The reusable slice function returns an ordinary typed reference, separately
@@ -109,16 +108,13 @@ theorem function_contract {w heapLimit : Nat} {array : ArrayRef w}
     ram_total_apply
       ((slice_contract (heapLimit := heapLimit) (depth := 0) (xs := xs) span).wp_call
         (arg := (array, offset, count)))
-      [functions.function_lookup.slice, functions.results_length.slice,
-        functions.arguments.slice, functions.arguments.sumSlice, Source.State.enter, represented]
+      [represented]
     rintro window middle rfl sliceRep rfl _
     have sliceFit := represented.subslice_end_lt offset count span fit
     have sumContract := (sum_function_contract_of_ref
       (program := sumFunctions.program) (heapLimit := heapLimit) (depth := 0)
       hw sliceFit).renameCalls functions.embeds.Sum
-    ram_total_apply sumContract [functions.function_lookup.Sum.sum,
-      functions.arguments.sumSlice, sliceRep, ArrayRef.subslice,
-      Source.State.enter, Source.State.restore]
+    ram_total_apply sumContract [sliceRep, ArrayRef.subslice]
 
 /-- The semantic value uses the same declared implementation and ordinary list slice. -/
 theorem eval_eq {w heapLimit : Nat} {array : ArrayRef w}
@@ -229,16 +225,11 @@ theorem runTotal_steps_le {array : ArrayRef 32} {offset count : Word 32}
   obtain ⟨value, finish, execution, _⟩ :=
     function_contract (by decide : 0 < 32) fit span (array, offset, count) entry
       ⟨rfl, represented⟩
-  have bounded := by
-    ram_run_apply (LocalCompiler.Function.runTotal_steps_le_of_timeBound
-      (sumSlice_halts ⟨xs, represented, fit⟩ span hstack) (execution := execution)
-      (time := function_timeBound (by decide : 0 < 32) fit span) (pre := ⟨rfl, represented⟩))
-      [functions.function_lookup.sumSlice]
-    exact hstack
-  have callCount : LocalCompiler.Function.callSteps functions.registers
-      functions.function.sumSlice (18 * count.toNat + 119) + 1 = 18 * count.toNat + 189 := by
-    ram_simp [LocalCompiler.Function.callSteps_eq, functions.result_eq.sumSlice]
-  simpa only [functions.runTotal.sumSlice, callCount] using bounded
+  ram_run_bound (LocalCompiler.Function.runTotal_steps_le_of_timeBound
+    (sumSlice_halts ⟨xs, represented, fit⟩ span hstack) (execution := execution)
+    (time := function_timeBound (by decide : 0 < 32) fit span) (pre := ⟨rfl, represented⟩))
+    [functions.result_eq.sumSlice]
+  exact hstack
 
 -- This host state preloads 1, 2, 3, 4, 5. The call selects the middle three
 -- elements; its reported count excludes this host-side preparation.

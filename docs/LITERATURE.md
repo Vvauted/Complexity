@@ -89,6 +89,15 @@ against counted RAM transitions, and our arithmetic lemmas must respect actual
 word semantics. A user may propose a budget or potential and prove it sufficient;
 that is not permission to define an operation's execution cost.
 
+Section 4 is also a useful guide to proof ergonomics. Its syntax-directed
+characteristic formulae leave recursive proofs to the host prover's ordinary
+induction. Type-directed lifting lets postconditions use mathematical values
+instead of repeatedly classifying raw runtime values. For us this motivates
+declaration-generated binding equations and shared exact-cost composition,
+not a second recursive proof framework. We retain proved RAM primitive and
+calling costs rather than importing its function-call counting convention;
+abstract interfaces must be backed by our existing execution theorems.
+
 ## 5. Separate algorithmic reasoning from representation proofs
 
 Maximilian P. L. Haslbeck and Peter Lammich, **Refinement with Time — Refining the

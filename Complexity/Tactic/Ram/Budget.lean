@@ -14,6 +14,8 @@ import Mathlib.Tactic.Ring
 `ram_bound [facts]` rewrites the proved formulas for call overhead, guard
 costs, atomic instruction lengths and finite-sum loop reserves, then tries
 numeric normalization, Presburger arithmetic and polynomial normalization.
+The shared declaration binding set supplies static arities and local counts;
+function bodies and returned expressions remain opaque unless supplied.
 `ram_bound at h` and `ram_bound at *` explicitly select other locations; the
 default changes only the goal.
 
@@ -54,7 +56,7 @@ macro_rules
   | `(tactic| ram_bound [$args,*] $[$loc:location]?) =>
       `(tactic|
         (simp (config := { failIfUnchanged := false }) only
-          [Ram.Source.Recursion.Spec.callBudget_eq,
+          [ram_bindings, Ram.Source.Recursion.Spec.callBudget_eq,
             Ram.ABI.callResultsLocals_steps_eq, Ram.ABI.callLocals_steps_eq,
             Ram.ABI.callPrefixLocals_length_eq, Ram.ABI.returnCodeResultsLocals_length,
             Ram.ABI.returnCodeLocals_length, Ram.ABI.receiveResults_length,

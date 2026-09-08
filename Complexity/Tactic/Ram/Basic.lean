@@ -4,6 +4,8 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Verification.Basic
+import Complexity.Computability.Ram.Source.Named.Attributes
+import Complexity.Computability.Ram.Source.Function.Basic
 import Mathlib.Tactic.NormNum
 
 /-!
@@ -14,7 +16,9 @@ import Mathlib.Tactic.NormNum
   weakest-precondition rewrites. `ram_vc [definitions, facts]` performs those
   rewrites on an existing WP goal.
 * `ram_simp [definitions, facts]` simplifies expression semantics, state
-  updates, heap-read obligations and generated atomic instruction lengths. It
+  updates, heap-read obligations and generated atomic instruction lengths.
+  The declaration-generated `ram_bindings` set supplies argument fields, lookup
+  and static arities without unfolding function bodies or return expressions. It
   then invokes mathlib's `norm_num` for arithmetic normalization.
 
 Both tactics are transparent macros over existing proved rules. They neither
@@ -68,8 +72,8 @@ end Ram.Tactic
 
 open Lean.Parser.Tactic
 
-/-- Simplify only the RAM expression/state/atomic-length vocabulary and the
-explicitly supplied definitions and facts, then normalize numeric arithmetic.
+/-- Simplify the RAM expression/state/atomic-length vocabulary, generated
+declaration bindings and explicitly supplied facts, then normalize numeric arithmetic.
 Remaining safety and mathematical obligations are not admitted or hidden. -/
 syntax (name := ramSimp) "ram_simp" (" [" simpArg,* "]")? : tactic
 
@@ -78,13 +82,14 @@ macro_rules
   | `(tactic| ram_simp [$args,*]) =>
       `(tactic|
         (simp (config := { failIfUnchanged := false }) only
-          [Ram.Tactic.stmtSize_assign, Ram.Tactic.stmtSize_store,
+          [ram_bindings, Ram.Tactic.stmtSize_assign, Ram.Tactic.stmtSize_store,
             Ram.Tactic.stmtSize_read, Ram.Tactic.stmtSize_write,
             Ram.Tactic.compile_const_length, Ram.Tactic.compile_var_length,
             Ram.Tactic.compile_bin_length, Ram.Tactic.compile_load_length,
             List.forall_mem_cons, List.forall_mem_nil, List.map_cons, List.map_nil,
             List.length_cons, List.length_nil, and_true, true_and,
             Ram.Expr.ReadsBelow, Ram.Source.State.eval, Ram.Expr.eval, Ram.BinOp.eval,
+            Ram.Source.State.enter_regs, Ram.Source.State.restore,
             Ram.Source.State.setRegs_nil, Ram.Source.State.setRegs_nil_values,
             Ram.Source.State.setRegs_cons,
             Ram.Source.State.setReg, Ram.Source.State.setMem, Ram.Source.State.output,

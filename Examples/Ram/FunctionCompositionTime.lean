@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Tactic.Ram.Time
+import Complexity.Tactic.Ram.Run
 import Examples.Ram.FunctionComposition
 
 /-!
@@ -76,17 +77,11 @@ theorem runTotal_steps_le {source destination : ArrayRef 32} {heapLimit : Nat}
   obtain ⟨value, finish, execution, _⟩ :=
     function_contract (by decide : 0 < 32) sameLength fit disjoint _ entry
       ⟨rfl, sourceArray, destinationArray⟩
-  have bounded := LocalCompiler.Function.runTotal_steps_le_of_timeBound (halts safe hstack)
-    compile_copyThenSum functions.function_lookup.copyThenSum code_length_lt hstack execution
-    (function_timeBound (by decide : 0 < 32) sameLength fit disjoint)
-    ⟨rfl, sourceArray, destinationArray⟩
-  have callCount : LocalCompiler.Function.callSteps functions.registers
-      functions.function.copyThenSum (37 * xs.length + 104) + 1 = 37 * xs.length + 160 := by
-    rw [LocalCompiler.Function.callSteps_eq]
-    change 37 * xs.length + 104 + 2 * 4 + 1 + 7 * 5 + 2 * 1 + 9 + 1 =
-      37 * xs.length + 160
-    omega
-  simpa only [functions.runTotal.copyThenSum,
-    max_eq_right (by decide : 1 ≤ functions.registers), callCount] using bounded
+  ram_run_bound (LocalCompiler.Function.runTotal_steps_le_of_timeBound
+    (halts safe hstack) (execution := execution)
+    (time := function_timeBound (by decide : 0 < 32) sameLength fit disjoint)
+    (pre := ⟨rfl, sourceArray, destinationArray⟩))
+    [functions.result_eq.copyThenSum]
+  exact hstack
 
 end Ram.Examples.FunctionComposition

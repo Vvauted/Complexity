@@ -36,19 +36,6 @@ def Safe (source destination length : Word 32) (heapLimit : Nat)
     ArrayAt heapLimit source xs entry ∧ ArrayAt heapLimit destination ys entry ∧
     ArraysDisjoint source xs.length destination xs.length
 
-private def copyCode : Code :=
-  LocalCompiler.rawLink copyFunctions.registers copyFunctions.program
-    (LocalCompiler.Function.trampoline copyFunctions.functionIndex.copy
-      copyFunctions.function.copy.params copyFunctions.function.copy.results.length)
-
-private theorem compile_copy :
-    LocalCompiler.Function.compile copyFunctions.registers copyFunctions.program
-      copyFunctions.functionIndex.copy copyFunctions.function.copy.params = some copyCode := by
-  set_option maxRecDepth 4096 in decide
-
-private theorem copyCode_length_lt : copyCode.length < 2 ^ 32 := by
-  set_option maxRecDepth 4096 in decide
-
 variable {source destination length : Word 32} {heapLimit : Nat} {entry : Source.State 32}
 
 /-- Budget-free copy correctness establishes normal termination of this
@@ -69,8 +56,9 @@ theorem copy_halts (safe : Safe source destination length heapLimit entry)
     (program := copyFunctions.program) (depth := 0) (by decide : 0 < 32)
     sameLength lengthFit disjoint entry sourceArray destinationArray
   rw [← encoded] at execution
-  exact LocalCompiler.Function.halts_of_execution compile_copy copyFunctions.function_lookup.copy
-    copyCode_length_lt (by simpa using hstack) execution
+  ram_run_apply (LocalCompiler.Function.halts_of_execution (execution := execution))
+    [copyFunctions.function_lookup.copy]
+  simpa using hstack
 
 /-- Execute the existing compiled copy and return its source-visible state.
 The proof is erased, and the destination contents come from actual RAM stores. -/
@@ -102,11 +90,13 @@ theorem copy_applyState_spec (safe : Safe source destination length heapLimit en
   have encoded : length = BitVec.ofNat 32 xs.length := by
     rw [← count]
     exact (Word.ofNat_toNat_self length).symm
-  have post := LocalCompiler.Function.applyState_spec (copy_halts safe hstack)
-    compile_copy copyFunctions.function_lookup.copy copyCode_length_lt (by simpa using hstack)
-    (copy_function_contract (program := copyFunctions.program) (depth := 0)
-      (by decide : 0 < 32) sameLength lengthFit disjoint)
-    ⟨by rw [encoded], sourceArray, destinationArray⟩
+  have post := by
+    ram_run_apply (LocalCompiler.Function.applyState_spec (copy_halts safe hstack)
+      (contract := copy_function_contract (program := copyFunctions.program) (depth := 0)
+        (by decide : 0 < 32) sameLength lengthFit disjoint)
+      (pre := ⟨by rw [encoded], sourceArray, destinationArray⟩))
+      [copyFunctions.function_lookup.copy]
+    simpa using hstack
   refine ⟨rfl, ?_⟩
   simpa only [copyFunctions.applyState.copy,
     max_eq_right (by decide : 1 ≤ copyFunctions.registers)] using post.2
@@ -160,19 +150,12 @@ theorem runTotal_steps_le (safe : Safe source destination length heapLimit entry
     (program := copyFunctions.program) (depth := 0) (by decide : 0 < 32)
     sameLength lengthFit disjoint entry sourceArray destinationArray
   rw [← encoded] at execution
-  have bounded := LocalCompiler.Function.runTotal_steps_le_of_timeBound
-    (copy_halts safe hstack) compile_copy copyFunctions.function_lookup.copy
-    copyCode_length_lt (by simpa using hstack) execution
-    (copy_function_timeBound (by decide : 0 < 32) sameLength lengthFit disjoint)
-    ⟨by rw [encoded], sourceArray, destinationArray⟩
-  have callCount : LocalCompiler.Function.callSteps copyFunctions.registers
-      copyFunctions.function.copy (19 * xs.length + 2) + 1 = 19 * xs.length + 39 := by
-    rw [LocalCompiler.Function.callSteps_eq]
-    change 19 * xs.length + 2 + 2 * 3 + 0 + 7 * 3 + 2 * 0 + 9 + 1 =
-      19 * xs.length + 39
-    omega
-  simpa only [copyFunctions.runTotal.copy,
-    max_eq_right (by decide : 1 ≤ copyFunctions.registers), callCount] using bounded
+  ram_run_bound (LocalCompiler.Function.runTotal_steps_le_of_timeBound
+    (copy_halts safe hstack) (execution := execution)
+    (time := copy_function_timeBound (by decide : 0 < 32) sameLength lengthFit disjoint)
+    (pre := ⟨by rw [encoded], sourceArray, destinationArray⟩))
+    [copyFunctions.result_eq.copy]
+  simpa using hstack
 
 private theorem copy_stack_of_sum_stack
     (hstack : heapLimit + ABI.frameSize sumFunctions.registers < 2 ^ 32) :

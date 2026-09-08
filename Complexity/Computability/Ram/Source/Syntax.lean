@@ -79,8 +79,8 @@ syntax:max ident : ramExpr
 syntax:max "(" ramExpr ")" : ramExpr
 syntax:max "const(" term ")" : ramExpr
 syntax:max "load[" ramExpr "]" : ramExpr
-syntax:max "true" : ramExpr
-syntax:max "false" : ramExpr
+syntax:max (name := ramTrueLiteral) &"true" : ramExpr
+syntax:max (name := ramFalseLiteral) &"false" : ramExpr
 syntax:max "(" ")" : ramExpr
 /-- Construct a by-value array handle from two word expressions, without allocating memory. -/
 syntax:max "array(" ramExpr ", " ramExpr ")" : ramExpr
@@ -233,18 +233,23 @@ private def resolveBase (scope : LocalScope) (strict : Bool) (name : Lean.TSynta
 
 partial def lowerExpr (scope : LocalScope) (strict : Bool)
     (expr : Lean.TSyntax `ramExpr) : Lean.MacroM (Lean.TSyntax `term) := do
+  -- Nonreserved literals normally use the identifier parser. These syntax
+  -- kinds also cover environments that already reserve the same tokens.
+  if expr.raw.getKind == ``ramTrueLiteral then return ← `(Ram.Expr.const 1)
+  if expr.raw.getKind == ``ramFalseLiteral then return ← `(Ram.Expr.const 0)
   let binary (op : Lean.TSyntax `term) (a b : Lean.TSyntax `ramExpr) := do
     let a ← lowerExpr scope strict a
     let b ← lowerExpr scope strict b
     `(Ram.Expr.bin $op $a $b)
   match expr with
   | `(ramExpr| $n:num) => `(Ram.Expr.const $n)
-  | `(ramExpr| $x:ident) => `(Ram.Expr.var $(← resolveLocal scope strict x))
+  | `(ramExpr| $x:ident) =>
+      if x.getId == `true then `(Ram.Expr.const 1)
+      else if x.getId == `false then `(Ram.Expr.const 0)
+      else `(Ram.Expr.var $(← resolveLocal scope strict x))
   | `(ramExpr| ($e:ramExpr)) => lowerExpr scope strict e
   | `(ramExpr| const($n:term)) => `(Ram.Expr.const $n)
   | `(ramExpr| load[$a:ramExpr]) => `(Ram.Expr.load $(← lowerExpr scope strict a))
-  | `(ramExpr| true) => `(Ram.Expr.const 1)
-  | `(ramExpr| false) => `(Ram.Expr.const 0)
   | `(ramExpr| ()) => Lean.Macro.throwErrorAt expr "expected a word, not Unit"
   | `(ramExpr| array($_base:ramExpr, $_length:ramExpr)) =>
       Lean.Macro.throwErrorAt expr "expected a word, not an array handle"

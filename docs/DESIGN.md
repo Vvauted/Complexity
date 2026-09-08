@@ -31,6 +31,12 @@ imports, not host callbacks, runtime module loading or arbitrary Lean compilatio
 All six generated observation/run interfaces are available under imported aliases.
 Stored signatures survive further imports; bare term quotations cannot resolve includes.
 
+Declarations also generate a dedicated binding simp set for argument fields,
+lookup and static arity/frame/result counts. Correctness and cost tactics reuse
+that one set. Function bodies, return expressions and representation theorems
+are not registered, so an implementation remains opaque until explicitly opened.
+Source Boolean literals do not reserve the host Lean identifiers `true` and `false`.
+
 Word, borrowed-array and `Unit` results have one, two and zero fields. All return
 expressions are evaluated in the same final callee state before restoring caller
 registers. Result arity is checked; receipt updates destinations in order.
@@ -181,7 +187,20 @@ ordinary Lean callbacks executable or provide a data-dependent fold-cost rule.
 A separate uniform upper-bound rule accepts `FunctionTimeBound` for each actual
 two-argument helper call, without requiring an exact count or helper totality.
 It bounds completed traversals; existence still comes from independent correctness.
-Dependence on the actual element and prefix accumulator needs a further rule.
+The data-dependent rule sums `C accumulator element` at the actual fold prefixes.
+It additionally uses a separate read-only helper contract to identify the
+returned accumulator and preserve unread elements. Accumulator invariants and
+admitted element domains are explicit; the shared guarded traversal requires
+helper correctness only for iterations whose guard is true, not at the empty
+endpoint. The actual factorial adapter exercises a varying helper bound without
+requiring all word inputs to fit a fixed recursion depth.
+
+`TimeExact` states an equality about every completed measured execution. Its
+source-compositional rules reuse compiled straight-line lengths, branches and
+calls; no new execution relation or cost annotation is introduced. A single
+cost induction can supply both an upper bound and the count of a separately
+proved safe execution. Conditional equalities and bounds are not automatically
+monotone in safety capacities: an insufficient capacity can make them vacuous.
 
 Scoped `for x in xs` lowers to the same statements: two fresh cursor locals copy
 the descriptor, and a third local receives each actual element load. The source

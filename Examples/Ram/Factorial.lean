@@ -10,7 +10,8 @@ import Complexity.Computability.Ram.Verification.Call
 import Complexity.Computability.Ram.Verification.Function
 import Complexity.Computability.Ram.Verification.Recursion.Basic
 import Complexity.Computability.Ram.Verification.Recursion.Time
-import Complexity.Computability.Ram.Verification.Time.Composition
+import Complexity.Computability.Ram.Verification.Time.Exact
+import Complexity.Tactic.Ram.Budget
 import Complexity.Tactic.Ram.Total
 import Mathlib.Data.Nat.Factorial.Basic
 
@@ -79,10 +80,6 @@ theorem value_succ (w k : Nat) :
     value w (k + 1) = BitVec.ofNat w (k + 1) * value w k := by
   simp only [value, factorialNat, Nat.factorial_succ, BitVec.ofNat_mul]
 
-private theorem set_answer_twice (s : Source.State w) (a b : Word w) :
-    (s.setReg 1 a).setReg 1 b = s.setReg 1 b :=
-  Source.State.setReg_setReg s 1 a b
-
 /-- The callee's local registers are genuinely discarded on return. In
 particular, the caller's original `n` survives its recursive call. -/
 theorem leave_answer (s : Source.State w) (args : List (Word w)) (answer : Word w) :
@@ -120,7 +117,6 @@ theorem function_contract (H k : Nat) (hk : k < 2 ^ w) :
       rw [if_neg hnonzero]
       ram_total_apply (ih (by omega)) [functions.function_lookup.factorial,
         encoded_pred, value_succ]
-      rfl
 
 /-- Apply factorial directly to a word argument, without a `main` or I/O. -/
 theorem function_runs (H k : Nat) (hk : k < 2 ^ w) (entry : Source.State w) :
@@ -230,63 +226,47 @@ theorem recursive_total (H : Nat) :
         funext r
         by_cases hr : r = functions.localReg.factorial.answer <;> simp [hr]
 
-/-- The independent time proof composes generated call/assignment lengths.
-The mathematical recurrence is `T (k + 1) = T k + 37`; functional recursion
-only supplies the callable termination assertion needed by sequence composition. -/
-theorem recursive_timeBound (H : Nat) :
-    ∀ k, Source.TimeBound 2 program H k factorial.body ((totalSpec w).pre k)
+/-- A single mathematical induction proves the exact recurrence
+`T (k + 1) = T k + 37`. Public cost rules handle the measured branches,
+recursive call and straight-line continuation; no callee state is reconstructed. -/
+theorem recursive_timeExact (H : Nat) :
+    ∀ k, Source.TimeExact 2 program H k factorial.body ((totalSpec w).pre k)
       (fun _ => 37 * k + 4) := by
   intro k
   induction k with
   | zero =>
-      have yes : Source.TimeBound 2 program H 0
-          (.seq (.call [1] self [.bin .sub (.var 0) (.const 1)])
-            (.assign 1 (.bin .mul (.var 0) (.var 1))))
-          (fun s : Source.State w => (totalSpec w).pre 0 s ∧ s.eval (.var 0) ≠ 0)
-          (fun _ => 0) := by
-        intro s hs steps t hx
-        exact False.elim (hs.2 hs.1.2)
-      have branches := Source.TimeBound.ite yes
-        (Source.TimeBound.assign (value := .const 1) (dst := 1))
-      apply branches.mono_budget
-      intro s hs
-      change 2 + (if s.eval (.var 0) = 0 then 2 else 0 + 1) ≤ 4
-      split <;> omega
+      change Source.TimeExact 2 program H 0 functions.function.factorial.body _ _
+      rw [functions.body_eq.factorial]
+      apply Source.TimeExact.congr_cost
+      · apply Source.TimeExact.ite_of_eq_zero
+        · intro s hs
+          exact hs.2
+        · exact Source.TimeExact.of_isStraightLine trivial
+      · intro s hs
+        ram_bound
   | succ k ih =>
-      let P : Source.State w → Prop :=
-        fun s => (totalSpec w).pre (k + 1) s ∧ s.eval (.var 0) ≠ 0
-      have callable : Source.TotalContract program H (k + 1)
-          (.call [1] self [.bin .sub (.var 0) (.const 1)]) P (fun _ => True) := by
-        intro s hs
-        apply (recursive_total H k).wp_call
-          (show program[self]? = some factorial from rfl) rfl rfl (by decide)
-        · simp [Expr.ReadsBelow]
-        · exact predecessor_pre k s hs.1
-        · exact Nat.le_refl _
-        · intro callee post
-          trivial
-      have callCost : Source.TimeBound 2 program H (k + 1)
-          (.call [1] self [.bin .sub (.var 0) (.const 1)]) P (fun _ => 37 * k + 34) := by
-        apply (Source.TimeBound.call (P := P)
-          (show program[self]? = some factorial from rfl)
-          (fun s hs => predecessor_pre k s hs.1) ih).mono_budget
-        intro s hs
-        change 16 + 1 + (37 * k + 4) + 12 + 1 ≤ 37 * k + 34
-        omega
-      have yes : Source.TimeBound 2 program H (k + 1)
-          (.seq (.call [1] self [.bin .sub (.var 0) (.const 1)])
-            (.assign 1 (.bin .mul (.var 0) (.var 1)))) P (fun _ => 37 * k + 38) := by
-        apply Source.TimeBound.seq callable callCost Source.TimeBound.assign
-        intro s hs middle hm
-        change 37 * k + 34 + 4 ≤ 37 * k + 38
-        omega
-      have branches := Source.TimeBound.ite yes
-        (Source.TimeBound.assign (value := .const 1) (dst := 1))
-      apply branches.mono_budget
-      intro s hs
-      change 2 + (if s.eval (.var 0) = 0 then 2 else (37 * k + 38) + 1) ≤
-        37 * (k + 1) + 4
-      split <;> omega
+      change Source.TimeExact 2 program H (k + 1) functions.function.factorial.body _ _
+      rw [functions.body_eq.factorial]
+      apply Source.TimeExact.congr_cost
+      · apply Source.TimeExact.ite_of_ne_zero
+        · intro s hs zero
+          have decoded := congrArg BitVec.toNat zero
+          change (s.regs functions.localReg.factorial.n).toNat = 0 at decoded
+          rw [hs.2, Word.ofNat_toNat_of_lt hs.1] at decoded
+          omega
+        · apply Source.TimeExact.seq_const
+          · exact Source.TimeExact.call
+              (show program[self]? = some factorial from rfl) (predecessor_pre k) ih
+          · exact Source.TimeExact.of_isStraightLine trivial
+      · intro s hs
+        ram_bound [factorial, functions.result_eq.factorial, functions.locals_eq.factorial]
+
+/-- The independent upper bound follows from the exact cost equation, without
+another recursive proof or a proposed budget in the functional specification. -/
+theorem recursive_timeBound (H : Nat) :
+    ∀ k, Source.TimeBound 2 program H k factorial.body ((totalSpec w).pre k)
+      (fun _ => 37 * k + 4) :=
+  fun k => (recursive_timeExact H k).timeBound
 
 /-- The function-body time bound is independent of its result specification.
 The enclosing call's argument and frame costs are accounted for separately. -/
@@ -344,78 +324,29 @@ theorem body_measured (H k : Nat) (s : Source.State w)
     (hk : k < 2 ^ w) (hn : s.regs 0 = BitVec.ofNat w k) :
     Source.LocalMeasuredExec 2 program H k factorial.body (37 * k + 4)
       s (s.setReg 1 (value w k)) := by
-  induction k generalizing s with
-  | zero =>
-      have hzero : s.eval (.var 0) = 0 := hn
-      exact .iteFalse (c := .var 0) trivial hzero
-        (.assign (value := .const 1) trivial)
-  | succ k ih =>
-      have hpred : s.eval (.bin .sub (.var 0) (.const 1)) = BitVec.ofNat w k := by
-        change s.regs 0 - BitVec.ofNat w 1 = BitVec.ofNat w k
-        rw [hn, encoded_pred]
-      have hcallee := ih (s.enter [BitVec.ofNat w k]) (by omega) (by
-        simp [Source.State.enter])
-      have harguments :
-          ∀ arg ∈ [Expr.bin .sub (.var 0) (.const 1)],
-            arg.ReadsBelow H s.regs s.mem := by
-        simp [Expr.ReadsBelow]
-      have hbody : Source.LocalMeasuredExec 2 program H k factorial.body (37 * k + 4)
-          (s.enter ([.bin .sub (.var 0) (.const 1)].map s.eval))
-          ((s.enter [BitVec.ofNat w k]).setReg 1 (value w k)) := by
-        simpa only [List.map_cons, List.map_nil, hpred] using hcallee
-      have hcall := Source.LocalMeasuredExec.call (dsts := [1]) (fn := self)
-        (show program[self]? = some factorial from rfl) rfl rfl (by decide)
-        harguments hbody (by simp [factorial, functions.result_eq.factorial, Expr.ReadsBelow])
-      have hcall' : Source.LocalMeasuredExec 2 program H (k + 1)
-          (.call [1] self [.bin .sub (.var 0) (.const 1)]) (37 * k + 34)
-          s (s.setReg 1 (value w k)) := by
-        simp only [show factorial.results = [.var 1] from rfl,
-          show factorial.locals = 2 from rfl, List.length_singleton,
-          recursive_call_steps, leave_answer] at hcall
-        simpa only [Nat.add_assoc] using hcall
-      have hmul : (s.setReg 1 (value w k)).eval (.bin .mul (.var 0) (.var 1)) =
-          value w (k + 1) := by
-        simp only [Source.State.eval, Expr.eval, BinOp.eval_mul,
-          Source.State.setReg_ne _ _ _ _ (by decide : (0 : Reg) ≠ 1),
-          Source.State.setReg_same, hn, value_succ]
-      have hassign : Source.LocalMeasuredExec 2 program H (k + 1)
-          (.assign 1 (.bin .mul (.var 0) (.var 1))) 4
-          (s.setReg 1 (value w k)) (s.setReg 1 (value w (k + 1))) := by
-        have h := Source.LocalMeasuredExec.assign (control := 2) (program := program)
-          (heapLimit := H) (d := k + 1) (s := s.setReg 1 (value w k))
-          (dst := 1) (value := .bin .mul (.var 0) (.var 1)) ⟨trivial, trivial⟩
-        simpa only [hmul, set_answer_twice,
-          show LocalCompiler.stmtSize 2 (LocalCompiler.calleeLocals program)
-              (.assign 1 (.bin .mul (.var 0) (.var 1))) = 4
-            from rfl] using h
-      have hnonzero : s.eval (.var 0) ≠ 0 := by
-        change s.regs 0 ≠ 0
-        intro hz
-        have hnat := congrArg BitVec.toNat hz
-        rw [hn, Word.ofNat_toNat_of_lt hk] at hnat
-        change k + 1 = 0 at hnat
-        omega
-      have h := Source.LocalMeasuredExec.iteTrue (c := .var 0) (no := .assign 1 (.const 1))
-        trivial hnonzero (.seq hcall' hassign)
-      have hcount : 1 + 1 + (37 * k + 34 + 4) + 1 = 37 * (k + 1) + 4 := by omega
-      simpa only [show (Expr.compile (.var 0) (ABI.scratch 2)).length = 1 from rfl,
-        hcount] using h
+  obtain ⟨finish, execution, _, post⟩ := recursive_total H k s ⟨hk, hn⟩
+  change finish = s.setReg 1 (value w k) at post
+  subst finish
+  exact execution.measured_of_timeExact (recursive_timeExact H k) ⟨hk, hn⟩
 
 /-- The public call restores every caller local other than its destination. -/
 theorem call_measured (H k : Nat) (s : Source.State w)
     (hk : k < 2 ^ w) (hn : s.regs 0 = BitVec.ofNat w k) :
     Source.LocalMeasuredExec 2 program H (k + 1) (.call [1] self [.var 0])
       (37 * k + 32) s (s.setReg 1 (value w k)) := by
-  have hbody := body_measured H k (s.enter ([.var 0].map s.eval)) hk (by
-    simpa [Source.State.enter, Source.State.eval, Expr.eval] using hn)
-  have hcall := Source.LocalMeasuredExec.call (dsts := [1]) (fn := self)
-    (show program[self]? = some factorial from rfl) rfl rfl (by decide)
-    (show ∀ arg ∈ [Expr.var 0], arg.ReadsBelow H s.regs s.mem from by
-      simp [Expr.ReadsBelow]) hbody
-    (by simp [factorial, functions.result_eq.factorial, Expr.ReadsBelow])
-  simp only [show factorial.results = [.var 1] from rfl,
-    show factorial.locals = 2 from rfl, List.length_singleton,
-    initial_call_steps, leave_answer] at hcall
-  simpa only [Nat.add_assoc] using hcall
+  obtain ⟨finish, execution, post⟩ :=
+    call_refines H (k + 1) s k s ⟨rfl, hk, Nat.le_refl _, hn⟩
+  change finish = s.setReg 1 (value w k) at post
+  subst finish
+  have cost : Source.TimeExact 2 program H (k + 1) (.call [1] self [.var 0])
+      (fun current => current = s) (fun _ => 37 * k + 32) := by
+    apply Source.TimeExact.congr_cost
+    · apply Source.TimeExact.call (show program[self]? = some factorial from rfl)
+        (body := recursive_timeExact H k)
+      rintro current rfl
+      exact ⟨hk, by simpa [Source.State.enter, Source.State.eval, Expr.eval] using hn⟩
+    · intro current hcurrent
+      ram_bound [factorial, functions.result_eq.factorial, functions.locals_eq.factorial]
+  exact execution.measured_of_timeExact cost rfl
 
 end Ram.Examples.Factorial

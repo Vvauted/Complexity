@@ -17,9 +17,9 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 
 | Consumer | What works | What still costs the proof author too much |
 | --- | --- | --- |
-| [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves the recursive function; its executable value rewrites to mathlib factorial under the stated word/stack conditions. | Separate time and exact-count proofs reconstruct body states, recursive calls and register updates. |
-| [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. A separate uniform helper-bound rule is available. | Exact helper costs still require measured-execution case analysis; actual element/prefix-dependent traversal costs need a further rule. |
-| [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. | The implementation proof still normalizes parameter binding, returned descriptor receipt and representation transport; its time proof separately composes those calls. |
+| [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves correctness and a single exact-cost recurrence. The upper bound and measured endpoint reuse these proofs; executable values rewrite to mathlib factorial. | Publishing the runtime equation still assembles source observations and justified word/stack conditions; general state-dependent exact composition needs more rules. |
+| [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. Uniform and actual element/prefix-dependent cost rules are available, exercised by an adapter around the existing factorial. | The caller still supplies the mathematical update, element domain and accumulator invariant. Mutable or richer-accumulator traversals are not covered by this read-only scalar rule. |
+| [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Declaration bindings and outer cost arithmetic are handled by shared automation. | The author still selects the typed input, transports representation facts and separately chooses bounds for the continuation. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls, with independently reusable correctness and time proofs. | Clients transport contracts through imports, rebuild representations, unpack register preservation, and choose numeric continuation reserves. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
 
@@ -165,9 +165,11 @@ compiled costs without a stream driver, fabricated result fields or host-side
 sequencing masquerading as one compiled program. Scalar and recursive consumers,
 the full library, examples and manual pass on the designated server.
 
-This establishes the typed path, not the final proof experience. Calls still need
-explicit typed-input instantiation and some parameter/representation normalization;
-the following priorities remove that repetitive work through public rules.
+This establishes the typed path, not the final proof experience. A dedicated
+declaration-generated binding set now removes repeated argument-builder,
+lookup and static arity/local-count facts, including imports. Slice's reduced
+call proof exercises it. Calls still need explicit typed-input selection and
+mathematical representation reasoning; no encoding is inverted by guesswork.
 
 A `Unit` value alone is not an observation of mutation or execution steps.
 Use the same invocation's state/count interface to observe those effects;
@@ -177,37 +179,44 @@ a source-language `Unit` call still executes its body and calling convention.
 
 Build on the existing total-correctness and measured-execution rules.
 
-- Provide declaration-driven call and sequence rules for both exact costs and
-  upper bounds. Infer static bindings and real call overhead from the source.
-  A cost equation remains something proved about the implementation.
-- Give recursive functions reusable body/recurrence rules so factorial's cost
-  proof uses its mathematical recursive argument instead of another register-level
-  induction. Retain any stronger body invariant actually required; do not infer
-  it from restored caller state alone.
-- Build on the checked uniform `ForIn.function_timeBound`, which consumes a
-  callee's conditional `FunctionTimeBound` without requiring exact costs or
-  helper totality. Next allow bounds on the actual element and prefix accumulator,
-  reusing finite sums and existing traversal/framing proofs.
+**Checked foundation:** `TimeExact` provides conditional exact-count composition
+over the original measured semantics. Factorial now uses one ordinary cost
+induction; its upper bound and measured body execution are projections, not
+separate execution-tree proofs. `ram_run_bound` composes the actual runtime
+bridge and proved outer-overhead arithmetic for copy, slice and copy-then-sum.
+
+The uniform `ForIn.function_timeBound` needs no exact helper count or totality.
+The separate `function_timeBound_of_step` sums work at actual elements and prefix
+accumulators, using a read-only correctness contract on admitted inputs. The
+shared traversal rule now requires the step only when its guard is true; an empty
+endpoint does not impose correctness of an unexecuted call. The existing
+factorial adapter supplies real input-dependent cost, an explicit element bound
+and sufficient recursive capacity. Standard list operations supply the sum;
+there is one small generic prefix-sum identity, not a new cost monad.
+
+**Remaining work:**
+
+- Extend the exact-cost interface beyond state-independent continuations.
+  Correctness, exact costs and upper bounds should share source-facing call and
+  sequence decomposition even when a returned value determines later work.
+  Keep cost equations proved, not annotations accepted by the compiler.
+- Simplify other recursive consumers with these rules before proposing another
+  recursion framework. Retain a stronger body invariant only where actually
+  needed; do not infer discarded callee locals from restored caller state.
 - Expose state-dependent continuation bounds through the existing call rules.
   Automate local restoration and routine representation transport; mathematical
   facts about updated data remain explicit.
-- Let the existing runtime bridge normalize outer call/return/halt costs as well
-  as static compilation obligations. Do not repeat trampoline and `callSteps`
-  proofs in every sample.
+- Consolidate exact runtime equations with the same convenience now available
+  for upper bounds, instead of repeating trampoline or `callSteps` proofs.
 
 **Evidence of completion:** `LocalBindings`, factorial, `ArrayFold`, and
 copy-then-sum use the common rules. Their algorithmic proofs retain only relevant
 invariants, contracts and mathematical cost arguments; neither exact-count nor
 upper-bound clients reconstruct ABI blocks or measured execution trees.
-Adapt the existing call-based fold to reuse a helper whose actual cost varies
-with its input, and validate that composition. Re-instantiating a constant-cost
-helper does not establish the promised data-dependent experience.
-
-The next concrete candidate is a tiny two-argument adapter around the existing
-factorial implementation, not a second recursive algorithm. Sum the proved costs
-at actual elements and prefix accumulators using standard list operations. Keep
-an explicit element bound and sufficient recursive stack capacity; a conditional
-time bound does not become monotone in allowed call depth without justification.
+The data-dependent factorial fold meets the varying-helper part of that evidence;
+it does not establish arbitrary mutation or richer accumulator support. A
+conditional time bound does not become monotone in allowed call depth without
+justification; this consumer transfers it using an actual execution and determinism.
 
 ## Priority 3: make data-operation contracts compose naturally
 
@@ -235,6 +244,24 @@ operation contracts at a lower level; its algorithmic proof should instead
 compose named parameters, results and array representations without restating
 call ASTs or assembling register states. Subsequent list/graph properties use
 upstream mathematics.
+
+Use merge sort's existing `sortState` as the next native-function consumer.
+Typed contract consequence and `Std.Do.Triple` already provide the logical
+ingredients; the existing actual `applyState` bridge provides the runtime one.
+Adding an unused wrapper would not yet shorten its multi-buffer binding proof.
+Copy already has a direct `Unit`/shared-state specification, so do not invent a
+duplicate stateful copy model just to demonstrate another interface.
+
+The language itself is also unfinished. Word, borrowed-array and `Unit` results,
+with only end-of-function returns, are not a complete high-level programming
+experience. The existing lower-bound search exposes a more immediate gap: it
+still uses a preloaded register block and observes its result in a machine
+register. Make it a named callable function and reuse `LowerBoundSpec.eq_findIdx`.
+Its result is naturally an insertion index, including `xs.length`; that legitimate
+mathematical sentinel is not evidence that this algorithm needs `Option` or an
+early return. Use an actual structured-result or early-exit consumer to justify
+those subsequent features. Source lowering, correctness, costs and runtime
+observations must arrive together; parser acceptance alone is not completion.
 
 ## Priority 4: publish mathematical statements once per declaration
 

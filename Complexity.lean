@@ -158,6 +158,7 @@ import Complexity.Computability.Ram.Source.Function.Eval
 import Complexity.Computability.Ram.Source.Function.Time
 import Complexity.Computability.Ram.Source.Function.Linking
 import Complexity.Computability.Ram.Source.Linking
+import Complexity.Computability.Ram.Source.Named.Attributes
 import Complexity.Computability.Ram.Source.Named.Basic
 import Complexity.Computability.Ram.Source.Named.Declaration
 import Complexity.Computability.Ram.Source.Safe
@@ -208,6 +209,7 @@ import Complexity.Computability.Ram.Verification.StateM.Traversal
 import Complexity.Computability.Ram.Verification.Time.Basic
 import Complexity.Computability.Ram.Verification.Time.Capacity
 import Complexity.Computability.Ram.Verification.Time.Composition
+import Complexity.Computability.Ram.Verification.Time.Exact
 import Complexity.Computability.Ram.Verification.Time.Function
 import Complexity.Computability.Ram.Verification.Time.StraightLine
 import Complexity.Computability.Ram.Verification.Total
@@ -220,6 +222,7 @@ import Complexity.Computability.Recurrence.Growth
 import Complexity.Computability.Recurrence.Majorant
 import Complexity.Computability.Recurrence.Rounding
 import Complexity.Computability.Recurrence.Supercritical
+import Complexity.Data.List.Fold
 import Complexity.Data.List.InsertIdx
 import Complexity.Data.List.StateM
 import Complexity.Data.Nat.Log

@@ -23,6 +23,7 @@ Lean declarations for its functions and source names:
 * `p.body_eq.f` and `p.result_eq.f` expose the lowered body and return fields;
 * `p.results_length.f` proves the field count of the declared result kind;
 * `p.arguments.f` takes word or `Ram.ArrayRef` parameters and constructs their word argument list;
+* `p.arguments_eq.f` exposes those actual word fields to declaration-driven simplification;
 * `p.arguments_length.f` proves that this list has the function's declared arity;
 * `p.eval.f` observes the function's result and shared state through `Part`;
 * `p.bodyTime.f` observes its compiler-derived body count through `Part`;
@@ -82,6 +83,14 @@ the same lowering once, sharing name resolution, slot allocation and generated A
 No runtime lookup is introduced, and the compiler and verification rules are unchanged.
 Existing term-form declarations need not be migrated.
 
+The dedicated `ram_bindings` simp set contains the generated argument-field
+equations, lookup and static arity/frame/result counts. RAM verification tactics
+use these facts for both local and imported functions, so callers need not repeat
+argument-builder definitions or declaration lookup proofs. Bodies and returned
+expressions are not registered: opening an implementation still requires its
+explicit body/result equations. Mathematical specifications and representation
+lemmas are not added to this set.
+
 Within `ram_def`, `include other as Alias;` imports a previously declared collection
 before the local functions. Calls such as `Alias.f(xs)` retain the imported word/array
 parameter and result signature. Linking relocates every imported internal call; local functions are lowered
@@ -135,6 +144,7 @@ private def argumentDeclarations (name fn : Lean.TSyntax `ident)
     (params : Array Parameter) (functionName : Lean.TSyntax `ident) :
     Lean.MacroM (Array Lean.Syntax) := do
   let argumentsName := Lean.mkIdentFrom fn (name.getId ++ `arguments ++ fn.getId)
+  let equationName := Lean.mkIdentFrom fn (name.getId ++ `arguments_eq ++ fn.getId)
   let lengthName := Lean.mkIdentFrom fn (name.getId ++ `arguments_length ++ fn.getId)
   let width := Lean.mkIdent (← Lean.Macro.addMacroScope `w)
   let parameterType (kind : ValueKind) := match kind with
@@ -161,13 +171,22 @@ private def argumentDeclarations (name fn : Lean.TSyntax `ident)
     application ← `($application $name:ident)
   let mut arity ← `(($application).length = ($functionName:ident).params)
   let mut proof ← `(Eq.refl ($application).length)
+  let mut fieldsEquation ← `($application = ([$words,*] : List (Ram.Word $width:ident)))
+  let mut fieldsProof ← `(Eq.refl $application)
   for param in params.reverse do
     let name := param.name
     let type ← parameterType param.kind
     arity ← `(∀ ($name:ident : $type), $arity)
     proof ← `(fun ($name:ident : $type) => $proof)
-  let length ← `(command| theorem $lengthName:ident {$width:ident : Nat} : $arity := $proof)
-  return #[arguments.raw, length.raw]
+    fieldsEquation ← `(∀ ($name:ident : $type), $fieldsEquation)
+    fieldsProof ← `(fun ($name:ident : $type) => $fieldsProof)
+  let equation ← `(command|
+    /-- The declared parameters' actual by-value word fields. -/
+    @[ram_bindings] theorem $equationName:ident {$width:ident : Nat} :
+      $fieldsEquation := $fieldsProof)
+  let length ← `(command| @[ram_bindings] theorem $lengthName:ident
+    {$width:ident : Nat} : $arity := $proof)
+  return #[arguments.raw, equation.raw, length.raw]
 
 private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
     (params : Array Parameter) (resultKind : ValueKind) :
@@ -265,10 +284,10 @@ private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
 private def layoutEquations (name fn functionName : Lean.TSyntax `ident)
     (params locals : Lean.TSyntax `term) : Lean.MacroM (Array Lean.Syntax) := do
   let paramsName := Lean.mkIdentFrom fn (name.getId ++ `params_eq ++ fn.getId)
-  let paramsEquation ← `(command| @[simp] theorem $paramsName:ident :
+  let paramsEquation ← `(command| @[simp, ram_bindings] theorem $paramsName:ident :
     ($functionName:ident).params = $params := rfl)
   let localsName := Lean.mkIdentFrom fn (name.getId ++ `locals_eq ++ fn.getId)
-  let localsEquation ← `(command| @[simp] theorem $localsName:ident :
+  let localsEquation ← `(command| @[simp, ram_bindings] theorem $localsName:ident :
     ($functionName:ident).locals = $locals := rfl)
   return #[paramsEquation.raw, localsEquation.raw]
 
@@ -276,7 +295,7 @@ private def resultLengthEquation (name fn functionName : Lean.TSyntax `ident)
     (kind : ValueKind) : Lean.MacroM Lean.Syntax := do
   let lengthName := Lean.mkIdentFrom fn (name.getId ++ `results_length ++ fn.getId)
   let width := Lean.Syntax.mkNumLit (toString kind.width)
-  let declaration ← `(command| @[simp] theorem $lengthName:ident :
+  let declaration ← `(command| @[simp, ram_bindings] theorem $lengthName:ident :
     ($functionName:ident).results.length = $width:num := rfl)
   return declaration.raw
 
@@ -313,7 +332,7 @@ private def functionDeclarations (name : Lean.TSyntax `ident)
       ($name:ident).program[$indexName:ident]'(by decide))
     declarations := declarations.push function.raw
     let lookupName := Lean.mkIdentFrom fn (name.getId ++ `function_lookup ++ fn.getId)
-    let lookup ← `(command| theorem $lookupName:ident :
+    let lookup ← `(command| @[ram_bindings] theorem $lookupName:ident :
       ($name:ident).program[$indexName:ident]? = some $functionName:ident := by rfl)
     declarations := declarations.push lookup.raw
     declarations := declarations ++ (← functionEquations name fn functionName lowered decl.resultKind)
@@ -370,7 +389,7 @@ private def importDeclarations (name : Lean.TSyntax `ident) (lowered : LoweredNa
       let indexDeclaration ← `(command| abbrev $indexName:ident : Nat := $mapName:ident $literal:num)
       let functionDeclaration ← `(command| abbrev $functionName:ident : Ram.Func :=
         ($original).renameCalls $mapName:ident)
-      let lookupDeclaration ← `(command| theorem $lookupName:ident :
+      let lookupDeclaration ← `(command| @[ram_bindings] theorem $lookupName:ident :
         ($name:ident).program[$indexName:ident]? = some $functionName:ident :=
         $embeddingName:ident (show ($src:ident).program[$literal:num]? = some $original from rfl))
       declarations := declarations ++

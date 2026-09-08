@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Local.Basic
 import Complexity.Computability.Ram.Source.Linking
 import Complexity.Computability.Ram.Source.Syntax
+import Complexity.Computability.Ram.Source.Named.Attributes
 
 /-!
 # Named functions and programs over the existing RAM language

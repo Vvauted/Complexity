@@ -35,8 +35,11 @@ also accepted: `ram_total_apply (contract.wp_call (arg := input))` selects a
 typed input by ordinary Lean application, without guessing it from an encoding.
 Calls and loops remain opaque: the
 tactic uses the supplied specification without unfolding its implementation.
-The optional simplification facts can discharge fixed lookup, arity and local
-frame facts; input-dependent safety and functional obligations remain explicit.
+Named lookup, argument fields and fixed arities come from `ram_def`'s dedicated
+binding equations, including imported signatures. The author still chooses the
+contract and typed input; input-dependent safety and functional obligations
+remain explicit. Optional facts supply their mathematical or representation
+reasoning, rather than repeating the caller and callee's argument definitions.
 
 These are transparent macros over the proved total rules and `ram_simp`.
 They introduce no execution semantics, resource annotations or trusted solver.
