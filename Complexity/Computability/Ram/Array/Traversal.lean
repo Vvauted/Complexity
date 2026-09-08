@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.Contracts
+import Complexity.Computability.Ram.Source.Named.Declaration
 import Complexity.Computability.Ram.Verification.Time.Composition
 import Complexity.Computability.Ram.Verification.Time.StraightLine
 import Complexity.Tactic.Ram.Total
@@ -12,9 +13,10 @@ import Init.Data.List.Nat.TakeDrop
 /-!
 # Copying a non-overlapping array with a fixed traversal
 
-The program uses three source registers: source pointer, destination pointer,
-and remaining length. Each iteration performs one ordinary load/store and
-three register updates. Logical progress is the standard list expression
+The named function takes a source pointer, destination pointer and remaining
+length. Each iteration performs one ordinary load/store and three local
+updates. The block and body interfaces below refer to this single source
+declaration. Logical progress is the standard list expression
 `xs.take i ++ ys.drop i`, not a second executable copying primitive.
 
 The relational contract preserves the original source array and every word
@@ -52,23 +54,51 @@ theorem copy_prefix_finish (xs ys : List α) (hlen : ys.length = xs.length) :
     xs.take xs.length ++ ys.drop xs.length = xs := by
   rw [List.take_length, ← hlen, List.drop_length, List.append_nil]
 
-def copyCondition : Expr := .var 2
+/-- One reusable copy function. Arrays are passed by pointer and length;
+the function neither reads an input stream nor allocates either array. -/
+ram_def copyFunctions := ram_functions% {
+  fn copy(source, destination, remaining) locals () {
+    while remaining {
+      store[destination] := load[source];
+      source := source + 1;
+      destination := destination + 1;
+      remaining := remaining - 1;
+    }
+    return 0;
+  }
+}
 
-/-- One word is copied before either pointer advances. -/
+/-- The function body can also be verified and compiled as a preloaded block. -/
+def copy : Stmt := copyFunctions.function.copy.body
+
+/-- The actual guard of the source declaration. -/
+def copyCondition : Expr :=
+  match copy with
+  | .while condition _ => condition
+  | _ => .const 0
+
+/-- The actual loop body: one word is copied before either pointer advances. -/
 def copyBody : Stmt :=
-  .seq (.store (.var 1) (.load (.var 0)))
-    (.seq (.assign 0 (.bin .add (.var 0) (.const 1)))
-      (.seq (.assign 1 (.bin .add (.var 1) (.const 1)))
-        (.assign 2 (.bin .sub (.var 2) (.const 1)))))
-
-/-- One fixed source loop, independent of the length and contents. -/
-def copy : Stmt := .while copyCondition copyBody
+  match copy with
+  | .while _ body => body
+  | _ => .skip
 
 theorem copy_wellFormed {locals : Nat} (h : 3 ≤ locals) : copy.WellFormed locals := by
   have h0 : 0 < locals := Nat.lt_of_lt_of_le (by decide : 0 < 3) h
   have h1 : 1 < locals := Nat.lt_of_lt_of_le (by decide : 1 < 3) h
   have h2 : 2 < locals := Nat.lt_of_lt_of_le (by decide : 2 < 3) h
-  simp [copy, copyCondition, copyBody, Stmt.WellFormed, Expr.Bounded, h0, h1, h2]
+  simp [copy, copyFunctions.function.copy, Named.Functions.program, copyFunctions,
+    Stmt.WellFormed, Expr.Bounded, h0, h1, h2]
+
+/-- The copy body performs no function calls and can be used in any function table. -/
+theorem copy_callsValid (program : Program) : Compiler.CallsValid program copy := by
+  simp [copy, copyFunctions.function.copy, Named.Functions.program, copyFunctions,
+    Compiler.CallsValid]
+
+/-- Each iteration consists entirely of ordinary straight-line instructions. -/
+theorem copy_body_isStraightLine : copyBody.IsStraightLine := by
+  simp [copyBody, copy, copyFunctions.function.copy, Named.Functions.program,
+    copyFunctions, Stmt.IsStraightLine]
 
 theorem copy_body_code_size (control : Nat) (localsTable : Nat → Nat) :
     LocalCompiler.stmtSize control localsTable copyBody = 16 := rfl
@@ -110,7 +140,9 @@ theorem copy_body_total_contract {heapLimit depth : Nat} {program : Program}
     (hdestination : (s.regs 1).toNat < heapLimit) :
     TotalContract program heapLimit depth copyBody (fun t => t = s)
       (fun t => t = copyStep s) := by
-  ram_total_vc t ht [copyBody, copyStep, ht, hsource, hdestination]
+  ram_total_vc t ht [copyBody, copy, copyFunctions.function.copy, Named.Functions.program,
+    copyFunctions, copyStep, ht, hsource, hdestination]
+  ram_simp [hsource, hdestination]
 
 /-- The body budget is the generated block's length. Its only safety
 obligations are the two actual word addresses used by the load and store. -/
@@ -120,7 +152,7 @@ theorem copy_body_contract {control heapLimit depth : Nat} {program : Program}
     Contract control program heapLimit depth copyBody (fun t => t = s)
       (fun t => t = copyStep s) (fun _ => 16) := by
   exact (copy_body_total_contract s hsource hdestination).with_timeBound
-    (TimeBound.of_isStraightLine (by simp [copyBody, Stmt.IsStraightLine]))
+    (TimeBound.of_isStraightLine copy_body_isStraightLine)
 
 /-- Preloaded input arrays and the three runtime operands. Destination
 contents are arbitrary but its allocated interval has the source length. -/
@@ -329,7 +361,7 @@ theorem copy_timeBound {control heapLimit depth : Nat} {program : Program}
     apply TimeBound.while_linear (CopyInvariant heapLimit source destination xs ys entry)
       (fun s => (s.regs 2).toNat) 16
     · exact copy_iteration_total_contract hw hlen hdisjoint entry
-    · exact TimeBound.of_isStraightLine (by simp [copyBody, Stmt.IsStraightLine])
+    · exact TimeBound.of_isStraightLine copy_body_isStraightLine
   have bound := hloop entry (copy_start hpre) steps finish execution
   simpa only [hpre.count, Nat.mul_comm] using bound
 

@@ -15,6 +15,7 @@ import Complexity.Computability.Ram.Array.Contracts
 import Complexity.Computability.Ram.Array.Finset
 import Complexity.Computability.Ram.Array.Footprint
 import Complexity.Computability.Ram.Array.Frame
+import Complexity.Computability.Ram.Array.Function
 import Complexity.Computability.Ram.Array.Indexed
 import Complexity.Computability.Ram.Array.Insertion.Basic
 import Complexity.Computability.Ram.Array.Merge.Basic
@@ -135,6 +136,8 @@ import Complexity.Computability.Ram.Problem.Encoding
 import Complexity.Computability.Ram.Reduction
 import Complexity.Computability.Ram.Source.Basic
 import Complexity.Computability.Ram.Source.Expr
+import Complexity.Computability.Ram.Source.Function.Basic
+import Complexity.Computability.Ram.Source.Function.Time
 import Complexity.Computability.Ram.Source.Linking
 import Complexity.Computability.Ram.Source.Named.Basic
 import Complexity.Computability.Ram.Source.Named.Declaration
@@ -160,6 +163,7 @@ import Complexity.Computability.Ram.Verification.Contract
 import Complexity.Computability.Ram.Verification.Control
 import Complexity.Computability.Ram.Verification.Execution
 import Complexity.Computability.Ram.Verification.Frame
+import Complexity.Computability.Ram.Verification.Function
 import Complexity.Computability.Ram.Verification.Logic
 import Complexity.Computability.Ram.Verification.Loop.Basic
 import Complexity.Computability.Ram.Verification.Loop.Logarithmic

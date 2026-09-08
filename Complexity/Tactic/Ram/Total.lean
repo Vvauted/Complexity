@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Verification.Recursion.Total
+import Complexity.Computability.Ram.Verification.Function
 import Complexity.Tactic.Ram.Basic
 
 /-!
@@ -69,6 +70,7 @@ macro_rules
         (first
         | apply Ram.Source.Verification.TotalWP.of_relContract $contract
         | apply Ram.Source.Verification.TotalWP.of_contract $contract
+        | apply Ram.Source.FunctionContract.wp_call $contract
         | apply Ram.Source.Recursion.TotalSpec.Correct.wp_call $contract
         | apply Ram.Source.Verification.TotalWP.call $contract
         | apply Ram.Source.Verification.TotalWP.of_relContract
@@ -81,6 +83,7 @@ macro_rules
            first
            | apply Ram.Source.Verification.TotalWP.of_relContract $contract
            | apply Ram.Source.Verification.TotalWP.of_contract $contract
+           | apply Ram.Source.FunctionContract.wp_call $contract
            | apply Ram.Source.Recursion.TotalSpec.Correct.wp_call $contract
            | apply Ram.Source.Verification.TotalWP.call $contract
            | apply Ram.Source.Verification.TotalWP.of_relContract

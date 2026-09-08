@@ -10,7 +10,8 @@ import Complexity.Computability.Ram.Source.Named.Declaration
 /-!
 # A compiled non-overlapping array-copy block
 
-This is the named version of the reusable traversal in `Complexity.Computability.Ram.Array.Traversal`.
+This compiles the body of the reusable named function in
+`Complexity.Computability.Ram.Array.Traversal` as a preloaded block.
 Its code is fixed for every length, word width, and array content. The machine
 theorems start at the main block with preloaded arrays and the three operands
 already in registers; they do not claim an uncharged input loader or an
@@ -24,22 +25,22 @@ the separate ABI frame relation retains the old stack.
 
 namespace Ram.Examples.ArrayCopy
 
-ram_def named := ram_program% {
-  main locals (source, destination, remaining) {
-    while remaining {
-      store[destination] := load[source];
-      source := source + 1;
-      destination := destination + 1;
-      remaining := remaining - 1;
-    }
-  }
-}
+/-- A block entry for the function's body, without a duplicate implementation
+or a loader. Ordinary calls use the function declaration itself. -/
+def named : Named.Bundle where
+  registers := 3
+  declarations := []
+  main := Source.Array.copy
+
+abbrev named.mainReg.source : Reg := Source.Array.copyFunctions.localReg.copy.source
+abbrev named.mainReg.destination : Reg := Source.Array.copyFunctions.localReg.copy.destination
+abbrev named.mainReg.remaining : Reg := Source.Array.copyFunctions.localReg.copy.remaining
 
 theorem named_body : named.main = Source.Array.copy := rfl
 
 theorem valid : LocalCompiler.Valid 3 [] Source.Array.copy := by
   simp [LocalCompiler.Valid, Compiler.Valid, Source.Array.copy,
-    Source.Array.copyCondition, Source.Array.copyBody,
+    Source.Array.copyFunctions.function.copy, Named.Functions.program, Source.Array.copyFunctions,
     Stmt.WellFormed, Expr.Bounded, Compiler.CallsValid]
 
 def code : Code := LocalCompiler.rawLink 3 [] Source.Array.copy

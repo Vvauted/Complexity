@@ -117,7 +117,7 @@ theorem wellFormed {locals : Nat} (h : 9 ≤ locals) : program.WellFormed locals
 
 theorem callsValid (functions : Program) : Compiler.CallsValid functions program := by
   simp [program, mergeSetup, copySetup, Compiler.CallsValid,
-    Merge.callsValid functions, copy, copyBody]
+    Merge.callsValid functions, copy_callsValid functions]
 
 theorem code_size (control : Nat) (localsTable : Nat → Nat) :
     LocalCompiler.stmtSize control localsTable program = 121 := rfl

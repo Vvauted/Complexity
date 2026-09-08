@@ -6,8 +6,10 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Local.Program.Basic
 import Complexity.Computability.Ram.Source.Named.Declaration
 import Complexity.Computability.Ram.Source.State
+import Complexity.Computability.Ram.Source.Function.Time
 import Complexity.Computability.Ram.Time.Basic
 import Complexity.Computability.Ram.Verification.Call
+import Complexity.Computability.Ram.Verification.Function
 import Complexity.Computability.Ram.Verification.Recursion.Basic
 import Complexity.Computability.Ram.Verification.Recursion.Time
 import Complexity.Computability.Ram.Verification.Time.Composition
@@ -32,7 +34,7 @@ namespace Ram.Examples.Factorial
 
 /-- Both function names and local register names are resolved automatically.
 The source does not maintain a numeric function table or a `self` index. -/
-ram_def named := ram_program% {
+ram_def functions := ram_functions% {
   fn factorial(n) locals (answer) {
     if n {
       answer := call factorial(n - 1);
@@ -42,21 +44,27 @@ ram_def named := ram_program% {
     }
     return answer;
   }
-  main locals (n, answer) {
+}
+
+/-- An optional stream adapter around the independently defined function. -/
+def named : Named.Bundle :=
+  let n : Reg := 0
+  let answer : Reg := 1
+  let factorial := functions.functionIndex.factorial
+  functions.withMain 2 (ram% {
     read n;
     answer := call factorial(n);
     write answer;
-  }
-}
+  })
 
 def program : Program := named.program
 def main : Stmt := named.main
 
 /-- Inspect the resolved declaration for the semantic proof below. -/
-def factorial : Func := named.program[named.functionIndex.factorial]'(by decide)
+def factorial : Func := functions.function.factorial
 
 /-- This resolved index is used only in proofs, never in the named source. -/
-def self : Nat := named.functionIndex.factorial
+def self : Nat := functions.functionIndex.factorial
 
 theorem program_expands : program = [factorial] := rfl
 
@@ -114,8 +122,8 @@ theorem initial_call_steps (bodySteps : Nat) :
 
 /-- Functional recursion is specified without an instruction budget. -/
 def totalSpec (w : Nat) : Source.Recursion.TotalSpec factorial w Nat where
-  pre k s := k < 2 ^ w ∧ s.regs named.localReg.factorial.n = BitVec.ofNat w k
-  post k entry finish := finish = entry.setReg named.localReg.factorial.answer (value w k)
+  pre k s := k < 2 ^ w ∧ s.regs functions.localReg.factorial.n = BitVec.ofNat w k
+  post k entry finish := finish = entry.setReg functions.localReg.factorial.answer (value w k)
   depth k := k
 
 /-- The ghost argument records the mathematical input. Neither its proposed
@@ -183,6 +191,43 @@ theorem recursive_total (H : Nat) :
         funext r
         by_cases hr : r = 1 <;> simp [hr]
 
+/-- The independently callable function returns factorial and preserves all
+caller state. Arguments and the result are explicit; no stream adapter or
+destination register occurs in this specification. -/
+theorem function_contract (H k : Nat) (hk : k < 2 ^ w) :
+    Source.FunctionContract program H k factorial
+      (fun args _ => args = functions.arguments.factorial (BitVec.ofNat w k))
+      (fun _ entry result finish => result = value w k ∧ finish = entry) := by
+  apply Source.FunctionContract.of_body (recursive_total H k)
+  · rintro args entry rfl
+    exact functions.arguments_length.factorial _
+  · decide
+  · rintro args entry rfl
+    exact ⟨hk, rfl⟩
+  · rintro args entry rfl callee result
+    change callee = (entry.enter _).setReg 1 (value w k) at result
+    subst callee
+    exact ⟨rfl, rfl⟩
+
+/-- Apply factorial directly to a word argument, without a `main` or I/O. -/
+theorem function_runs (H k : Nat) (hk : k < 2 ^ w) (entry : Source.State w) :
+    Source.FunctionExec program H k factorial
+      (functions.arguments.factorial (BitVec.ofNat w k)) entry (value w k) entry := by
+  obtain ⟨result, finish, execution, rfl, rfl⟩ :=
+    function_contract H k hk _ entry rfl
+  exact execution
+
+/-- Any completed invocation has the mathematical factorial as its returned
+natural number when that result fits. This is a property of the implementation,
+not the definition of its return value. -/
+theorem function_result {H depth k : Nat} {entry finish : Source.State w} {result : Word w}
+    (hk : k < 2 ^ w) (hresult : Nat.factorial k < 2 ^ w)
+    (execution : Source.FunctionExec program H depth factorial
+      (functions.arguments.factorial (BitVec.ofNat w k)) entry result finish) :
+    result.toNat = Nat.factorial k ∧ finish = entry := by
+  obtain ⟨rfl, rfl⟩ := execution.deterministic (function_runs H k hk entry)
+  exact ⟨Word.ofNat_toNat_of_lt hresult, rfl⟩
+
 /-- The independent time proof composes generated call/assignment lengths.
 The mathematical recurrence is `T (k + 1) = T k + 37`; functional recursion
 only supplies the callable termination assertion needed by sequence composition. -/
@@ -241,9 +286,19 @@ theorem recursive_timeBound (H : Nat) :
         37 * (k + 1) + 4
       split <;> omega
 
-/-- A separate contract proof, independent of `body_measured` below. Ordinary
-WP rules handle branching, sequencing and assignment; the induction hypothesis
-is invoked through the reusable recursive-call continuation rule. -/
+/-- The function-body time bound is independent of its result specification.
+The enclosing call's argument and frame costs are accounted for separately. -/
+theorem function_timeBound (H k : Nat) (hk : k < 2 ^ w) :
+    Source.FunctionTimeBound 2 program H k factorial
+      (fun args _ => args = functions.arguments.factorial (BitVec.ofNat w k))
+      (fun _ _ => 37 * k + 4) := by
+  apply Source.FunctionTimeBound.of_body (recursive_timeBound H k)
+  · rintro args entry rfl
+    exact ⟨hk, rfl⟩
+  · intros
+    exact Nat.le_refl _
+
+/-- Combine independently proved behavior and time for the recursive body. -/
 theorem recursive_contract (H : Nat) :
     ∀ k, (recursionSpec w).Correct 2 program H k :=
   fun k => (recursive_total H k).with_timeBound (recursive_timeBound H k)
@@ -255,21 +310,19 @@ theorem call_refines (H depth : Nat) (caller : Source.State w) :
     Source.Refines program H depth (.call 1 self [.var 0])
       (fun k s => s = caller ∧ k < 2 ^ w ∧ k + 1 ≤ depth ∧ s.regs 0 = BitVec.ofNat w k)
       (fun result t => t = caller.setReg 1 (BitVec.ofNat w result)) Nat.factorial := by
-  apply Source.Refines.call (spec := totalSpec w) id (recursive_total H)
-    (show program[self]? = some factorial from rfl) rfl (by decide)
-  · intro k s hs
-    simp [Expr.ReadsBelow]
-  · intro k s hs
-    exact ⟨hs.2.1, by
-      simpa [Source.State.enter_regs, Source.State.eval, Expr.eval] using hs.2.2.2⟩
-  · intro k s hs
-    exact hs.2.2.1
-  · intro k s hs callee post
-    change callee = (s.enter _).setReg 1 (value w k) at post
-    subst callee
-    change s.leave ((s.enter _).setReg 1 (value w k)) 1 (.var 1) =
-      caller.setReg 1 (value w k)
-    rw [Source.State.leave_enter_setReg, hs.1]
+  intro k
+  apply Source.Verification.verify_total
+  rintro s ⟨rfl, hk, hd, hn⟩
+  ram_total_apply (function_contract H k hk)
+  · exact functions.function_lookup.factorial
+  · intro expr hexpr
+    simp only [List.mem_singleton] at hexpr
+    subst expr
+    trivial
+  · simpa [functions.arguments.factorial, Source.State.eval, Expr.eval] using hn
+  · exact hd
+  · rintro result finish ⟨rfl, rfl⟩ _
+    rfl
 
 /-- The recursive contract exposes the complete body-state postcondition,
 not merely the final return value. Its proof does not use the exact trace. -/
