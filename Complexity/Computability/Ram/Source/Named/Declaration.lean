@@ -16,6 +16,7 @@ Lean declarations for its functions and source names:
 * `p.function.f` is the actual `Ram.Func` in the table;
 * `p.functionIndex.f` is the function-table index of `f`;
 * `p.function_lookup.f` proves that this entry is `p.function.f`;
+* `p.body_eq.f` and `p.result_eq.f` expose the lowered body and return expression;
 * `p.arguments.f` takes the declared parameters as words and constructs their argument list;
 * `p.arguments_length.f` proves that this list has the function's declared arity;
 * `p.localReg.f.x` is parameter or local `x` in function `f`;
@@ -28,11 +29,12 @@ parameter-before-local order. Function indices use declaration order, exactly
 as named calls do. Function names, function locals and main locals remain in
 separate namespaces; the usual Lean declaration-name collision errors apply.
 
-Function abbreviations select the quoted table entry; they do not lower or
-maintain a second copy of the function body. The command first invokes the
-term macro, preserving its name-resolution errors and generated AST. No runtime
-lookup is introduced, and the compiler and verification rules are unchanged.
-Existing term-form declarations need not be migrated.
+Function abbreviations select the quoted table entry. Body and result equations
+reuse terms from that same lowering, so proofs can unfold source definitions
+without maintaining a second syntax tree. The command first invokes the term
+macro, preserving its name-resolution errors and generated AST. No runtime lookup
+is introduced, and the compiler and verification rules are unchanged. Existing
+term-form declarations need not be migrated.
 -/
 
 namespace Ram.DSL
@@ -69,11 +71,34 @@ private def argumentDeclarations (name fn : Lean.TSyntax `ident)
   let length ← `(command| theorem $lengthName:ident {$width:ident : Nat} : $arity := $proof)
   return #[arguments.raw, length.raw]
 
+private def loweredDeclarations (lowered : Lean.TSyntax `term) :
+    Lean.MacroM (Array (Lean.TSyntax `term)) := do
+  match lowered with
+  | `(Ram.Named.Functions.mk $_registers:term [$declarations:term,*]) =>
+      return declarations.getElems
+  | `(Ram.Named.Bundle.mk $_registers:term [$declarations:term,*] $_main:term) =>
+      return declarations.getElems
+  | _ => Lean.Macro.throwErrorAt lowered "expected a lowered RAM declaration"
+
+private def functionEquations (name fn functionName : Lean.TSyntax `ident)
+    (lowered : Lean.TSyntax `term) : Lean.MacroM (Array Lean.Syntax) := do
+  match lowered with
+  | `(($_label:str, Ram.Func.mk $_params:term $_locals:term $body:term $result:term)) =>
+      let bodyName := Lean.mkIdentFrom fn (name.getId ++ `body_eq ++ fn.getId)
+      let bodyEquation ← `(command| theorem $bodyName:ident :
+        ($functionName:ident).body = $body := rfl)
+      let resultName := Lean.mkIdentFrom fn (name.getId ++ `result_eq ++ fn.getId)
+      let resultEquation ← `(command| theorem $resultName:ident :
+        ($functionName:ident).result = $result := rfl)
+      return #[bodyEquation.raw, resultEquation.raw]
+  | _ => Lean.Macro.throwErrorAt lowered "expected a lowered RAM function"
+
 private def functionDeclarations (name : Lean.TSyntax `ident)
-    (decls : Array (Lean.TSyntax `ramDecl)) : Lean.MacroM (Array Lean.Syntax) := do
+    (decls : Array (Lean.TSyntax `ramDecl)) (functions : Array (Lean.TSyntax `term)) :
+    Lean.MacroM (Array Lean.Syntax) := do
   let mut declarations := #[]
   let mut index := 0
-  for decl in decls do
+  for (decl, lowered) in decls.zip functions do
     match decl with
     | `(ramDecl| fn $fn:ident($params:ident,*) $_keyword:ident($locals:ident,*) {
         $_body:ramStmt* return $_result:ramExpr; }) =>
@@ -90,6 +115,7 @@ private def functionDeclarations (name : Lean.TSyntax `ident)
         let lookup ← `(command| theorem $lookupName:ident :
           ($name:ident).program[$indexName:ident]? = some $functionName:ident := by rfl)
         declarations := declarations.push lookup.raw
+        declarations := declarations ++ (← functionEquations name fn functionName lowered)
         declarations := declarations ++ (← argumentDeclarations name fn params.getElems functionName)
         declarations := declarations ++ (← localRegisterDeclarations
           (name.getId ++ `localReg ++ fn.getId) (params.getElems ++ locals.getElems))
@@ -116,7 +142,8 @@ macro_rules
         | Lean.Macro.throwErrorAt source "expected a RAM declaration quotation"
       let lowered : Lean.TSyntax `term := ⟨lowered⟩
       let declaration ← `(command| $[$doc:docComment]? def $name:ident : $type := $lowered)
-      let mut declarations := #[declaration.raw] ++ (← functionDeclarations name decls)
+      let functions ← loweredDeclarations lowered
+      let mut declarations := #[declaration.raw] ++ (← functionDeclarations name decls functions)
       declarations := declarations ++ (← localRegisterDeclarations
         (name.getId ++ `mainReg) mainNames)
       return Lean.mkNullNode declarations

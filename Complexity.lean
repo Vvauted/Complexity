@@ -172,6 +172,7 @@ import Complexity.Computability.Ram.Verification.Loop.Traversal
 import Complexity.Computability.Ram.Verification.Model
 import Complexity.Computability.Ram.Verification.Observation
 import Complexity.Computability.Ram.Verification.Recursion.Basic
+import Complexity.Computability.Ram.Verification.Recursion.Function
 import Complexity.Computability.Ram.Verification.Recursion.Time
 import Complexity.Computability.Ram.Verification.Recursion.Total
 import Complexity.Computability.Ram.Verification.Refinement

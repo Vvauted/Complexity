@@ -80,6 +80,7 @@ is the actual function; `functions.arguments.factorial` constructs its argument 
 from typed word parameters. Both are generated from this one declaration.
 The [declaration interface](##Complexity.Computability.Ram.Source.Named.Declaration)
 also exports lookup facts and source-local names for implementation proofs.
+Generated body and return equations let verification unfold the same declaration.
 These names do not yet hide every register-level obligation inside those proofs.
 
 ## Add an executable driver when needed

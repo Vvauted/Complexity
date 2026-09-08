@@ -11,6 +11,7 @@ import Complexity.Computability.Ram.Time.Basic
 import Complexity.Computability.Ram.Verification.Call
 import Complexity.Computability.Ram.Verification.Function
 import Complexity.Computability.Ram.Verification.Recursion.Basic
+import Complexity.Computability.Ram.Verification.Recursion.Function
 import Complexity.Computability.Ram.Verification.Recursion.Time
 import Complexity.Computability.Ram.Verification.Time.Composition
 import Complexity.Tactic.Ram.Basic
@@ -153,43 +154,61 @@ private theorem predecessor_pre (k : Nat) (s : Source.State w)
     rw [hs.2, encoded_pred]
   exact ⟨by have hk := hs.1; omega, by simp [Source.State.enter_regs, hpred]⟩
 
+/-- Translate the body specification to arguments and the actual returned
+value once, for both recursive hypotheses and external callers. -/
+private theorem function_contract_of_body {H k : Nat}
+    (correct : (totalSpec w).Correct program H k) :
+    Source.FunctionContract program H k factorial
+      (fun args _ => k < 2 ^ w ∧ args = functions.arguments.factorial (BitVec.ofNat w k))
+      (fun _ entry result finish => result = value w k ∧ finish = entry) := by
+  apply Source.FunctionContract.of_body correct
+  · rintro args entry ⟨_, rfl⟩
+    exact functions.arguments_length.factorial _
+  · decide
+  · rintro args entry ⟨hk, rfl⟩
+    exact ⟨hk, rfl⟩
+  · rintro args entry ⟨_, rfl⟩ callee result
+    change callee = (entry.enter _).setReg functions.localReg.factorial.answer (value w k)
+      at result
+    subst callee
+    exact ⟨rfl, rfl⟩
+
 /-- Prove factorial using ordinary well-founded recursion and mathlib's
-factorial equation. No time bound or measured execution enters this proof. -/
+factorial equation. Recursive hypotheses describe function arguments and
+returned values, not callee frames. No time bound enters this proof. -/
 theorem recursive_total (H : Nat) :
     ∀ k, (totalSpec w).Correct program H k := by
-  apply Source.Recursion.TotalSpec.verify_wellFounded _ Nat.lt_wfRel.wf
+  apply (totalSpec w).verify_wellFounded_function Nat.lt_wfRel.wf
+    (fun _ => function_contract_of_body)
   intro k ih s hs
   obtain ⟨hk, hn⟩ := hs
   cases k with
   | zero =>
-      ram_total_vc [totalSpec, factorial_expands, hn, value, factorialNat, Nat.factorial_zero]
+      ram_total_vc [totalSpec, factorial, functions.body_eq.factorial,
+        functions.result_eq.factorial, hn, value, factorialNat, Nat.factorial_zero]
   | succ k =>
-      have hnonzero : s.eval (.var 0) ≠ 0 := by
+      have hnonzero : s.eval (.var functions.localReg.factorial.n) ≠ 0 := by
         intro hz
         have hnat := congrArg BitVec.toNat hz
-        change (s.regs 0).toNat = 0 at hnat
+        change (s.regs functions.localReg.factorial.n).toNat = 0 at hnat
         rw [hn, Word.ofNat_toNat_of_lt hk] at hnat
         omega
-      change Source.Verification.TotalWP program H (k + 1) factorial.body _ s
+      change Source.Verification.TotalWP program H (k + 1)
+        functions.function.factorial.body _ s
       simp only [totalSpec]
-      rw [factorial_expands, Source.Verification.TotalWP.ite_iff]
+      rw [functions.body_eq.factorial, Source.Verification.TotalWP.ite_iff]
       refine ⟨trivial, ?_⟩
       rw [if_neg hnonzero, Source.Verification.TotalWP.seq_iff]
-      apply (ih k (Nat.lt_succ_self k)).wp_call
-        (show program[self]? = some factorial from rfl) rfl (by decide)
+      ram_total_apply (ih k (Nat.lt_succ_self k))
+      · exact functions.function_lookup.factorial
       · simp [Expr.ReadsBelow]
-      · exact predecessor_pre k s ⟨hk, hn⟩
+      · refine ⟨by omega, ?_⟩
+        simp [functions.arguments.factorial, Source.State.eval, Expr.eval, hn, encoded_pred]
       · exact Nat.le_refl _
-      · intro callee hcallee
-        change callee = (s.enter _).setReg 1 (value w k) at hcallee
-        subst callee
-        change Source.Verification.TotalWP program H (k + 1)
-          (.assign 1 (.bin .mul (.var 0) (.var 1))) _
-          (s.leave ((s.enter _).setReg 1 (value w k)) 1 (.var 1))
-        rw [Source.State.leave_enter_setReg]
-        ram_total_vc [totalSpec, factorial_expands, hn, value_succ]
+      · rintro result finish ⟨rfl, rfl⟩ _
+        ram_total_vc [totalSpec, factorial, functions.result_eq.factorial, hn, value_succ]
         funext r
-        by_cases hr : r = 1 <;> simp [hr]
+        by_cases hr : r = functions.localReg.factorial.answer <;> simp [hr]
 
 /-- The independently callable function returns factorial and preserves all
 caller state. Arguments and the result are explicit; no stream adapter or
@@ -198,16 +217,8 @@ theorem function_contract (H k : Nat) (hk : k < 2 ^ w) :
     Source.FunctionContract program H k factorial
       (fun args _ => args = functions.arguments.factorial (BitVec.ofNat w k))
       (fun _ entry result finish => result = value w k ∧ finish = entry) := by
-  apply Source.FunctionContract.of_body (recursive_total H k)
-  · rintro args entry rfl
-    exact functions.arguments_length.factorial _
-  · decide
-  · rintro args entry rfl
-    exact ⟨hk, rfl⟩
-  · rintro args entry rfl callee result
-    change callee = (entry.enter _).setReg 1 (value w k) at result
-    subst callee
-    exact ⟨rfl, rfl⟩
+  exact (function_contract_of_body (recursive_total H k)).consequence
+    (fun _ _ args => ⟨hk, args⟩) (fun _ _ _ _ _ result => result)
 
 /-- Apply factorial directly to a word argument, without a `main` or I/O. -/
 theorem function_runs (H k : Nat) (hk : k < 2 ^ w) (entry : Source.State w) :
