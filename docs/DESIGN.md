@@ -306,7 +306,17 @@ Parent and child fragments overlap; the flat site array is not an execution
 trace. A driver descends through the hierarchy instead of concatenating or
 charging every recorded fragment.
 
-These sites are an unfinished input to source-directed proof elaboration, not
+The initialization proof driver consumes these sites in root-block order,
+advancing only complete assignment/skip source statements. An array descriptor
+is exposed only after both real field assignments. It uses the actual goal's
+elaborated expressions; retained source terms are never elaborated again in a
+different Lean scope. The two proof modes share navigation and typed observations,
+not execution rules: total correctness retains unresolved read safety, while
+conditional time bounds retain affordability and charge emitted instructions.
+Naming the resulting state and its `Word`/`ArrayRef` locals adds proof-only views,
+not executable conversions, a loader or assumptions about arbitrary heap effects.
+
+General source-directed proof elaboration remains unfinished. The sites are not
 new correctness certificates. A future driver must follow the actual WP
 decomposition and give a lexical cursor only to code continuations. Expressions
 and effects come from that proof goal, not from reinterpreting stored source

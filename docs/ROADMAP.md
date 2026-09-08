@@ -91,7 +91,7 @@ contracts. A heap reference represented by a list is not an implemented
 | [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Named calls and shared traversal yield `List.foldl`; the factorial helper exercises element/prefix-dependent costs. | The fold interface is read-only with a scalar accumulator, not arbitrary mutation or richer accumulator support. |
 | [ArrayMap](../Examples/Ram/ArrayMap.lean) | Real helper calls and stores produce `List.map`; independent bounds cover the same compiled invocation. The indexed rule owns cursor/count progress. | The payload still relates source state to mathematical contents and a real user index. The operation template retains a fixed internal layout. |
 | [ArraySlice](../Examples/Ram/ArraySlice.lean), [properties](../Examples/Ram/ArraySliceProperties.lean) | A real returned borrowed reference feeds another compiled call; its length controls the time continuation. | Typed-input selection and mathematical containment/representation facts remain explicit. |
-| [LowerBound](../Examples/Ram/LowerBound.lean) | Named source directly composes shared loop rules, with budget-free termination, executable `List.findIdx` and a logarithmic full-call bound. | The invariant/initialization still use a register-role bridge. The loop-scoped midpoint is not a function-level binding. |
+| [LowerBound](../Examples/Ram/LowerBound.lean) | Named source initialization supplies typed values and binding facts to both the shared total loop and its separate logarithmic bound; the executable result is `List.findIdx`. | The loop invariant still uses a register-role bridge. The loop-scoped midpoint is not a function-level binding. |
 | [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function yields `List.merge`, both preserved sources and an independent linear full-call bound. | The wrapper really calls the core and pays that overhead; extent and destination non-overlap remain premises. |
 | [MergeSort](../Examples/Ram/MergeSort.lean) | A two-array declaration recursively calls itself, merge and copy. Length induction gives sorted-permutation and contents-level `StateM` specifications; the same invocation has an `n log n` bound. | Correctness and time still repeat some stage composition. Recursive capacity, the whole-branch reserve and multi-buffer facts are explicit. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [time](../Examples/Ram/FunctionCompositionTime.lean) | Imported copy passes complete array representations to sum; call accounting derives the remaining reserve. | Import transport and genuine equal-length, range and disjointness premises remain. |
@@ -142,7 +142,18 @@ retains intermediate lexical scopes and actual emitted fragments as proof-site
 metadata. Previously only bindings visible at the function return survived.
 This is necessary to distinguish a midpoint before/after its declaration and
 inner shadowing, but metadata alone does not improve a correctness proof.
-There is not yet a source-proof driver consuming these sites.
+The first consumer is now source initialization: `ram_total_init` and
+`ram_time_init` advance the same actual assignment prefix, name its current
+`Word`/`ArrayRef` values and produce the corresponding binding equations. Search
+no longer writes its own initialization state or proves its field updates.
+Its initial invariant uses the shared `Pre.invariant` rule and the source facts.
+The time driver uses its own completed-execution rules, including affordability
+and actual assignment charges; it does not consume a total-correctness proof.
+
+This driver stops before calls and control-flow bodies. It is not yet a lexical
+proof cursor for arbitrary intermediate goals, nor a source-facing loop invariant
+elaborator. In particular, Search still reuses its register-role loop proof and
+Map still owns its fixed internal payload layout.
 
 **Next work:**
 
@@ -151,8 +162,16 @@ There is not yet a source-proof driver consuming these sites.
   operands can be inferred by unification; it does not need a second AST walk or
   lexical metadata. Scope metadata is needed for source-name visibility, not for
   every elementary proof operation.
-- Connect these sites to existing WP decomposition, beginning with Map's actual
-  named helper-call/store body. A proof cursor must accompany code continuations,
+- The next structured-scope consumer is merge sort's existing `if` branch:
+  `middle`, `left` and `right` should become typed proof values at their actual
+  declaration sites and remain usable across calls. Its assignments are already
+  handled by the old VC tactic; the missing interface is source bindings and
+  branch/call continuation, not another initializer-state theorem. The time proof
+  also repeats the guard and branch-entry decomposition. Use these two real
+  proofs to exercise nested array initialization, retaining halving, slice
+  containment, disjointness and changed-heap reassembly as mathematical work.
+- Carry the same source positions through Map's actual named helper-call/store
+  body. A proof cursor must accompany code continuations,
   not ordinary lookup, read-safety, representation or depth goals. Enter loop
   scopes only at their actual loaded/body entry; restore outer bindings on exit.
   Consume generated initialization and tail instructions rather than skipping
@@ -163,7 +182,7 @@ There is not yet a source-proof driver consuming these sites.
   Lean scope. Introduce ordinary word/reference values from current bindings;
   after calls, transport heap representations only using their actual contracts.
   Restored caller registers do not imply an unchanged heap.
-- The first concrete body should expose a helper postcondition followed by
+- Map's body-level consumer should expose a helper postcondition followed by
   `List.set` and its frame, using the existing call and array-store rules. It
   should not reproduce `.var` slots, receiver updates or expression evaluation.
   Mathematical index ranges, Word/Nat correspondence, aliasing and the payload

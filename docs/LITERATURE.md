@@ -274,8 +274,15 @@ binds its actual receiver; the subsequent store consumes the current array
 representation and produces `List.set` facts. Source metadata is only navigation
 and binding information, not a proof of those effects. We are not implementing
 CFML's characteristic-formula generator or adopting its ML heap semantics, and
-the paper does not establish costs for our RAM compiler. The source-proof driver
-remains unfinished; retaining scopes is its prerequisite, not its completion.
+the paper does not establish costs for our RAM compiler.
+
+The initial-prefix driver is a concrete first consumer: it follows the declared
+assignment sites and uses existing proved rules to obtain their current values.
+It neither treats the metadata as a correctness axiom nor claims a whole-language
+characteristic formula. Correctness and conditional cost modes use different
+existing execution rules while sharing the lexical traversal; a convenient
+logical name cannot erase the charged field assignments. General call/loop
+continuation support remains unfinished.
 
 ## Reading discipline
 

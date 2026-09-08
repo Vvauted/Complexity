@@ -250,6 +250,7 @@ import Complexity.Tactic.Ram.Budget
 import Complexity.Tactic.Ram.Contract
 import Complexity.Tactic.Ram.Model
 import Complexity.Tactic.Ram.Run
+import Complexity.Tactic.Ram.Source
 import Complexity.Tactic.Ram.Time
 import Complexity.Tactic.Ram.Total
 import Complexity.Tactic.Ram.Word

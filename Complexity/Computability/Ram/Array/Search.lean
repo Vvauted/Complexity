@@ -365,6 +365,22 @@ theorem step_preserves {heapLimit : Nat} {base key : Word w}
       dsimp [midpoint]
       omega
 
+/-- An already initialized zero left endpoint establishes the loop invariant,
+with shared state and unrelated registers framed against the current state. -/
+theorem Pre.invariant {heapLimit : Nat} {base key : Word w}
+    {xs : List (Word w)} {current : State w}
+    (hpre : Pre registers heapLimit base key xs current)
+    (hlo : current.regs registers.lo = 0) :
+    Invariant registers heapLimit base key xs current current := by
+  refine ⟨hpre.array, hpre.base_reg, hpre.key_reg, ?_, hpre.length_reg.le,
+    ?_, ?_, rfl, rfl, rfl, fun _ _ _ _ => rfl⟩
+  · simp [hlo]
+  · intro i hi hip
+    simp [hlo] at hip
+  · intro i hi hip
+    rw [hpre.length_reg] at hip
+    exact (Nat.not_le_of_gt hi hip).elim
+
 /-- The zero-left-endpoint initialization establishes the shared loop invariant. -/
 theorem Pre.initialize {heapLimit : Nat} {base key : Word w}
     {xs : List (Word w)} {entry : State w}

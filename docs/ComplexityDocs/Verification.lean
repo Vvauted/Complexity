@@ -563,6 +563,33 @@ still choose the contract and typed input, but need not repeat caller/callee
 argument-builder definitions. Bodies, return expressions and mathematical
 representation lemmas are not registered in this set.
 
+For a named function whose initialization needs mathematical reasoning, use
+`ram_total_start args entry pattern` to apply the existing function rule without
+advancing the body. Then
+
+```lean
+ram_total_init functions.function.lowerBound at initial with bindings
+```
+
+follows the actual leading assignment statements, stopping before calls or
+control flow. `initial` names the current source state. The visible locals
+become ordinary Lean values such as `initial.xs : ArrayRef w` and
+`initial.lo : Word w`; `bindings.xs.base`, `bindings.xs.length` and `bindings.lo`
+relate these values to their actual source bindings. Nested locals such as the
+search midpoint are not visible before entering their scope. An array local is
+exposed only after its two field assignments have both executed.
+
+The [named search proof](##Complexity.Computability.Ram.Array.Search.Function)
+uses these facts with `Search.Pre.invariant`, then applies its existing loop
+contract. It does not write a separate `State.enter`/`setReg` initializer.
+The independent time proof uses `ram_time_start` and `ram_time_init` with the
+same syntax, but applies the existing conditional time rules and charges the
+actual assignments. Both initialization forms accept optional `[facts]`;
+unsolved safety or affordability goals remain explicit. Neither form invents a
+loop invariant or advances through a call. The current entry requires the
+named function's whole body, not an arbitrary already-executed prefix.
+See [source initialization](##Complexity.Tactic.Ram.Source).
+
 For a typed function call, `ram_total_apply contract on input [facts]` selects
 the actual mathematical input and passes the returned value and shared effects
 to a continuation with caller locals restored. It only attempts to close the

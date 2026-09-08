@@ -11,6 +11,7 @@ import Complexity.Computability.Ram.Verification.Function.Typed
 import Complexity.Computability.Ram.Verification.Time.Function
 import Complexity.Tactic.Ram.Total
 import Complexity.Tactic.Ram.Time
+import Complexity.Tactic.Ram.Source
 
 /-!
 # A callable lower-bound search
@@ -62,42 +63,6 @@ private def functionRegisters {lo hi mid : Reg}
       lo_ne_mid := distinct.2.2.2.1.2
       hi_ne_mid := distinct.2.2.2.2 }
 
-private def functionStart (lo hi : Reg) (array : ArrayRef w) (key : Word w)
-    (entry : State w) : State w :=
-  ((entry.enter (array.args ++ [key])).setReg lo 0).setReg hi array.length
-
-private theorem functionStart_invariant {lo hi mid heapLimit : Nat}
-    {array : ArrayRef w} {key : Word w} {xs : List (Word w)} {entry : State w}
-    (distinct : [0, 1, 2, lo, hi, mid].Nodup)
-    (represented : array.Rep heapLimit xs entry) :
-    Invariant (functionRegisters distinct) heapLimit array.base key xs
-      (functionStart lo hi array key entry) (functionStart lo hi array key entry) := by
-  let registers := functionRegisters distinct
-  have baseLo : (0 : Reg) ≠ lo := registers.base_ne_lo
-  have baseHi : (0 : Reg) ≠ hi := registers.base_ne_hi
-  have keyLo : (2 : Reg) ≠ lo := registers.key_ne_lo
-  have keyHi : (2 : Reg) ≠ hi := registers.key_ne_hi
-  have separate : lo ≠ hi := registers.lo_ne_hi
-  refine ⟨represented.2, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl, rfl, ?_⟩
-  · change (functionStart lo hi array key entry).regs 0 = array.base
-    simp [functionStart, State.setReg, State.enter, ArrayRef.args, baseHi, baseLo]
-  · change (functionStart lo hi array key entry).regs 2 = key
-    simp [functionStart, State.setReg, State.enter, ArrayRef.args, keyHi, keyLo]
-  · change ((functionStart lo hi array key entry).regs lo).toNat ≤
-      ((functionStart lo hi array key entry).regs hi).toNat
-    simp [functionStart, State.setReg, separate]
-  · change ((functionStart lo hi array key entry).regs hi).toNat ≤ xs.length
-    simpa only [functionStart, State.setReg_same] using represented.1.le
-  · intro i inside lower
-    change i < ((functionStart lo hi array key entry).regs lo).toNat at lower
-    simp [functionStart, State.setReg, separate] at lower
-  · intro i inside lower
-    change ((functionStart lo hi array key entry).regs hi).toNat ≤ i at lower
-    simp only [functionStart, State.setReg_same, represented.1] at lower
-    omega
-  · intro r _ _ _
-    rfl
-
 /-- The named function returns the ordinary lower-bound position and preserves
 the entire caller state. Sortedness and represented data suffice; there is no
 instruction budget or extra strict array-endpoint condition. -/
@@ -108,18 +73,22 @@ theorem function_contract {w heapLimit depth : Nat} {program : Program}
       (fun input : ArrayRef w × Word w => functions.arguments.lowerBound input.1 input.2)
       (fun input entry => input = (array, key) ∧ array.Rep heapLimit xs entry)
       (fun _ entry value finish => LowerBoundSpec xs key value.toNat ∧ finish = entry) := by
-  ram_total_vc input entry ⟨rfl, represented⟩
-    [functions.body_eq.lowerBound, functions.result_eq.lowerBound]
+  ram_total_start input entry ⟨rfl, represented⟩
+  ram_total_init functions.function.lowerBound at initial with bindings
   refine Verification.TotalWP.mono_post
     (loop_total (functionRegisters ?layout) (base := array.base) (key := key)
-      (original := functionStart functions.localReg.lowerBound.lo
-        functions.localReg.lowerBound.hi array key entry) hw sorted _ ?initial) ?post
+      (original := initial) hw sorted _ ?initialInvariant) ?post
   case layout => decide
-  case initial => exact functionStart_invariant (by decide) represented
+  case initialInvariant =>
+    apply Pre.invariant
+    · exact ⟨represented.2, bindings.xs.base, bindings.key,
+        by simpa only [bindings.hi] using represented.1⟩
+    · exact bindings.lo
   case post =>
     intro finish post
     have shared : entry.restore finish = entry :=
       State.restore_eq_of_shared post.mem post.input post.output
+    ram_total_vc [functions.result_eq.lowerBound]
     exact ⟨post.result, shared⟩
 
 /-- The same callable body has a logarithmic compiled time bound. This theorem
@@ -132,18 +101,21 @@ theorem function_timeBound {w control heapLimit depth : Nat} {program : Program}
       (fun args entry => args = functions.arguments.lowerBound array key ∧
         array.Rep heapLimit xs entry)
       (fun _ _ => 25 * Nat.clog 2 (xs.length + 1) + 8) := by
-  ram_time_vc args entry ⟨rfl, represented⟩ [functions.body_eq.lowerBound]
+  ram_time_start args entry ⟨rfl, represented⟩
+  ram_time_init functions.function.lowerBound at initial with bindings
   refine (loop_timeBound (functionRegisters ?layout) (base := array.base) (key := key)
-    hw sorted (functionStart functions.localReg.lowerBound.lo
-      functions.localReg.lowerBound.hi array key entry)).consequence ?initial ?reserve
+    hw sorted initial).consequence ?initialInvariant ?reserve
   case layout => decide
-  case initial =>
+  case initialInvariant =>
     rintro s rfl
-    exact functionStart_invariant (by decide) represented
+    apply Pre.invariant
+    · exact ⟨represented.2, bindings.xs.base, bindings.key,
+        by simpa only [bindings.hi] using represented.1⟩
+    · exact bindings.lo
   case reserve =>
     rintro s rfl
-    change Nat.clog 2 (array.length.toNat + 1) * 25 + 4 ≤ _
-    simp [represented.1, Nat.mul_comm]
+    ram_simp [functionRegisters, bindings.lo, bindings.hi,
+      initial.lo, initial.hi, represented.1, Nat.mul_comm]
 
 /-- The semantic observation returns the standard list insertion index, with
 no independently implemented reference algorithm. Its shared state is unchanged. -/
