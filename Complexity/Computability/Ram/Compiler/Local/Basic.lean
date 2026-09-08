@@ -124,6 +124,37 @@ theorem stmtSize_control_eq (localsTable : Nat → Nat) (stmt : Stmt) (a b : Nat
     stmtSize a localsTable stmt = stmtSize b localsTable stmt :=
   compileStmt_length_control_eq localsTable stmt a b (fun _ => 0) (fun _ => 0) 0 0
 
+@[simp] theorem stmtSize_skip (control : Nat) (localsTable : Nat → Nat) :
+    stmtSize control localsTable .skip = 0 := rfl
+
+/-- Assignment materializes its expression and moves the result to the local slot. -/
+@[simp] theorem stmtSize_assign (control : Nat) (localsTable : Nat → Nat)
+    (dst : Reg) (value : Expr) :
+    stmtSize control localsTable (.assign dst value) =
+      (value.compile (ABI.scratch control)).length + 1 := by
+  simp only [stmtSize, compileStmt, List.length_append, List.length_singleton]
+
+@[simp] theorem stmtSize_seq (control : Nat) (localsTable : Nat → Nat) (a b : Stmt) :
+    stmtSize control localsTable (.seq a b) =
+      stmtSize control localsTable a + stmtSize control localsTable b := by
+  rw [← compileStmt_length control localsTable (fun _ => 0) (.seq a b) 0]
+  simp only [compileStmt, List.length_append, compileStmt_length]
+
+@[simp] theorem stmtSize_ite (control : Nat) (localsTable : Nat → Nat)
+    (c : Expr) (yes no : Stmt) :
+    stmtSize control localsTable (.ite c yes no) =
+      (c.compile (ABI.scratch control)).length + stmtSize control localsTable yes +
+        stmtSize control localsTable no + 2 := by
+  rw [← compileStmt_length control localsTable (fun _ => 0) (.ite c yes no) 0]
+  simp only [compileStmt, ifCode_length, compileStmt_length]
+
+@[simp] theorem stmtSize_while (control : Nat) (localsTable : Nat → Nat)
+    (c : Expr) (body : Stmt) :
+    stmtSize control localsTable (.while c body) =
+      (c.compile (ABI.scratch control)).length + stmtSize control localsTable body + 2 := by
+  rw [← compileStmt_length control localsTable (fun _ => 0) (.while c body) 0]
+  simp only [compileStmt, whileCode_length, compileStmt_length]
+
 theorem stmtSize_call (control : Nat) (localsTable : Nat → Nat)
     (dsts : List Reg) (fn : Nat) (args : List Expr) :
     stmtSize control localsTable (.call dsts fn args) =

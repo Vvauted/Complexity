@@ -42,30 +42,6 @@ def SimulationExact (control locals heapLimit : Nat) (code : Code)
     CodeAt code t.pc (compileStmt control localsTable entries stmt t.pc) →
     StatementRunExact control locals heapLimit code localsTable entries stmt steps s' t
 
-@[simp] theorem stmtSize_skip (control : Nat) (localsTable : Nat → Nat) :
-    stmtSize control localsTable .skip = 0 := rfl
-
-@[simp] theorem stmtSize_seq (control : Nat) (localsTable : Nat → Nat) (a b : Stmt) :
-    stmtSize control localsTable (.seq a b) =
-      stmtSize control localsTable a + stmtSize control localsTable b := by
-  rw [← compileStmt_length control localsTable (fun _ => 0) (.seq a b) 0]
-  simp only [compileStmt, List.length_append, compileStmt_length]
-
-@[simp] theorem stmtSize_ite (control : Nat) (localsTable : Nat → Nat)
-    (c : Expr) (yes no : Stmt) :
-    stmtSize control localsTable (.ite c yes no) =
-      (c.compile (ABI.scratch control)).length + stmtSize control localsTable yes +
-        stmtSize control localsTable no + 2 := by
-  rw [← compileStmt_length control localsTable (fun _ => 0) (.ite c yes no) 0]
-  simp only [compileStmt, ifCode_length, compileStmt_length]
-
-@[simp] theorem stmtSize_while (control : Nat) (localsTable : Nat → Nat)
-    (c : Expr) (body : Stmt) :
-    stmtSize control localsTable (.while c body) =
-      (c.compile (ABI.scratch control)).length + stmtSize control localsTable body + 2 := by
-  rw [← compileStmt_length control localsTable (fun _ => 0) (.while c body) 0]
-  simp only [compileStmt, whileCode_length, compileStmt_length]
-
 private theorem heap_lower_of_frame {control heapLimit : Nat} {s t : State w}
     (h : heapLimit ≤ (s.regs (ABI.sp control)).toNat)
     (hf : FramePreserved control heapLimit s t) :
