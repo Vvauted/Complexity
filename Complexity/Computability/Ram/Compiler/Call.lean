@@ -118,22 +118,8 @@ private theorem call_run
       rw [henteredSP]
       simp [ABI.frameSize])]
     exact hp.returnAddress
-  have hsaved : ABI.FrameSaved n (t.regs (ABI.sp n)) t.regs q.mem := by
-    intro i hi
-    have hslotFit : (t.regs (ABI.sp n)).toNat + (i + 1) < 2 ^ w := by
-      change (t.regs (ABI.sp n)).toNat + (n + 1) < 2 ^ w at hframeFit
-      omega
-    have ha := arrayAddr_toNat hslotFit
-    have hlo : heapLimit ≤ (arrayAddr (t.regs (ABI.sp n)) (i + 1)).toNat := by
-      rw [ha]
-      omega
-    have hhi : (arrayAddr (t.regs (ABI.sp n)) (i + 1)).toNat <
-        (entered.regs (ABI.sp n)).toNat := by
-      rw [ha, henteredSP]
-      simp only [ABI.frameSize]
-      omega
-    rw [hbodyFrame.older _ hlo hhi]
-    exact hp.saved i hi
+  have hsaved : ABI.FrameSaved n (t.regs (ABI.sp n)) t.regs q.mem :=
+    hbodyFrame.frameSaved hheap (Nat.le_of_eq henteredSP.symm) hp.saved
   have hreturnAt : CodeAt code q.pc (ABI.returnCodeResults n f.results) := by
     rw [hbodyPC]
     simpa only [entered, State.atPC_pc, compileStmt_length] using hfunction.append_right

@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.ABI.Basic
+import Complexity.Computability.Ram.Compiler.ABI.Frame.Basic
 import Complexity.Computability.Ram.Compiler.Control
 import Complexity.Computability.Ram.Memory.Basic
 
@@ -35,6 +36,28 @@ theorem trans {n heapLimit : Nat} {s t u : State w}
   intro a ha hb
   have hb' : a.toNat < (t.regs (ABI.sp n)).toNat := by rw [hst.sp]; exact hb
   exact (htu.older a ha hb').trans (hst.older a ha hb)
+
+/-- A saved frame inside the protected older-stack interval survives between
+the endpoints. Its upper bound supplies non-wrapping slot addresses; the heap
+and newer stack need not be unchanged. This does not assert absence of writes. -/
+theorem frameSaved {control heapLimit locals : Nat} {start finish : State w}
+    {base : Word w} {savedRegs : Reg → Word w}
+    (frame : FramePreserved control heapLimit start finish)
+    (lower : heapLimit ≤ base.toNat)
+    (upper : base.toNat + ABI.frameSize locals ≤ (start.regs (ABI.sp control)).toNat)
+    (saved : ABI.FrameSaved locals base savedRegs start.mem) :
+    ABI.FrameSaved locals base savedRegs finish.mem := by
+  apply saved.congr
+  intro i hi
+  have slotUpper : base.toNat + (i + 1) < (start.regs (ABI.sp control)).toNat := by
+    simp only [ABI.frameSize] at upper
+    omega
+  have slotAddress := arrayAddr_toNat (Nat.lt_trans slotUpper (BitVec.isLt _))
+  apply frame.older
+  · rw [slotAddress]
+    omega
+  · rw [slotAddress]
+    exact slotUpper
 
 theorem of_eq {n heapLimit : Nat} {s t : State w}
     (hr : t.regs (ABI.sp n) = s.regs (ABI.sp n)) (hm : t.mem = s.mem) :

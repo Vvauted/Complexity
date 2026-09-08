@@ -135,22 +135,8 @@ theorem simulate_call_exact
       simp [ABI.frameSize]
     rw [hbodyFrame.older (t.regs (ABI.sp control)) hheap hbelow]
     exact hp.returnAddress
-  have hsaved : ABI.FrameSaved f.locals (t.regs (ABI.sp control)) t.regs q.mem := by
-    intro i hi
-    have hslotFit : (t.regs (ABI.sp control)).toNat + (i + 1) < 2 ^ w := by
-      change (t.regs (ABI.sp control)).toNat + (f.locals + 1) < 2 ^ w at hframeFit
-      omega
-    have ha := arrayAddr_toNat hslotFit
-    have hlo : heapLimit ≤ (arrayAddr (t.regs (ABI.sp control)) (i + 1)).toNat := by
-      rw [ha]
-      omega
-    have hhi : (arrayAddr (t.regs (ABI.sp control)) (i + 1)).toNat <
-        (entered.regs (ABI.sp control)).toNat := by
-      rw [ha, henteredSP]
-      simp only [ABI.frameSize]
-      omega
-    rw [hbodyFrame.older _ hlo hhi]
-    exact hp.saved i hi
+  have hsaved : ABI.FrameSaved f.locals (t.regs (ABI.sp control)) t.regs q.mem :=
+    hbodyFrame.frameSaved hheap (Nat.le_of_eq henteredSP.symm) hp.saved
   have hreturnAt : CodeAt code q.pc
       (ABI.returnCodeResultsLocals control f.locals f.results) := by
     rw [hbodyPC]
