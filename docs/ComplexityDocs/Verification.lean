@@ -383,6 +383,18 @@ is required only when the guard is nonzero. The rule does not assert that an
 arbitrary body preserves the original array contents or pointer trajectory.
 See [general foreach correctness](##Complexity.Computability.Ram.Verification.ForIn).
 
+For a forward traversal that preserves its private cursor locals, prefer
+`Ram.Source.Verification.TotalWP.forIn_indexed`. Supply a payload
+`invariant : Nat → State w → Prop` for the mathematical iteration number.
+The rule owns the pointer/count relation, count subtraction, termination and
+exit-index argument. The body proof receives `i < n` and the payload at the
+pre-load state, starts at the actual current-heap element load, and establishes
+the next payload after `ForIn.advanceState`. It does not assume the payload
+survives loading its element local. Cursor preservation is an endpoint premise,
+so writing and restoring a cursor is allowed; static destination exclusion is
+one way to prove it. Memory and I/O may change. The setup equations still use
+sequential expression evaluation, and only executed addresses need be safe.
+
 The independent `Ram.Source.TimeBound.forIn` accepts a uniform conditional body
 bound `B` and preservation of the remaining count on completed body executions.
 It adds the actual setup expression lengths, `(B + 14) * count` and the remaining
@@ -413,8 +425,9 @@ fn mapSquares(xs : array) : Unit {
 ```
 
 Its correctness proof reuses the imported square contract and the common map
-theorem. The operation proof maintains the ordinary updated-prefix/unread-suffix
-list, reuses the existing array store/frame rules, and reads each original element
+theorem. The operation proof uses the indexed rule to maintain the ordinary
+updated-prefix/unread-suffix list without its own private cursor/count invariant.
+It reuses the existing array store/frame rules and reads each original element
 before replacing it. Empty arrays are admitted; an unused final pointer may wrap
 at the address-space endpoint. The actual descriptor length remains word-sized.
 

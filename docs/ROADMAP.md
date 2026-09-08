@@ -4,522 +4,262 @@ Write one executable program, state its correctness with ordinary Lean mathemati
 and derive its complexity without reopening the machine implementation.
 A pleasant DSL, reusable proofs and proof automation are parts of the same goal.
 
-This roadmap is driven by the existing samples, not by the number of interfaces
-or lemmas in the repository. [Design](DESIGN.md) records semantic boundaries;
-[literature notes](LITERATURE.md) record what we take from other work.
+The checked backend and mathematical observations already work. The main gap is
+the experience of proving a new implementation: mutable loops and recursive
+multi-buffer composition still expose too much source-state plumbing.
+A short client theorem does not excuse that burden in an implementation module.
 
-## What the samples actually establish
-
-The checked function path supports word, borrowed-array and genuine `Unit`
-results, typed mathematical contracts, budget-free correctness, separate compiled
-costs, and ordinary executable value equations. The existing samples exercise
-these through the actual compiler and runner, not syntax or backend lemmas alone.
-
-| Consumer | What works | What still costs the proof author too much |
-| --- | --- | --- |
-| [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves correctness and a single exact-cost recurrence. The upper bound and measured endpoint reuse these proofs; executable values rewrite to mathlib factorial. | Publishing the runtime equation still assembles source observations and justified word/stack conditions; general state-dependent exact composition needs more rules. |
-| [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. Uniform and actual element/prefix-dependent cost rules are available, exercised by an adapter around the existing factorial. | The caller still supplies the mathematical update, element domain and accumulator invariant. Mutable or richer-accumulator traversals are not covered by this read-only scalar rule. |
-| [ArrayMap](../Examples/Ram/ArrayMap.lean) | A named mutable traversal calls the existing square helper and writes back its results. The reusable map contract yields ordinary `List.map` contents and an outside-array frame; independent costs cover the same compiled invocation. | The operation hides its fixed private local layout, but arbitrary mutable loop proofs still use explicit source-state invariants. This is not general named-invariant automation or runtime higher-order application. |
-| [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Its time continuation receives that reference directly and bounds summation using its actual length. | The author still selects the typed input, transports representation facts and justifies the mathematical continuation bound. |
-| [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. Its declared body directly supplies initialization and the remaining loop; a shared assignment rule names the actual midpoint. | The common loop invariant still uses a register-role representation and a separate initialization lemma. Direct function composition is not general named-invariant inference. |
-| [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost; clients still prove their genuine extent and aliasing conditions. |
-| [Merge sort](../Examples/Ram/MergeSort.lean) | A real two-array `Unit` declaration recursively calls itself, merge and copy. Ordinary length induction composes shared slice/reassembly rules; actual output has a sorted-permutation and `StateM` specification, with a separate full-run `n log n` reserve. Correctness and time calls restore caller bindings; the time rule derives each remaining reserve. | Correctness and time proofs still repeat stage composition. The author supplies the whole-branch reserve, recursive capacity and array facts; these must not be confused with automatically derived call accounting. |
-| [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls. Copy passes the complete destination representation to sum; the time rule derives the remaining reserve. | Clients still transport contracts through imports and establish real equal-length, range and non-overlap conditions. |
-| [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
-
-The diagnosis is not that mathematical statements are impossible. They already
-work. The missing step is making their implementation proofs and separate cost
-proofs consistently compositional and source-facing.
+This is a plan, not a chronological list of completed lemmas.
+[Design](DESIGN.md) records semantic boundaries, the
+[manual](https://vvauted.github.io/Complexity/ComplexityDocs/Verification.html)
+describes proof interfaces, and [literature notes](LITERATURE.md) record what we
+take from primary papers.
 
 ## Four questions for every proposed change
 
-### 1. Are public proof rules and automation doing the repetitive work?
+### 1. Do public rules and automation remove repeated work?
 
-A public rule should remove repeated work from an existing consumer. Parameter
-binding, return binding, scope restoration, import relocation and routine framing
-belong in reusable rules. Automation should apply those proved rules and leave
-readable mathematical goals.
+Parameter and return binding, import relocation, scope restoration and routine
+frames belong in shared rules. A proof should follow calls, sequencing, branches,
+loops and recursion in the declared source. Small changes to a loop body should
+not require a new whole-function AST adapter.
 
-The author still supplies genuine invariants, recursive measures, callee
-contracts, range/aliasing facts, and recurrences or potentials. Hiding these goals,
-weakening the input domain, or replacing them with a blanket execution premise
-does not improve proof automation.
+The author still supplies mathematical invariants, recursive measures, callee
+contracts, range/aliasing facts, and recurrences or potentials. Automation should
+leave those goals readable, not replace them with blanket execution premises or
+weaken the admitted input domain.
 
-Prefer compositional rules for calls, sequencing, branches, loops and recursion
-over another recognizer for one exact sample AST. Retain focused shortcuts where
-they are useful, but do not make a tiny syntactic variation require an entirely
-new correctness proof. Exact costs and upper bounds should share the same source
-decomposition rather than forcing clients back to separate execution-tree proofs.
+### 2. Are we reusing Lean, Std, Batteries and mathlib?
 
-### 2. Are we actually reusing Lean, Std, Batteries and mathlib?
+Reuse ordinary lists, arrays, vectors, `Part`, `StateM`, `Std.Do.Triple`, induction,
+`Set.EqOn`, asymptotic relations and mathlib's recurrence machinery.
+Do not create parallel collections, monads or asymptotics libraries.
 
-Already reused: `Part`, ordinary lists and vectors, `StateM` and `Std.Do.Triple`,
-standard induction, `Set.EqOn` for unchanged locals, asymptotic relations, and
-mathlib's Akra–Bazzi machinery.
-Do not build replacements for these.
+The current sum algebra uses upstream list sums through a word-encoding bridge.
+Array mutation reuses list `take`, `drop`, `set` and map identities.
+Local frames and static destination sets use ordinary mathlib sets.
+Memory representation, compiler simulation and actual transition costs are
+project-specific bridges; an upstream list theorem cannot replace them.
 
-The word-sum algebra in [Array/Sum](../Complexity/Computability/Ram/Array/Sum.lean)
-now reuses `List.sum_eq_foldl` and standard sum identities through one
-encoding/modular-arithmetic bridge. Typed result decoding similarly reuses
-standard list-length and element facts. Do not maintain parallel collections of
-generic list proofs; preserve the project-specific representation bridge.
+Search the pinned dependencies before adding generic mathematics. Add a small
+extension only for a concrete missing fact. Keep dependency pins consistent;
+CSLib is not needed for this direction.
 
-Memory-to-list representation, source-to-target simulation and compiler-derived
-costs are necessary project-specific bridges; an upstream `List` or `Part`
-lemma cannot replace them. Before adding a generic lemma, search the pinned
-dependencies and record a concrete reason if a small extension is still needed.
-Do not expand dependency scope merely to advertise reuse; CSLib is not required.
+### 3. What should proving an implementation feel like?
 
-### 3. What should writing a proof feel like?
+Write a function with typed parameters, lexical locals, calls and returns.
+Prove its behavior by ordinary mathematical induction, a loop invariant, or
+composition of operation contracts. Prove its cost using the same decomposition,
+leaving sums, inequalities and recurrences.
 
-The author writes a function with typed parameters, local bindings, calls and
-returns. Its correctness proof follows the algorithm: ordinary induction,
-a loop invariant, or composition of known operation contracts. Its cost proof
-follows the same decomposition, leaving sums, inequalities and recurrences.
+A client proof should not mention numeric register slots, stack instructions,
+generated function-table offsets, raw code layout or measured execution trees.
+Backend authors establish those facts once. Both implementation proofs and
+downstream mathematical uses must be pleasant; hiding boilerplate in a sample
+adapter is not completion.
 
-A proof about a client should not mention register numbers, stack save/restore
-instructions, raw code layout, generated function-table offsets, or a manually
-reconstructed execution tree. Backend authors prove those facts once.
+### 4. Can correctness look like an ordinary Lean proposition?
 
-Proving an implementation and using its theorem are different tasks. Both matter:
-a short mathematical client theorem does not excuse a large, repetitive
-implementation proof hidden in another sample file.
+Yes: executable factorial equations, slice identities, `List.findIdx`, mapped
+contents and sorted-permutation statements already demonstrate this.
+A relational specification need not implement a second reference algorithm.
 
-### 4. Can correctness be stated like an ordinary Lean proposition?
-
-Yes. The existing executable factorial equality and slice identities demonstrate
-this. The target includes both value equations and relational specifications;
-sorting need not be specified by implementing a second sorting algorithm.
-
-These are schematic proposition shapes, not additional implemented APIs:
+The intended proposition shapes are schematic, not new APIs:
 
 ```text
-pure result:       admissible x → implementedFunction x = mathematicalValue x
-relational result: admissible x → property x (implementedFunction x)
-mutable result:    represented input entry →
-                     let (result, finish) := implementedFunction input entry
-                     resultProperty input result ∧ represented output finish ∧ frame entry finish
-separate cost:     admissible x → costOfThatInvocation x ≤ bound x
+pure:      admissible x → implementedFunction x = mathematicalValue x
+relation:  admissible x → property x (implementedFunction x)
+mutation:  represented input entry →
+             resultProperty result ∧ represented output finish ∧ frame entry finish
+cost:      admissible x → costOfThatSameInvocation x ≤ bound x
 ```
 
-Admissibility must describe the intended legal inputs and real representation,
-overflow and capacity conditions. A named condition may package them; it must not
-hide an unproved halt assumption or discard inconvenient legal inputs.
-Once termination follows from those conditions, ordinary application should not
-require the client to assemble a machine trace or choose a time bound.
+Admissibility retains real representation, overflow and capacity conditions.
+Normal termination must follow from those conditions without choosing a time
+budget. Packaging them must not hide an unproved halt assumption.
 
-A pure result need not display streams or a heap. Hiding shared state requires
-proving independence and preservation, not just choosing empty input.
-Effectful programs may naturally use stateful/Hoare specifications.
-Heap-backed arrays are currently references with list representations, not an
-implemented `List → List` loader. Conversions and allocation need real programs
-and their own costs before an end-to-end list API can claim them.
+A pure observation may omit heap and streams, but a purity claim requires
+independence and preservation. Mutable programs naturally use result/state
+contracts. A heap reference represented by a list is not an implemented
+`List → List` loader; actual conversion and allocation require charged programs.
 
-## CALF as a guide, not a label
+## Evidence from the existing samples
 
-[CALF](https://arxiv.org/abs/2107.04663) distinguishes values from computations
-and behavioral equality from cost-sensitive reasoning. Its phase discipline
-prevents cost information from affecting observable behavior. These are stronger
-ideas than merely storing a pair of a result and a number.
+| Consumer | Checked end-to-end capability | Remaining burden |
+| --- | --- | --- |
+| [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves behavior and one independent exact-cost recurrence; executable equations reuse mathlib factorial. | Publishing the runtime result still supplies genuine word and stack conditions. General value-dependent exact-cost continuation support needs a real consumer. |
+| [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Named calls and shared traversal yield `List.foldl`; the factorial helper exercises element/prefix-dependent costs. | The fold interface is read-only with a scalar accumulator, not arbitrary mutation or richer accumulator support. |
+| [ArrayMap](../Examples/Ram/ArrayMap.lean) | Real helper calls and stores produce `List.map`; independent bounds cover the same compiled invocation. The indexed rule owns cursor/count progress. | The payload still relates source state to mathematical contents and a real user index. The operation template retains a fixed internal layout. |
+| [ArraySlice](../Examples/Ram/ArraySlice.lean), [properties](../Examples/Ram/ArraySliceProperties.lean) | A real returned borrowed reference feeds another compiled call; its length controls the time continuation. | Typed-input selection and mathematical containment/representation facts remain explicit. |
+| [LowerBound](../Examples/Ram/LowerBound.lean) | Named source directly composes shared loop rules, with budget-free termination, executable `List.findIdx` and a logarithmic full-call bound. | The invariant/initialization still use a register-role bridge. The loop-scoped midpoint is not a function-level binding. |
+| [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function yields `List.merge`, both preserved sources and an independent linear full-call bound. | The wrapper really calls the core and pays that overhead; extent and destination non-overlap remain premises. |
+| [MergeSort](../Examples/Ram/MergeSort.lean) | A two-array declaration recursively calls itself, merge and copy. Length induction gives sorted-permutation and contents-level `StateM` specifications; the same invocation has an `n log n` bound. | Correctness and time still repeat some stage composition. Recursive capacity, the whole-branch reserve and multi-buffer facts are explicit. |
+| [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [time](../Examples/Ram/FunctionCompositionTime.lean) | Imported copy passes complete array representations to sum; call accounting derives the remaining reserve. | Import transport and genuine equal-length, range and disjointness premises remain. |
+| [GraphDegree](../Examples/Ram/GraphDegree.lean) | An implemented sum transfers to a mathlib graph property. | Represented graph data is assumed; this is not a graph loader. |
 
-For this library, make the corresponding obligations concrete:
+All these claims concern the actual source/compiler/runtime path, not parser
+acceptance or a mathematical replacement implementation. Existing source
+programs, admitted domains and cost bounds must be preserved when simplifying
+their proofs.
 
-- Typed result and state observations describe the same executable declaration
-  as its cost observation. Correctness and termination do not depend on a
-  proposed bound.
-- The source program cannot inspect proof budgets or the measured step counter.
-  Erasing measurement must preserve results and effects; measuring a terminating
-  invocation must not choose a different execution.
-- Behavioral equality permits reuse of mathematical properties, not transport of
-  a runtime bound between different algorithms. A separate cost/refinement theorem
-  is required.
-- Cost composition follows actual intermediate values and effects. A call's
-  returned array or updated state can determine the next call's bound.
-- Local costs and calling overhead come from proved compiled executions. No
-  unchecked `tick`, host callback or bulk operation may assign itself a price.
+## Priority 1: make new mutable and scoped proofs source-facing
 
-The existing erasure, determinism and result/count correspondence theorems support
-this direction. They are not a formalization of CALF's modal type theory or its
-internal noninterference metatheorem. Extend the typed proof interface on that
-existing semantics; do not start a disconnected interpreter or a second program
-whose connection to the executable remains the user's burden.
+**Available foundation:** general `TotalWP.forIn` supports arbitrary bodies and
+loop-head state invariants; its independent uniform time rule charges setup,
+loads, cursor updates and control flow. `forIn_indexed` additionally maintains
+the mathematical iteration number and private cursor/count relation internally.
 
+Map now supplies only its payload: represented updated-prefix/unread-suffix
+contents, the program's own base/index bindings, and frame/I/O facts. It no longer
+proves private-pointer advancement, word-count subtraction or exit-index
+arithmetic. The body still starts after a real current-heap load and establishes
+the payload after actual cursor updates. Semantic cursor preservation permits
+write-then-restore; `Stmt.writtenRegs` discharges the static case.
+
+**Next work:**
+
+- Use this division to improve the remaining binding view for an actual mutable
+  implementation. Keep mathematical contents and user-visible values readable;
+  do not reintroduce private cursors into each payload or add one recognizer per
+  sample. The current indexed rule still exposes `State` and `advanceState`;
+  it is a shared foundation, not the finished named-invariant interface.
+- Let proof-local bindings follow lexical scope. Search's midpoint already uses
+  `ram_total_bind`; its declaration supplies the real remaining loop directly.
+  Improve its register-role initialization only where it obstructs the proof.
+  Do not export a loop-local name at function scope or add dummy parameters.
+- Retain the concise scalar-fold and whole-operation contracts where they suffice.
+  Rewriting all clients into a more general invariant is not itself an improvement.
+  Multiple live mutable arrays and richer accumulators need a representation
+  interface that preserves their actual ordered effects.
+- The language supports word, borrowed-array and `Unit` results and end-of-function
+  returns. Richer results and early exit remain unfinished. Select a genuine
+  consumer before extending them, then provide lowering, correctness, cost and
+  runtime observations together. Search returning its insertion index, including
+  the endpoint, does not by itself require `Option`.
+
+**Acceptance evidence:** the next genuinely different mutable body should reuse
+the traversal mechanics while its proof contains the algorithm's mathematical
+invariant and operations. Private layout changes should not force a new
+algorithmic correctness argument. No uncharged host callback or array snapshot
+may stand in for the body.
+
+## Priority 2: share independent correctness and cost decomposition
+
+**Available foundation:** typed call rules pass actual returned values and shared
+effects with caller locals restored. `ram_total_apply` and `ram_time_apply`
+reuse declaration-generated bindings. The time rule can derive a remaining
+reserve after proving the complete compiled call fits, or accept an explicit
+continuation bound depending on the actual returned value, as slice does.
+
+`TimeExact` supplies exact-count composition over the existing measured
+execution. Factorial's upper bound and measured endpoint reuse its one cost
+induction. `ram_run_eq` and `ram_run_bound` account for real outer-call overhead.
+Search's logarithmic proof reuses `while_div` and a budget-free halving relation.
+
+**Next work:**
+
+- Reduce repeated source-stage composition in recursive correctness and time
+  proofs, starting with merge sort. The author should supply the recurrence and
+  nonrecursive toll, not repeatedly unfold call ASTs or reconstruct register states.
+- Extend exact composition to value/state-dependent continuations when an
+  existing exact-count client needs it. Do not add an unused exact wrapper to a
+  client already served by an upper bound.
+- Mutable input-dependent traversal costs must follow actual elements, state and
+  order. The current map uses a uniform helper bound; read-only fold's varying
+  cost rule does not establish arbitrary mutable helper effects.
+
+Correctness and termination stay budget-free. A conditional cost theorem alone
+does not establish that an execution exists, nor is it automatically monotone
+in allowed call depth. Time may use separately proved behavioral facts, but
+behavioral equality between algorithms cannot transfer their runtime costs.
+Natural subtraction alone cannot justify an overspent reserve.
+
+**Acceptance evidence:** calls, assignments, loops and recursion decompose the
+same declared computation in both proof views. A real varying-work continuation
+gets its needed value and representation without unpacking measured execution.
+The mathematical reserve/recurrence and actual capacity conditions remain visible.
+
+## Priority 3: finish compositional data and runtime observations
+
+**Available foundation:** typed contracts, `Part` observations and executable
+`apply`/`applyState` are views of one declaration. Typed projection rules derive
+ordinary value properties without per-client field decoding.
+Copy returns complete represented arrays to its continuation; its reference view
+still uses the original three runtime words, with destination length justified
+by input representation, not inferred through encoder injectivity.
+
+Shared two-buffer slice/reassembly rules carry unchanged halves across recursive
+calls. Merge sort's `Stages` uses them independently of register and return-field
+layout. Mathematical list and graph properties remain upstream mathematics.
+
+**Next work:**
+
+- Improve repeated multi-buffer composition at actual call boundaries. Transport
+  lookup, bindings and routine frames; leave genuine containment, aliasing,
+  representation length and mutation obligations explicit.
+- Derive reusable declaration-level admissibility/observation conveniences where
+  consumers still repeat them. Do not create a third function container, a new
+  runner, or a wrapper around an already short equation.
+- Prefer returned-value/shared-state contracts to reconstructing values from
+  destination registers. A terminal time call with no continuation need not be
+  migrated to a richer result interface merely for uniformity.
+
+**Acceptance evidence:** the implementation-side proofs for slice, copy-then-sum
+and recursive sort compose named operands and represented data. Their published
+mathematical statements and separate cost bounds concern the actual compiled
+invocation without per-client raw-code declarations or extracted result slots.
+Scratch mutation is retained even when a contents-level specification omits it.
+
+## CALF and related work: obligations, not labels
+
+[CALF](https://arxiv.org/abs/2107.04663) guides the distinction between values and
+computations, behavioral equality and cost-sensitive reasoning.
 [Refinement with Time](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ITP.2019.20)
-motivates compositional representation and cost rules.
-[Decalf](https://arxiv.org/abs/2307.05938) is a useful warning that effects need
-cost comparisons which retain behavior, rather than assuming every computation
-has a separate pure scalar cost formula. These motivate the design; our RAM
-adequacy claims must still be proved here.
+guides compositional representation transport.
+[Decalf](https://arxiv.org/html/2307.05938v4) warns against discarding effects when
+comparing costs. Their computational models do not establish our RAM bounds.
 
-## Priority 1: typed function path — checked foundation
+For this library the concrete obligations are:
 
-The multi-field path now covers source semantics, both
-compilers, checked arities, executable calls, DSL signatures, imported signatures,
-typed observations and contracts. Word, borrowed array and `Unit` results
-use actual returned fields from the same callee execution.
+- Results, effects and costs observe the same executable declaration.
+- The source cannot inspect proof budgets or its measured transition count.
+  Erasure and determinism connect measured and unmeasured executions.
+- Correctness/termination do not depend on a proposed bound. Behavioral equality
+  supports mathematical reuse, not automatic transport of algorithmic cost.
+- Calls pass actual intermediate values and changed representations in execution
+  order. Pure list identities do not justify reordering effectful helper calls.
+- Primitive and calling costs follow from emitted instructions, not accepted
+  annotations, unchecked ticks or free host computations.
 
-`TypedFunctionContract` exposes typed arguments and results, not only generated
-`eval`/`apply` entry points. Shared semantic and executable projection theorems
-remove per-client field-length and decoding proofs. This is a thin view of the
-one declared implementation, not another program container.
-
-`ram_total_vc` also starts these typed contracts through their existing `of_wp`
-rule. The callable merge uses it and `ram_total_apply` to leave only its array
-premises and result representation; no separate typed verification tactic is needed.
-
-**Checked evidence:** the slice consumer returns a borrowed array which another
-function passes to imported sum. Copy genuinely returns `Unit` and preserves its
-heap effects in copy-then-sum. Both have mathematical contracts and independent
-compiled costs without a stream driver, fabricated result fields or host-side
-sequencing masquerading as one compiled program. Scalar and recursive consumers,
-the full library, examples and manual pass on the designated server.
-
-This establishes the typed path, not the final proof experience. A dedicated
-declaration-generated binding set now removes repeated argument-builder,
-lookup and static arity/local-count facts, including imports. Slice's reduced
-call proof exercises it. Calls still need explicit typed-input selection and
-mathematical representation reasoning; no encoding is inverted by guesswork.
-
-A `Unit` value alone is not an observation of mutation or execution steps.
-Use the same invocation's state/count interface to observe those effects;
-a source-language `Unit` call still executes its body and calling convention.
-
-## Priority 2: share source-facing correctness and cost decomposition
-
-Build on the existing total-correctness and measured-execution rules.
-
-**Checked foundation:** `TimeExact` provides conditional exact-count composition
-over the original measured semantics. Factorial now uses one ordinary cost
-induction; its upper bound and measured body execution are projections, not
-separate execution-tree proofs. `ram_run_bound` composes the actual runtime
-bridge and proved outer-overhead arithmetic for copy, slice and copy-then-sum.
-`ram_run_eq` provides the corresponding exact-count convenience, used by the
-actual factorial and array-sum applications without local call-length rewrites.
-
-The uniform `ForIn.function_timeBound` needs no exact helper count or totality.
-The separate `function_timeBound_of_step` sums work at actual elements and prefix
-accumulators, using a read-only correctness contract on admitted inputs. The
-shared traversal rule now requires the step only when its guard is true; an empty
-endpoint does not impose correctness of an unexecuted call. The existing
-factorial adapter supplies real input-dependent cost, an explicit element bound
-and sufficient recursive capacity. Standard list operations supply the sum;
-there is one small generic prefix-sum identity, not a new cost monad.
-
-`TimeBound.while_div` now specializes the existing linear-loop rule using
-ordinary `Nat.clog` lemmas. Bit length and named lower-bound search both use it
-instead of repeating logarithmic-potential arithmetic. Search shares one
-budget-free interval-halving iteration relation between termination and the
-separate time proof. The costs still include every compiled guard and back-edge;
-the shared rule does not assign an abstract constant price to the whole loop.
-Search's conditional body bound now composes the real assignment and branch
-costs directly, without projecting from the older combined correctness/time
-contract. That local bound requires neither safe addresses nor body totality;
-the separate correctness proof still establishes read safety.
-
-**Checked local-binding step:** `State.LocalFrame` packages unchanged shared
-state with mathlib's `Set.EqOn` on unaffected locals. The expression-fold adapter
-proves parameter/local separation once and transports the same parameter facts
-through initialization, element loading and cursor advance. Search and both fold
-adapters reuse `restore_eq_of_shared` at return. Function entry is still a real
-change of register environment: the local frame starts after `entry.enter args`.
-Neither endpoint equality nor discarded locals erase executed assignment costs.
-
-This is an implementation-side bridge, not automatic scope inference or a net
-reduction in every proof's length. LocalBindings already composes its calls in
-a few lines; search's two single-register reads remain simpler without a set
-frame. Do not migrate such proofs just to demonstrate the new interface. The
-remaining `Nodup`/register-role adapter and expression meaning are still explicit.
-
-`TotalWP.assign_value` and `ram_total_bind mid hmid [facts]` now name one actual
-assignment's value in its continuation, retaining its evaluation equality.
-Search uses this to keep its midpoint opaque through both update branches,
-rather than duplicating a large expression and simplification setup. This is a
-proof-local word value, not an exported source variable or inferred loop
-invariant. Unresolved read safety remains a goal. The rule reuses `assign_iff`
-and sequencing; it introduces neither another program nor scope metadata.
-
-Search's function proofs now use the declaration's own body equations and apply
-the existing loop rules to the actual remaining `while`. Unification infers the
-private loop slots before their separation is checked. Visible endpoint names
-describe initialization; the loop-scoped midpoint is not exported. This removes
-both whole-function body-shape adapters without introducing a replacement rule.
-The existing register-role constructor and mathematical initialization lemma
-remain useful bridges; arbitrary named loop invariants are still not inferred.
-
-**General loop-body foundation:** `TotalWP.forIn` accepts arbitrary source bodies
-and loop-head invariants, without imposing one accumulator or unchanged shared
-state. The independent uniform `TimeBound.forIn` needs only a conditional body
-bound and count preservation on completed body executions. Both reuse the
-existing while rules and the actual load/setup/cursor instructions. The helper-call
-traversal uses the common cost rule instead of maintaining its own execution
-decomposition; its original domain and bounds are unchanged.
-
-`Stmt.writtenRegs` now supplies a sufficient static local-preservation check.
-Its soundness is proved once for `Exec`, then reused through `SafeExec.erase`.
-Map and helper-call traversal use it for their remaining-count local instead
-of destructing executions. It uses ordinary mathlib sets; calls include only
-result destinations, regardless of heap or I/O effects. The general loop rules
-retain their semantic preservation premise: writing and restoring a local is
-still allowed when this conservative static exclusion cannot prove preservation.
-
-**Mutable operation:** in-place map now uses the general loop rule with a
-transformed-prefix/original-suffix invariant. It reuses `ArrayAt.setMem`, array
-frames and upstream list identities through the existing copy-prefix bridge.
-The actual named square-map client imports the existing helper and publishes
-`List.map` contents from its compiled `applyState`. The independent body bound
-is `46 * n + 8`, and the full invocation adds its real outer overhead to give
-`46 * n + 71`. Correctness needs the helper only on original input elements;
-the separate uniform conditional cost premise covers one-word helper inputs.
-Empty arrays and an unused pointer wrapping at the allocation endpoint remain
-admitted. No changed-heap snapshot or uncharged host callback is assumed.
-
-This is still not the final named-variable proof interface. Map is a verified
-operation with a fixed internal layout, connected to its named instance by
-definitional equality. Its reusable proof does not recognize arbitrary loop
-programs. Scalar sum/count clients keep their simpler rules; the existing copy
-program is not rewritten into foreach merely for uniformity. The next proof
-experience step should remove local-layout work for genuinely different bodies,
-not grow a catalog of exact sample-body adapters. Runtime higher-order functions
-and input-dependent mutable traversal costs are not established by this map.
-
-**Remaining work:**
-
-- Make local-block proofs follow the source structure without exposing numeric
-  slots. Search's scoped midpoint must remain local to its loop body; exporting
-  it as a function-level variable would misrepresent the language's scope.
-  Reuse `TotalWP.while_variant`, ordinary-model `Refines.while_wellFounded`,
-  and existing statement rules. Build on the checked parameter-preservation
-  bridge when a real local-block proof still repeats this work;
-  do not replace the loop framework or accumulate whole-sample AST recognizers.
-  Search now demonstrates direct function-to-loop composition without a
-  whole-body adapter. Its underlying invariant and initialization still use
-  the register-role bridge. Improve those remaining implementation-side views
-  when they obstruct an actual proof, not by restoring a wrapper around the
-  short function proof. Extend value binding to richer values or calls only
-  when a real continuation benefits; this constant-cost body needs no cost binder.
-- Extend the exact-cost interface beyond state-independent continuations.
-  Correctness, exact costs and upper bounds should share source-facing call and
-  sequence decomposition even when a returned value determines later work.
-  Keep cost equations proved, not annotations accepted by the compiler.
-  Do this when an exact-count consumer needs it: the slice currently needs an
-  upper bound, already covered by the typed continuation rule, not another
-  exact-cost wrapper with no client.
-- Simplify other recursive consumers with these rules before proposing another
-  recursion framework. Retain a stronger body invariant only where actually
-  needed; do not infer discarded callee locals from restored caller state.
-- Simplify representation transport in effectful typed continuations.
-  The restored call rules now carry actual effects without register equalities;
-  merge sort uses the default remaining reserve and slice retains an explicit
-  bound depending on `window.length`. Neither rule decodes a guessed input or
-  changes the execution. Repeated multi-buffer stage composition remains work;
-  its genuine mathematical facts stay explicit.
-
-**Completion target:** `LocalBindings`, factorial, `ArrayFold`, and
-copy-then-sum should use the common rules. Their algorithmic proofs should retain
-only relevant invariants, contracts and mathematical cost arguments; neither exact-count nor
-upper-bound clients reconstruct ABI blocks or measured execution trees.
-The data-dependent factorial fold meets the varying-helper part of that evidence;
-it does not establish arbitrary mutation or richer accumulator support. A
-conditional time bound does not become monotone in allowed call depth without
-justification; this consumer transfers it using an actual execution and determinism.
-
-## Priority 3: make data-operation contracts compose naturally
-
-Use ordinary list/array/graph properties at the mathematical boundary and reuse
-the existing `StateM` / `Std.Do` interfaces where they help.
-
-- Imported operation contracts should transport lookup, argument/result binding
-  and routine frames without clients rebuilding those facts.
-- Return useful representation postconditions directly: copying produces a
-  represented destination; slicing produces a represented borrowed reference.
-  Preserve range, overlap and mutation conditions.
-- Base function-level `StateM` bridges on returned values and shared effects.
-  Reconstructing values from destination registers is a lower-level observation,
-  not the preferred interface for proving ordinary functions.
-- Extend traversal and mutation rules through actual consumers, including
-  multiple live arrays and richer accumulators. Do not add containers merely to
-  increase the library's feature count.
-- Keep borrowed descriptors, allocated storage, mathematical views and actual
-  data conversion distinct. Only implement loaders/allocation when their
-  semantics and costs can be included in the claimed interface.
-
-**Evidence of completion:** the returned-slice and copy-then-sum proofs need no
-callee implementation details. The existing merge-sort proof already reuses
-operation contracts at a lower level; its algorithmic proof should instead
-compose named parameters, results and array representations without restating
-call ASTs or assembling register states. Subsequent list/graph properties use
-upstream mathematics.
-
-Merge sort now connects its existing `sortState` to the actual new function's
-contents using the checked `applyState` bridge. This is a contents-level
-refinement: the RAM function also changes scratch storage, whose final contents
-need not be part of the ordinary list model. Adding another wrapper around this
-equation would not shorten its multi-buffer binding proof. Copy likewise already
-has a direct `Unit`/shared-state specification; no duplicate stateful model is needed.
-
-**Checked merge step:** the named core shares the existing merge loop, and the
-typed `merge(left : array, right : array, destination : array) : Unit` makes a
-real call to it. The destination equation is standard `List.merge`; sortedness
-is needed only for the sorted-permutation corollary. Both sources survive and
-may overlap each other. The destination view has exactly the combined length
-and is disjoint from each source. This typed length is word-representable;
-the raw core retains its broader domain of two separately representable counts.
-The actual typed invocation has bound `34 * (xs.length + ys.length) + 122`,
-including both calls, returns and halt. Neither storage allocation nor loading
-is claimed. A larger allocated buffer can supply a contained destination view.
-
-**Checked representation step:** `ArrayAt.reassemble_prefix_of_frame_two` and
-`reassemble_suffix_of_frame_two` now carry the unchanged half across an operation
-on the other half and a contained scratch view. Both existing `after_left` and
-`after_right` use these public rules. They mention neither registers nor return
-fields, permit unequal source/scratch lengths, and retain empty endpoint cases.
-The old recursive adapters still bind their actual operands; this extraction
-does not claim those adapters are already source-facing.
-
-**Checked typed recursive correctness:** the new two-array, `Unit`-returning
-declaration uses ordinary length induction whose callable hypothesis covers all
-input-reference pairs. Public `Stages` rules split the arrays, preserve the
-unchanged half across each actual recursive call, refresh scratch contents, and
-prepare merge. Typed contract relocation reuses the existing import embedding;
-larger call-depth capacities preserve the same budget-free correctness.
-`Function.sort_contents`, `sort_sorted` and `sort_stateM` observe this new
-compiled declaration, not the old three-parameter sort or a host sorting call.
-Empty arrays, odd sizes and duplicates remain in the domain.
-
-**Checked independent cost:** the same declaration has body bound
-`Recurrence.balancedBudget 4 227 n`; its taken branch charges a nonrecursive
-`53 * n + 348`, including descriptor assignments, recursive call blocks, merge
-and copy. `Function.runTotal_steps_le` adds the actual outer invocation and halt,
-giving `bodyBudget n + 81`. The existing balanced recurrence and mathlib `IsBigO`
-prove the reserve's `n log n` growth. This is a bound, not an exact count or a
-comparison-only model. The separate time induction handles every sufficient
-call depth directly; it does not assume conditional time bounds are monotone
-in that capacity. Each fixed-width execution still has real code/stack and
-representation premises, and no allocation or loading cost is claimed.
-
-**Checked call-composition improvement:** `TypedFunctionContract.wp_call_restored`
-passes the actual shared effects with caller bindings already restored. The
-three typed sort calls use it and no longer accumulate register equalities.
-It reuses the existing call rule, retains ordered return-field assignment, and
-does not change the tactic's global rule selection or gather all local facts.
-Mathematical names such as the midpoint stay opaque in continuations; expanding
-them into word-arithmetic expressions everywhere makes list reasoning needlessly
-difficult. The migrated proof avoids that global unfolding.
-
-**Checked time-call improvement:** `call_seq_typed_restored_at` provides the same
-binding behavior for independent time proofs. `call_seq_typed_remaining_at`
-derives the continuation reserve by subtracting the proved complete call bound,
-with an explicit affordability premise. Merge sort's three typed calls use
-`ram_time_apply correct time on input`; they no longer choose intermediate
-numeric reserves or accumulate register equalities. `ram_time_vc` normalizes the
-compiled call-length terms in the reserve without unfolding callee bodies.
-Slice retains an explicit `nextBound` depending on its actual returned length.
-Both consumers retain their original execution and bounds.
-
-This does not infer the algorithm's whole-branch bound or recurrence. The author
-still proves that both children and the actual nonrecursive toll fit the proposed
-reserve. Natural-number subtraction cannot justify overspending. Automation
-handles lookup and argument equations; it does not repeatedly search a large
-continuation or unfold mathematical names there while attempting those premises.
-
-**Checked imported-call consumer:** `copy_function_typed_contract_of_ref` passes
-complete source and destination `ArrayRef.Rep` assertions through the existing
-restored call rules. Copy-then-sum and merge sort no longer rebuild them locally.
-The same three-word implementation executes; the destination descriptor length
-comes from its input representation and equal-length premise, not another runtime
-argument. The former's `37 * n + 104` body and `37 * n + 160` full-run bounds
-are unchanged. Merge sort's terminal time call keeps its simpler raw rule,
-since no following continuation needs the new postcondition. Equal-length,
-range and non-overlap conditions remain explicit; the original raw API remains.
-
-**Next proof-experience work:** reassess repeated multi-buffer stage composition
-and the limited loop-body interfaces below. A short helper-call proof is not a
-reason to add another wrapper. Extract a shared rule only when it removes work
-without hiding representation, mutation or capacity obligations; do not add
-another recursion framework or whole-sample AST recognizer.
-
-**Checked lower-bound step:** search is now a named callable function, with
-ordinary endpoint initialization and a loop-scoped midpoint. Its shared interval
-and exit proofs are register-parametric; the old binary-insertion specialization
-remains usable. Budget-free termination uses interval decrease, correctness
-reuses `LowerBoundSpec.eq_findIdx`, and the separate full-run bound is
-`25 * Nat.clog 2 (xs.length + 1) + 69`. The additional initialization, call,
-return and halt costs come from this actual function, not the old block.
-The admitted data includes empty arrays and duplicates without an extra strict
-array-endpoint condition. Normal execution still needs its genuine stack capacity.
-
-This completes one source-to-runtime consumer, not the full high-level interface.
-The named correctness and time proofs now directly reuse the shared loop without
-whole-function adapters. Its register-parametric invariant and initialization
-are still implementation-side work; multi-buffer representation needs attention
-too. Do not add dummy parameters or whole-program renaming merely to preserve
-old numeric slots.
-
-The language itself is also unfinished. Word, borrowed-array and `Unit` results,
-with only end-of-function returns, are not a complete high-level programming
-experience. Search's insertion index, including `xs.length`, is a legitimate
-mathematical result, not evidence that it needs `Option` or early return.
-Use an actual structured-result or early-exit consumer to justify those features.
-Source lowering, correctness, costs and runtime observations must arrive together;
-parser acceptance alone is not completion.
-
-## Priority 4: publish mathematical statements once per declaration
-
-Consolidate correctness-to-evaluation and correctness-to-execution bridges.
-Generate or derive reusable declaration-level observations and named, justified
-capacity conditions; do not introduce a third unrelated function container.
-
-Keep `Part` for semantic partial observations and actual compiled application
-for executable values. Pure clients should reuse plain value equations;
-mutable clients should reuse result/state contracts. Separate time theorems must
-continue to describe the identical invocation, including its actual outer
-overhead, without feeding the bound to the implementation.
-
-**Evidence of completion:** the factorial, slice and composition clients publish
-ordinary equations/relations and independent time bounds without per-client
-raw-code declarations, proof-only reference algorithms, or hand-extracted result
-registers. Their real legal-input and representation assumptions remain visible.
-
-**Checked value-projection step:** `LocalCompiler.Function.applyTyped_spec`
-transfers a typed contract to any proved property of the actual returned value.
-Lower-bound search and slice sum now use it without unpacking `FunctionExec` or
-connecting returned fields by hand. Their remaining mathematical steps use
-`LowerBoundSpec.eq_findIdx` and `wordSum_toNat`. The rule reuses the existing
-`applyStateTyped_spec` and its value projection; it does not create another runner.
-Discarding shared state from this conclusion does not prove that the execution
-has no effects. Mutable clients keep the result/state interface.
-
-The declaration-level application still carries justified input and capacity
-conditions. Derive additional observation conveniences only when they remove
-repeated client work; do not duplicate this bridge with a third function container.
+This is not a port of CALF's modal type theory, Decalf's effectful language or
+Sepref's synthesis. Read a small relevant part of a primary paper when a sample
+exposes a design question; record the applicable distinction and its limits in
+the literature notes, then return to the implementation.
 
 ## Later work and limits
 
-The current cost is word-RAM transitions, not Lean interpreter wall time or bit
-complexity. Uniform whole-problem statements must keep the original input domain,
-encoding, width policy and size measure. Host preloading is not a proved loader.
+The cost model is word-RAM transitions, not Lean wall time, comparison count or
+bit complexity. Whole-problem claims fix the encoding, input domain, width policy
+and size measure and quantify one program over legal inputs.
 
-Space needs a separate observation of live resources on the same execution.
-A sufficient address-space bound is not peak live storage. Prove actual stack
-liveness before advertising stack-space bounds, and allocation/reclamation
-before claiming general live-heap space.
+Borrowed descriptors, mathematical views, allocated storage and data conversion
+are distinct. General allocation/loaders need actual implementations and costs;
+preloaded-memory contracts do not claim them.
 
-Cross-model complexity needs a costed simulation and justified bit/word encoding.
-Do not let a catalog of complexity classes, extra machine models, or more generic
-recurrence wrappers displace the proof-experience priorities above.
+Space needs observations of live resources on the same execution. Address-space
+capacity is not peak live storage. Establish stack liveness before stack-space
+claims, allocation/reclamation before general live-heap claims.
+Cross-model complexity requires a costed simulation and justified encoding.
+Do not let more machine models, class catalogs or recurrence wrappers displace
+the proof-experience priorities above.
 
-## Keep questioning the plan
+## Working discipline
 
-Work in small consumer-driven steps: identify a painful proof, add or reuse the
-public rule that removes it, check the consumer on the designated server, and
-update the claim here. Keep in-progress work distinct from verified interfaces.
+Use real consumers to identify the next obstacle, reuse or improve a shared rule,
+check affected modules on the designated server, and update the evidence here.
+Keep in-progress work distinct from verified interfaces. Reassess the plan when
+a sample exposes a missing premise, unaccounted operation or unusable abstraction;
+existing code is not a reason to preserve a poor interface.
 
-When a design choice is unclear, read the relevant sections of one or two primary
-papers and compare their assumptions with ours. Record the decision and its limit
-in the literature notes; a bibliography is not a deliverable by itself.
-Revisit priorities when a sample exposes a missing premise, duplicated proof,
-unaccounted operation or unusable interface. Do not preserve a design merely
-because it is already implemented.
-
-Use Lean's checks and the real samples. No separate audit framework, checksum
-machinery or unrelated test scaffold is needed for this process.
+Use Lean's checks and the actual samples. No separate audit framework, checksum
+machinery or unrelated test scaffolding is needed.

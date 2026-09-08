@@ -249,6 +249,16 @@ Its count-preservation premise concerns the body's own loaded entry; the element
 and remaining locals must be distinct to connect this to the loop-head count.
 The invariant before loading is not automatically available after loading.
 
+`TotalWP.forIn_indexed` keeps the fixed forward cursor trajectory and remaining
+count inside the shared proof. Its payload is indexed by an ordinary natural
+iteration number; clients need not repeat private-pointer/count arithmetic or
+the exit-index proof. The body starts with the real current-heap load and proves
+the next payload after the actual cursor assignments. Its semantic preservation
+premise allows cursor writes followed by restoration. Map uses this rule while
+retaining its own mathematical contents, source index and store/frame proof.
+This is not payload-stability inference or a declaration-level named-variable
+interface, and it does not strengthen the endpoint address requirement.
+
 The separate uniform `TimeBound.forIn` bounds completed traversals without body
 totality. It reuses the existing linear-loop rule and includes the load, both
 cursor updates, guards and setup. The general rules take three register roles,

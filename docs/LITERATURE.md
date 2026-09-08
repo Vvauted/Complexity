@@ -240,6 +240,11 @@ also propagate the changed representation in execution order. Standard `List`
 identities can simplify the mathematical result, but cannot alone justify
 reordering calls or transporting their costs.
 
+The order is concrete in Figure 4: the recursive traversal of the tail precedes
+the helper application to the head. Our source foreach visits forward. A shared
+pure `List.map` result is therefore not enough to transfer an effectful traversal
+contract between them; the current-heap load in our indexed rule remains explicit.
+
 Rechecking Example 3.4 for in-place map gives a concrete boundary: its concise
 linear bound assumes a pure behavioral helper with a uniform cost bound; the
 uninstrumented map itself carries no traversal charge in that example. Our

@@ -163,4 +163,84 @@ theorem forIn (pointer remaining element : Reg) {base length : Expr} (hw : 0 < w
       invariant reads implementation pre continuation
   exact ⟨finish, .seq (.assign baseReads) (.seq (.assign lengthReads) execution), result⟩
 
+/-- Verify a traversal using a mathematical iteration index and an arbitrary
+payload invariant. The rule maintains the private pointer and remaining count;
+the payload need only describe the caller's values, heap and other effects.
+
+The body starts after the real load from the current heap at `origin + i`, and
+establishes the next payload after the actual cursor assignments. Preserving
+the two cursor locals is a semantic endpoint premise: writing and restoring
+them is allowed. Neither the body nor the payload must preserve shared state.
+
+Setup evaluates length after the pointer assignment. Only executed positions
+require safe addresses; the unused final pointer may wrap at the word boundary. -/
+theorem forIn_indexed (pointer remaining element : Reg) {base length : Expr}
+    (origin : Word w) (n : Nat) (hw : 0 < w)
+    (pointer_ne_remaining : pointer ≠ remaining) (element_ne_pointer : element ≠ pointer)
+    (element_ne_remaining : element ≠ remaining)
+    (invariant : Nat → State w → Prop)
+    (reads : ∀ i current, i < n → invariant i current →
+      (origin + BitVec.ofNat w i).toNat < heapLimit)
+    (preserves : ∀ {entry finish : State w}, SafeExec program heapLimit depth body entry finish →
+      finish.regs pointer = entry.regs pointer ∧ finish.regs remaining = entry.regs remaining)
+    (implementation : ∀ i current, i < n → invariant i current →
+      TotalWP program heapLimit depth body
+        (fun middle => invariant (i + 1) (ForIn.advanceState pointer remaining middle))
+        (current.setReg element (current.mem (origin + BitVec.ofNat w i))))
+    (baseReads : base.ReadsBelow heapLimit s.regs s.mem)
+    (lengthReads : length.ReadsBelow heapLimit
+      (s.setReg pointer (s.eval base)).regs (s.setReg pointer (s.eval base)).mem)
+    (base_eq : s.eval base = origin)
+    (count_eq : ((s.setReg pointer (s.eval base)).eval length).toNat = n)
+    (pre : invariant 0 (ForIn.initialState pointer remaining base length s))
+    (continuation : ∀ finish, invariant n finish → post finish) :
+    TotalWP program heapLimit depth (Stmt.forIn pointer remaining element base length body)
+      post s := by
+  let loopInvariant (current : State w) : Prop :=
+    ∃ i, i ≤ n ∧ current.regs pointer = origin + BitVec.ofNat w i ∧
+      (current.regs remaining).toNat = n - i ∧ invariant i current
+  refine forIn pointer remaining element hw pointer_ne_remaining element_ne_remaining
+    loopInvariant ?_ ?_ baseReads lengthReads ?_ ?_
+  · rintro current ⟨i, _, pointer_eq, count, payload⟩ nonzero
+    have positive : 0 < (current.regs remaining).toNat :=
+      Nat.pos_of_ne_zero (fun zero => nonzero ((Word.toNat_eq_zero_iff _).mp zero))
+    have inside : i < n := by omega
+    simpa only [pointer_eq] using reads i current inside payload
+  · rintro current ⟨i, _, pointer_eq, count, payload⟩ nonzero
+    have positive : 0 < (current.regs remaining).toNat :=
+      Nat.pos_of_ne_zero (fun zero => nonzero ((Word.toNat_eq_zero_iff _).mp zero))
+    have inside : i < n := by omega
+    have loaded : ForIn.loadedState pointer element current =
+        current.setReg element (current.mem (origin + BitVec.ofNat w i)) := by
+      simp only [ForIn.loadedState, pointer_eq]
+    obtain ⟨middle, execution, next⟩ := implementation i current inside payload
+    have execution' : SafeExec program heapLimit depth body
+        (ForIn.loadedState pointer element current) middle := by
+      simpa only [loaded] using execution
+    have preserved := preserves execution'
+    have middle_pointer : middle.regs pointer = current.regs pointer := by
+      simpa [ForIn.loadedState, State.setReg, Ne.symm element_ne_pointer] using preserved.1
+    have middle_remaining : middle.regs remaining = current.regs remaining := by
+      simpa [ForIn.loadedState, State.setReg, Ne.symm element_ne_remaining] using preserved.2
+    refine ⟨middle, execution', ?_, preserved.2⟩
+    refine ⟨i + 1, by omega, ?_, ?_, next⟩
+    · simp [ForIn.advanceState, State.setReg, pointer_ne_remaining, middle_pointer,
+        pointer_eq, BitVec.ofNat_add, BitVec.add_assoc]
+    · rw [ForIn.advance_remaining pointer remaining pointer_ne_remaining, middle_remaining]
+      have one : (1 : Word w).toNat = 1 := BitVec.toNat_one hw
+      have one_le : (1 : Word w).toNat ≤ (current.regs remaining).toNat := by omega
+      change (BinOp.eval .sub (current.regs remaining) 1).toNat = n - (i + 1)
+      rw [BinOp.eval_sub_toNat_of_le _ _ one_le, one, count]
+      omega
+  · refine ⟨0, Nat.zero_le _, ?_, ?_, pre⟩
+    · simpa [ForIn.initialState, State.setReg, pointer_ne_remaining] using base_eq
+    · simpa [ForIn.initialState, State.setReg] using count_eq
+  · rintro finish ⟨i, index_le, _, count, payload⟩ zero
+    have last : i = n := by
+      rw [zero] at count
+      change 0 = n - i at count
+      omega
+    subst i
+    exact continuation finish payload
+
 end Ram.Source.Verification.TotalWP

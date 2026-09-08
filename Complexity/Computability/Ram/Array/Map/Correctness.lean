@@ -14,8 +14,10 @@ suffix. Each iteration loads the next original word, applies the actual helper
 contract and stores its returned word in that position. Existing array-update
 and frame rules retain the rest of the heap.
 
-The general `TotalWP.forIn` rule supplies loop termination independently of any
-instruction budget. Only original input elements require the helper contract.
+The shared `TotalWP.forIn_indexed` rule maintains private cursor/count progress
+and supplies loop termination independently of any instruction budget. The
+payload retains only the program's own bindings and mathematical heap effects.
+Only original input elements require the helper contract.
 Array bounds may include the end of the word-address space: the final cursor
 is unused, and no strict endpoint assumption is added.
 -/
@@ -60,55 +62,43 @@ private theorem contents_finish (transform : Word w → Word w) (xs : List (Word
 
 private structure Invariant (heapLimit : Nat) (base : Word w) (xs : List (Word w))
     (transform : Word w → Word w) (entry : State w) (i : Nat) (s : State w) : Prop where
-  index_le : i ≤ xs.length
   base_eq : s.regs 0 = base
   index : s.regs 2 = BitVec.ofNat w i
-  pointer : s.regs 3 = arrayAddr base i
-  remaining : (s.regs 4).toNat = xs.length - i
   array : ArrayAt heapLimit base (contents transform xs i) s
   frame : ArrayFrame base xs.length entry.mem s.mem
   input : s.input = entry.input
   output : s.outputRev = entry.outputRev
 
-private theorem Invariant.index_lt {heapLimit : Nat} {base : Word w}
-    {xs : List (Word w)} {transform : Word w → Word w} {entry s : State w} {i : Nat}
-    (h : Invariant heapLimit base xs transform entry i s) (nonzero : s.regs 4 ≠ 0) :
-    i < xs.length := by
-  have positive : 0 < (s.regs 4).toNat :=
-    Nat.pos_of_ne_zero (fun zero => nonzero ((Word.toNat_eq_zero_iff _).mp zero))
-  rw [h.remaining] at positive
-  omega
-
 private theorem Invariant.address_lt {heapLimit : Nat} {base : Word w}
     {xs : List (Word w)} {transform : Word w → Word w} {entry s : State w} {i : Nat}
     (h : Invariant heapLimit base xs transform entry i s) (hi : i < xs.length) :
-    (s.regs 3).toNat < heapLimit := by
-  rw [h.pointer]
-  exact h.array.addr_lt (by rw [contents_length transform xs h.index_le]; exact hi)
+    (arrayAddr base i).toNat < heapLimit := by
+  exact h.array.addr_lt (by rw [contents_length transform xs hi.le]; exact hi)
 
 private theorem Invariant.read_next {heapLimit : Nat} {base : Word w}
     {xs : List (Word w)} {transform : Word w → Word w} {entry s : State w} {i : Nat}
     (h : Invariant heapLimit base xs transform entry i s) (hi : i < xs.length) :
-    s.mem (s.regs 3) = xs[i] := by
-  rw [h.pointer]
+    s.mem (arrayAddr base i) = xs[i] := by
   exact (h.array.1.lookup i
-    (by rw [contents_length transform xs h.index_le]; exact hi)).trans
+    (by rw [contents_length transform xs hi.le]; exact hi)).trans
       (contents_get_next transform xs hi)
 
 private theorem Invariant.advance {heapLimit : Nat} {base : Word w}
     {xs : List (Word w)} {transform : Word w → Word w} {entry s : State w} {i : Nat}
-    (hw : 0 < w) (h : Invariant heapLimit base xs transform entry i s)
+    (h : Invariant heapLimit base xs transform entry i s)
     (hi : i < xs.length) :
     Invariant heapLimit base xs transform entry (i + 1)
-      (advanceState 3 4 (bodyState transform (loadedState 3 5 s))) := by
-  let next := advanceState 3 4 (bodyState transform (loadedState 3 5 s))
+      (advanceState 3 4 (bodyState transform
+        (s.setReg 5 (s.mem (arrayAddr base i))))) := by
+  let next := advanceState 3 4 (bodyState transform
+    (s.setReg 5 (s.mem (arrayAddr base i))))
   let stored := s.setMem (arrayAddr base i) (transform xs[i])
-  have loaded := h.read_next hi
+  have loaded : s.mem (base + BitVec.ofNat w i) = xs[i] := h.read_next hi
   have indexFits : i < (contents transform xs i).length := by
-    rw [contents_length transform xs h.index_le]
+    rw [contents_length transform xs hi.le]
     exact hi
   have memory : next.mem = stored.mem := by
-    simp [next, advanceState, bodyState, loadedState, State.setReg, State.setMem,
+    simp [next, advanceState, bodyState, State.setReg, State.setMem,
       stored, h.base_eq, h.index, loaded, arrayAddr]
   have updated : ArrayAt heapLimit base (contents transform xs (i + 1)) next := by
     have represented := h.array.setMem indexFits (transform xs[i])
@@ -118,23 +108,12 @@ private theorem Invariant.advance {heapLimit : Nat} {base : Word w}
     exact represented
   have frame : ArrayFrame base xs.length s.mem next.mem := by
     rw [memory]
-    simpa only [contents_length transform xs h.index_le] using
+    simpa only [contents_length transform xs hi.le] using
       ArrayFrame.store h.array.1 indexFits (transform xs[i])
-  have count : next.regs 4 = s.regs 4 - 1 := by
-    simp [next, advanceState, bodyState, loadedState, State.setReg, State.setMem]
-  have one : (1 : Word w).toNat = 1 := BitVec.toNat_one hw
-  have positive : 0 < (s.regs 4).toNat := by rw [h.remaining]; omega
-  refine ⟨by omega, ?_, ?_, ?_, ?_, updated, h.frame.trans frame, h.input, h.output⟩
-  · simp [advanceState, bodyState, loadedState, State.setReg, State.setMem, h.base_eq]
-  · simp [advanceState, bodyState, loadedState, State.setReg, State.setMem,
+  refine ⟨?_, ?_, updated, h.frame.trans frame, h.input, h.output⟩
+  · simp [advanceState, bodyState, State.setReg, State.setMem, h.base_eq]
+  · simp [advanceState, bodyState, State.setReg, State.setMem,
       h.index, BitVec.ofNat_add]
-  · simp [advanceState, bodyState, loadedState, State.setReg, State.setMem,
-      h.pointer, arrayAddr, BitVec.ofNat_add, BitVec.add_assoc]
-  · change (next.regs 4).toNat = xs.length - (i + 1)
-    rw [count]
-    change (BinOp.eval .sub (s.regs 4) 1).toNat = xs.length - (i + 1)
-    rw [BinOp.eval_sub_toNat_of_le _ _ (by rw [one]; omega), one, h.remaining]
-    omega
 
 /-- The actual map loop safely transforms its represented array in place and
 preserves memory outside that array and both streams. The helper is required
@@ -159,45 +138,34 @@ theorem code_total_contract {program : Program} {helper : Func} {fn heapLimit de
       finish.input = entry.input ∧ finish.outputRev = entry.outputRev) entry
   rw [code, Verification.TotalWP.seq_iff, Verification.TotalWP.assign_iff]
   refine ⟨trivial, ?_⟩
-  apply Verification.TotalWP.forIn 3 4 5 hw (by decide) (by decide)
-    (fun current => ∃ i, Invariant heapLimit base xs transform entry i current)
-  · rintro current ⟨i, h⟩ nonzero
-    exact h.address_lt (h.index_lt nonzero)
-  · rintro current ⟨i, h⟩ nonzero
-    have hi := h.index_lt nonzero
-    have loaded : (loadedState 3 5 current).regs 5 = xs[i] := by
+  apply Verification.TotalWP.forIn_indexed 3 4 5 base xs.length hw
+    (by decide) (by decide) (by decide) (Invariant heapLimit base xs transform entry)
+  · intro i current hi h
+    exact h.address_lt hi
+  · intro current finish execution
+    exact ⟨execution.regs_eq_of_not_mem_writtenRegs (by simp [body, Stmt.writtenRegs]),
+      body_remaining execution⟩
+  · intro i current hi h
+    let loadedState := current.setReg 5 (current.mem (arrayAddr base i))
+    have loaded : loadedState.regs 5 = xs[i] := by
       simpa only [loadedState, State.setReg_same] using h.read_next hi
     have address :
-        ((loadedState 3 5 current).regs 0 + (loadedState 3 5 current).regs 2).toNat <
-          heapLimit := by
-      have same : current.regs 0 + current.regs 2 = current.regs 3 := by
-        rw [h.base_eq, h.index, h.pointer]
-        rfl
-      simpa [loadedState, State.setReg, same] using h.address_lt hi
+        (loadedState.regs 0 + loadedState.regs 2).toNat < heapLimit := by
+      simpa [loadedState, State.setReg, h.base_eq, h.index, arrayAddr] using h.address_lt hi
     have helperCorrect := correct xs[i] (List.getElem_mem hi)
-    have execution := body_safe_at lookup (loadedState 3 5 current)
+    have execution := body_safe_at lookup loadedState
       (by simpa only [loaded] using helperCorrect) address
-    refine ⟨bodyState transform (loadedState 3 5 current), execution,
-      ⟨i + 1, Invariant.advance hw h hi⟩, ?_⟩
-    simp [bodyState, State.setReg, State.setMem]
+    exact ⟨bodyState transform loadedState, execution, h.advance hi⟩
   · trivial
   · trivial
-  · refine ⟨0, ?_⟩
-    refine ⟨Nat.zero_le _, ?_, ?_, ?_, ?_, ?_, ArrayFrame.refl _ _ _, rfl, rfl⟩
+  · simpa [State.eval, Expr.eval, State.setReg] using base_eq
+  · simpa [State.eval, Expr.eval, State.setReg] using length_eq
+  · refine ⟨?_, ?_, ?_, ArrayFrame.refl _ _ _, rfl, rfl⟩
     · simpa [initialState, State.eval, Expr.eval, State.setReg] using base_eq
     · simp [initialState, State.eval, Expr.eval, State.setReg]
-    · simp [initialState, State.eval, Expr.eval, State.setReg, base_eq, arrayAddr]
-    · simpa [initialState, State.eval, Expr.eval, State.setReg] using length_eq
     · simpa [contents, initialState, State.eval, Expr.eval, State.setReg, ArrayAt]
         using represented
-  · rintro finish ⟨i, h⟩ zero
-    have count := h.remaining
-    rw [zero] at count
-    have last : i = xs.length := by
-      have le := h.index_le
-      change 0 = xs.length - i at count
-      omega
-    subst i
+  · intro finish h
     exact ⟨by simpa only [contents_finish] using h.array, h.frame, h.input, h.output⟩
 
 end Ram.Source.Array.Map
