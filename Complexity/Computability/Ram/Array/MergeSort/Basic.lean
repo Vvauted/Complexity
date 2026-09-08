@@ -189,20 +189,12 @@ theorem after_left {heapLimit selfFn : Nat} {base scratch : Word w}
     simpa only [htlen] using hf'
   have hdwhole : ArraysDisjoint base xs.length scratch workspace.length := by
     simpa only [hlen] using hp.disjoint
-  have hdsecond : ArraysDisjoint scratch k (arrayAddr base k) (xs.drop k).length := by
-    have h := ArraysDisjoint.slices hs.1 hp.source_array.1
-      (firstOffset := 0) (firstLen := k) (secondOffset := k)
-      (secondLen := (xs.drop k).length) (by omega) (by simp; omega) hdwhole.symm
-    simpa [arrayAddr] using h
-  have hright : ArrayAt heapLimit (arrayAddr base k) (xs.drop k) finish :=
-    (hp.source_array.drop hk).frame_two hf
-      (by simpa only [htlen] using hp.source_array.1.split_disjoint hk) hdsecond
   have hleft : ArrayAt heapLimit base (sorted (xs.take k)) finish := hc.source_array.leave _ _ _
-  have hsum : (sorted (xs.take k)).length + (xs.drop k).length = xs.length := by
-    rw [length_sorted, htlen, List.length_drop]
-    omega
   have hfull : ArrayAt heapLimit base (sorted (xs.take k) ++ xs.drop k) finish :=
-    hp.source_array.reassemble hleft (by simpa only [length_sorted, htlen] using hright) hsum
+    hp.source_array.reassemble_prefix_of_frame_two (scratchOffset := 0) (scratchLen := k)
+      hs.1 hdwhole hk
+      (by omega : 0 + k ≤ workspace.length)
+      (by rw [length_sorted, htlen]) hleft (by simpa [arrayAddr] using hf)
   have hframe : TwoBufferFrame base xs.length scratch xs.length entry.mem finish.mem := by
     have hf' : TwoBufferFrame (arrayAddr base 0) k (arrayAddr scratch 0) k entry.mem finish.mem := by
       simpa [arrayAddr] using hf
@@ -281,32 +273,23 @@ theorem after_right {heapLimit selfFn : Nat} {base scratch : Word w}
   let finish := caller.leave callee [4] [.const 0]
   have hf : TwoBufferFrame (arrayAddr base k) (xs.drop k).length
       (arrayAddr scratch k) (xs.drop k).length caller.mem finish.mem := hc.frame
-  have hfront : ArrayAt heapLimit base (sorted (xs.take k)) caller := by
-    have h := hwhole.take (sorted (xs.take k)).length
-    simpa only [List.take_left] using h
-  have hdsecond : ArraysDisjoint (arrayAddr scratch k) (xs.drop k).length
-      base (sorted (xs.take k)).length := by
-    have hd : ArraysDisjoint scratch workspace.length base xs.length := by
-      simpa only [hlen] using hp.disjoint.symm
-    have h := ArraysDisjoint.slices hspace.1 hp.source_array.1
-      (firstOffset := k) (firstLen := (xs.drop k).length)
-      (secondOffset := 0) (secondLen := k) (by simp; omega) (by omega) hd
-    simpa [arrayAddr, length_sorted, htlen] using h
-  have hleft : ArrayAt heapLimit base (sorted (xs.take k)) finish :=
-    hfront.frame_two hf
-      (by simpa only [length_sorted] using (hp.source_array.1.split_disjoint hk).symm)
-      hdsecond
   have hright : ArrayAt heapLimit (arrayAddr base k) (sorted (xs.drop k)) finish :=
     hc.source_array.leave _ _ _
-  have hsum : (sorted (xs.take k)).length + (sorted (xs.drop k)).length = xs.length := by
-    simp only [length_sorted, htlen, List.length_drop]
+  have hsourceLen : (sorted (xs.take k) ++ xs.drop k).length = xs.length := by
+    simp only [List.length_append, length_sorted, htlen, List.length_drop]
     omega
-  have hfull : ArrayAt heapLimit base (sorted (xs.take k) ++ sorted (xs.drop k)) finish :=
-    hp.source_array.reassemble hleft (by simpa only [length_sorted, htlen] using hright) hsum
+  have hdwhole : ArraysDisjoint base (sorted (xs.take k) ++ xs.drop k).length
+      scratch workspace.length := by
+    simpa only [hsourceLen, hlen] using hp.disjoint
+  have hfull : ArrayAt heapLimit base (sorted (xs.take k) ++ sorted (xs.drop k)) finish := by
+    have restored := hwhole.reassemble_suffix_of_frame_two
+      (scratchOffset := k) (scratchLen := (xs.drop k).length) hspace.1 hdwhole
+      (by omega : k ≤ (sorted (xs.take k) ++ xs.drop k).length)
+      (by simp only [List.length_drop]; omega : k + (xs.drop k).length ≤ workspace.length)
+      (by simp only [length_sorted, List.length_drop, hsourceLen]) hright
+      (by simpa only [hsourceLen, List.length_drop] using hf)
+    simpa only [List.take_left' ((length_sorted (xs.take k)).trans htlen)] using restored
   have hframe : TwoBufferFrame base xs.length scratch xs.length caller.mem finish.mem := by
-    have hsourceLen : (sorted (xs.take k) ++ xs.drop k).length = xs.length := by
-      simp only [List.length_append, length_sorted, htlen, List.length_drop]
-      omega
     have h := TwoBufferFrame.within hwhole.1 hspace.1
       (by rw [hsourceLen, List.length_drop]; omega)
       (by rw [hlen, List.length_drop]; omega) hf

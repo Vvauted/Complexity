@@ -16,6 +16,10 @@ allocation or other machine operation.
 As in `ArrayRep` and `Slice`, element addresses do not wrap. An empty suffix
 at the top of the word-address space may nevertheless have word address zero.
 The interval and frame lemmas below retain this case explicitly.
+
+The source-facing reassembly rules retain an untouched half across a framed
+change to the other half and a contained scratch view. They depend only on heap
+representations, not the calling convention, registers or returned values.
 -/
 
 namespace Ram
@@ -183,5 +187,63 @@ theorem Source.ArrayAt.frame_two {heapLimit firstLen secondLen : Nat}
     (hsecond : ArraysDisjoint second secondLen other ys.length) :
     Source.ArrayAt heapLimit other ys t :=
   ⟨frame.preserves hfirst hsecond h.1, h.2⟩
+
+/-- Reassemble an array after a length-preserving change to its prefix and an
+arbitrary contained view of a disjoint scratch buffer. The two-buffer frame
+preserves the original suffix. Empty halves and a wrapped unused endpoint are
+allowed; the original allocation supplies the combined heap and no-wrap bounds. -/
+theorem Source.ArrayAt.reassemble_prefix_of_frame_two
+    {heapLimit split scratchOffset scratchLen : Nat} {base scratch : Word w}
+    {xs workspace front : List (Word w)} {s t : Source.State w}
+    (whole : Source.ArrayAt heapLimit base xs s)
+    (scratchWhole : ArrayRep s.mem scratch workspace)
+    (disjoint : ArraysDisjoint base xs.length scratch workspace.length)
+    (hsplit : split ≤ xs.length) (scratchSpan : scratchOffset + scratchLen ≤ workspace.length)
+    (sameLength : front.length = split)
+    (updated : Source.ArrayAt heapLimit base front t)
+    (frame : TwoBufferFrame base split (arrayAddr scratch scratchOffset) scratchLen s.mem t.mem) :
+    Source.ArrayAt heapLimit base (front ++ xs.drop split) t := by
+  have scratchSuffix : ArraysDisjoint (arrayAddr scratch scratchOffset) scratchLen
+      (arrayAddr base split) (xs.drop split).length :=
+    ArraysDisjoint.slices scratchWhole whole.1 scratchSpan
+      (by rw [List.length_drop]; omega) disjoint.symm
+  have suffix : Source.ArrayAt heapLimit (arrayAddr base split) (xs.drop split) t :=
+    (whole.drop hsplit).frame_two frame
+      (by simpa only [List.length_take_of_le hsplit] using whole.1.split_disjoint hsplit)
+      scratchSuffix
+  apply whole.reassemble updated
+  · simpa only [sameLength] using suffix
+  · rw [sameLength, List.length_drop]
+    omega
+
+/-- Reassemble an array after a length-preserving change to its suffix and an
+arbitrary contained view of a disjoint scratch buffer. The two-buffer frame
+preserves the original prefix. Scratch and source allocations need not have
+the same length, and no strict condition is imposed on unused endpoints. -/
+theorem Source.ArrayAt.reassemble_suffix_of_frame_two
+    {heapLimit split scratchOffset scratchLen : Nat} {base scratch : Word w}
+    {xs workspace suffix : List (Word w)} {s t : Source.State w}
+    (whole : Source.ArrayAt heapLimit base xs s)
+    (scratchWhole : ArrayRep s.mem scratch workspace)
+    (disjoint : ArraysDisjoint base xs.length scratch workspace.length)
+    (hsplit : split ≤ xs.length) (scratchSpan : scratchOffset + scratchLen ≤ workspace.length)
+    (sameLength : suffix.length = xs.length - split)
+    (updated : Source.ArrayAt heapLimit (arrayAddr base split) suffix t)
+    (frame : TwoBufferFrame (arrayAddr base split) (xs.length - split)
+      (arrayAddr scratch scratchOffset) scratchLen s.mem t.mem) :
+    Source.ArrayAt heapLimit base (xs.take split ++ suffix) t := by
+  have scratchPrefix : ArraysDisjoint (arrayAddr scratch scratchOffset) scratchLen
+      base (xs.take split).length := by
+    have disjointSlices := ArraysDisjoint.slices scratchWhole whole.1 scratchSpan
+      (secondOffset := 0) (secondLen := split) (by omega) disjoint.symm
+    simpa [arrayAddr, List.length_take_of_le hsplit] using disjointSlices
+  have frontArray : Source.ArrayAt heapLimit base (xs.take split) t :=
+    (whole.take split).frame_two frame
+      (by simpa only [List.length_drop] using (whole.1.split_disjoint hsplit).symm)
+      scratchPrefix
+  apply whole.reassemble frontArray
+  · simpa only [List.length_take_of_le hsplit] using updated
+  · rw [List.length_take_of_le hsplit, sameLength]
+    omega
 
 end Ram

@@ -290,13 +290,23 @@ The actual typed invocation has bound `34 * (xs.length + ys.length) + 122`,
 including both calls, returns and halt. Neither storage allocation nor loading
 is claimed. A larger allocated buffer can supply a contained destination view.
 
-**Next migration, not yet checked:** split the existing `after_left` and
-`after_right` heap/frame arguments from their fixed registers and dummy return.
-Reuse those arguments in a genuine two-array, `Unit`-returning recursive source
-declaration. Recursive slices, merge and copy must compose their changed
-representations through actual calls. Its `StateM` sorting property and separate
-recurrence should then reuse that same declaration. Do not build another
-recursion framework or call the old three-parameter sort a typed implementation.
+**Checked representation step:** `ArrayAt.reassemble_prefix_of_frame_two` and
+`reassemble_suffix_of_frame_two` now carry the unchanged half across an operation
+on the other half and a contained scratch view. Both existing `after_left` and
+`after_right` use these public rules. They mention neither registers nor return
+fields, permit unequal source/scratch lengths, and retain empty endpoint cases.
+The old recursive adapters still bind their actual operands; this extraction
+does not claim those adapters are already source-facing.
+
+**Next migration, not yet checked:** reuse those rules in a genuine two-array,
+`Unit`-returning recursive declaration, with ordinary length induction whose
+callable hypothesis covers all input-reference pairs. Recursive slices, merge
+and copy must compose their changed representations through actual calls.
+Its `StateM` sorting property and separate recurrence should then reuse that
+same declaration. Derive capacities and constants anew: the typed merge calls
+its core, so the new call chain is deeper than the old inline combine block.
+Do not build another recursion framework or call the old three-parameter sort
+a typed implementation.
 
 **Checked lower-bound step:** search is now a named callable function, with
 ordinary endpoint initialization and a loop-scoped midpoint. Its shared interval

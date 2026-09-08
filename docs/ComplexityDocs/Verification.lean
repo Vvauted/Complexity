@@ -186,6 +186,13 @@ The [merge application](##Examples.Ram.Merge) uses `applyStateTyped_spec` direct
 `Function.merge_spec` describes its three arrays and preserved frame, and
 `Function.merge_contents` rewrites the actual destination to standard `List.merge`.
 The sorted-permutation corollary then uses existing list mathematics.
+For recursive operations on two buffers, `ArrayAt.reassemble_prefix_of_frame_two`
+and `reassemble_suffix_of_frame_two` combine a changed half with the preserved half
+using the operation's actual two-buffer frame. These
+[shared array rules](##Complexity.Computability.Ram.Array.TwoBuffer) already shorten
+both recursive merge-sort stages without fixing registers, return values or
+equal buffer sizes in the rules. Slice containment, disjointness and the changed
+half's length remain explicit premises.
 The raw `applyState_eq_of_execution` identifies `(values, finish)`.
 Its `returnState` projection keeps entry registers, takes actual target memory below
 `heapLimit` and entry memory outside it, and retains actual input/output effects.
