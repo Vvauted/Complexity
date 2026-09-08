@@ -6,6 +6,7 @@ Authors: vvauted
 import Mathlib.Algebra.BigOperators.Fin
 import Mathlib.Combinatorics.SimpleGraph.Finite
 import Complexity.Computability.Ram.Array.Sum
+import Examples.Ram.ArraySum
 
 /-!
 # Computing a graph degree from a represented adjacency row
@@ -119,5 +120,19 @@ theorem function_runs_with_timeBound {program : Program} {control heapLimit dept
       (function_timeBound G v (control := control) hw hfit)
       (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) entry ⟨rfl, represented⟩
   exact ⟨bodySteps, value, execution, correct, bound⟩
+
+/-- The ordinary executable sum returns a graph degree on a represented
+adjacency row. The proof uses its value equation and mathlib's graph facts;
+it does not reopen an execution relation, loop or calling convention. -/
+theorem sum_eq_degree {heapLimit : Nat} {array : ArrayRef 32}
+    {entry : Source.State 32}
+    (fit : array.base.toNat + n < 2 ^ 32)
+    (hstack : heapLimit + ABI.frameSize sumFunctions.registers < 2 ^ 32)
+    (represented : array.Rep heapLimit (adjacencyRow G v 32) entry) :
+    ArraySum.sum array heapLimit entry
+      ⟨adjacencyRow G v 32, represented, by simpa using fit⟩ hstack = G.degree v := by
+  rw [ArraySum.sum_eq (by simpa using fit) hstack represented,
+    sum_adjacencyRow_toNat G v (by decide : 0 < 32)]
+  exact Nat.mod_eq_of_lt (lt_trans (by simpa using G.degree_lt_card_verts v) (by omega))
 
 end Ram.Examples.GraphDegree

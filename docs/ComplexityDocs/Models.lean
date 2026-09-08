@@ -55,6 +55,16 @@ allocate memory. General array-valued local bindings, returned array values and 
 loading of Lean lists are not supplied by this parameter syntax. See
 [array references](##Complexity.Computability.Ram.Array.Ref) for the representation rules.
 
+The [ordinary sum application](##Examples.Ram.ArraySum) has the form
+`sum array heapLimit entry safe hstack : Nat`. Its data inputs are the reference,
+heap boundary and preloaded state. The mathematical list is existentially described
+inside the erased safety proof, not passed as another runtime argument. `sum_eq`
+connects this executable value to the modular list sum; the
+[graph client](##Examples.Ram.GraphDegree) uses that equation to prove `sum_eq_degree`
+with ordinary mathlib facts and no loop or frame proof. Neither application loads
+the represented array. The underlying `apply` projects only the returned word;
+use `runTotal` and the operation's contract when final-state effects also matter.
+
 ## Fold through an expression or a proved function
 
 Sum and count both use a scoped `for` with one expression update to a scalar

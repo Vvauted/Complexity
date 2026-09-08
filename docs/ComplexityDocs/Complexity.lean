@@ -40,6 +40,20 @@ calls need their own rules: their code length is not their execution length.
 See [time bounds](##Complexity.Computability.Ram.Verification.Time.Basic) and
 [straight-line costs](##Complexity.Computability.Ram.Verification.Time.StraightLine).
 
+## Keep actual steps with ordinary application
+
+The executable `p.apply.f` returns a word from `p.runTotal.f`; the latter retains
+the actual machine result and its `steps`. Their normal-halt proof supplies neither
+a step formula nor an execution limit and is erased at runtime.
+`Ram.LocalCompiler.Function.runTotal_steps_eq_of_execution` combines the independent
+function execution and body-time equation to identify those same full-run steps.
+The [factorial sample](##Examples.Ram.FunctionRun) uses `factorial_steps` to identify
+`37 * n.toNat + 33` steps; the [sum sample](##Examples.Ram.ArraySum) uses `runTotal_steps`
+to identify `18 * xs.length + 67`. These include the enclosing call, return and halt.
+The wrappers do not change the RAM trace or price host-side work as RAM instructions;
+they execute that trace and project its result. `Part` body-time observations remain
+noncomputable proof views, separate from this executable application.
+
 ## Count an expression-based array fold
 
 `Ram.Source.Array.ForIn.Expression.function_measured` recovers an exact count

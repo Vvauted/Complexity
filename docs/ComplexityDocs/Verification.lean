@@ -85,6 +85,8 @@ mathematical propositions mention only its argument and observed value.
 This is a noncomputable proof view, not executable ordinary Lean function syntax.
 General stateful functions still depend on shared entry state, and insufficient heap
 capacity can make an observation undefined.
+The ordinary executable `p.apply.f` interface described below is separate;
+it does not make these `Part` observations computable.
 
 `Ram.Source.FunctionContract.eval_spec` transports any postcondition to that view;
 the postcondition can be a mathematical relation, not necessarily a reference algorithm.
@@ -109,6 +111,28 @@ application used by `#eval`. General divergent programs do not
 return a nontermination flag; use `Ram.LocalCompiler.Function.run` when an operational
 limit is desired. Unlike body time, the complete run counts the outer call, return
 and halt. The generated entry point does not prove capacity or construct represented arrays.
+
+For an ordinary executable value, use `p.apply.f ... heapLimit entry h`; use
+`p.runTotal.f ... heapLimit entry h` to retain the complete machine result.
+Both require `Ram.LocalCompiler.Function.Halts` for those exact arguments and
+entry state: the actual `runUntil` equals `some result` and `result.reason = .halted`.
+An `isSome` proof alone would also admit faults and is not enough for this interface.
+The [total-call bridge](##Complexity.Computability.Ram.Compiler.Local.Function.Total)
+`halts_of_execution` derives this fact from budget-free `FunctionExec` with the
+compiled-code and stack premises. It does not require a cost theorem.
+
+`runTotal` performs `Option.get` on the actual runner output; `apply` reads its
+returned word. The proof argument is in `Prop` and erased at runtime, not a supplied
+answer extracted from a specification. `apply_eq_of_execution` identifies that word;
+`runTotal_correct_of_execution` also retains the source-visible final-state observation.
+Neither normal halt nor projecting a word asserts that the body has no effects.
+
+The [factorial application](##Examples.Ram.FunctionRun) proves ordinary equations
+`factorial_eq_mod` and `factorial_eq`, and positivity using mathlib, about its
+executable `factorial n hstack : Nat`. The latter two retain the no-overflow premise.
+These values can be executed with `#eval`; their mathematical equalities use the
+proved execution bridge, not kernel computation by `rfl`. The underlying word width,
+capacity and entry-state restrictions are not removed by an ordinary return type.
 
 Use `Ram.Source.TotalContract` when the precondition and postcondition directly describe
 the source state. `Ram.Source.TotalRelContract` also lets the postcondition refer to the
@@ -162,6 +186,9 @@ The graph proof only identifies the represented row's list sum with mathlib's
 `SimpleGraph.degree` and applies the existing function contract. It does not reprove
 the traversal, register updates or unchanged-memory facts. The row is explicitly
 preloaded; converting an abstract graph to that layout would need its own implementation.
+Its `sum_eq_degree` theorem also states a direct equality about the ordinary executable
+`ArraySum.sum`. It rewrites `ArraySum.sum_eq` and the mathematical adjacency-row sum,
+without opening an execution relation or a calling-convention proof.
 
 The array-sum source accepts `xs : array`, and `sumPair(left : array, right : array)`
 calls it as `call sum(left)` and `call sum(right)`. The generated argument builders take
@@ -197,7 +224,10 @@ to construct those arrays. Its `runCount_eq` theorem also covers an actual compi
 call with the target word as a runtime argument, returning the count independently
 of stream output. The [sum client](##Examples.Ram.ArraySum) likewise reuses the function
 contract and measured execution for its value equation and runner, without another
-raw loop proof. Fixed verified helper calls have their own
+raw loop proof. Its ordinary `sum` application takes representation/range evidence
+and a stack-capacity proof, both erased at runtime; `sum_eq` identifies the actual
+returned natural number. No mathematical list is passed as executable data.
+Fixed verified helper calls have their own
 [source-derived rule](##Complexity.Computability.Ram.Array.ForIn.Function);
 richer bodies, multiple accumulators, mutation and short-circuiting still need
 further proof interfaces.

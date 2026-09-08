@@ -13,9 +13,10 @@ functions, recursive calls, verified compilation and executable runners.
 Budget-free total correctness, separate time bounds, mathematical refinement
 and bridges to native `StateM` verification are implemented.
 
-Function-only declarations generate typed argument lists and `eval`, `bodyTime`
-and `run` entry points. The declared word or array parameters come first, followed
-by heap capacity and caller state; no input/output `main` is required. Return values,
+Function-only declarations generate typed argument lists and `eval`, `bodyTime`,
+`run`, `runTotal` and `apply` entry points. The declared word or array parameters
+come first, followed by heap capacity and caller state; the last two also require
+a normal-halt proof. No input/output `main` is required. Return values,
 shared effects and body counts are observations of the existing execution, with
 actual call overhead added at call sites. Factorial, array-copy and array-sum
 expose this interface. A graph-degree client reuses the
@@ -39,8 +40,8 @@ still show why the source-facing work below is unfinished.
 
 `Func.eval` and `Func.bodyTime` expose the same execution through mathlib's `Part`.
 The factorial function-value sample states result equations and mathematical
-properties without carrying source state in each proposition. These are
-noncomputable semantic observations, not yet executable ordinary Lean functions.
+properties without carrying source state in each proposition. These remain
+noncomputable semantic observations, distinct from executable ordinary application.
 The compiled function-call adapter additionally executes intermediate functions
 without a stream driver, using runtime word arguments and a preloaded shared state.
 Its correctness bridge needs no time budget. `Function.runUntil` executes the same
@@ -51,6 +52,17 @@ A divergent unbounded call keeps running; the interface does not decide terminat
 An exact runner theorem can combine a function's correctness proof with a separate
 equation for its body-time observation. A shared generated-code-length lemma handles
 outer call overhead, rather than repeating frame arithmetic in each runtime client.
+
+Ordinary application now uses `runTotal` and `apply` on this same compiled run.
+Their `Halts` proof establishes a returned result with reason `halted`, not merely
+an `isSome` result that could be a fault. `runTotal` extracts the actual `Option`
+output and retains state and steps; `apply` projects its returned word. Proofs
+are erased at runtime: no mathematical answer or time estimate is passed to the
+implementation. The existing factorial and sum clients expose ordinary `Nat`
+results with separate value and step equations. They execute with `#eval`, not by
+making `Part` computable or compiling arbitrary Lean functions. Their fixed word
+width, stack-capacity and preloaded-data premises remain explicit; proofs use the
+execution equations rather than expecting kernel computation by `rfl`.
 
 Named functions accept array parameters as well as words: `fn sum(xs : array)`
 and `call sum(xs)` pass a by-value base address and length through the existing ABI.
@@ -79,7 +91,9 @@ refinement has been supplied; it does not derive that refinement automatically.
 
 - Mathematical specifications are not restricted to machine objects. The
   graph-degree sample states a standard mathlib graph property and derives it
-  from a list-sum contract. It assumes a represented adjacency row; it does not
+  from a list-sum contract. Its `sum_eq_degree` also rewrites the ordinary executable
+  `ArraySum.sum` value equation to `G.degree v`, without opening an execution
+  relation, loop or ABI proof. It assumes a represented adjacency row; it does not
   implement a graph loader or compile a Lean adjacency predicate.
 - Reuse can avoid machine-level proofs: the graph client never opens the sum
   loop, register assignments or frame handling. Sum and count now share those
@@ -97,6 +111,20 @@ refinement has been supplied; it does not derive that refinement automatically.
   and proves it unchanged. Its optional `read`/`write` driver lives in a separate
   module importing the function; function definitions and proofs do not depend on
   that adapter.
+- Ordinary executable values no longer require a `Part` result type: the factorial
+  client proves `factorial_eq_mod`, exact equality and positivity when the result
+  fits, while sum proves its ordinary modular list-sum equation. Their definitions
+  use the actual generated `apply`, not the mathematical specification. Sum's list
+  occurs only in an erased representation/range proof; the runtime inputs are its
+  reference, heap boundary and existing state. Independent `runTotal` step equations
+  retain `37 * n + 33` for factorial and `18 * n + 67` for sum's full invocation.
+- Scalar return values are not enough for effectful functions. Copy returns zero;
+  its useful result is the updated destination array. `runTotal` retains the actual
+  machine state, but its private stack must not be mistaken for source shared memory.
+  A reusable returned-value/shared-state interface should let the existing copy
+  client state its result with `arrayContents` and pass that state to another call.
+  This needs a proved projection of the actual execution, not another array model
+  or an assertion that the entire source and target memories coincide.
 - The recursive factorial contract uses ordinary induction, generated parameter
   binding and the recursive call's argument/result contract. Its algorithmic
   proof names no registers or callee frames. A separate one-step bridge retains
@@ -164,8 +192,10 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
   extract expressions or assemble register roles.
 - Build on typed array calls and the executable function adapter: support useful
   local data bindings and return values through that same compiled call path.
-  Do not confuse proof-level `Part` observations with a runnable frontend, or
-  require a proposed time bound merely to express a terminating function.
+  Extend the ordinary application interface to those data operations while
+  retaining their effects and safety premises. Do not confuse proof-level `Part`
+  observations with executable application, or require a proposed time bound merely
+  to express a terminating function.
 - Derive verification conditions from that declaration using existing total
   correctness rules. Keep relations and mathematical specifications available;
   a loop need not first become a total pure function.
@@ -196,6 +226,11 @@ objects. Do not add more data-structure wrappers merely to expand a feature list
 
 - Expose each operation's mathematical effect, safety assumptions and unchanged
   state through a reusable call interface.
+- Extend executable application to return usable source shared state as well as
+  the scalar result. Reuse the existing array-content observations, and prove how
+  visible heap changes and unchanged out-of-heap source memory are recovered from
+  the actual compiled run. Start with the existing copy client and its composition
+  with a read-only operation, retaining genuine effects and capacity premises.
 - Build on the shared expression and verified-call folds for richer existing
   consumers: short-circuiting, multiple accumulators and mutable traversals need
   their actual effects and progress rules. Reuse ordinary `List` folds and their

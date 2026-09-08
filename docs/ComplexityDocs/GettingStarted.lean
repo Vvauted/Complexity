@@ -79,11 +79,12 @@ This is the function declaration from [the factorial example](##Examples.Ram.Fac
 No `main`, input stream or output stream is required. `functions.function.factorial`
 is the actual function; `functions.arguments.factorial` constructs its argument list
 from typed word parameters. The same declaration also generates
-`functions.eval.factorial`, `functions.bodyTime.factorial` and `functions.run.factorial`.
+`functions.eval.factorial`, `functions.bodyTime.factorial`, `functions.run.factorial`,
+`functions.runTotal.factorial` and `functions.apply.factorial`.
 The [declaration interface](##Complexity.Computability.Ram.Source.Named.Declaration)
 also exports lookup facts and source-local names for implementation proofs.
 Generated body and return equations let verification unfold the same declaration.
-These generated interfaces are proof tools, not automatic correctness proofs;
+These are execution and proof entry points, not automatic correctness proofs;
 representation obligations depend on the chosen specification.
 
 Locals may also be introduced where they are used. The
@@ -114,18 +115,24 @@ outside this body count and are charged when `squaredNorm` is called.
 For a declaration named `p`, the generated entry points take the declared parameters
 in order, followed by `heapLimit : Nat` and `entry : Ram.Source.State w`.
 Word parameters take `Ram.Word w`; array parameters take `Ram.ArrayRef w`.
-For the `squaredNorm` declaration above, the three views are:
+`runTotal` and `apply` additionally take a final normal-termination proof `h`.
+For the `squaredNorm` declaration above, the entry points are:
 
 | Entry point | Result and meaning |
 | --- | --- |
 | `functions.eval.squaredNorm x y heapLimit entry` | `Part (Word w × Source.State w)`: the returned word and final shared state |
 | `functions.bodyTime.squaredNorm x y heapLimit entry` | `Part Nat`: the same invocation's compiler-derived body count |
 | `functions.run.squaredNorm x y heapLimit entry` | `Option (RunResult (Ram.State w))`: the complete compiled run, without an instruction limit |
+| `functions.runTotal.squaredNorm x y heapLimit entry h` | `RunResult (Ram.State w)`: the same run, with normal halt proved |
+| `functions.apply.squaredNorm x y heapLimit entry h` | `Word w`: that actual run's returned word |
 
 `eval` and `bodyTime` are noncomputable semantic observations, not executable Lean
 functions. `run` executes the existing compiled call path. It retains the final machine
 state, step count and stopping reason; it does not merely return a word or discard effects.
-All three refer to the same declared implementation. The explicit heap boundary and
+`runTotal` extracts the actual runner result with `Option.get`; `apply` projects its
+returned word. The `Halts` proof is erased at runtime and requires normal halt, not
+merely a nonempty `Option`. It supplies neither a reference answer nor a time budget.
+All five refer to the same declared implementation. The explicit heap boundary and
 entry state are not a time budget, and generating an entry point does not establish
 code or stack capacity.
 
@@ -280,7 +287,8 @@ The unbounded runner is executable, unlike the proof-only `Part` view. It uses L
 `partial_fixpoint` over the existing machine transition. A divergent program keeps running;
 `Option` is not a runtime nontermination detector. Static compilation or arity failure can
 return `none` from the function adapter, while a run that stops retains its stopping reason.
-Inspect that reason before interpreting the result register as a successful return.
+For this raw `run` interface, inspect that reason before interpreting the result
+register as a successful return; a fault can also produce `some result`.
 
 The [compiler bridge](##Complexity.Computability.Ram.Compiler.Local.Function)
 relates the runtime value, visible shared state and step count to the function
@@ -291,6 +299,43 @@ Lean lists into loaded array data.
 The [array-argument sample](##Examples.Ram.ArrayArguments) uses the generated
 `sumFunctions.run.sumPair` on an explicitly prepared heap. Its mathematical list
 concatenation describes the returned sum; no concatenated array or list loader is executed.
+
+## Use an ordinary executable value
+
+With normal termination proved, `p.apply.f ... heapLimit entry h` returns a word
+without `Part` or `Option` in its result type. The
+[function runner sample](##Examples.Ram.FunctionRun) defines an ordinary
+`factorial n hstack : Nat` by decoding this word:
+
+```lean
+#eval Ram.Examples.FunctionRun.factorial (BitVec.ofNat 32 5) (by decide)
+-- 120
+```
+
+Here `n : Word 32` is the only runtime argument. The erased `hstack` proof establishes
+`(n.toNat + 1) * ABI.frameSize Factorial.functions.registers < 2 ^ 32`.
+`factorial_eq_mod` identifies the result modulo the word range; `factorial_eq` and
+`factorial_pos` additionally require that the mathematical factorial fits in 32 bits.
+No result specification or instruction bound is an argument to the function.
+Its independent `factorial_steps` theorem observes the same full run through `runTotal`.
+
+The [array-sum sample](##Examples.Ram.ArraySum) similarly defines
+`sum array heapLimit entry safe hstack : Nat`. Its data inputs are an `ArrayRef 32`,
+the heap boundary and the preloaded state. The mathematical list appears only in
+the erased `safe` proof of representation and non-wrapping addresses, not as an
+extra runtime argument. The separate `hstack` proof supplies room for the call frame
+below `2 ^ 32`. `sum_eq` gives the modular list sum; `sum_eq_of_sum_lt`
+recovers the exact natural sum when it fits. The
+[graph-degree client](##Examples.Ram.GraphDegree) reuses this ordinary value equation
+to prove `sum_eq_degree`, without reopening the implementation's loop or call frame.
+
+These functions execute the existing compiled RAM call, not `Part.get` or a
+mathematical reference function. They work with `#eval`, but the underlying
+partial-fixed-point runner is not an ordinary kernel-reducing recursive definition:
+use the proved value equations, not an expectation that `rfl` computes a result.
+This adds executable application of declared source functions, not compilation of
+arbitrary Lean definitions. Use `runTotal` when final state or actual steps matter;
+projecting a word with `apply` does not prove shared state unchanged.
 
 ## Add an executable driver when needed
 

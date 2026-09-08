@@ -17,9 +17,10 @@ return values and shared-data effects must be available without a stream-based
 `main`. Reading and writing external input belong to an optional outer driver.
 Parameter binding and result observations are derived from the same source
 declaration, not restated by each caller. Named declarations generate `eval`,
-`bodyTime` and `run` entries with the declared typed parameters, followed by heap
-capacity and caller state. They reuse the existing semantics and runner; they do
-not fill in a reference result, a cost formula or a correctness proof.
+`bodyTime`, `run`, `runTotal` and `apply` entries with the declared typed parameters,
+followed by heap capacity and caller state. The last two additionally require a
+normal-halt proof. They reuse the existing semantics and runner; they do not fill
+in a reference result, a cost formula or a correctness proof.
 
 The generic execution state retains input and output fields because functions
 may have effects. Merely carrying those fields does not execute stream operations.
@@ -67,6 +68,22 @@ machine step until a stopping state; `Function.run` retains a limit for explorat
 Both relate to the same finite traces. The unbounded runner's logical bottom is
 not an executable divergence test. Source shared memory is related only to visible
 target heap cells, not to the private stack left behind by the call.
+
+Ordinary executable application uses this same runtime path. `Function.Halts`
+asserts that the actual `runUntil` returns `some result` with reason `halted`;
+merely returning an optional result would also admit faults. `runTotal` applies
+`Option.get` to that real output, and `apply` projects the returned word. Neither
+uses `Part.get` or extracts an answer from the specification. The `Prop` proof
+is erased at runtime and can follow from safe source termination before any time
+bound is supplied. The full result still carries the actual transition count,
+with its equation proved independently about that same run.
+
+These are executable ordinary Lean wrappers around declared RAM functions,
+not a compiler for arbitrary Lean definitions. They support `#eval`; ordinary
+kernel reduction of the partial-fixed-point runner is not their correctness
+interface. Value equations come from the execution bridges. Fixed word width,
+sufficient capacity and represented preloaded data remain genuine conditions.
+Projecting the returned word alone does not establish preservation of shared state.
 
 An `array` parameter is a typed by-value pair of words, not a newly allocated
 descriptor. Its base and length are passed by the same call compiler as scalar
