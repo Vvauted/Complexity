@@ -39,14 +39,36 @@ then gives the existing halted runner, actual result and same-execution count.
 Code and stack capacity remain explicit. Shared-state preservation is derived
 from the actual lowered program, not assumed from restored caller registers.
 
-The interface is still typed core syntax, not the planned Lean-like frontend.
-An existential instruction count is not a source-level complexity bound. The
-compiler lowers each statement child once and uses a private return flag to
+The compiler lowers each statement child once and uses a private return flag to
 skip tails after a return; calls restore the caller's flag.
 [Exact code-size formulas](##Complexity.Computability.Ram.Compiler.Language.CodeSize)
 include each branch once, plus actual argument and callee-frame expansion.
-The new flag operations are real work, and a source-level runtime cost theorem
-remains unfinished. Optimizing code size does not imply every execution is faster.
+Static code length is not elapsed time: the running program selects one branch,
+and even a returned path pays the flag checks in enclosing sequences.
+
+[Source cost rules](##Complexity.Computability.Ram.Compiler.Language.ExecutionCost)
+now observe the same realized source execution. `ExecutionCost` counts its
+lowered core; the returning function's flag wrapper adds five transitions.
+`callCost` derives internal-call overhead from the actual compiler, including
+the callee body and frame, without a user-supplied ABI price.
+The [measured simulation](##Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation)
+proves these are real machine counts. Budget-free behavior simulation erases
+this same proof instead of maintaining a second structural induction.
+
+`FunctionCostBound` is a separate conditional bound: it does not establish
+termination or repeat the mathematical postcondition. Its counts are
+[independent of word width, call capacity and realization proofs](##Complexity.Computability.Ram.Compiler.Language.CostDeterministic).
+[Cost transfer](##Complexity.Computability.Ram.Compiler.Language.CostExecution)
+identifies the existing `bodyTime`; `FunctionRealizable.runUntil_le` combines
+the source bound with the original correctness and realization contracts.
+The complete invocation bound adds the outer calling convention and final halt
+exactly once. The scalar consumer reuses its helper bound and both branch rules.
+
+This remains typed core syntax, not the planned Lean-like frontend. Costs are
+currently derived for successfully realized scalar executions, not an
+instrumentation theorem for every unrestricted source execution. Mutable data,
+loop cost rules and the semantic Std.Do adapter remain future work.
+Optimizing code size does not imply every execution is faster.
 The executable word-RAM workflow and maintainer interfaces below remain available.
 
 ## Choose a specification

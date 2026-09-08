@@ -3,8 +3,10 @@
 Status: architecture under implementation. The independent scalar core now has
 source correctness rules, generic whole-function lowering and proof transfer to
 the existing executable RAM runner. Return-flag lowering avoids continuation
-duplication and has exact static code-size formulas. The Lean-like surface and
-source-level runtime cost bounds remain unfinished. The
+duplication and has exact static code-size formulas. A separate cost observation
+of realized scalar executions now transfers source bounds to the actual runner,
+including internal calls and the outer invocation overhead. The Lean-like
+surface, mutable source data, loops and semantic Std.Do adapter remain unfinished. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.

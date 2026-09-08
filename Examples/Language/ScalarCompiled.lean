@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Examples.Language.Scalar
 import Complexity.Computability.Ram.Compiler.Language.Execution
+import Complexity.Computability.Ram.Compiler.Language.CostExecution
 
 /-!
 # Transferring the scalar source proof through generic lowering
@@ -16,8 +17,9 @@ identifies its actual returned value; its mathematical behavior is not reproved.
 
 The shared lowering theorems produce both callable IR execution and a halted RAM
 runner with the same mathematical minimum. No register layout, receiver update
-or algorithm-specific source-to-IR adapter appears in this proof. The measured
-instruction count belongs to that execution; no instruction upper bound is asserted.
+or algorithm-specific source-to-IR adapter appears in this proof. Separate
+source-execution cost bounds apply to that same invocation, including its
+internal helper call, outer calling convention and final halt.
 -/
 
 namespace Complexity.Language.Examples.Scalar
@@ -141,5 +143,77 @@ theorem boundedIncrement_runUntil {w heapLimit : Nat} (hw : 0 < w) (n limit : Na
       ⟨sumFits, limitFits⟩ trivial entry codeCapacity stackCapacity
   have actualValue : (value : Nat) = min (n + 1) limit := result
   exact ⟨bodySteps, target, execution, actualValue ▸ values, observed, time⟩
+
+/-- The helper body spends four transitions on addition, four on returning its
+value and setting the flag, and five on the function-body wrapper. -/
+theorem increment_costBound :
+    FunctionCostBound program (0 : Fin 2) (fun _ => True) (fun _ => 13) := by
+  intro args _ w depth finish value execution steps cost
+  cases cost with
+  | letPrim tail =>
+      cases tail
+      change 4 + (2 * 1 + 2) + 5 ≤ 13
+      decide
+
+/-- The caller reuses the helper's complete call bound. Its comparison, selected
+return branch and wrapper add at most sixteen transitions. -/
+theorem boundedIncrement_costBound :
+    FunctionCostBound program (1 : Fin 2) (fun _ => True)
+      (fun _ => callCost program (0 : Fin 2) 13 + 16) := by
+  intro args _ w depth finish value execution steps cost
+  cases cost with
+  | callReturn calleeCost bodyCost =>
+      have helperBound := increment_costBound _ trivial _ calleeCost
+      change _ + 5 ≤ 13 at helperBound
+      have callBound := callCost_mono program (0 : Fin 2) helperBound
+      cases bodyCost with
+      | letPrim branch =>
+          cases branch with
+          | iteTrue returned =>
+              cases returned
+              exact Nat.add_le_add_right callBound 16
+          | iteFalse returned =>
+              cases returned
+              exact Nat.le_trans (Nat.add_le_add_right callBound 15)
+                (Nat.add_le_add_left (by decide : 15 ≤ 16) _)
+
+/-- The same halted machine invocation returns the mathematical minimum and
+satisfies the independent source cost bound, including the outer call and halt. -/
+theorem boundedIncrement_runUntil_le {w heapLimit : Nat} (hw : 0 < w) (n limit : Nat)
+    (sumFits : n + 1 < 2 ^ w) (limitFits : limit < 2 ^ w) (entry : Ram.Source.State w)
+    (codeCapacity : (lowerCode program (1 : Fin 2)).length < 2 ^ w)
+    (stackCapacity : heapLimit + 2 * Ram.ABI.frameSize (programControl program) < 2 ^ w) :
+    ∃ (bodySteps : Nat) (target : Ram.State w),
+      Ram.LocalCompiler.Function.runUntil (programControl program) (lowerProgram program) 1
+          2 heapLimit
+          (envWords w (Env.cons (τ := .nat) n (Env.cons (τ := .nat) limit Env.empty))) entry =
+        some ⟨target,
+          Ram.LocalCompiler.Function.callSteps (programControl program)
+            (lowerFunc program (1 : Fin 2)) bodySteps + 1, .halted⟩ ∧
+      Ram.LocalCompiler.Function.returnedValues 1 target =
+        valueWords w (τ := .nat) (min (n + 1) limit) ∧
+      Ram.Source.State.Observes heapLimit 0 entry target ∧
+      (lowerFunc program (1 : Fin 2)).bodyTime (lowerProgram program) heapLimit
+          (envWords w (Env.cons (τ := .nat) n (Env.cons (τ := .nat) limit Env.empty))) entry =
+        Part.some bodySteps ∧
+      bodySteps ≤ callCost program (0 : Fin 2) 13 + 16 ∧
+      Ram.LocalCompiler.Function.callSteps (programControl program)
+          (lowerFunc program (1 : Fin 2)) bodySteps + 1 ≤
+        Ram.LocalCompiler.Function.callSteps (programControl program)
+          (lowerFunc program (1 : Fin 2)) (callCost program (0 : Fin 2) 13 + 16) + 1 := by
+  let args : Env [.nat, .nat] :=
+    Env.cons (τ := .nat) n (Env.cons (τ := .nat) limit Env.empty)
+  have emptyFits : EnvFits w Env.empty := by intro τ scalar v; cases v
+  have limitEnv : EnvFits w (Env.cons (τ := .nat) limit Env.empty) :=
+    emptyFits.cons (τ := .nat) limit (fun _ => limitFits)
+  have arguments : EnvFits w args :=
+    limitEnv.cons (τ := .nat) n (fun _ => by change n < 2 ^ w; omega)
+  obtain ⟨value, bodySteps, target, result, execution, values, observed, time,
+      bodyBound, invocationBound⟩ :=
+    boundedIncrement_realizable.runUntil_le boundedIncrement_total boundedIncrement_costBound
+      hw args arguments ⟨sumFits, limitFits⟩ trivial trivial entry codeCapacity stackCapacity
+  have actualValue : (value : Nat) = min (n + 1) limit := result
+  exact ⟨bodySteps, target, execution, actualValue ▸ values, observed, time,
+    bodyBound, invocationBound⟩
 
 end Complexity.Language.Examples.Scalar

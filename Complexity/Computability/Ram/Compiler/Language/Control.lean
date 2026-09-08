@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Values
+import Complexity.Language.Semantics
 
 /-!
 # Preserving values around the return flag
@@ -20,6 +21,29 @@ separation from a Unit result imposes no fictitious register requirement.
 namespace Ram.LanguageCompiler
 
 open Complexity.Language
+
+/-- Normal completion retains the lexical environment; return exposes its
+actual fields. The private flag distinguishes these outcomes without requiring
+returned executions to preserve source bindings that are no longer live. -/
+def ControlMatches (layout : RegisterMap Γ) (resultSlot flag : Reg) (finish : Env Γ)
+    (control : Control result) (target : Source.State w) : Prop :=
+  match control with
+  | .normal => layout.Matches finish target.regs ∧ target.regs flag = 0
+  | .returned value =>
+      (resultExprs result resultSlot).map target.eval = valueWords w value ∧
+        target.regs flag = 1
+  | .fault _ => False
+
+/-- Finishing a lexical binding drops only its temporary environment entry. -/
+theorem ControlMatches.tail {layout : RegisterMap Γ} {finish : Env (τ :: Γ)}
+    {target : Source.State w} {control : Control result}
+    (matched : ControlMatches (RegisterMap.extend layout τ dst)
+      resultSlot flag finish control target) :
+    ControlMatches layout resultSlot flag finish.tail control target := by
+  cases control with
+  | normal => exact ⟨RegisterMap.Matches.tail matched.1, matched.2⟩
+  | returned _ => exact matched
+  | fault _ => exact matched
 
 namespace RegisterMap
 

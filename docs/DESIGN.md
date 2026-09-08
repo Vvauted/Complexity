@@ -7,8 +7,10 @@ automatically checked lowering to the existing RAM backend. Its independent
 scalar core and whole-function proof transfer are implemented separately; the
 current named syntax still directly targets register IR. A private return flag
 avoids copying continuations; its exact static code-size formulas retain real
-callee-frame expansion. The new core's surface and source-level runtime cost
-bounds remain unfinished.
+callee-frame expansion. Realized scalar source costs now correspond to actual
+measured execution, with conditional source bounds and outer-call accounting.
+The new core's surface, mutable data, loops and semantic Std.Do adapter remain
+unfinished.
 
 The sections below document the existing implementation and the semantic
 boundaries that its reuse must preserve. Here, `Source` means the current

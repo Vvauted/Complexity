@@ -46,9 +46,11 @@ They support a mathematical proof of a real helper-call/branch program without
 registers. [Generic proof transfer](##Complexity.Computability.Ram.Compiler.Language.Execution)
 connects its source range and call-nesting conditions to the existing executable
 runner. See [the source example](##Examples.Language.Scalar) and its
-[compiled invocation](##Examples.Language.ScalarCompiled). The Lean-like surface,
-source-level runtime cost bounds remain in development. Private return-flag
-lowering already avoids continuation duplication and has
+[compiled invocation](##Examples.Language.ScalarCompiled).
+[Separate source cost bounds](##Complexity.Computability.Ram.Compiler.Language.CostExecution)
+now apply to the same compiled invocation, with actual internal and outer-call
+overheads. The Lean-like surface, mutable source data and loops remain in
+development. Private return-flag lowering avoids continuation duplication and has
 [exact code-size formulas](##Complexity.Computability.Ram.Compiler.Language.CodeSize).
 
 Functions can be declared without a `main` and verified through their arguments,

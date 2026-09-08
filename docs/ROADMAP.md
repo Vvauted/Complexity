@@ -176,6 +176,14 @@ the existing register frame to cover actual recursive calls. They distinguish
 restored caller locals from unchanged memory and streams. These are ordinary
 backend lemmas, available without source-cursor metadata or the high-level frontend.
 
+The scalar cost transfer reuses an existing safe assignment's proved endpoint
+through `SafeExec.assign_localMeasured`, and transports a callee body bound
+through `LocalCompiler.Function.callSteps_mono`. The generic scalar simulation
+now proves behavior and its actual count together; erasure supplies the old
+budget-free interfaces. There is no second full behavior-simulation induction
+to update when a lowering case changes. This is a proof-maintenance reduction,
+not a measured claim of faster Lean compilation or faster RAM execution.
+
 ## M1 — Independent source meaning and the first automatic proof transfer
 
 Status: in progress, not complete.
@@ -219,18 +227,40 @@ Status: in progress, not complete.
   but is not an unconditional linear bound in bare source-node count or a
   runtime bound. Static size-composition lemmas now live in the foundational
   local compiler module, without importing its execution simulation.
+- [Runtime cost rules](../Complexity/Computability/Ram/Compiler/Language/ExecutionCost.lean)
+  now observe the same `RealizedExec`, with no proposed budget or repeated
+  correctness/range proof. `callCost` derives actual callee-frame overhead;
+  branch and return rules count executed guards and jumps, not both branches'
+  static code. [Measured lowering](../Complexity/Computability/Ram/Compiler/Language/MeasuredSimulation.lean)
+  proves the count equals the existing local compiler's executed transitions.
+- [Cost determinism](../Complexity/Computability/Ram/Compiler/Language/CostDeterministic.lean)
+  is independent of word width, call capacity and execution-proof choices.
+  It follows the independent source trace, without positive-width or encoded
+  input premises. Every realized source execution admits this observation.
+- [Cost publication](../Complexity/Computability/Ram/Compiler/Language/CostExecution.lean)
+  identifies the existing `bodyTime` and combines a separate `FunctionCostBound`
+  with source correctness/realizability in `FunctionRealizable.runUntil_le`.
+  Returning-body wrapper work and internal calls are included in the body;
+  outer call-and-halt work is added exactly once. The existing scalar consumer
+  composes its helper's cost with the selected branch without register proofs
+  or a second proof of the mathematical minimum.
 
 Next, before broadening the frontend:
 
-1. Derive a source-facing cost interpretation and its bound from the same
-   lowering, including operand moves, internal calls, actual frame operations,
-   and private-flag initialization/updates/dispatch. A returned path still pays
-   for the flag checks in each enclosing sequence it crosses. The selected
-   lowered body's flag wrapper belongs to its body charge; count the outer
-   calling convention and final halt separately, exactly once. The existing
-   runner gives an actual existential count, **not yet a source-level complexity bound**.
-2. Add the Lean-like surface and semantic `Part`/Std.Do adapter over the proved
-   core, without exposing backend layout or simulation obligations.
+1. Add the Lean-like surface and semantic `Part`/Std.Do adapter over the proved
+   core, without exposing backend layout or simulation obligations. Preserve
+   ordinary mathematical values and source total correctness; do not implement
+   the source evaluator by evaluating lowered RAM code.
+2. Make source correctness, realization and conditional cost proofs convenient
+   through shared structural rules, including actual returned-value call
+   continuations. The current cost consumer still performs explicit structural
+   case analysis. Extend proof automation over these checked rules, not through
+   per-program adapters or manually supplied instruction prices.
+
+The present cost interpretation concerns successful realized scalar executions.
+It is not yet instrumentation of every unrestricted source execution, nor
+source-level loop/heap/potential support. Mutable data and loops require their
+own source semantics, lowering cases and justified observations in M2–M3.
 
 Later remove redundant flag checks or specialize no-return fragments only
 through proved optimizations and revised costs. The current size-safe lowering

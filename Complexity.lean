@@ -89,10 +89,15 @@ import Complexity.Computability.Ram.Compiler.Expr.Basic
 import Complexity.Computability.Ram.Compiler.Expr.Memory
 import Complexity.Computability.Ram.Compiler.Language.CodeSize
 import Complexity.Computability.Ram.Compiler.Language.Control
+import Complexity.Computability.Ram.Compiler.Language.CostDeterministic
+import Complexity.Computability.Ram.Compiler.Language.CostExecution
 import Complexity.Computability.Ram.Compiler.Language.Effects
 import Complexity.Computability.Ram.Compiler.Language.Execution
+import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.Layout
 import Complexity.Computability.Ram.Compiler.Language.Lowering
+import Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation
+import Complexity.Computability.Ram.Compiler.Language.MeasuredValues
 import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Compiler.Language.Scalar
 import Complexity.Computability.Ram.Compiler.Language.Simulation

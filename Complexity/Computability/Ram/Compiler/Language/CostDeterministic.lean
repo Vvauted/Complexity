@@ -1,0 +1,91 @@
+/-
+Copyright (c) 2026 vvauted. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: vvauted
+-/
+import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
+
+/-!
+# Determinism of scalar source execution costs
+
+The same source statement and entry values determine its backend-derived count.
+Word width, call capacity and the proofs used to realize the execution do not
+affect that count. Source execution determinism aligns intermediate values and
+the actual callee returns before the structural cost rules are compared.
+
+This result requires neither a machine representation nor positive word width.
+It compares existing cost observations and does not assert source termination.
+-/
+
+namespace Ram.LanguageCompiler
+
+open Complexity.Language
+
+namespace ExecutionCost
+
+private theorem observations_eq {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w w' depth depth' : Nat}
+    {Γ : List Ty} {result : Ty} {stmt : Complexity.Language.Stmt signatures Γ result}
+    {entry finish finish' : Env Γ} {control control' : Control result}
+    {execution : RealizedExec program w depth stmt entry finish control}
+    {execution' : RealizedExec program w' depth' stmt entry finish' control'}
+    {steps steps' : Nat} (_ : ExecutionCost execution steps)
+    (_ : ExecutionCost execution' steps') : finish = finish' ∧ control = control' :=
+  execution.erase.deterministic execution'.erase
+
+/-- A deterministic source trace has one compiled core count, independently of
+word width, call capacity, final-state witnesses and realization proofs. -/
+theorem deterministic {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w depth : Nat}
+    {Γ : List Ty} {result : Ty} {stmt : Complexity.Language.Stmt signatures Γ result}
+    {entry finish : Env Γ} {control : Control result}
+    {execution : RealizedExec program w depth stmt entry finish control} {steps : Nat}
+    (first : ExecutionCost execution steps) :
+    ∀ {w' depth' : Nat} {finish' : Env Γ} {control' : Control result}
+      {execution' : RealizedExec program w' depth' stmt entry finish' control'} {steps' : Nat},
+      ExecutionCost execution' steps' → steps = steps' := by
+  induction first with
+  | skip =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second
+      rfl
+  | letPrim tail ih =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | letPrim tail' => rw [ih tail']
+  | seqNormal firstCost secondCost ihFirst ihSecond =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | seqNormal firstCost' secondCost' =>
+          obtain ⟨rfl, _⟩ := observations_eq firstCost firstCost'
+          rw [ihFirst firstCost', ihSecond secondCost']
+      | seqReturn cost' => cases (observations_eq firstCost cost').2
+  | seqReturn cost ih =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | seqNormal firstCost' secondCost' => cases (observations_eq cost firstCost').2
+      | seqReturn cost' => rw [ih cost']
+  | iteTrue cost ih =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | iteTrue cost' => rw [ih cost']
+      | iteFalse cost' => simp_all
+  | iteFalse cost ih =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | iteTrue cost' => simp_all
+      | iteFalse cost' => rw [ih cost']
+  | ret =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second
+      rfl
+  | callReturn calleeCost bodyCost ihCallee ihBody =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | callReturn calleeCost' bodyCost' =>
+          cases Control.returned.inj (observations_eq calleeCost calleeCost').2
+          rw [ihCallee calleeCost', ihBody bodyCost']
+
+end ExecutionCost
+
+end Ram.LanguageCompiler
