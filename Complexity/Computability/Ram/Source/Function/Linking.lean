@@ -22,10 +22,10 @@ termination.
 
 namespace Ram.Source
 
-/-- Linking preserves a safe invocation's arguments, returned word and shared effects. -/
+/-- Linking preserves a safe invocation's arguments, returned fields and shared effects. -/
 theorem FunctionExec.renameCalls {heapLimit depth : Nat} {source target : Program}
     {ρ : Nat → Nat} {f : Func} {args : List (Word w)}
-    {entry finish : State w} {value : Word w}
+    {entry finish : State w} {value : List (Word w)}
     (h : FunctionExec source heapLimit depth f args entry value finish)
     (embedding : Program.Embeds ρ source target) :
     FunctionExec target heapLimit depth (f.renameCalls ρ) args entry value finish := by
@@ -35,7 +35,7 @@ theorem FunctionExec.renameCalls {heapLimit depth : Nat} {source target : Progra
 /-- Linking preserves the actual compiled body count of the same invocation. -/
 theorem FunctionMeasuredExec.renameCalls {control heapLimit depth bodySteps : Nat}
     {source target : Program} {ρ : Nat → Nat} {f : Func} {args : List (Word w)}
-    {entry finish : State w} {value : Word w}
+    {entry finish : State w} {value : List (Word w)}
     (h : FunctionMeasuredExec control source heapLimit depth f args bodySteps
       entry value finish)
     (embedding : Program.Embeds ρ source target) :
@@ -47,7 +47,7 @@ theorem FunctionMeasuredExec.renameCalls {control heapLimit depth bodySteps : Na
 /-- The compiler's reserved-register boundary changes neither body count nor result. -/
 theorem FunctionMeasuredExec.rebase {control heapLimit depth bodySteps : Nat}
     {program : Program} {f : Func} {args : List (Word w)}
-    {entry finish : State w} {value : Word w}
+    {entry finish : State w} {value : List (Word w)}
     (h : FunctionMeasuredExec control program heapLimit depth f args bodySteps
       entry value finish) (control' : Nat) :
     FunctionMeasuredExec control' program heapLimit depth f args bodySteps
@@ -58,7 +58,7 @@ theorem FunctionMeasuredExec.rebase {control heapLimit depth bodySteps : Nat}
 /-- A callable correctness contract is unchanged when its implementation is linked. -/
 theorem FunctionContract.renameCalls {heapLimit depth : Nat} {source target : Program}
     {ρ : Nat → Nat} {f : Func} {P : List (Word w) → State w → Prop}
-    {Q : List (Word w) → State w → Word w → State w → Prop}
+    {Q : List (Word w) → State w → List (Word w) → State w → Prop}
     (h : FunctionContract source heapLimit depth f P Q)
     (embedding : Program.Embeds ρ source target) :
     FunctionContract target heapLimit depth (f.renameCalls ρ) P Q := by
@@ -81,7 +81,7 @@ the embedding need not support backwards execution transport. -/
 theorem FunctionTimeBound.renameCalls {control heapLimit depth : Nat}
     {source target : Program} {ρ : Nat → Nat} {f : Func}
     {P : List (Word w) → State w → Prop}
-    {Q : List (Word w) → State w → Word w → State w → Prop}
+    {Q : List (Word w) → State w → List (Word w) → State w → Prop}
     {bound : List (Word w) → State w → Nat}
     (h : FunctionTimeBound control source heapLimit depth f P bound)
     (embedding : Program.Embeds ρ source target)

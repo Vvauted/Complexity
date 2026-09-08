@@ -54,8 +54,8 @@ def compileStmt (control : Nat) (localsTable entries : Nat → Nat) : Stmt → N
       whileCode condCode (ABI.scratch control) bodyCode base
   | .read dst, _ => [.read dst]
   | .write value, _ => value.compile (ABI.scratch control) ++ [.write (ABI.scratch control)]
-  | .call dst fn args, base =>
-      ABI.callCodeLocals control (localsTable fn) (entries fn) dst args base
+  | .call dsts fn args, base =>
+      ABI.callCodeResultsLocals control (localsTable fn) (entries fn) dsts args base
 
 /-- Increasing the global reserved-register boundary only changes register
 numbers, not code length. The fixed callee table controls actual frame work. -/
@@ -102,7 +102,7 @@ theorem compileStmt_length_control_eq (localsTable : Nat → Nat) (stmt : Stmt)
   | read => rfl
   | write => simp only [compileStmt, List.length_append, List.length_singleton, he]
   | call =>
-      simp only [compileStmt, ABI.callCodeLocals_length, ABI.callPrefixLocals_length_eq, he]
+      simp only [compileStmt, ABI.callCodeResultsLocals_length, ABI.callPrefixLocals_length_eq, he]
 
 /-- Relocation and function-entry resolution preserve instruction-list length. -/
 theorem compileStmt_length_eq (control : Nat) (localsTable : Nat → Nat) (stmt : Stmt)
@@ -125,18 +125,20 @@ theorem stmtSize_control_eq (localsTable : Nat → Nat) (stmt : Stmt) (a b : Nat
   compileStmt_length_control_eq localsTable stmt a b (fun _ => 0) (fun _ => 0) 0 0
 
 theorem stmtSize_call (control : Nat) (localsTable : Nat → Nat)
-    (dst fn : Nat) (args : List Expr) :
-    stmtSize control localsTable (.call dst fn args) =
-      (ABI.callPrefixLocals control (localsTable fn) args 0).length + 2 := by
-  simp only [stmtSize, compileStmt, ABI.callCodeLocals_length]
+    (dsts : List Reg) (fn : Nat) (args : List Expr) :
+    stmtSize control localsTable (.call dsts fn args) =
+      (ABI.callPrefixLocals control (localsTable fn) args 0).length + 1 + dsts.length := by
+  simp only [stmtSize, compileStmt, ABI.callCodeResultsLocals_length]
+  omega
 
 def compileFunc (control : Nat) (localsTable entries : Nat → Nat) (f : Func)
     (base : Nat) : Code :=
   compileStmt control localsTable entries f.body base ++
-    ABI.returnCodeLocals control f.locals f.result
+    ABI.returnCodeResultsLocals control f.locals f.results
 
 def funcSize (control : Nat) (localsTable : Nat → Nat) (f : Func) : Nat :=
-  stmtSize control localsTable f.body + (ABI.returnCodeLocals control f.locals f.result).length
+  stmtSize control localsTable f.body +
+    (ABI.returnCodeResultsLocals control f.locals f.results).length
 
 @[simp] theorem compileFunc_length (control : Nat) (localsTable entries : Nat → Nat)
     (f : Func) (base : Nat) :
@@ -145,9 +147,11 @@ def funcSize (control : Nat) (localsTable : Nat → Nat) (f : Func) : Nat :=
 
 theorem funcSize_control_eq (localsTable : Nat → Nat) (f : Func) (a b : Nat) :
     funcSize a localsTable f = funcSize b localsTable f := by
-  simp only [funcSize, ABI.returnCodeLocals_length,
-    stmtSize_control_eq localsTable f.body a b,
-    Expr.compile_length_eq f.result (ABI.scratch a) (ABI.scratch b)]
+  have he (e : Expr) :
+      (e.compile (ABI.scratch a)).length = (e.compile (ABI.scratch b)).length :=
+    e.compile_length_eq _ _
+  simp only [funcSize, ABI.returnCodeResultsLocals_length,
+    stmtSize_control_eq localsTable f.body a b, he]
 
 /-- Emit every function once. Recursive calls use its linked entry, rather
 than causing compile-time unfolding. -/

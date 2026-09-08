@@ -15,12 +15,23 @@ A separate [complexity proof](##ComplexityDocs.Complexity) can reuse the same in
 
 ## Choose a specification
 
-For an intermediate function, start with `Ram.Source.FunctionContract`. Its precondition
-describes arguments and caller state; its postcondition describes the actual returned
-word and shared-state effects. It requires neither a `main` nor stream input/output.
+For source-facing proofs, start with `Ram.Source.TypedFunctionContract`. Its precondition
+describes typed arguments and caller state; its postcondition describes the declared
+`Word w`, `ArrayRef w` or `Unit` result and shared-state effects. The argument encoder
+and result kind reuse the [source-value representation](##Complexity.Computability.Ram.Source.Value).
+`TypedFunctionContract.of_wp` proves a body directly, and `wp_call` gives the typed value
+to the continuation. `of_raw` reuses an existing raw contract; `raw` connects a chosen typed
+input to the existing independent time rules. These are views of the same implementation,
+not new execution relations, and require neither a `main` nor a time budget. See
+[typed function contracts](##Complexity.Computability.Ram.Verification.Function.Typed).
+
+`Ram.Source.FunctionContract` remains the raw field-list interface used by existing
+implementation proofs. Its precondition describes word arguments and caller state;
+its postcondition describes returned fields and shared-state effects.
 `Ram.Source.FunctionExec` defines those observations through the function's real body and
-return expression: the returned word must equal that expression's value after the body
-executes. A mathematical specification is a property to prove about that execution,
+return expressions: the returned list is `f.results.map callee.eval`, with every field
+evaluated in the same final callee state. Scalar, array and `Unit` returns have one,
+two and zero fields respectively. A mathematical specification is a property of that execution,
 not a replacement implementation.
 
 The `input` and `outputRev` fields in `Ram.Source.State` are shared stream state, not the
@@ -40,8 +51,8 @@ The [array-copy function](##Complexity.Computability.Ram.Array.Function) instead
 represented arrays in shared memory. Its public contract hides parameter registers but
 retains genuine address-range, length and non-overlap assumptions.
 `Ram.Source.FunctionContract.wp_call` reuses a contract at another function's call site;
-the continuation receives the returned word, the proved postcondition and preserved caller locals.
-The [local-binding sample](##Examples.Ram.LocalBindings) composes that rule twice
+the continuation receives the returned fields, the proved postcondition and preserved caller locals.
+The [local-binding sample](##Examples.Ram.LocalBindings) retains this raw interface and composes its call rule twice
 through `ram_total_apply`. Its direct proof uses the source declaration from
 [getting started](##ComplexityDocs.GettingStarted) and the existing `square_contract`:
 
@@ -49,7 +60,7 @@ through `ram_total_apply`. Its direct proof uses the source declaration from
 theorem squaredNorm_contract (heapLimit : Nat) (x y : Word w) :
     Source.FunctionContract functions.program heapLimit 1 functions.function.squaredNorm
       (fun args _ => args = functions.arguments.squaredNorm x y)
-      (fun _ entry value finish => value = x * x + y * y ∧ finish = entry) := by
+      (fun _ entry value finish => value = [x * x + y * y] ∧ finish = entry) := by
   ram_total_vc args entry rfl [functions.body_eq.squaredNorm, functions.result_eq.squaredNorm]
   ram_total_apply (square_contract heapLimit x) [functions.function_lookup.square]
   ram_total_apply (square_contract heapLimit y) [functions.function_lookup.square]
@@ -57,7 +68,7 @@ theorem squaredNorm_contract (heapLimit : Nat) (x y : Word w) :
 
 `ram_total_vc args entry pattern [facts]` starts the `FunctionContract` using
 `Ram.Source.FunctionContract.of_wp`: declared arguments are bound, and the
-postcondition observes the real return expression and shared state. The pattern
+postcondition observes the real return fields and shared state. The pattern
 `rfl` here substitutes the specified argument list. Each `ram_total_apply` uses
 the supplied function contract and lookup fact without unfolding `square`'s body.
 Here simplification automatically substitutes the postcondition's equalities for
@@ -65,7 +76,8 @@ the returned value and final state into the continuation. No manual `rintro` or
 final `rfl` is needed. Non-equational postconditions still leave ordinary continuation
 goals. This proof needs no separate intermediate-state specification, register
 arithmetic or stack layout.
-Unresolved arity, frame and safety obligations remain explicit. `of_body` remains
+Argument and result arities must match the callee signature. Unresolved arity, frame
+and return-expression read-safety obligations remain explicit. `of_body` remains
 useful when a body refinement or invariant is already available; the tactics do not
 discover invariants or select reusable contracts automatically.
 The sample's independent `squaredNorm_bodyTime` theorem identifies the same body's count
@@ -75,10 +87,11 @@ or its enclosing calling convention.
 For a named declaration `p`, use `p.eval.f` for function-value equations and
 `p.bodyTime.f` for separate body-count equations. These generated entry points take
 the declared word or array parameters, then `heapLimit` and `entry`. They specialize
-`Ram.Func.eval` and `Ram.Func.bodyTime`, observing the same actual invocation through
-mathlib's `Part`. The value equation has the form
+`Ram.Func.evalTyped` and `Ram.Func.bodyTime`, observing the same actual invocation through
+mathlib's `Part`. The generated value interface decodes the declared field shape
+to `Word w`, `ArrayRef w` or `Unit`, without a default for a missing field. Its equation has the form
 `p.eval.f ... heapLimit entry = Part.some (value, finish)` and includes termination;
-the returned word and shared state are both retained. The
+the typed result and shared state are both retained. The
 [factorial function-value sample](##Examples.Ram.FactorialFunction) hides its canonical
 entry state once and proves agreement with every actual caller state. Subsequent
 mathematical propositions mention only its argument and observed value.
@@ -88,12 +101,17 @@ capacity can make an observation undefined.
 The ordinary executable `p.apply.f` interface described below is separate;
 it does not make these `Part` observations computable.
 
-`Ram.Source.FunctionContract.eval_spec` transports any postcondition to that view;
-the postcondition can be a mathematical relation, not necessarily a reference algorithm.
+`TypedFunctionContract.eval_spec` transports the typed postcondition to this view;
+`FunctionExec.evalTyped_eq_some` also transfers a concrete execution using the generated
+`results_length` equation. Neither bridge asks clients to split result lists or reconstruct
+an array reference from a specification.
+`Ram.Source.FunctionContract.eval_spec` transports any postcondition to the raw field-list
+view; the declared shape connects it to the generated typed view. The postcondition can
+be a mathematical relation, not necessarily a reference algorithm.
 `Ram.Source.FunctionContract.eval_with_timeBound` adds a separate bound to the same
 invocation's `Ram.Func.bodyTime`. Neither observation is defined using the proposed
 result property or time bound. Body time excludes this function's own final return
-expression and enclosing call overhead; it includes completed calls inside its body.
+expressions and enclosing call overhead; it includes completed calls inside its body.
 
 To execute a declared function, use `p.run.f` with the same typed parameters,
 `heapLimit` and `entry`, rather than the noncomputable `Part` observation.
@@ -113,7 +131,7 @@ limit is desired. Unlike body time, the complete run counts the outer call, retu
 and halt. The generated entry point does not prove capacity or construct represented arrays.
 
 For an ordinary executable value, use `p.apply.f ... heapLimit entry h`; use
-`p.applyState.f ... heapLimit entry h` for its word and reusable source shared state,
+`p.applyState.f ... heapLimit entry h` for its typed result and reusable source shared state,
 or `p.runTotal.f ... heapLimit entry h` for the complete machine result.
 All three require `Ram.LocalCompiler.Function.Halts` for those exact arguments and
 entry state: the actual `runUntil` equals `some result` and `result.reason = .halted`.
@@ -121,7 +139,8 @@ An `isSome` proof alone would also admit faults and is not enough for this inter
 The [total-call bridge](##Complexity.Computability.Ram.Compiler.Local.Function.Total)
 `halts_of_execution` derives this fact from budget-free `FunctionExec` with the
 compiled-code and stack premises. It does not require a cost theorem.
-`halts_of_contract` instead takes an existing `FunctionContract` and its precondition,
+`halts_of_typedContract` takes an existing typed contract and its precondition;
+`halts_of_contract` is the corresponding raw-contract rule. Both work
 without making the client first extract a returned value and execution witness.
 
 For these runtime bridges, use `ram_run_apply theorem [facts]` from
@@ -136,21 +155,28 @@ Stack capacity, representation, overflow and the supplied correctness or time th
 remain explicit proof obligations. This is proof automation, not another runtime wrapper
 or a guarantee that every `ram_def` compiles and fits every word width.
 
-`runTotal` performs `Option.get` on the actual runner output; `apply` reads its
-returned word. The proof argument is in `Prop` and erased at runtime, not a supplied
-answer extracted from a specification. `apply_eq_of_execution` identifies that word;
+`runTotal` performs `Option.get` on the actual runner output; generated `apply` decodes
+its returned fields using the declared result shape. The proof argument is in `Prop`
+and erased at runtime, not a supplied answer extracted from a specification.
+Use `Ram.LocalCompiler.Function.applyTyped_eq_of_execution` for the generated typed value;
+the underlying `apply_eq_of_execution` identifies raw fields.
 `runTotal_correct_of_execution` also retains the source-visible final-state observation.
-Neither normal halt nor projecting a word asserts that the body has no effects.
+Neither normal halt nor projecting a result asserts that the body has no effects.
 
-`applyState_eq_of_execution` identifies the returned pair with `(value, finish)`.
+`Ram.LocalCompiler.Function.applyStateTyped_eq_of_execution` identifies the typed pair
+with `(value, finish)`, while `applyStateTyped_spec` transfers a typed contract's
+postcondition directly. The [typed runtime bridge](##Complexity.Computability.Ram.Compiler.Local.Function.Typed)
+uses the same compiled run and does not introduce another runner.
+The raw `applyState_eq_of_execution` identifies `(values, finish)`.
 Its `returnState` projection keeps entry registers, takes actual target memory below
 `heapLimit` and entry memory outside it, and retains actual input/output effects.
 Safe execution preserves out-of-heap source memory, so this recovers the entire
 source final state without equating it with the target's private stack.
 `applyState_spec` transfers any existing `FunctionContract` postcondition to that
 pair, with the contract's precondition and the compilation/capacity premises.
-The [copy client](##Examples.Ram.ArrayCopyFunction) uses this rule for its destination
-contents, frame and stream-preservation claims, then reuses them to call sum on the
+The [copy client](##Examples.Ram.ArrayCopyFunction) decodes its zero fields as `Unit`
+and uses this rule for its destination contents, frame and stream-preservation claims,
+then reuses them to call sum on the
 returned state; it does not reopen the copy loop.
 
 The [factorial application](##Examples.Ram.FunctionRun) proves ordinary equations
@@ -231,14 +257,15 @@ Its explicit heap and stack premises are separate from any time estimate; the
 mathematical list concatenation does not allocate a new runtime array.
 
 The [local-slice client](##Examples.Ram.ArraySlice) binds
-`let window : array := subslice(xs, offset, count);` and calls the imported sum on
-that reference. `Ram.ArrayRef.Rep.subslice` supplies the ordinary
+`let window ← call slice(xs, offset, count);` and calls the imported sum on
+the returned array reference. `slice` declares `: array` and returns
+`subslice(xs, offset, count)`. `Ram.ArrayRef.Rep.subslice` supplies the ordinary
 `(xs.drop offset.toNat).take count.toNat` representation;
 `Ram.ArrayRef.Rep.subslice_end_lt` carries the parent's strict endpoint bound to
-the selected interval. Its `function_contract` starts with `ram_total_vc`, then
-uses those array facts and the existing sum contract through `ram_total_apply`.
-The descriptor assignments are part of the source, but the client does not name
-their register slots or reconstruct sum's traversal. Containment, representation
+the selected interval. The slice contract carries the returned reference's representation
+to the sum call, which reuses sum's existing contract rather than its traversal proof.
+Descriptor evaluation and both returned fields are part of the compiled call, not
+a host-side loader or copy. Containment, representation
 and non-wrapping addresses remain explicit, and the postcondition preserves the
 entire caller state, including arbitrary initial stream contents.
 
@@ -348,6 +375,9 @@ statement is fixed and must obtain that value through its representation.
 
 There are also [call](##Complexity.Computability.Ram.Verification.StateM.Call) and
 [finite traversal](##Complexity.Computability.Ram.Verification.StateM.Traversal) bridges.
+The call bridge represents returned fields as an ordinary list. Its register-observation
+form requires distinct destinations to recover every field from the final registers;
+the source call itself permits repeated destinations with last-write-wins assignment.
 `mvcgen` verifies the mathematical model: it does not compile arbitrary Lean code or discharge
 the model-to-memory connection. Reuse an existing bridge where one is available.
 
@@ -383,9 +413,11 @@ this embedding, retaining its arguments, returned value and shared-state postcon
 Apply that contract with `ram_total_apply` and the generated
 `functions.function_lookup.Copy.copy` fact, then reuse the sum contract through
 `functions.embeds.Sum`. Copy's postcondition supplies the destination representation
-needed by sum. The standalone `call Copy.copy(...);` discards only its scalar
-result binding: its postcondition and shared-memory effects still reach the
-continuation through the same call rule. It is not a `Unit`-returning function.
+needed by sum. `Copy.copy` really returns `Unit`, so the standalone
+`call Copy.copy(...);` has an empty result list and no dummy destination.
+Its postcondition and shared-memory effects still reach the continuation through
+the same call rule. This differs from discarding a word or array result, whose
+fields are still evaluated and received into private destinations.
 Relocation does not discharge representation, equal-length or
 disjointness premises. The proof composes the existing contracts without expanding
 either callee loop; the generated `applyState` result belongs to one compiled run,

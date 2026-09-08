@@ -12,11 +12,11 @@ import Complexity.Computability.Ram.Verification.Refinement
 
 `Refines.call` uses an existing verified `TotalSpec` as a call implementation
 of a pure mathematical function. Its return adapter can observe both the
-returned value and the callee's shared-memory effects, while caller locals
+returned values and the callee's shared-memory effects, while caller locals
 are restored by the existing `State.leave` semantics.
 
 The ghost argument indexes a specification, never generated source syntax:
-the program, callee, destination and argument expressions are fixed. Heap-read
+the program, callee, destinations and argument expressions are fixed. Heap-read
 safety and sufficient call depth remain obligations for represented inputs.
 The rule adds no specification record or execution relation; it directly
 reuses `TotalSpec.Correct.wp_call`.
@@ -26,7 +26,7 @@ namespace Ram.Source.Refines
 
 variable {α β : Type*} {Arg : Type} {program : Program} {heapLimit depth : Nat}
 variable {f : Func} {spec : Recursion.TotalSpec f w Arg}
-variable {fn dst : Nat} {args : List Expr}
+variable {fn : Nat} {dsts : List Reg} {args : List Expr}
 variable {inputRep : α → State w → Prop} {outputRep : β → State w → Prop}
 variable {model : α → β}
 
@@ -37,6 +37,7 @@ The available depth need only suffice on represented inputs. -/
 theorem call (argument : α → Arg)
     (correct : ∀ x, spec.Correct program heapLimit (argument x))
     (lookup : program[fn]? = some f) (arity : args.length = f.params)
+    (resultCount : dsts.length = f.results.length)
     (frame : f.params ≤ f.locals)
     (arguments : ∀ x caller, inputRep x caller →
       ∀ expr ∈ args, expr.ReadsBelow heapLimit caller.regs caller.mem)
@@ -45,10 +46,10 @@ theorem call (argument : α → Arg)
     (nesting : ∀ x caller, inputRep x caller → spec.depth (argument x) + 1 ≤ depth)
     (returned : ∀ x caller, inputRep x caller → ∀ callee,
       spec.post (argument x) (caller.enter (args.map caller.eval)) callee →
-      outputRep (model x) (caller.leave callee dst f.result)) :
-    Refines program heapLimit depth (.call dst fn args) inputRep outputRep model := by
+      outputRep (model x) (caller.leave callee dsts f.results)) :
+    Refines program heapLimit depth (.call dsts fn args) inputRep outputRep model := by
   intro x caller represented
-  exact (correct x).wp_call lookup arity frame (arguments x caller represented)
+  exact (correct x).wp_call lookup arity resultCount frame (arguments x caller represented)
     (pre x caller represented) (nesting x caller represented) (returned x caller represented)
 
 end Ram.Source.Refines

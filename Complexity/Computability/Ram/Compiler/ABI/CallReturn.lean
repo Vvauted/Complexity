@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.ABI.Frame.Basic
 import Complexity.Computability.Ram.Compiler.Effects
+import Complexity.Computability.Ram.Compiler.Local.Call.Results
 
 /-!
 # Returning from a compiled function
@@ -72,7 +73,8 @@ structure ReturnRestored (n : Nat) (result : Expr) (sourceCallee : Source.State 
 theorem returnPrefix_linear (n : Nat) (result : Expr) :
     ∀ i ∈ returnPrefix n result, i.Linear := by
   intro i hi
-  simp only [returnPrefix, evalResults_singleton, List.mem_append, List.mem_singleton] at hi
+  simp only [returnPrefix, returnPrefixResults, evalResults_singleton,
+    List.mem_append, List.mem_singleton] at hi
   rcases hi with (((he | rfl) | ht) | rfl) | hl
   · exact result.compile_linear (scratch n) i he
   · trivial
@@ -132,7 +134,8 @@ theorem returnPrefix_correct {n heapLimit : Nat} {result : Expr}
     exact hframe
   have hfinish : execBlock (returnPrefix n result) start =
       execBlock (restoreLocals n n) addressed := by
-    simp only [returnPrefix, evalResults_singleton, execBlock_append, execBlock_cons, execBlock_nil]
+    simp only [returnPrefix, returnPrefixResults, evalResults_singleton,
+      execBlock_append, execBlock_cons, execBlock_nil]
     rfl
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
     execBlock_pc _ start (returnPrefix_linear n result)⟩
@@ -190,5 +193,37 @@ theorem returnCode_exec {code : Code} {n returnPC : Nat} {result : Expr}
     exact hcode.append_right.head
   have hj := Exec.single (h.jump_step hrun hfetch hreturnPC)
   simpa only [returnCode, List.length_append, List.length_singleton] using hp.trans hj
+
+/-- The global-frame return is the callee-sized return with both bounds equal.
+Every result is evaluated before restoring caller locals, including when the
+result list is empty or two result expressions use the same callee register. -/
+theorem returnPrefixResults_correct {n heapLimit : Nat} {results : List Expr}
+    {sourceCallee : Source.State w} {savedRegs : Reg → Word w}
+    {baseWord returnWord : Word w} {start : State w}
+    (hmatch : sourceCallee.Matches heapLimit n start)
+    (hfitResults : results.length - 1 ≤ n)
+    (hbounded : ∀ e ∈ results, e.Bounded n)
+    (hreads : ∀ e ∈ results, e.ReadsBelow heapLimit sourceCallee.regs sourceCallee.mem)
+    (hfit : baseWord.toNat + frameSize n < 2 ^ w)
+    (hsp : (start.regs (sp n)).toNat = baseWord.toNat + frameSize n)
+    (hframe : FrameSaved n baseWord savedRegs start.mem)
+    (hreturn : start.mem baseWord = returnWord) :
+    ReturnResultsRestoredLocals n n results sourceCallee savedRegs baseWord returnWord start
+      (execBlock (returnPrefixResults n results) start) :=
+  returnPrefixResultsLocals_correct (Nat.le_refl n) hmatch hfitResults hbounded hreads
+    hfit hsp hframe hreturn
+
+/-- Execute the global multi-result return, including its actual indirect jump,
+by specializing the verified callee-sized return execution. -/
+theorem returnCodeResults_exec {code : Code} {n returnPC : Nat} {results : List Expr}
+    {sourceCallee : Source.State w} {savedRegs : Reg → Word w}
+    {baseWord returnWord : Word w} {start : State w}
+    (h : ReturnResultsRestoredLocals n n results sourceCallee savedRegs
+      baseWord returnWord start (execBlock (returnPrefixResults n results) start))
+    (hcode : CodeAt code start.pc (returnCodeResults n results))
+    (hrun : start.status = .running) (hreturnPC : returnWord.toNat = returnPC) :
+    Exec code (returnCodeResults n results).length start
+      ((execBlock (returnPrefixResults n results) start).atPC returnPC) :=
+  returnCodeResultsLocals_exec h hcode hrun hreturnPC
 
 end Ram.ABI

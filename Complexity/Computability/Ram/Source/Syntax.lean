@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Source.ForIn
+import Complexity.Computability.Ram.Source.Value
 import Lean
 
 /-!
@@ -15,8 +16,9 @@ can be introduced with `let`, `let mut`, or a call-result binding. The explicit
 `locals (locals)` header is also supported. Function syntax assigns local register numbers only at
 variable occurrences, not by introducing Lean bindings around the body.
 `call f(args);` and `let _ ← call f(args);` execute a call without binding its
-returned word. They allocate an anonymous destination slot in the same frame;
-the call and frame costs remain part of the compiled execution.
+returned value. Word and array results allocate one or two anonymous destination
+slots in the same frame; Unit results allocate none. The actual call and frame
+costs remain part of the compiled execution.
 Outside that syntax, identifiers refer to ordinary Lean bindings of type
 `Ram.Reg`; legacy call targets refer to Lean `Nat` bindings. Function targets
 and `const(t)` retain their enclosing Lean scope, even when a parameter has
@@ -26,7 +28,8 @@ separately resolved named function table.
 Named functions additionally support `xs : array` parameters. A handle occupies
 two ordinary word parameters, exposed as `xs.base` and `xs.length`; `xs[i]`
 loads from its base. Named calls check the declared parameter kinds and pass
-both fields for an array argument. An array handle is not a word expression.
+both fields for an array argument. Named result signatures similarly determine
+the number of fields received by a call binding. An array handle is not a word expression.
 `let window : array := subslice(xs, offset, count);` binds a local handle in two
 fresh registers. `let other : array := window;` copies that handle, while
 `array(base, length)` constructs one from word expressions. These same array
@@ -63,7 +66,7 @@ Arithmetic retains unsigned machine-word semantics, including wrapping
 subtraction, unsigned division/remainder, and logical shifts. `&&&`, `|||`, and
 `^^^` are bitwise operations, not short-circuit Boolean operators. A condition
 uses the existing zero/nonzero convention. A `return` occurs only at the end
-of a function, matching `Func.result`; this syntax does not pretend that the
+of a function, matching `Func.results`; this syntax does not pretend that the
 current statement AST has early returns, break, or continue.
 -/
 
@@ -78,6 +81,7 @@ syntax:max "const(" term ")" : ramExpr
 syntax:max "load[" ramExpr "]" : ramExpr
 syntax:max "true" : ramExpr
 syntax:max "false" : ramExpr
+syntax:max "(" ")" : ramExpr
 /-- Construct a by-value array handle from two word expressions, without allocating memory. -/
 syntax:max "array(" ramExpr ", " ramExpr ")" : ramExpr
 /-- Shift a bound array handle's base and select its length; bounds are proof obligations. -/
@@ -118,7 +122,7 @@ syntax "store[" ramExpr "]" " := " ramExpr ";" : ramStmt
 syntax "read " ident ";" : ramStmt
 syntax "write " ramExpr ";" : ramStmt
 syntax ident " := " "call " ident "(" ramExpr,* ")" ";" : ramStmt
-/-- Execute a source call and discard its returned word using a fresh frame slot. -/
+/-- Execute a source call, receiving any discarded fields into fresh frame slots. -/
 syntax "call " ident "(" ramExpr,* ")" ";" : ramStmt
 /-- Execute a source call without introducing a lexical result binding. -/
 syntax "let " "_" " ← " "call " ident "(" ramExpr,* ")" ";" : ramStmt
@@ -150,23 +154,17 @@ syntax:max "ram_stmt% " ramStmt : term
 positions. In particular it never rewrites a call target or the Lean term
 inside `const(...)`. This keeps the three namespaces independent. -/
 
-/-- Source parameter shape; an array is a two-word by-value handle. -/
-inductive ParameterKind where
-  | word
-  | array
-  deriving BEq, Inhabited
-
 /-- A declared parameter before local-register allocation. -/
 structure Parameter where
   name : Lean.TSyntax `ident
-  kind : ParameterKind := .word
+  kind : ValueKind := .word
   deriving Inhabited
 
 /-- One lexical binding and the first register of its representation. -/
 structure LocalBinding where
   name : Lean.Name
   register : Nat
-  kind : ParameterKind := .word
+  kind : ValueKind := .word
   deriving Inhabited
 
 abbrev LocalScope := Array LocalBinding
@@ -174,11 +172,11 @@ abbrev LocalScope := Array LocalBinding
 /-- Resolve a call using its signature and the caller's lexical bindings. -/
 abbrev FunctionResolver := LocalScope → Bool → Lean.TSyntax `ident →
   Array (Lean.TSyntax `ramExpr) →
-    Lean.MacroM (Lean.TSyntax `term × Array (Lean.TSyntax `term))
+    Lean.MacroM (Lean.TSyntax `term × Array (Lean.TSyntax `term) × ValueKind)
 
 def localRegisterCount (scope : LocalScope) : Nat :=
   scope.foldl (fun count binding =>
-    max count (binding.register + if binding.kind == .array then 2 else 1)) 0
+    max count (binding.register + binding.kind.width)) 0
 
 def makeParameterScope (params : Array Parameter) : Lean.MacroM LocalScope := do
   let mut scope : LocalScope := #[]
@@ -214,6 +212,8 @@ def resolveLocal (scope : LocalScope) (strict : Bool) (name : Lean.TSyntax `iden
   | some binding =>
       if binding.kind == .array then
         Lean.Macro.throwErrorAt name "expected a word; use an array field or indexed element"
+      if binding.kind == .unit then
+        Lean.Macro.throwErrorAt name "expected a word, not Unit"
       registerTerm binding.register
   | none =>
       if let some index := arrayField? scope name.getId then
@@ -245,6 +245,7 @@ partial def lowerExpr (scope : LocalScope) (strict : Bool)
   | `(ramExpr| load[$a:ramExpr]) => `(Ram.Expr.load $(← lowerExpr scope strict a))
   | `(ramExpr| true) => `(Ram.Expr.const 1)
   | `(ramExpr| false) => `(Ram.Expr.const 0)
+  | `(ramExpr| ()) => Lean.Macro.throwErrorAt expr "expected a word, not Unit"
   | `(ramExpr| array($_base:ramExpr, $_length:ramExpr)) =>
       Lean.Macro.throwErrorAt expr "expected a word, not an array handle"
   | `(ramExpr| subslice($_array:ramExpr, $_offset:ramExpr, $_length:ramExpr)) =>
@@ -307,7 +308,38 @@ partial def arrayArgument (scope : LocalScope) (strict : Bool)
   | _ => Lean.Macro.throwErrorAt expr "expected an array handle"
 
 def externalFunction : FunctionResolver := fun scope strict name args => do
-  return (← `($name:ident), ← args.mapM (lowerExpr scope strict))
+  return (← `($name:ident), ← args.mapM (lowerExpr scope strict), .word)
+
+/-- Lower a value to its actual returned or argument fields. Unit expressions
+are literals or bound Unit values, so omitting their zero fields drops no computation. -/
+def valueArgument (scope : LocalScope) (strict : Bool) (kind : ValueKind)
+    (expr : Lean.TSyntax `ramExpr) : Lean.MacroM (Array (Lean.TSyntax `term)) := do
+  match kind with
+  | .word => return #[← lowerExpr scope strict expr]
+  | .array => arrayArgument scope strict expr
+  | .unit =>
+      match expr with
+      | `(ramExpr| ()) => return #[]
+      | `(ramExpr| $name:ident) =>
+          if scope.any (fun binding => binding.name == name.getId && binding.kind == .unit) then
+            return #[]
+          Lean.Macro.throwErrorAt expr "expected Unit"
+      | _ => Lean.Macro.throwErrorAt expr "expected Unit"
+
+private def callDestinations (scope : LocalScope) (strict : Bool)
+    (name : Lean.TSyntax `ident) (kind : ValueKind) :
+    Lean.MacroM (Array (Lean.TSyntax `term)) := do
+  match kind with
+  | .word => return #[← resolveLocal scope strict name]
+  | .array =>
+      let some binding := scope.find? (fun entry => entry.name == name.getId &&
+          entry.kind == .array)
+        | Lean.Macro.throwErrorAt name "expected an array result destination"
+      return #[← registerTerm binding.register, ← registerTerm (binding.register + 1)]
+  | .unit =>
+      if scope.any (fun entry => entry.name == name.getId && entry.kind == .unit) then
+        return #[]
+      Lean.Macro.throwErrorAt name "expected a Unit result destination"
 
 mutual
 partial def lowerStmt (scope : LocalScope) (strict : Bool) (function : FunctionResolver)
@@ -334,8 +366,9 @@ partial def lowerStmt (scope : LocalScope) (strict : Bool) (function : FunctionR
   | `(ramStmt| read $x:ident;) => `(Ram.Stmt.read $(← resolveVar x))
   | `(ramStmt| write $e:ramExpr;) => `(Ram.Stmt.write $(← expr e))
   | `(ramStmt| $x:ident := call $f:ident($args:ramExpr,*);) =>
-      let (fn, es) ← function scope strict f args.getElems
-      `(Ram.Stmt.call $(← resolveVar x) $fn [$es,*])
+      let (fn, es, kind) ← function scope strict f args.getElems
+      let destinations ← callDestinations scope strict x kind
+      `(Ram.Stmt.call [$destinations,*] $fn [$es,*])
   | `(ramStmt| call $_f:ident($_args:ramExpr,*);) =>
       Lean.Macro.throwErrorAt stmt
         "discarding a call result requires a function or named main frame; use 'dst := call' here"
@@ -388,7 +421,7 @@ private def checkMutable (scope : LocalScope) (immutable : Array Lean.Name)
       Lean.Macro.throwErrorAt name "cannot assign to an immutable array field; use 'let mut'"
 
 /-- Lower lexical declarations with the same expression and statement translator.
-Words receive one fresh frame slot and array handles receive two; initializers
+Words receive one fresh frame slot, array handles receive two, and Unit receives none; initializers
 refer to the previous scope, leaving shadowed bindings untouched. -/
 partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
     (nextRegister : Nat) (strict : Bool) (function : FunctionResolver)
@@ -399,16 +432,18 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
   let mut statements : Array (Lean.TSyntax `term) := #[]
   for stmt in body do
     let lowerCall (fn : Lean.TSyntax `ident) (args : Array (Lean.TSyntax `ramExpr)) := do
-      let register ← registerTerm nextRegister
-      let (fn, args) ← function scope strict fn args
-      `(Ram.Stmt.call $register $fn [$args,*])
+      let (fn, args, kind) ← function scope strict fn args
+      let destinations ← (List.range kind.width).toArray.mapM fun i =>
+        registerTerm (nextRegister + i)
+      let invocation ← `(Ram.Stmt.call [$destinations,*] $fn [$args,*])
+      pure (invocation, kind)
     let bindLocal (name : Lean.TSyntax `ident) (mutable : Bool)
         (value : Lean.TSyntax `term) := do
       if (arrayField? scope name.getId).isSome then
         Lean.Macro.throwErrorAt name "assign to an array field instead of declaring it with 'let'"
       let register := Lean.Syntax.mkNumLit (toString nextRegister)
       let assignment ← `(Ram.Stmt.assign $register:num $value)
-      pure (name, mutable, ParameterKind.word, assignment)
+      pure (name, mutable, ValueKind.word, assignment)
     let bindArray (name : Lean.TSyntax `ident) (mutable : Bool)
         (value : Lean.TSyntax `ramExpr) := do
       if (arrayField? scope name.getId).isSome then
@@ -418,13 +453,13 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
       let length ← registerTerm (nextRegister + 1)
       let assignment ← `(Ram.Stmt.seq (Ram.Stmt.assign $base $(fields[0]!))
         (Ram.Stmt.assign $length $(fields[1]!)))
-      pure (name, mutable, ParameterKind.array, assignment)
+      pure (name, mutable, ValueKind.array, assignment)
     let bindCall (name : Lean.TSyntax `ident) (mutable : Bool)
         (fn : Lean.TSyntax `ident) (args : Array (Lean.TSyntax `ramExpr)) := do
       if (arrayField? scope name.getId).isSome then
         Lean.Macro.throwErrorAt name "assign to an array field instead of declaring it with 'let'"
-      let invocation ← lowerCall fn args
-      pure (name, mutable, ParameterKind.word, invocation)
+      let (invocation, kind) ← lowerCall fn args
+      pure (name, mutable, kind, invocation)
     let binding ← match stmt with
       | `(ramStmt| let $name:ident := $value:ramExpr;) =>
           pure (some (← bindLocal name Bool.false (← lowerExpr scope strict value)))
@@ -448,17 +483,17 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
           ⟨name.getId, nextRegister, kind⟩
         immutable := immutable.filter (fun oldName => !shadowed oldName)
         if !mutable then immutable := immutable.push name.getId
-        nextRegister := nextRegister + if kind == .array then 2 else 1
+        nextRegister := nextRegister + kind.width
         statements := statements.push statement
     | none =>
         let statement ← match stmt with
           | `(ramStmt| call $fn:ident($args:ramExpr,*);) => do
-              let invocation ← lowerCall fn args.getElems
-              nextRegister := nextRegister + 1
+              let (invocation, kind) ← lowerCall fn args.getElems
+              nextRegister := nextRegister + kind.width
               pure invocation
           | `(ramStmt| let _ ← call $fn:ident($args:ramExpr,*);) => do
-              let invocation ← lowerCall fn args.getElems
-              nextRegister := nextRegister + 1
+              let (invocation, kind) ← lowerCall fn args.getElems
+              nextRegister := nextRegister + kind.width
               pure invocation
           | `(ramStmt| if $condition:ramExpr { $yes:ramStmt* }) => do
               let yes ← lowerScopedBlock scope immutable nextRegister strict function yes
@@ -521,15 +556,20 @@ structure LoweredFunction where
 def lowerFunctionWithScope (strict : Bool) (function : FunctionResolver)
     (params : Array Parameter) (localNames : Array (Lean.TSyntax `ident))
     (body : Array (Lean.TSyntax `ramStmt))
-    (result : Lean.TSyntax `ramExpr) : Lean.MacroM LoweredFunction := do
+    (result : Option (Lean.TSyntax `ramExpr)) (resultKind : ValueKind := .word) :
+    Lean.MacroM LoweredFunction := do
   let parameterScope ← makeParameterScope params
   let scope ← makeParameterScope (params ++ localNames.map (fun name => ⟨name, .word⟩))
   let body ← lowerScopedBlock scope #[] (localRegisterCount scope) strict function body
   let paramCount := Lean.Syntax.mkNumLit (toString (localRegisterCount parameterScope))
   let localCount := Lean.Syntax.mkNumLit (toString body.nextRegister)
-  let term ← `(Ram.Func.mk $paramCount $localCount $(body.term)
-    $(← lowerExpr body.scope strict result))
-  return ⟨term, body.scope, body.nextRegister⟩
+  let results ← match result with
+    | some result => valueArgument body.scope strict resultKind result
+    | none =>
+        if resultKind == .unit then pure #[]
+        else Lean.Macro.throwError "a word or array function requires a return value"
+  let term ← `(Ram.Func.mk $paramCount $localCount $(body.term) [$results,*])
+  return ⟨term, body.scope, max body.nextRegister resultKind.width⟩
 
 def lowerFunction (strict : Bool) (function : FunctionResolver)
     (params localNames : Array (Lean.TSyntax `ident))
@@ -538,7 +578,7 @@ def lowerFunction (strict : Bool) (function : FunctionResolver)
   if localsKeyword.getId != `locals then
     Lean.Macro.throwErrorAt localsKeyword "expected 'locals' followed by local register names"
   return (← lowerFunctionWithScope strict function (params.map fun name => ⟨name, .word⟩)
-    localNames body result).term
+    localNames body (some result)).term
 
 macro_rules
   | `(ram_expr% $expr:ramExpr) => do return ← lowerExpr #[] Bool.false expr
@@ -547,7 +587,7 @@ macro_rules
 
 /-- Declare function-local register names without hand-numbering them.
 Parameters occupy the initial registers, followed by the declared locals.
-The final return expression is exactly the existing `Func.result`. -/
+The final return expression is the single field of the existing `Func.results`. -/
 syntax:max "ram_fun% " "(" ident,* ")" ident "(" ident,* ")" "{"
   ramStmt* "return " ramExpr ";" "}" : term
 
@@ -563,7 +603,7 @@ macro_rules
   | `(ram_fun% ($params:ident,*) { $body:ramStmt* return $result:ramExpr; }) => do
       return (← lowerFunctionWithScope Bool.true externalFunction
         (params.getElems.map fun name => ⟨name, .word⟩) #[]
-        body result).term
+        body (some result)).term
 
 /-!
 ### Examples

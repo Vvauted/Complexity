@@ -70,7 +70,7 @@ theorem count_function_contract {w heapLimit depth : Nat} {program : Program}
       (fun args entry =>
         args = countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target ∧
         ArrayAt heapLimit base xs entry)
-      (fun _ entry value finish => value = BitVec.ofNat w (xs.count target) ∧ finish = entry) := by
+      (fun _ entry value finish => value = [BitVec.ofNat w (xs.count target)] ∧ finish = entry) := by
   have correct := ForIn.Expression.function_contract
     (program := program) (heapLimit := heapLimit) (depth := depth)
     (step := Count.step target) countFunctions.body_eq.count countFunctions.result_eq.count
@@ -94,7 +94,7 @@ theorem count_function_runs {w heapLimit depth : Nat} {program : Program}
     (entry : State w) (represented : ArrayAt heapLimit base xs entry) :
     FunctionExec program heapLimit depth countFunctions.function.count
       (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target)
-      entry (BitVec.ofNat w (xs.count target)) entry := by
+      entry [BitVec.ofNat w (xs.count target)] entry := by
   obtain ⟨value, finish, execution, rfl, rfl⟩ :=
     count_function_contract (program := program) (depth := depth) hw hfit
       (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target)
@@ -108,14 +108,17 @@ theorem count_function_eval_toNat {w heapLimit : Nat} {program : Program}
     {base target : Word w} {xs : List (Word w)} {entry : State w} (hw : 0 < w)
     (hfit : base.toNat + xs.length < 2 ^ w)
     (represented : ArrayAt heapLimit base xs entry) :
-    (countFunctions.function.count.eval program heapLimit
+    (countFunctions.function.count.evalTyped .word countFunctions.results_length.count
+      program heapLimit
       (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target) entry).map
-        (fun result => result.1.toNat) = Part.some (xs.count target) := by
-  rw [(count_function_runs (program := program) (depth := 0)
-    hw hfit entry represented).eval_eq_some]
+        (fun result => result.1.toNat) =
+      Part.some (xs.count target) := by
+  have execution := count_function_runs (program := program) (depth := 0) (target := target)
+    hw hfit entry represented
+  rw [execution.evalTyped_eq_some (kind := .word) countFunctions.results_length.count]
   have exactCount : xs.count target < 2 ^ w :=
     lt_of_le_of_lt List.count_le_length (by omega)
-  simp [Word.ofNat_toNat_of_lt exactCount]
+  simp only [Part.map_some, Word.ofNat_toNat_of_lt exactCount]
 
 /-- A separate bound on this function's actual compiled body count. It does
 not include an enclosing caller's argument evaluation, frame or return code.
@@ -145,7 +148,7 @@ theorem count_function_runs_with_timeBound {w control heapLimit depth : Nat} {pr
     ∃ bodySteps,
       FunctionMeasuredExec control program heapLimit depth countFunctions.function.count
         (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target)
-        bodySteps entry (BitVec.ofNat w (xs.count target)) entry ∧
+        bodySteps entry [BitVec.ofNat w (xs.count target)] entry ∧
       bodySteps ≤ 20 * xs.length + 8 := by
   obtain ⟨bodySteps, value, finish, execution, ⟨rfl, rfl⟩, bound⟩ :=
     (count_function_contract (program := program) (depth := depth) hw hfit).with_timeBound
@@ -162,7 +165,7 @@ theorem count_function_contract_of_ref {w heapLimit depth : Nat} {program : Prog
     FunctionContract program heapLimit depth countFunctions.function.count
       (fun args entry => args = countFunctions.arguments.count array target ∧
         array.Rep heapLimit xs entry)
-      (fun _ entry value finish => value = BitVec.ofNat w (xs.count target) ∧ finish = entry) := by
+      (fun _ entry value finish => value = [BitVec.ofNat w (xs.count target)] ∧ finish = entry) := by
   apply (count_function_contract (program := program) (depth := depth)
     (base := array.base) (target := target) (xs := xs) hw hfit).consequence
   · rintro args entry ⟨rfl, represented⟩
@@ -180,7 +183,7 @@ theorem count_function_measured_of_ref {w control heapLimit depth : Nat} {progra
     (entry : State w) (represented : array.Rep heapLimit xs entry) :
     FunctionMeasuredExec control program heapLimit depth countFunctions.function.count
       (countFunctions.arguments.count array target) (20 * xs.length + 8)
-      entry (BitVec.ofNat w (xs.count target)) entry := by
+      entry [BitVec.ofNat w (xs.count target)] entry := by
   obtain ⟨value, finish, execution, rfl, rfl⟩ :=
     count_function_contract_of_ref (program := program) (depth := depth) hw hfit
       (countFunctions.arguments.count array target) entry ⟨rfl, represented⟩
@@ -193,9 +196,11 @@ theorem count_function_eval_toNat_of_ref {w heapLimit : Nat} {program : Program}
     {array : ArrayRef w} {target : Word w} {xs : List (Word w)} {entry : State w}
     (hw : 0 < w) (hfit : array.base.toNat + xs.length < 2 ^ w)
     (represented : array.Rep heapLimit xs entry) :
-    (countFunctions.function.count.eval program heapLimit
+    (countFunctions.function.count.evalTyped .word countFunctions.results_length.count
+      program heapLimit
       (countFunctions.arguments.count array target) entry).map
-        (fun result => result.1.toNat) = Part.some (xs.count target) := by
+        (fun result => result.1.toNat) =
+      Part.some (xs.count target) := by
   simpa only [countFunctions.arguments.count, represented.length_eq] using
     (count_function_eval_toNat (program := program) (target := target) hw hfit represented.2)
 

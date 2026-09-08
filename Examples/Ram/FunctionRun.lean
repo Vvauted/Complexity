@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Tactic.Ram.Run
+import Complexity.Computability.Ram.Compiler.Local.Function.Typed
 import Examples.Ram.Factorial
 import Examples.Ram.FactorialFunction
 
@@ -48,7 +49,7 @@ def runFactorialUntil (n : Word 32) : Option (Nat × Nat × StopReason) :=
 private theorem factorial_execution (n : Word 32) :
     Source.FunctionExec Factorial.functions.program 0 n.toNat Factorial.factorial
       (Factorial.functions.arguments.factorial n) (Source.State.initial [])
-      (Factorial.value 32 n.toNat) (Source.State.initial []) := by
+      [Factorial.value 32 n.toNat] (Source.State.initial []) := by
   simpa only [Word.ofNat_toNat_self] using
     Factorial.function_runs 0 n.toNat n.isLt (Source.State.initial [])
 
@@ -73,13 +74,16 @@ theorem runFactorialUntil_eq (n : Word 32)
       [Factorial.functions.function_lookup.factorial]
     simpa using hstack
   obtain ⟨target, returned, value, _⟩ := run
+  have field : target.regs 0 = Factorial.value 32 n.toNat := by
+    simpa [LocalCompiler.Function.returnedValues, Factorial.factorial,
+      Factorial.functions.result_eq.factorial] using value
   have steps : LocalCompiler.Function.callSteps Factorial.functions.registers
       Factorial.factorial (37 * n.toNat + 4) + 1 = 37 * n.toNat + 33 := by
     rw [factorial_call_steps]
   simp only [Factorial.factorial] at returned steps
   simp only [runFactorialUntil, Factorial.functions.run.factorial,
     max_eq_right (by decide : 1 ≤ Factorial.functions.registers), returned,
-    Option.map_some, value, Factorial.value_toNat, steps]
+    Option.map_some, field, Factorial.value_toNat, steps]
 
 #eval runFactorialUntil (BitVec.ofNat 32 5)
 
@@ -106,11 +110,14 @@ def factorial (n : Word 32)
 theorem factorial_eq_mod (n : Word 32)
     (hstack : (n.toNat + 1) * ABI.frameSize Factorial.functions.registers < 2 ^ 32) :
     factorial n hstack = Nat.factorial n.toNat % 2 ^ 32 := by
-  have returned := by
-    ram_run_apply (LocalCompiler.Function.apply_eq_of_execution (factorial_halts n hstack)
+  have returned : Factorial.functions.apply.factorial n 0 (Source.State.initial [])
+      (factorial_halts n hstack) = Factorial.value 32 n.toNat := by
+    ram_run_apply (LocalCompiler.Function.applyTyped_eq_of_execution (kind := .word)
+      Factorial.functions.results_length.factorial (factorial_halts n hstack)
       (execution := factorial_execution n)) [Factorial.functions.function_lookup.factorial]
     simpa using hstack
-  exact congrArg BitVec.toNat returned
+  simpa only [factorial, Factorial.value_toNat, Factorial.factorialNat] using
+    congrArg BitVec.toNat returned
 
 /-- When the mathematical result fits, the ordinary executable value is exactly
 mathlib's factorial, not just its residue modulo the word range. -/

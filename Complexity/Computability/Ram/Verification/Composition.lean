@@ -61,9 +61,10 @@ return safety; the real setup/return overhead remains in `callBudget`. -/
 theorem Correct.wp_call_reserve {w n heapLimit : Nat} {program : Program}
     {f : Func} {Arg : Type} {spec : Spec f w Arg} {arg : Arg}
     (correct : spec.Correct n program heapLimit arg)
-    {fn dst depth fuel reserve : Nat} {args : List Expr} {caller : State w}
+    {fn depth fuel reserve : Nat} {dsts : List Reg} {args : List Expr} {caller : State w}
     {post : State w → Nat → Prop}
     (lookup : program[fn]? = some f) (arity : args.length = f.params)
+    (resultCount : dsts.length = f.results.length)
     (frame : f.params ≤ f.locals)
     (arguments : ∀ expr ∈ args, expr.ReadsBelow heapLimit caller.regs caller.mem)
     (pre : spec.pre arg (caller.enter (args.map caller.eval)))
@@ -71,9 +72,9 @@ theorem Correct.wp_call_reserve {w n heapLimit : Nat} {program : Program}
     (budget : spec.callBudget n args arg + reserve ≤ fuel)
     (continuation : ∀ callee,
       spec.post arg (caller.enter (args.map caller.eval)) callee →
-      ∀ remaining, reserve ≤ remaining → post (caller.leave callee dst f.result) remaining) :
-    Verification.WP n program heapLimit depth (.call dst fn args) post caller fuel := by
-  apply correct.wp_call lookup arity frame arguments pre nesting (by omega)
+      ∀ remaining, reserve ≤ remaining → post (caller.leave callee dsts f.results) remaining) :
+    Verification.WP n program heapLimit depth (.call dsts fn args) post caller fuel := by
+  apply correct.wp_call lookup arity resultCount frame arguments pre nesting (by omega)
   intro callee hc remaining hr
   exact continuation callee hc remaining (by omega)
 

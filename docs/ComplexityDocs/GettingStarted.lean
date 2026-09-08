@@ -70,8 +70,9 @@ ram_def functions := ram_functions% {
 ```
 
 Names resolve to source registers and function-table entries, including forward and mutual
-recursive calls. Runtime values are words: multiplication wraps unless range hypotheses
-justify its interpretation as natural-number multiplication.
+recursive calls. Arithmetic operates on words: multiplication wraps unless range hypotheses
+justify its interpretation as natural-number multiplication. The default result is a word;
+`: array` returns an `ArrayRef`, and `: Unit` returns no fields, using `return;`.
 Return expressions occur at the end of functions; early return, `break` and `continue`
 are not current constructs.
 
@@ -115,6 +116,13 @@ outside this body count and are charged when `squaredNorm` is called.
 For a declaration named `p`, the generated entry points take the declared parameters
 in order, followed by `heapLimit : Nat` and `entry : Ram.Source.State w`.
 Word parameters take `Ram.Word w`; array parameters take `Ram.ArrayRef w`.
+Generated value interfaces retain the declared result type: `Word w`, `ArrayRef w` or
+`Unit`. These occupy one, two or zero return fields respectively. The raw function
+execution and contract interfaces use lists of words, so a scalar result is `[value]`,
+not a defaulted projection from a possibly empty list.
+The shared [source-value interface](##Complexity.Computability.Ram.Source.Value) supplies
+these representations. For proofs over typed arguments and results, use
+`Ram.Source.TypedFunctionContract`; generated semantic values use `Ram.Func.evalTyped`.
 `runTotal`, `apply` and `applyState` additionally take a final normal-termination proof `h`.
 For the `squaredNorm` declaration above, the entry points are:
 
@@ -130,8 +138,8 @@ For the `squaredNorm` declaration above, the entry points are:
 `eval` and `bodyTime` are noncomputable semantic observations, not executable Lean
 functions. `run` executes the existing compiled call path. It retains the final machine
 state, step count and stopping reason; it does not merely return a word or discard effects.
-`runTotal` extracts the actual runner result with `Option.get`; `apply` projects its
-returned word, while `applyState` also recovers source shared state without private
+`runTotal` extracts the actual runner result with `Option.get`; `apply` decodes its
+declared result, while `applyState` also recovers source shared state without private
 target stack cells. The `Halts` proof is erased at runtime and requires normal halt, not
 merely a nonempty `Option`. It supplies neither a reference answer nor a time budget.
 All six refer to the same declared implementation. The explicit heap boundary and
@@ -182,16 +190,19 @@ reuses it twice, without reopening the loop proof. Range and overflow premises s
 belong to the operation contract. See [data models](##ComplexityDocs.Models) for the
 representation boundary and current limits on array-valued source expressions.
 
-## Bind and borrow a local array
+## Return and borrow an array
 
-The [slice sample](##Examples.Ram.ArraySlice) calls the same sum implementation
-on a locally constructed reference:
+The [slice sample](##Examples.Ram.ArraySlice) returns a borrowed reference from one
+function and passes that actual result to the existing sum implementation:
 
 ```lean
 ram_def functions := ram_functions% {
   include sumFunctions as Sum;
+  fn slice(xs : array, offset, count) : array {
+    return subslice(xs, offset, count);
+  }
   fn sumSlice(xs : array, offset, count) {
-    let window : array := subslice(xs, offset, count);
+    let window ← call slice(xs, offset, count);
     let answer ← call Sum.sum(window);
     return answer;
   }
@@ -199,18 +210,21 @@ ram_def functions := ram_functions% {
 ```
 
 `subslice(xs, offset, count)` shifts the base by `offset` and sets the length to
-`count`. The two-word local descriptor is created by actual assignments, including
-the word addition; no array elements are copied and no heap storage is allocated.
+`count`. Both descriptor fields are evaluated in the callee and received by the
+caller through the ordinary compiled call. The address addition, return-field work
+and call overhead are real instructions; no array elements are copied and no heap
+storage is allocated.
 The function contract requires containment and no-wrap conditions and
 identifies the returned word with the sum of `(xs.drop offset.toNat).take count.toNat`.
 `sumSlice_eq` states the corresponding ordinary executable natural-number value
 modulo the word range, without a `main` or stream I/O.
 The sample runs on preloaded `[1, 2, 3, 4, 5]` with offset `1` and count `3`,
-returning `some (9, 196, Ram.StopReason.halted)`. Those 196 transitions include
-the actual descriptor work and calls, but not host-side heap preparation.
+returning `some (9, 243, Ram.StopReason.halted)`. Those 243 transitions include
+both calls and descriptor work, but not host-side heap preparation.
 
 Use `let other : array := window;` to copy a descriptor, or
 `let window : array := array(base, length);` to construct one from word expressions.
+`let window : array := subslice(xs, offset, count);` remains available for a local borrow.
 An immutable binding forbids `window.base := ...` and `window.length := ...`, but
 does not forbid writes such as `window[i] := value`; it is not read-only ownership.
 `let mut window : array := ...;` permits descriptor-field updates. Copies refer to
@@ -220,8 +234,9 @@ Local handles also work with `for x in window` and typed array call arguments.
 Typed array call positions accept `array(base, length)` and `subslice(xs, offset, count)`
 directly. The first argument of `subslice` must be an already bound handle, optionally
 parenthesized: use a prior `let` to construct or slice an intermediate handle.
-These are not general eager array expressions, checked slice constructors or
-array-valued returns. Bounds and aliasing remain proof obligations; allocation and
+These borrowed references are not general eager array expressions or checked slice
+constructors. Array-valued returns use the same represented references, not loaded
+Lean lists. Bounds and aliasing remain proof obligations; allocation and
 automatic loading from Lean lists are still separate work.
 
 ## Call functions declared in another module
@@ -243,11 +258,12 @@ ram_def functions := ram_functions% {
 ```
 
 `call f(...);` executes a call for its effects without introducing a source name
-for the returned word; `let _ ← call f(...);` is the explicit discard form.
+for its result; `let _ ← call f(...);` is the explicit discard form.
 Both work in scoped function and `main` bodies, including their nested blocks.
-The frontend allocates a private destination in the inferred frame and uses the
-same word-returning call compiler. Discarding the result does not skip the call,
-its shared-state effects or its costs, and does not add a `Unit` return signature.
+For a non-`Unit` result, the frontend allocates private destinations for its actual
+fields. Here `Copy.copy` really declares `: Unit` and ends with `return;`: its call
+has no result field or dummy destination. Neither discarding a result nor returning
+`Unit` skips the function's shared-state effects or its actual call costs.
 Raw `ram%` and `ram_stmt%` quotations have no inferred frame and require an explicit destination.
 
 The earlier declarations' stored word/array signatures determine argument lowering:
@@ -265,8 +281,8 @@ and sufficient code/stack capacity remain required. The mathematical result is t
 modular sum and copied destination contents. A
 [separate time proof](##Examples.Ram.FunctionCompositionTime) bounds that same invocation;
 correctness and termination require no proposed time bound.
-Its source-facing time tactics infer both call sites, including the anonymous copy
-destination. The proof supplies callee contracts, array facts and a bound for the
+Its source-facing time tactics infer both call sites, including copy's empty
+destination list. The proof supplies callee contracts, array facts and a bound for the
 remaining sum call; it does not reconstruct either callee loop or local-register roles.
 See [separate call costs](##ComplexityDocs.Complexity) for that interface.
 
@@ -392,8 +408,8 @@ concatenation describes the returned sum; no concatenated array or list loader i
 
 ## Use an ordinary executable value
 
-With normal termination proved, `p.apply.f ... heapLimit entry h` returns a word
-without `Part` or `Option` in its result type. The
+With normal termination proved, `p.apply.f ... heapLimit entry h` returns the declared
+word, array reference or `Unit` without `Part` or `Option` in its result type. The
 [function runner sample](##Examples.Ram.FunctionRun) defines an ordinary
 `factorial n hstack : Nat` by decoding this word:
 
@@ -432,13 +448,14 @@ partial-fixed-point runner is not an ordinary kernel-reducing recursive definiti
 use the proved value equations, not an expectation that `rfl` computes a result.
 This adds executable application of declared source functions, not compilation of
 arbitrary Lean definitions. Use `applyState` for shared state usable by another call,
-or `runTotal` for the complete machine result and actual steps. Projecting a word
+or `runTotal` for the complete machine result and actual steps. Projecting a result
 with `apply` does not prove shared state unchanged.
 
 The [state-returning copy sample](##Examples.Ram.ArrayCopyFunction) defines
 `copy source destination length heapLimit entry safe hstack : Source.State 32`.
-It executes the existing copy function's stores; `copy_contents` identifies the copied
-destination using the existing `arrayContents` observation. Its
+It projects the state from the real `Unit × Source.State 32` result of copy's
+generated `applyState`. It executes the existing copy function's stores;
+`copy_contents` identifies the copied destination using the existing `arrayContents` observation. Its
 `ArrayCopyFunction.copyThenSum` passes that returned state to the ordinary sum function.
 This is host-side sequencing of two real compiled calls, not one newly compiled RAM
 function, and has no combined RAM-cost theorem. Representation, disjointness and

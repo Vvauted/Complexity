@@ -23,7 +23,7 @@ require a normal-halt proof. They reuse the existing semantics and runner; they 
 in a reference result, a cost formula or a correctness proof.
 
 Source `include priorDeclaration as Alias;` reuses earlier `ram_def` implementations
-and their stored word/array signatures. Function tables are combined with the existing
+and their stored parameter and result signatures. Function tables are combined with the existing
 `Program.link` relocation; new functions are appended and qualified source calls
 resolve in that final table. Generated index maps and embeddings transport the old
 contracts instead of duplicating implementation proofs. These are static source
@@ -31,12 +31,13 @@ imports, not host callbacks, runtime module loading or arbitrary Lean compilatio
 All six generated observation/run interfaces are available under imported aliases.
 Stored signatures survive further imports; bare term quotations cannot resolve includes.
 
-Scoped `call f(...);` and `let _ ← call f(...);` discard the returned word without
-giving it a source binding. They still lower to the existing call operation with
-a fresh anonymous destination, included in the inferred local frame and charged
-by the same compiler-derived call costs. This is not a new `Unit`-returning ABI or
-an effect-erasing optimization. Raw `ram%` and `ram_stmt%` quotations do not infer
-a frame; their calls retain explicit destinations.
+Word, borrowed-array and `Unit` results have one, two and zero fields. All return
+expressions are evaluated in the same final callee state before restoring caller
+registers. Result arity is checked; receipt updates destinations in order.
+Scoped `call f(...);` and `let _ ← call f(...);` omit the source result binding.
+Non-`Unit` fields still receive fresh anonymous destinations in the inferred frame;
+a genuine `Unit` call has none. Both execute the body, effects and calling convention.
+Raw `ram%` and `ram_stmt%` quotations do not infer a frame and retain explicit destinations.
 
 The generic execution state retains input and output fields because functions
 may have effects. Merely carrying those fields does not execute stream operations.
@@ -47,6 +48,14 @@ A functional specification may be a relation, an ordinary Lean function or a
 native `StateM` computation. These are proof views. A sorting specification need
 not implement another sorting algorithm, and a loop need not be translated into
 a total pure function before its termination can be proved.
+
+`TypedFunctionContract` is a representation view of that same `FunctionExec`,
+using typed parameters and `Word`, `ArrayRef` or `Unit` results. Its encoder
+describes the declaration's actual fields; it is not a second program or a loader.
+The body rule decodes the callee's real results, and the call rule passes the
+typed value and shared effects to its continuation. A fixed-input adapter reuses
+existing raw contracts and independent time rules without assuming that arbitrary
+raw arguments represent valid typed inputs.
 
 Representation predicates relate mathematical values to visible machine state.
 Use mathlib equivalences when information is preserved, and relations when a
@@ -74,6 +83,10 @@ are noncomputable; executable application remains on the verified runtime path.
 Heap capacity can affect the domain, and shared entry state cannot be hidden
 without proving the relevant result and cost independence.
 
+Generated `eval` uses the single shared `Func.evalTyped` projection. Its decoding
+preserves all returned fields; the inverse encoding/decoding laws reuse standard
+list facts. The projection changes the mathematical view, not the chosen execution.
+
 The executable function adapter uses the existing compiler and machine runner.
 It places runtime arguments in parameter registers, launches a fixed call-and-halt
 sequence and returns the value separately from stream output. Preloading shared
@@ -88,7 +101,7 @@ target heap cells, not to the private stack left behind by the call.
 Ordinary executable application uses this same runtime path. `Function.Halts`
 asserts that the actual `runUntil` returns `some result` with reason `halted`;
 merely returning an optional result would also admit faults. `runTotal` applies
-`Option.get` to that real output, and `apply` projects the returned word. Neither
+`Option.get` to that real output, and raw `apply` projects the returned fields. Neither
 uses `Part.get` or extracts an answer from the specification. The `Prop` proof
 is erased at runtime and can follow from safe source termination before any time
 bound is supplied. The full result still carries the actual transition count,
@@ -101,7 +114,8 @@ interface. Value equations come from the execution bridges. Fixed word width,
 sufficient capacity and represented preloaded data remain genuine conditions.
 Projecting the returned word alone does not establish preservation of shared state.
 
-`applyState` returns that word with reusable source shared state from the same run.
+Generated `apply` and `applyState` decode the declared fields without default words;
+`applyState` pairs that typed value with reusable source shared state from the same run.
 `returnState` keeps caller registers and out-of-heap entry memory, takes actual
 target memory below the heap boundary, and retains actual I/O. Safe execution
 proves this projection equals the source final state; target stack cells are not
@@ -144,7 +158,8 @@ view under containment, and operation contracts retain address-range premises.
 Immutable bindings prevent descriptor-field assignment while still allowing
 writes through their addresses; `let mut` permits updating `base` and `length`.
 Aliases share the underlying heap, with no ownership or disjointness guarantee.
-Array-valued returns, general typed results and allocated-array construction still
+Array-valued returns use these same two actual fields and may be passed to another
+compiled source call. Allocated-array construction and richer value types still
 need implementation and cost interfaces; representation predicates do not supply them.
 
 Heap and call-depth capacities are safety premises, not instruction budgets.
@@ -163,6 +178,10 @@ of the actual callee to establish its mathematical `List.foldl` update and
 unchanged shared state. Its separate exact-count rule adds the real call and
 loop instructions to a proved constant callee-body count. This does not make
 ordinary Lean callbacks executable or provide a data-dependent fold-cost rule.
+A separate uniform upper-bound rule accepts `FunctionTimeBound` for each actual
+two-argument helper call, without requiring an exact count or helper totality.
+It bounds completed traversals; existence still comes from independent correctness.
+Dependence on the actual element and prefix accumulator needs a further rule.
 
 Scoped `for x in xs` lowers to the same statements: two fresh cursor locals copy
 the descriptor, and a third local receives each actual element load. The source
@@ -182,7 +201,7 @@ evaluation using those parameter equalities. A separate measured rule counts
 the compiled expression and traversal instructions in that same invocation.
 These rules cover one initialized scalar accumulator with an expression update
 or the supported fixed helper call. Richer bodies, multiple accumulators,
-short-circuiting, mutation and array-valued results need further interfaces;
+short-circuiting, mutation and array-valued accumulators need further interfaces;
 acceptance by the source parser alone does not supply their proofs.
 
 ## The current machine model

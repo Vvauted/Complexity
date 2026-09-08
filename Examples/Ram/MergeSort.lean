@@ -22,7 +22,7 @@ namespace Ram.Examples.MergeSort
 
 open Source.Array.MergeSort
 
-def main : Stmt := .call 3 0 [.var 0, .var 1, .var 2]
+def main : Stmt := .call [3] 0 [.var 0, .var 1, .var 2]
 
 def code : Code := LocalCompiler.rawLink 9 program main
 
@@ -121,7 +121,7 @@ theorem main_contract {heapLimit : Nat} {base scratch : Word w} {xs : List (Word
     change Pre heapLimit _ _ xs _
     simpa [Source.State.enter, Source.State.eval, Expr.eval, hp.base_reg, hp.scratch_reg]
       using hp.enter_params
-  have cost := Source.TimeBound.call (dst := 3) lookup entered
+  have cost := Source.TimeBound.call (dsts := [3]) lookup entered
     (recursive_timeBound (control := 9) hw lookup xs)
   apply cost.mono_budget
   intro entry hp

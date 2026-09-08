@@ -9,7 +9,7 @@ import Mathlib.Data.Part
 /-!
 # Function results and costs as partial values
 
-`Ram.Func.eval` observes the returned word and shared state of an actual function
+`Ram.Func.eval` observes the returned fields and shared state of an actual function
 invocation. Its domain is safe termination for some finite call depth, not a
 proposed instruction budget. `Ram.Func.bodyTime` independently observes the
 compiler-derived body count of that same invocation. Both use mathlib's `Part`;
@@ -33,16 +33,16 @@ namespace Func
 /-- The result of a safely terminating invocation, with call depth existentially
 hidden. No mathematical result function or time bound is supplied. -/
 noncomputable def eval (f : Func) (program : Program) (heapLimit : Nat)
-    (args : List (Word w)) (entry : Source.State w) : Part (Word w × Source.State w) where
-  Dom := ∃ result : Word w × Source.State w, ∃ depth,
+    (args : List (Word w)) (entry : Source.State w) : Part (List (Word w) × Source.State w) where
+  Dom := ∃ result : List (Word w) × Source.State w, ∃ depth,
     Source.FunctionExec program heapLimit depth f args entry result.1 result.2
   get := fun h => h.choose
 
 variable {w heapLimit depth : Nat} {f : Func} {program : Program}
-variable {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+variable {args : List (Word w)} {entry finish : Source.State w} {value : List (Word w)}
 
 /-- Membership describes exactly the existing safe execution relation. -/
-theorem mem_eval_iff {result : Word w × Source.State w} :
+theorem mem_eval_iff {result : List (Word w) × Source.State w} :
     result ∈ f.eval program heapLimit args entry ↔
       ∃ depth, Source.FunctionExec program heapLimit depth f args entry result.1 result.2 := by
   constructor
@@ -55,13 +55,66 @@ theorem mem_eval_iff {result : Word w × Source.State w} :
     exact Prod.ext (chosen.deterministic execution).1 (chosen.deterministic execution).2
 
 /-- An equation with `Part.some` includes termination as well as the result. -/
-theorem eval_eq_some_iff {result : Word w × Source.State w} :
+theorem eval_eq_some_iff {result : List (Word w) × Source.State w} :
     f.eval program heapLimit args entry = Part.some result ↔
       ∃ depth, Source.FunctionExec program heapLimit depth f args entry result.1 result.2 :=
   Part.eq_some_iff.trans mem_eval_iff
 
+/-- Every observed result has exactly the function's declared number of fields. -/
+theorem mem_eval_length {result : List (Word w) × Source.State w}
+    (h : result ∈ f.eval program heapLimit args entry) :
+    result.1.length = f.results.length := by
+  obtain ⟨_, execution⟩ := mem_eval_iff.mp h
+  exact execution.length_eq
+
+/-- Attach the proved field count to the same partial observation. Typed result
+decoders can then read actual fields without supplying defaults or extra values. -/
+noncomputable def evalFields (f : Func) (program : Program) (heapLimit : Nat)
+    (args : List (Word w)) (entry : Source.State w) :
+    Part ({values : List (Word w) // values.length = f.results.length} × Source.State w) where
+  Dom := (f.eval program heapLimit args entry).Dom
+  get := fun h =>
+    ⟨⟨((f.eval program heapLimit args entry).get h).1, mem_eval_length (Part.get_mem h)⟩,
+      ((f.eval program heapLimit args entry).get h).2⟩
+
+/-- Attaching field-count evidence changes neither termination nor shared effects. -/
+@[simp] theorem evalFields_dom :
+    (f.evalFields program heapLimit args entry).Dom ↔
+      (f.eval program heapLimit args entry).Dom := Iff.rfl
+
+/-- Forgetting field-count evidence recovers exactly the original observation. -/
+@[simp] theorem evalFields_map :
+    (f.evalFields program heapLimit args entry).map
+      (fun result => (result.1.val, result.2)) = f.eval program heapLimit args entry := rfl
+
+theorem mem_evalFields_iff
+    {fields : {values : List (Word w) // values.length = f.results.length}} :
+    (fields, finish) ∈ f.evalFields program heapLimit args entry ↔
+      (fields.val, finish) ∈ f.eval program heapLimit args entry := by
+  constructor
+  · rintro ⟨h, equal⟩
+    exact ⟨h, congrArg (fun result => (result.1.val, result.2)) equal⟩
+  · rintro ⟨h, equal⟩
+    have fieldsEqual := congrArg (fun result : List (Word w) × Source.State w => result.1) equal
+    have stateEqual := congrArg (fun result : List (Word w) × Source.State w => result.2) equal
+    exact ⟨h, Prod.ext (Subtype.ext fieldsEqual) stateEqual⟩
+
+/-- Typed decoding uses the original result equation, with no new execution proof. -/
+theorem evalFields_eq_some_iff
+    {fields : {values : List (Word w) // values.length = f.results.length}} :
+    f.evalFields program heapLimit args entry = Part.some (fields, finish) ↔
+      f.eval program heapLimit args entry = Part.some (fields.val, finish) :=
+  Part.eq_some_iff.trans (mem_evalFields_iff.trans Part.eq_some_iff.symm)
+
+/-- Reuse a raw result equation through the field-count interface. -/
+theorem evalFields_eq_some
+    (h : f.eval program heapLimit args entry = Part.some (value, finish))
+    (length : value.length = f.results.length) :
+    f.evalFields program heapLimit args entry = Part.some (⟨value, length⟩, finish) :=
+  evalFields_eq_some_iff.mpr h
+
 /-- Increasing safe heap capacity preserves every already defined result. -/
-theorem eval_mono_heap {heapLimit' : Nat} {result : Word w × Source.State w}
+theorem eval_mono_heap {heapLimit' : Nat} {result : List (Word w) × Source.State w}
     (h : result ∈ f.eval program heapLimit args entry) (hh : heapLimit ≤ heapLimit') :
     result ∈ f.eval program heapLimit' args entry := by
   obtain ⟨depth, execution⟩ := mem_eval_iff.mp h
@@ -109,7 +162,7 @@ theorem bodyTime_dom_iff_eval_dom :
     exact ⟨steps, f.locals, depth, value, finish, measured⟩
 
 /-- Separately observed results and costs belong to one and the same execution. -/
-theorem eval_bodyTime_iff {result : Word w × Source.State w} {steps : Nat} :
+theorem eval_bodyTime_iff {result : List (Word w) × Source.State w} {steps : Nat} :
     (f.eval program heapLimit args entry = Part.some result ∧
       f.bodyTime program heapLimit args entry = Part.some steps) ↔
       ∃ control depth,
@@ -130,7 +183,7 @@ end Func
 namespace Source
 
 variable {w control heapLimit depth : Nat} {f : Func} {program : Program}
-variable {args : List (Word w)} {entry finish : State w} {value : Word w}
+variable {args : List (Word w)} {entry finish : State w} {value : List (Word w)}
 
 /-- Turn a safe invocation into a function-value equation. -/
 theorem FunctionExec.eval_eq_some
@@ -147,7 +200,7 @@ theorem FunctionMeasuredExec.bodyTime_eq_some {steps : Nat}
 /-- A function contract yields a defined semantic value satisfying its ordinary
 mathematical postcondition; the postcondition need not define a reference algorithm. -/
 theorem FunctionContract.eval_spec {P : List (Word w) → State w → Prop}
-    {Q : List (Word w) → State w → Word w → State w → Prop}
+    {Q : List (Word w) → State w → List (Word w) → State w → Prop}
     (h : FunctionContract program heapLimit depth f P Q) (hp : P args entry) :
     ∃ value finish, f.eval program heapLimit args entry = Part.some (value, finish) ∧
       Q args entry value finish := by
@@ -156,7 +209,7 @@ theorem FunctionContract.eval_spec {P : List (Word w) → State w → Prop}
 
 /-- A total contract controls every value observed through the semantic interface. -/
 theorem FunctionContract.eval_post {P : List (Word w) → State w → Prop}
-    {Q : List (Word w) → State w → Word w → State w → Prop}
+    {Q : List (Word w) → State w → List (Word w) → State w → Prop}
     (h : FunctionContract program heapLimit depth f P Q) (hp : P args entry)
     (result : (value, finish) ∈ f.eval program heapLimit args entry) :
     Q args entry value finish := by
@@ -166,7 +219,7 @@ theorem FunctionContract.eval_post {P : List (Word w) → State w → Prop}
 /-- Publish a result property and a separately proved bound as observations of
 the same invocation. Neither observation is defined using those proposed properties. -/
 theorem FunctionContract.eval_with_timeBound {P : List (Word w) → State w → Prop}
-    {Q : List (Word w) → State w → Word w → State w → Prop}
+    {Q : List (Word w) → State w → List (Word w) → State w → Prop}
     {bound : List (Word w) → State w → Nat}
     (h : FunctionContract program heapLimit depth f P Q)
     (time : FunctionTimeBound control program heapLimit depth f P bound) (hp : P args entry) :

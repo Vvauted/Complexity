@@ -44,14 +44,14 @@ theorem simulate_measured_memory {control locals heapLimit depth steps : Nat}
       exact simulation_whileTrue_memory hwf.1 reads condition (body hwf.2) (rest hwf)
   | read available => exact simulation_read_memory hwf available
   | write reads => exact simulation_write_memory hwf reads
-  | call lookup arity frame arguments _ result body =>
+  | call lookup arity resultCount frame arguments _ results body =>
       have hf := hvalid.2.2 _ (List.mem_of_getElem? lookup)
       have hcount : _ ≤ _ := frame
       rw [← arity] at hcount
       have call := fun hcaller : locals ≤ control =>
         simulate_call_memory hcaller hf.2.1 (calleeLocals_lookup lookup)
-          hwf.1 hwf.2 arguments hcount hf.1.2.2 result (rawLink_function lookup)
-          hcodefit (body hf.1.2.1)
+          hwf.1 hwf.2 arguments hcount resultCount hf.2.2.2 hf.1.2.2 results
+          (rawLink_function lookup) hcodefit (body hf.1.2.1)
       exact ⟨fun hcaller => (call hcaller).1 hcaller,
         fun hcaller => (call hcaller).2 hcaller⟩
 

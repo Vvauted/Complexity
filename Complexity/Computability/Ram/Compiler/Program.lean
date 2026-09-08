@@ -35,15 +35,16 @@ theorem simulate_linked {n heapLimit depth : Nat} {program : Program} {main stmt
       apply simulate hx hwf
       intro dst fn args caller final hcall hwfCall
       cases hcall with
-      | call lookup arity frame arguments body result =>
+      | call lookup arity resultCount frame arguments body results =>
           have hf := hvalid.2.2 _ (List.mem_of_getElem? lookup)
           have hbodyWF := hf.1.2.1.mono hf.2.1
           have hbody := ih _ (Nat.lt_succ_self _) body hbodyWF
           have hcount : args.length ≤ n := by
             rw [arity]
             exact Nat.le_trans frame hf.2.1
-          exact simulate_call hwfCall.1 hwfCall.2 arguments hcount
-            (hf.1.2.2.mono hf.2.1) result (rawLink_function lookup) hcodefit hbody
+          exact simulate_call hwfCall.1 hwfCall.2 arguments hcount resultCount hf.2.2.2
+            (fun e he => (hf.1.2.2 e he).mono hf.2.1) results
+            (rawLink_function lookup) hcodefit hbody
 
 /-- The actual machine state after reading the extra boundary word. -/
 def mainStart (n heapLimit : Nat) (input : List (Word w)) : State w :=

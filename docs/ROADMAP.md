@@ -10,16 +10,16 @@ or lemmas in the repository. [Design](DESIGN.md) records semantic boundaries;
 
 ## What the samples actually establish
 
-The verified scalar-function baseline already supports independent functions,
-budget-free correctness, separate compiled costs, and ordinary executable value
-equations. The returned-array and genuine `Unit` migration is in progress:
-checked backend modules or accepted syntax alone do not establish end-to-end use.
+The checked function path supports word, borrowed-array and genuine `Unit`
+results, typed mathematical contracts, budget-free correctness, separate compiled
+costs, and ordinary executable value equations. The existing samples exercise
+these through the actual compiler and runner, not syntax or backend lemmas alone.
 
 | Consumer | What works | What still costs the proof author too much |
 | --- | --- | --- |
 | [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves the recursive function; its executable value rewrites to mathlib factorial under the stated word/stack conditions. | Separate time and exact-count proofs reconstruct body states, recursive calls and register updates. |
-| [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; a shared traversal proves the list fold without exposing its cursor. | Exact helper costs still require measured-execution case analysis; the traversal cost interface expects a constant helper-body count. |
-| [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | The implementation uses a borrowed slice; subsequent properties use ordinary `List.drop`, `take`, and sum identities. | The slice is currently a local descriptor, not the result of a reusable slice function; runtime publication repeats safety and call-overhead bridges. |
+| [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. A separate uniform helper-bound rule is available. | Exact helper costs still require measured-execution case analysis; actual element/prefix-dependent traversal costs need a further rule. |
+| [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. | The implementation proof still normalizes parameter binding, returned descriptor receipt and representation transport; its time proof separately composes those calls. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls, with independently reusable correctness and time proofs. | Clients transport contracts through imports, rebuild representations, unpack register preservation, and choose numeric continuation reserves. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
 
@@ -53,11 +53,11 @@ Already reused: `Part`, ordinary lists and vectors, `StateM` and `Std.Do.Triple`
 standard induction, asymptotic relations, and mathlib's Akra–Bazzi machinery.
 Do not build replacements for these.
 
-A confirmed small improvement is the word-sum algebra:
-[Array/Sum](../Complexity/Computability/Ram/Array/Sum.lean) can reuse
-`List.sum_eq_foldl`, `List.foldl_assoc`, and BitVec's existing associative addition
-and zero identity. Keep the necessary encoding/modular-arithmetic bridge, rather
-than maintaining a second collection of list-sum proofs.
+The word-sum algebra in [Array/Sum](../Complexity/Computability/Ram/Array/Sum.lean)
+now reuses `List.sum_eq_foldl` and standard sum identities through one
+encoding/modular-arithmetic bridge. Typed result decoding similarly reuses
+standard list-length and element facts. Do not maintain parallel collections of
+generic list proofs; preserve the project-specific representation bridge.
 
 Memory-to-list representation, source-to-target simulation and compiler-derived
 costs are necessary project-specific bridges; an upstream `List` or `Part`
@@ -146,24 +146,28 @@ cost comparisons which retain behavior, rather than assuming every computation
 has a separate pure scalar cost formula. These motivate the design; our RAM
 adequacy claims must still be proved here.
 
-## Priority 1: finish one typed function path
+## Priority 1: typed function path — checked foundation
 
-Complete the current multi-field migration across source semantics, both
+The multi-field path now covers source semantics, both
 compilers, checked arities, executable calls, DSL signatures, imported signatures,
-typed observations and contracts. Word, borrowed array and `Unit` results must
+typed observations and contracts. Word, borrowed array and `Unit` results
 use actual returned fields from the same callee execution.
 
-Then make typed arguments and results available in the correctness interface,
-not only in generated `eval`/`apply` entry points. Proof authors should not
-unpack a raw list of return words or prove return-field lengths themselves.
-A thin typed view must remain tied to the one declared implementation.
+`TypedFunctionContract` exposes typed arguments and results, not only generated
+`eval`/`apply` entry points. Shared semantic and executable projection theorems
+remove per-client field-length and decoding proofs. This is a thin view of the
+one declared implementation, not another program container.
 
-**Evidence of completion:** adapt the existing slice consumer so a function
-returns a borrowed slice which another function passes to imported sum. Adapt
-copy to genuinely return `Unit`, preserving its heap effects in copy-then-sum.
-Their mathematical contracts and independent compiled costs must compose without
-a stream driver, fabricated result fields, or host-side sequencing masquerading
-as one compiled program. Recheck scalar and recursive consumers too.
+**Checked evidence:** the slice consumer returns a borrowed array which another
+function passes to imported sum. Copy genuinely returns `Unit` and preserves its
+heap effects in copy-then-sum. Both have mathematical contracts and independent
+compiled costs without a stream driver, fabricated result fields or host-side
+sequencing masquerading as one compiled program. Scalar and recursive consumers,
+the full library, examples and manual pass on the designated server.
+
+This establishes the typed path, not the final proof experience. Calls still need
+explicit typed-input instantiation and some parameter/representation normalization;
+the following priorities remove that repetitive work through public rules.
 
 A `Unit` value alone is not an observation of mutation or execution steps.
 Use the same invocation's state/count interface to observe those effects;
@@ -180,10 +184,10 @@ Build on the existing total-correctness and measured-execution rules.
   proof uses its mathematical recursive argument instead of another register-level
   induction. Retain any stronger body invariant actually required; do not infer
   it from restored caller state alone.
-- Extend the existing traversal interface to consume a callee's conditional
-  `FunctionTimeBound`, first for a uniform per-step bound, then for bounds on
-  the actual element and prefix accumulator. Reuse finite sums and existing
-  traversal/framing proofs.
+- Build on the checked uniform `ForIn.function_timeBound`, which consumes a
+  callee's conditional `FunctionTimeBound` without requiring exact costs or
+  helper totality. Next allow bounds on the actual element and prefix accumulator,
+  reusing finite sums and existing traversal/framing proofs.
 - Expose state-dependent continuation bounds through the existing call rules.
   Automate local restoration and routine representation transport; mathematical
   facts about updated data remain explicit.
@@ -198,6 +202,12 @@ upper-bound clients reconstruct ABI blocks or measured execution trees.
 Adapt the existing call-based fold to reuse a helper whose actual cost varies
 with its input, and validate that composition. Re-instantiating a constant-cost
 helper does not establish the promised data-dependent experience.
+
+The next concrete candidate is a tiny two-argument adapter around the existing
+factorial implementation, not a second recursive algorithm. Sum the proved costs
+at actual elements and prefix accumulators using standard list operations. Keep
+an explicit element bound and sufficient recursive stack capacity; a conditional
+time bound does not become monotone in allowed call depth without justification.
 
 ## Priority 3: make data-operation contracts compose naturally
 

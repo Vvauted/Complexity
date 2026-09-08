@@ -34,18 +34,19 @@ namespace Spec
 variable {f : Func} {w n heapLimit : Nat} {Arg : Type} {program : Program}
 
 /-- The function body terminates within its proposed bound, and its return
-expression is safe to evaluate in the actual final callee state. -/
+expressions are safe to evaluate in the actual final callee state. -/
 def Correct (spec : Spec f w Arg) (n : Nat) (program : Program)
     (heapLimit : Nat) (arg : Arg) : Prop :=
   RelContract n program heapLimit (spec.depth arg) f.body (spec.pre arg)
-    (fun entry finish => f.result.ReadsBelow heapLimit finish.regs finish.mem ∧
+    (fun entry finish => (∀ result ∈ f.results,
+      result.ReadsBelow heapLimit finish.regs finish.mem) ∧
       spec.post arg entry finish) (fun _ => spec.budget arg)
 
 /-- Total invocation budget, read directly from generated setup and return
-blocks plus the body bound. It includes both jumps and receipt of the result. -/
+blocks plus the body bound. It includes both jumps and receipt of every result. -/
 def callBudget (spec : Spec f w Arg) (n : Nat) (args : List Expr) (arg : Arg) : Nat :=
   (ABI.callPrefixLocals n f.locals args 0).length + 1 + spec.budget arg +
-    (ABI.returnCodeLocals n f.locals f.result).length + 1
+    (ABI.returnCodeResultsLocals n f.locals f.results).length + f.results.length
 
 /-- Prove a recursive function by verifying its body once for a symbolic
 argument. Recursive hypotheses are callable contracts, not execution trees.
@@ -56,7 +57,8 @@ theorem verify_wellFounded (spec : Spec f w Arg) {r : Arg → Arg → Prop}
     (body : ∀ arg, (∀ smaller, r smaller arg → spec.Correct n program heapLimit smaller) →
       ∀ entry, spec.pre arg entry →
         Verification.WP n program heapLimit (spec.depth arg) f.body
-          (fun finish _ => f.result.ReadsBelow heapLimit finish.regs finish.mem ∧
+          (fun finish _ => (∀ result ∈ f.results,
+            result.ReadsBelow heapLimit finish.regs finish.mem) ∧
             spec.post arg entry finish) entry (spec.budget arg)) :
     ∀ arg, spec.Correct n program heapLimit arg := by
   intro arg
@@ -69,9 +71,10 @@ and I/O effects through `State.leave`. Extra available nesting depth is safe;
 unused time is threaded to the continuation, never reset. -/
 theorem Correct.wp_call {spec : Spec f w Arg} {arg : Arg}
     (correct : spec.Correct n program heapLimit arg)
-    {fn dst depth fuel : Nat} {args : List Expr} {caller : State w}
+    {fn depth fuel : Nat} {dsts : List Reg} {args : List Expr} {caller : State w}
     {post : State w → Nat → Prop}
     (lookup : program[fn]? = some f) (arity : args.length = f.params)
+    (resultCount : dsts.length = f.results.length)
     (frame : f.params ≤ f.locals)
     (arguments : ∀ expr ∈ args, expr.ReadsBelow heapLimit caller.regs caller.mem)
     (pre : spec.pre arg (caller.enter (args.map caller.eval)))
@@ -80,18 +83,19 @@ theorem Correct.wp_call {spec : Spec f w Arg} {arg : Arg}
     (continuation : ∀ callee,
       spec.post arg (caller.enter (args.map caller.eval)) callee →
       ∀ remaining, fuel - spec.callBudget n args arg ≤ remaining →
-        post (caller.leave callee dst f.result) remaining) :
-    Verification.WP n program heapLimit depth (.call dst fn args) post caller fuel := by
+        post (caller.leave callee dsts f.results) remaining) :
+    Verification.WP n program heapLimit depth (.call dsts fn args) post caller fuel := by
   obtain ⟨steps, callee, execution, ⟨reads, result⟩, hsteps⟩ :=
     correct (caller.enter (args.map caller.eval)) pre
   change steps ≤ spec.budget arg at hsteps
-  have call := LocalMeasuredExec.call (dst := dst) lookup arity frame arguments execution reads
-    |>.mono nesting
+  have call := LocalMeasuredExec.call (dsts := dsts) lookup arity resultCount frame
+    arguments execution reads |>.mono nesting
   have bounded :
       (ABI.callPrefixLocals n f.locals args 0).length + 1 + steps +
-        (ABI.returnCodeLocals n f.locals f.result).length + 1 ≤
+        (ABI.returnCodeResultsLocals n f.locals f.results).length + dsts.length ≤
           spec.callBudget n args arg := by
     unfold callBudget
+    rw [resultCount]
     omega
   exact ⟨_, _, call, Nat.le_trans bounded budget,
     continuation callee result _ (by omega)⟩

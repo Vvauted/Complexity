@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.ABI.Basic
+import Complexity.Computability.Ram.Memory.Basic
 
 /-!
 # Receiving a function's return fields
@@ -177,6 +178,49 @@ theorem receiveResults_correct {n start : Nat} {dsts : List Reg}
     receiveResults_bank bounded s, receiveResults_mem n start dsts s,
     receiveResults_input n start dsts s, receiveResults_output n start dsts s,
     receiveResults_status n start dsts s⟩
+
+/-- Receiving a buffered result list implements the source's ordered register
+assignments. Repeated destinations keep their last value, and each move leaves
+the still-unreceived fields in the protected result bank unchanged. -/
+theorem receiveResults_matches {n locals heapLimit start : Nat}
+    {dsts : List Reg} {values : List (Word w)} {s : Source.State w} {t : State w}
+    (hmatch : s.Matches heapLimit locals t) (hlocals : locals ≤ n)
+    (bounded : ∀ dst ∈ dsts, dst < locals) (hlen : dsts.length = values.length)
+    (hvalues : ∀ (i : Nat) (hi : i < values.length),
+      t.regs (resultReg n (start + i)) = values[i]) :
+    (s.setRegs dsts values).Matches heapLimit locals
+      (execBlock (receiveResults n start dsts) t) := by
+  induction dsts generalizing start values s t with
+  | nil =>
+      simpa only [Source.State.setRegs_nil, receiveResults, execBlock_nil] using hmatch
+  | cons dst dsts ih =>
+      cases values with
+      | nil => simp at hlen
+      | cons value values =>
+          have hdst : dst < n :=
+            Nat.lt_of_lt_of_le (bounded dst (by simp)) hlocals
+          have htail : ∀ r ∈ dsts, r < locals :=
+            fun r hr => bounded r (List.mem_cons_of_mem _ hr)
+          have hhead : t.regs (resultReg n start) = value := by
+            simpa only [Nat.add_zero, List.getElem_cons_zero] using hvalues 0 (by simp)
+          have moved : (s.setReg dst value).Matches heapLimit locals
+              (execInstr (.move dst (resultReg n start)) t) := by
+            refine ⟨?_, hmatch.heap, hmatch.input, hmatch.output, hmatch.running⟩
+            intro r hr
+            by_cases equal : r = dst
+            · subst r
+              simpa only [Source.State.setReg_same, execInstr, State.next_regs,
+                State.setReg_same] using hhead.symm
+            · simpa only [Source.State.setReg_ne _ _ _ _ equal, execInstr,
+                State.next_regs, State.setReg_ne _ _ _ _ equal] using hmatch.regs r hr
+          rw [Source.State.setRegs_cons, receiveResults, execBlock_cons]
+          apply ih (start := start + 1) moved htail (by simpa using hlen)
+          intro i hi
+          have hne : resultReg n ((start + 1) + i) ≠ dst :=
+            Nat.ne_of_gt (Nat.lt_trans hdst (lt_resultReg n ((start + 1) + i)))
+          simp only [execInstr, State.next_regs, State.setReg_ne _ _ _ _ hne]
+          simpa only [List.getElem_cons_succ, Nat.add_assoc, Nat.add_comm 1 i] using
+            hvalues (i + 1) (by simpa only [List.length_cons] using Nat.succ_lt_succ hi)
 
 /-- Each distinct destination contains the corresponding original return field. -/
 theorem ResultsReceived.values {n start : Nat} {dsts : List Reg} {s t : State w}

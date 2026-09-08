@@ -82,7 +82,11 @@ macro_rules
             Ram.Tactic.stmtSize_read, Ram.Tactic.stmtSize_write,
             Ram.Tactic.compile_const_length, Ram.Tactic.compile_var_length,
             Ram.Tactic.compile_bin_length, Ram.Tactic.compile_load_length,
+            List.forall_mem_cons, List.forall_mem_nil, List.map_cons, List.map_nil,
+            List.length_cons, List.length_nil, and_true, true_and,
             Ram.Expr.ReadsBelow, Ram.Source.State.eval, Ram.Expr.eval, Ram.BinOp.eval,
+            Ram.Source.State.setRegs_nil, Ram.Source.State.setRegs_nil_values,
+            Ram.Source.State.setRegs_cons,
             Ram.Source.State.setReg, Ram.Source.State.setMem, Ram.Source.State.output,
             BitVec.ofNat_eq_ofNat, $args,*] <;> try norm_num [$args,*] <;> try rfl))
 

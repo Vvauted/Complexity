@@ -30,7 +30,7 @@ body specification; it may retain arbitrary shared-state effects. -/
 theorem verify_wellFounded_function (spec : TotalSpec f w Arg) {r : Arg → Arg → Prop}
     (wf : WellFounded r)
     {P : Arg → List (Word w) → State w → Prop}
-    {Q : Arg → List (Word w) → State w → Word w → State w → Prop}
+    {Q : Arg → List (Word w) → State w → List (Word w) → State w → Prop}
     (adapt : ∀ arg, spec.Correct program heapLimit arg →
       FunctionContract program heapLimit (spec.depth arg) f (P arg) (Q arg))
     (body : ∀ arg,
@@ -38,7 +38,8 @@ theorem verify_wellFounded_function (spec : TotalSpec f w Arg) {r : Arg → Arg 
         FunctionContract program heapLimit (spec.depth smaller) f (P smaller) (Q smaller)) →
       ∀ entry, spec.pre arg entry →
         Verification.TotalWP program heapLimit (spec.depth arg) f.body
-          (fun finish => f.result.ReadsBelow heapLimit finish.regs finish.mem ∧
+          (fun finish =>
+            (∀ expr ∈ f.results, expr.ReadsBelow heapLimit finish.regs finish.mem) ∧
             spec.post arg entry finish) entry) :
     ∀ arg, spec.Correct program heapLimit arg :=
   spec.verify_wellFounded wf fun arg ih =>

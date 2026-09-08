@@ -58,7 +58,8 @@ The verified path has three layers:
 3. `Ram.LocalCompiler.compileChecked_runs_measured_heap` connects that execution to the
    checked target program, retaining the visible heap and I/O at a halted endpoint.
 
-`Ram.LocalCompiler.compileChecked` checks static register bounds, function lookup and arity.
+`Ram.LocalCompiler.compileChecked` checks static register bounds, function lookup,
+argument and result arities, and space for the buffered return fields.
 Runtime safety and capacity are premises of the compiler theorem, not automatically inserted
 bounds checks. Successful compilation alone therefore does not establish correctness.
 
@@ -80,8 +81,11 @@ header-read instruction. It neither consumes an input word to pass a function ar
 nor writes an output word to return a result. The function body may still contain its own
 I/O operations, and those effects are retained.
 
-`Ram.Source.FunctionExec` observes the function's returned word separately from shared
-state. The source state's `input` and `outputRev` fields model possible stream effects;
+`Ram.Source.FunctionExec` observes the function's returned list of words separately from
+shared state. Generated typed interfaces decode one field as a `Word`, two as an
+`ArrayRef`, or no fields as `Unit`. Array references remain borrowed base/length metadata,
+not loaded or allocated arrays. The source state's `input` and `outputRev` fields model
+possible stream effects;
 they are not implicit operations. For example, factorial proves the same result for
 arbitrary caller streams and preserves them. Its optional stream main actually executes
 `read` and `write`, and its whole-program theorem includes those instructions.
@@ -127,23 +131,31 @@ Word-valued Boolean interpretations additionally require positive word width.
 
 The default `Ram.LocalCompiler` uses a callee-sized frame. A call evaluates its arguments
 in the caller state, saves the return address and the `l` caller registers its callee can
-overwrite, passes the arguments, runs the body, then restores the caller.
+overwrite, passes the arguments, runs the body, evaluates all return fields, then restores
+the caller and receives the fields at its destinations.
 Heap and I/O effects remain shared.
 All save, initialization and restore work is emitted code; there is no unit-cost bulk copy.
 
-`Ram.ABI.callLocals_steps_eq` gives the count for a call with `p` arguments:
+`Ram.ABI.callResultsLocals_steps_eq` gives the count for a call with `p` argument
+words and `q` returned fields:
 
 ```text
-compiled argument lengths + measured body steps + compiled result length
-+ 7 * l + p + 11
+sum of compiled argument lengths + measured body steps + sum of compiled result lengths
++ 7 * l + p + 2 * q + 9
 ```
 
-The result expression is evaluated before restoring the caller, and the count includes the
-call and return control transfers. Increasing an unrelated function's local bound does not
-increase this call's frame work. `Ram.Compiler` retains the global-bound reference compiler.
+All result expressions are evaluated in the original final callee state before any field
+is received. Destinations are assigned in order, so repeated destinations retain their
+last assigned field. Return arity is checked independently of this overwrite behavior.
+The count includes both control transfers, field buffering and receipt. For a scalar
+result, `q = 1` recovers `Ram.ABI.callLocals_steps_eq` and its `+ 11` term. A true `Unit`
+return has `q = 0`: no dummy expression or result move executes, but the body, frame work,
+control transfers and any shared effects remain.
+Increasing an unrelated function's local bound does not increase this call's frame work.
+`Ram.Compiler` retains the global-bound reference compiler.
 
 `Ram.Func.bodyTime` excludes the enclosing call's argument evaluation, frame setup and
-return sequence, including evaluation of that function's own return expression. Nested
+return sequence, including evaluation of that function's own return expressions. Nested
 calls inside its body include their complete generated call code. For example,
 [squaredNorm](##Examples.Ram.LocalBindings) has body time 46 from two 23-step calls;
 its final addition is in its own return expression and is not part of those 46 steps.

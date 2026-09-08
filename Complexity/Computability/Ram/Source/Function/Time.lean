@@ -23,32 +23,32 @@ The count is independent of the proposed bound and safety capacities.
 
 namespace Ram.Source
 
-/-- Function invocation with its exact compiled body count. The returned value
+/-- Function invocation with its exact compiled body count. The returned fields
 and shared effects are those of the same body; enclosing call overhead is
 accounted for by `FunctionMeasuredExec.call`, not included in `bodySteps`. -/
 def FunctionMeasuredExec (control : Nat) (program : Program) (heapLimit depth : Nat)
     (f : Func) (args : List (Word w)) (bodySteps : Nat)
-    (entry : State w) (value : Word w) (finish : State w) : Prop :=
+    (entry : State w) (value : List (Word w)) (finish : State w) : Prop :=
   args.length = f.params ∧ f.params ≤ f.locals ∧
     ∃ callee,
       LocalMeasuredExec control program heapLimit depth f.body bodySteps
         (entry.enter args) callee ∧
-      f.result.ReadsBelow heapLimit callee.regs callee.mem ∧
-      value = callee.eval f.result ∧ finish = entry.restore callee
+      (∀ result ∈ f.results, result.ReadsBelow heapLimit callee.regs callee.mem) ∧
+      value = f.results.map callee.eval ∧ finish = entry.restore callee
 
 namespace FunctionMeasuredExec
 
 variable {w control heapLimit depth bodySteps : Nat} {program : Program} {f : Func}
-variable {args : List (Word w)} {entry finish : State w} {value : Word w}
+variable {args : List (Word w)} {entry finish : State w} {value : List (Word w)}
 
 /-- Reuse the existing measured body without choosing a cost annotation. -/
 theorem of_body {callee : State w} (arity : args.length = f.params)
     (frame : f.params ≤ f.locals)
     (body : LocalMeasuredExec control program heapLimit depth f.body bodySteps
       (entry.enter args) callee)
-    (result : f.result.ReadsBelow heapLimit callee.regs callee.mem) :
+    (result : ∀ expr ∈ f.results, expr.ReadsBelow heapLimit callee.regs callee.mem) :
     FunctionMeasuredExec control program heapLimit depth f args bodySteps entry
-      (callee.eval f.result) (entry.restore callee) :=
+      (f.results.map callee.eval) (entry.restore callee) :=
   ⟨arity, frame, callee, body, result, rfl, rfl⟩
 
 /-- Erasing the count retains the same safe invocation. -/
@@ -59,10 +59,17 @@ theorem erase
   obtain ⟨arity, frame, callee, body, result, returned, shared⟩ := h
   exact ⟨arity, frame, callee, body.erase, result, returned, shared⟩
 
+/-- Measuring the body does not change the number of returned fields. -/
+theorem length_eq
+    (h : FunctionMeasuredExec control program heapLimit depth f args bodySteps
+      entry value finish) :
+    value.length = f.results.length :=
+  h.erase.length_eq
+
 /-- A body has one count and one result, independently of safety capacities
 and the compiler's reserved-register boundary. -/
 theorem deterministic {control' heapLimit' depth' bodySteps' : Nat}
-    {value' : Word w} {finish' : State w}
+    {value' : List (Word w)} {finish' : State w}
     (h : FunctionMeasuredExec control program heapLimit depth f args bodySteps
       entry value finish)
     (h' : FunctionMeasuredExec control' program heapLimit' depth' f args bodySteps'
@@ -74,20 +81,21 @@ theorem deterministic {control' heapLimit' depth' bodySteps' : Nat}
   subst callee'
   exact ⟨count, rfl, rfl⟩
 
-/-- Count an actual call, including its argument-evaluation and frame code,
-callee body, return code and the two linking transitions. -/
-theorem call {fn dst : Nat} {exprs : List Expr}
+/-- Count an actual call, including argument evaluation, frame code, the entry
+jump, the callee body, return code and every result-field receipt. -/
+theorem call {fn : Nat} {dsts : List Reg} {exprs : List Expr}
     (h : FunctionMeasuredExec control program heapLimit depth f
       (exprs.map entry.eval) bodySteps entry value finish)
     (lookup : program[fn]? = some f)
+    (resultCount : dsts.length = f.results.length)
     (arguments : ∀ expr ∈ exprs, expr.ReadsBelow heapLimit entry.regs entry.mem) :
-    LocalMeasuredExec control program heapLimit (depth + 1) (.call dst fn exprs)
+    LocalMeasuredExec control program heapLimit (depth + 1) (.call dsts fn exprs)
       ((ABI.callPrefixLocals control f.locals exprs 0).length + 1 + bodySteps +
-        (ABI.returnCodeLocals control f.locals f.result).length + 1)
-      entry (finish.setReg dst value) := by
+        (ABI.returnCodeResultsLocals control f.locals f.results).length + dsts.length)
+      entry (finish.setRegs dsts value) := by
   obtain ⟨arity, frame, callee, body, result, rfl, rfl⟩ := h
-  rw [State.restore_setReg]
-  exact .call lookup (by simpa only [List.length_map] using arity) frame
+  rw [State.restore_setRegs]
+  exact .call lookup (by simpa only [List.length_map] using arity) resultCount frame
     arguments body result
 
 end FunctionMeasuredExec
@@ -95,7 +103,7 @@ end FunctionMeasuredExec
 /-- Safe termination already determines an actual body count; a time bound
 is not needed to obtain the corresponding measured invocation. -/
 theorem FunctionExec.exists_measured {heapLimit depth : Nat} {program : Program} {f : Func}
-    {args : List (Word w)} {entry finish : State w} {value : Word w}
+    {args : List (Word w)} {entry finish : State w} {value : List (Word w)}
     (h : FunctionExec program heapLimit depth f args entry value finish) (control : Nat) :
     ∃ bodySteps, FunctionMeasuredExec control program heapLimit depth f args bodySteps
       entry value finish := by
@@ -140,7 +148,7 @@ end FunctionTimeBound
 /-- Attach a separate bound to the very invocation supplied by correctness. -/
 theorem FunctionContract.with_timeBound {control heapLimit depth : Nat} {program : Program}
     {f : Func} {P : List (Word w) → State w → Prop}
-    {Q : List (Word w) → State w → Word w → State w → Prop}
+    {Q : List (Word w) → State w → List (Word w) → State w → Prop}
     {bound : List (Word w) → State w → Nat}
     (h : FunctionContract program heapLimit depth f P Q)
     (time : FunctionTimeBound control program heapLimit depth f P bound) :

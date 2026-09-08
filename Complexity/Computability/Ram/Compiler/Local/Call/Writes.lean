@@ -25,33 +25,35 @@ namespace Ram.LocalCompiler
 The body hypothesis retains its real entry SP, and the call's step count is
 unchanged from `simulate_call_exact`. -/
 theorem simulate_call_writes
-    {control caller heapLimit depth dst fn bodySteps : Nat}
-    {args : List Expr} {code : Code} {localsTable entries : Nat → Nat}
+    {control caller heapLimit depth fn bodySteps : Nat}
+    {dsts : List Reg} {args : List Expr} {code : Code} {localsTable entries : Nat → Nat}
     {s callee : Source.State w} {f : Func}
     (hcaller : caller ≤ control)
     (hlocals : f.locals ≤ control)
     (htable : localsTable fn = f.locals)
-    (hdst : dst < caller)
+    (hdsts : ∀ dst ∈ dsts, dst < caller)
     (hargs : ∀ a ∈ args, a.Bounded caller)
     (hreads : ∀ a ∈ args, a.ReadsBelow heapLimit s.regs s.mem)
     (hcount : args.length ≤ f.locals)
-    (hresult : f.result.Bounded f.locals)
-    (hresultReads : f.result.ReadsBelow heapLimit callee.regs callee.mem)
+    (hresultCount : dsts.length = f.results.length)
+    (hresultCapacity : f.results.length - 1 ≤ control)
+    (hresults : ∀ e ∈ f.results, e.Bounded f.locals)
+    (hresultReads : ∀ e ∈ f.results, e.ReadsBelow heapLimit callee.regs callee.mem)
     (hfunction : CodeAt code (entries fn)
       (compileFunc control localsTable entries f (entries fn)))
     (hcodefit : code.length < 2 ^ w)
     (hbody : SimulationWrites control f.locals heapLimit code localsTable entries depth
       f.body bodySteps (s.enter (args.map s.eval)) callee) :
     SimulationWrites control caller heapLimit code localsTable entries (depth + 1)
-      (.call dst fn args)
+      (.call dsts fn args)
       ((ABI.callPrefixLocals control f.locals args 0).length + 1 + bodySteps +
-        (ABI.returnCodeLocals control f.locals f.result).length + 1)
-      s (s.leave callee dst f.result) := by
-  refine ⟨simulate_call_exact hcaller hlocals htable hdst hargs hreads hcount
-    hresult hresultReads hfunction hcodefit hbody.1, ?_⟩
+        (ABI.returnCodeResultsLocals control f.locals f.results).length + dsts.length)
+      s (s.leave callee dsts f.results) := by
+  refine ⟨simulate_call_exact hcaller hlocals htable hdsts hargs hreads hcount
+    hresultCount hresultCapacity hresults hresultReads hfunction hcodefit hbody.1, ?_⟩
   intro _ t hm hheap hfit hcode address member
   change CodeAt code t.pc
-    (ABI.callCodeLocals control (localsTable fn) (entries fn) dst args t.pc) at hcode
+    (ABI.callCodeResultsLocals control (localsTable fn) (entries fn) dsts args t.pc) at hcode
   rw [htable] at hcode
   have hl := callCode_layout hcode
   let returnPC := t.pc + (ABI.callPrefixLocals control f.locals args 0).length + 1
@@ -87,7 +89,7 @@ theorem simulate_call_writes
   have hchildFit : Compiler.StackFits control depth entered := childEnvelope.trans_lt hfit
   change CodeAt code (entries fn)
     (compileStmt control localsTable entries f.body (entries fn) ++
-      ABI.returnCodeLocals control f.locals f.result) at hfunction
+      ABI.returnCodeResultsLocals control f.locals f.results) at hfunction
   have hbodyAt : CodeAt code entered.pc
       (compileStmt control localsTable entries f.body entered.pc) := hfunction.append_left
   obtain ⟨q, hbodyExec, hcallee, hbodyFrame, _, hbodyPC⟩ :=
@@ -99,19 +101,22 @@ theorem simulate_call_writes
   obtain ⟨hheader, hsaved⟩ := hbody.prefix_savedFrame hlocals
     (hp.matched.atPC (entries fn)) hchildHeap hchildFit hbodyAt
     hheap (by rw [henteredSP]) hp.saved hp.returnAddress (Nat.le_refl _) hbodyExec
-  have hreturnAt : CodeAt code q.pc (ABI.returnCodeLocals control f.locals f.result) := by
+  have hreturnAt : CodeAt code q.pc
+      (ABI.returnCodeResultsLocals control f.locals f.results) := by
     rw [hbodyPC]
     simpa only [entered, State.atPC_pc, compileStmt_length] using hfunction.append_right
-  have hr := ABI.returnPrefixLocals_correct hlocals hcallee hresult hresultReads
-    hframeFit hqSP hsaved hheader
-  let restored := execBlock (ABI.returnPrefixLocals control f.locals f.result) q
+  have hr := ABI.returnPrefixResultsLocals_correct hlocals hcallee hresultCapacity
+    hresults hresultReads hframeFit hqSP hsaved hheader
+  let restored := execBlock (ABI.returnPrefixResultsLocals control f.locals f.results) q
   let back := restored.atPC returnPC
   have hreturnFit : returnPC < 2 ^ w :=
-    Nat.lt_trans (List.getElem?_eq_some_iff.mp hl.receive).1 hcodefit
-  have hreturnExec : Exec code (ABI.returnCodeLocals control f.locals f.result).length q back :=
-    ABI.returnCodeLocals_exec hr hreturnAt hcallee.running (Word.ofNat_toNat_of_lt hreturnFit)
+    Nat.lt_of_le_of_lt (Nat.succ_le_of_lt (List.getElem?_eq_some_iff.mp hl.jump).1) hcodefit
+  have hreturnExec : Exec code
+      (ABI.returnCodeResultsLocals control f.locals f.results).length q back :=
+    ABI.returnCodeResultsLocals_exec hr hreturnAt hcallee.running
+      (Word.ofNat_toNat_of_lt hreturnFit)
   rw [← ABI.callPrefixLocals_length control f.locals args returnPC 0] at member
-  rw [heapWrites_add (((hprefix.trans hjump).trans hbodyExec).trans hreturnExec) 1,
+  rw [heapWrites_add (((hprefix.trans hjump).trans hbodyExec).trans hreturnExec) dsts.length,
     Finset.mem_union] at member
   rcases member with beforeReceive | receive
   · rw [heapWrites_add ((hprefix.trans hjump).trans hbodyExec) _, Finset.mem_union]
@@ -133,11 +138,13 @@ theorem simulate_call_writes
         · right
           rw [henteredSP] at inChild
           omega
-    · rw [ABI.returnCodeLocals_heapWrites_eq_empty hreturnAt hcallee.running] at returning
+    · rw [ABI.returnCodeResultsLocals_heapWrites_eq_empty hreturnAt hcallee.running] at returning
       exact (Finset.notMem_empty address returning).elim
   · have backRunning : back.status = .running := hr.status.trans hcallee.running
-    have receiveFetch : code[back.pc]? = some (.move dst (ABI.rv control)) := hl.receive
-    rw [heapWrites_one, stepHeapWrites_of_fetch backRunning receiveFetch] at receive
+    have receiveEmpty : heapWrites code dsts.length back = ∅ := by
+      simpa only [ABI.receiveResults_length] using
+        ABI.receiveResults_heapWrites_eq_empty hl.receive backRunning
+    rw [receiveEmpty] at receive
     exact (Finset.notMem_empty address receive).elim
 
 end Ram.LocalCompiler

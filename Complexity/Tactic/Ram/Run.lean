@@ -11,7 +11,8 @@ import Lean.Elab.Tactic.Simp
 # Applying the executable function bridges
 
 `ram_run_apply bridge [facts]` applies an existing function-runner theorem and
-uses its compilation premise to select the standard compiled call trampoline.
+uses its compilation premise to select the standard compiled call trampoline,
+including the result-field count from the actual function declaration.
 It attempts only the static compilation, function lookup and code-length gates.
 Stack capacity, source execution, contracts and mathematical premises remain
 ordinary proof goals. Supplied facts are used only on those static gates.
@@ -44,7 +45,8 @@ private def inferRunCode (goal : MVarId) : MetaM (Option (Lean.Expr × Lean.Expr
     let some (control, program, fn, arity) :=
       lhs.app4? ``LocalCompiler.Function.compile | return none
     let some (_, code) := rhs.app2? ``Option.some | return none
-    let trampoline ← mkAppM ``LocalCompiler.Function.trampoline #[fn, arity]
+    let resultArity ← mkAppM ``LocalCompiler.Function.resultArity #[program, fn]
+    let trampoline ← mkAppM ``LocalCompiler.Function.trampoline #[fn, arity, resultArity]
     let compiled ← mkAppM ``LocalCompiler.rawLink #[control, program, trampoline]
     unless ← isDefEq code compiled do return none
     let lookup ← mkAppM ``GetElem?.getElem? #[program, fn]

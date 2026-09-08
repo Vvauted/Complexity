@@ -99,6 +99,7 @@ import Complexity.Computability.Ram.Compiler.Local.Exact.Writes
 import Complexity.Computability.Ram.Compiler.Local.Exact.WritesBasic
 import Complexity.Computability.Ram.Compiler.Local.Function
 import Complexity.Computability.Ram.Compiler.Local.Function.Total
+import Complexity.Computability.Ram.Compiler.Local.Function.Typed
 import Complexity.Computability.Ram.Compiler.Local.Measured.Basic
 import Complexity.Computability.Ram.Compiler.Local.Measured.Deterministic
 import Complexity.Computability.Ram.Compiler.Local.Measured.Memory
@@ -163,6 +164,7 @@ import Complexity.Computability.Ram.Source.Safe
 import Complexity.Computability.Ram.Source.State
 import Complexity.Computability.Ram.Source.StraightLine
 import Complexity.Computability.Ram.Source.Syntax
+import Complexity.Computability.Ram.Source.Value
 import Complexity.Computability.Ram.Time.Basic
 import Complexity.Computability.Ram.Time.Logarithm
 import Complexity.Computability.Ram.Time.Multivariate
@@ -182,6 +184,7 @@ import Complexity.Computability.Ram.Verification.Control
 import Complexity.Computability.Ram.Verification.Execution
 import Complexity.Computability.Ram.Verification.Frame
 import Complexity.Computability.Ram.Verification.Function
+import Complexity.Computability.Ram.Verification.Function.Typed
 import Complexity.Computability.Ram.Verification.Logic
 import Complexity.Computability.Ram.Verification.Loop.Basic
 import Complexity.Computability.Ram.Verification.Loop.Logarithmic

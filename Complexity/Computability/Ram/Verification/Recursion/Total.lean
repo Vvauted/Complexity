@@ -33,11 +33,12 @@ namespace TotalSpec
 variable {f : Func} {w heapLimit : Nat} {Arg : Type} {program : Program}
 
 /-- The body terminates safely and establishes its functional postcondition.
-The final return expression is safe in that same callee state. -/
+Every return expression is safe in that same callee state. -/
 def Correct (spec : TotalSpec f w Arg) (program : Program)
     (heapLimit : Nat) (arg : Arg) : Prop :=
   TotalRelContract program heapLimit (spec.depth arg) f.body (spec.pre arg)
-    (fun entry finish => f.result.ReadsBelow heapLimit finish.regs finish.mem ∧
+    (fun entry finish => (∀ result ∈ f.results,
+      result.ReadsBelow heapLimit finish.regs finish.mem) ∧
       spec.post arg entry finish)
 
 /-- Prove a recursive function using any well-founded mathematical relation.
@@ -48,7 +49,8 @@ theorem verify_wellFounded (spec : TotalSpec f w Arg) {r : Arg → Arg → Prop}
     (body : ∀ arg, (∀ smaller, r smaller arg → spec.Correct program heapLimit smaller) →
       ∀ entry, spec.pre arg entry →
         Verification.TotalWP program heapLimit (spec.depth arg) f.body
-          (fun finish => f.result.ReadsBelow heapLimit finish.regs finish.mem ∧
+          (fun finish => (∀ result ∈ f.results,
+            result.ReadsBelow heapLimit finish.regs finish.mem) ∧
             spec.post arg entry finish) entry) :
     ∀ arg, spec.Correct program heapLimit arg := by
   intro arg
@@ -60,21 +62,22 @@ callee's shared-memory and I/O effects. Only the argument precondition, safe
 calling convention and the desired functional continuation remain to prove. -/
 theorem Correct.wp_call {spec : TotalSpec f w Arg} {arg : Arg}
     (correct : spec.Correct program heapLimit arg)
-    {fn dst depth : Nat} {args : List Expr} {caller : State w}
+    {fn depth : Nat} {dsts : List Reg} {args : List Expr} {caller : State w}
     {post : State w → Prop}
     (lookup : program[fn]? = some f) (arity : args.length = f.params)
+    (resultCount : dsts.length = f.results.length)
     (frame : f.params ≤ f.locals)
     (arguments : ∀ expr ∈ args, expr.ReadsBelow heapLimit caller.regs caller.mem)
     (pre : spec.pre arg (caller.enter (args.map caller.eval)))
     (nesting : spec.depth arg + 1 ≤ depth)
     (continuation : ∀ callee,
       spec.post arg (caller.enter (args.map caller.eval)) callee →
-        post (caller.leave callee dst f.result)) :
-    Verification.TotalWP program heapLimit depth (.call dst fn args) post caller := by
+        post (caller.leave callee dsts f.results)) :
+    Verification.TotalWP program heapLimit depth (.call dsts fn args) post caller := by
   obtain ⟨callee, execution, reads, result⟩ :=
     correct (caller.enter (args.map caller.eval)) pre
-  exact ⟨_, (SafeExec.call (dst := dst) lookup arity frame arguments execution reads).mono
-    nesting, continuation callee result⟩
+  exact ⟨_, (SafeExec.call (dsts := dsts) lookup arity resultCount frame
+    arguments execution reads).mono nesting, continuation callee result⟩
 
 end TotalSpec
 

@@ -34,7 +34,7 @@ theorem function_timeBound {w control heapLimit : Nat} {source destination : Arr
     FunctionTimeBound control functions.program heapLimit 1 functions.function.copyThenSum
       (fun args entry => args = functions.arguments.copyThenSum source destination ∧
         source.Rep heapLimit xs entry ∧ destination.Rep heapLimit ys entry)
-      (fun _ _ => 37 * xs.length + 107) := by
+      (fun _ _ => 37 * xs.length + 104) := by
   ram_time_vc args entry ⟨rfl, sourceArray, destinationArray⟩
     [functions.body_eq.copyThenSum]
   have copyCorrect := copy_function_contract
@@ -58,7 +58,6 @@ theorem function_timeBound {w control heapLimit : Nat} {source destination : Arr
     ram_time_call sumTime
       [functions.function_lookup.Sum.sum, registers,
         destinationArray.length_eq, sameLength, destinationCopied, sumFunctions.result_eq.sum]
-    exact destinationCopied
 
 /-- The bound includes every inner and outer call block and the final halt
 of the same compiled invocation. Its termination proof remains budget-free. -/
@@ -70,7 +69,7 @@ theorem runTotal_steps_le {source destination : ArrayRef 32} {heapLimit : Nat}
     (destinationArray : destination.Rep heapLimit ys entry)
     (disjoint : ArraysDisjoint source.base xs.length destination.base xs.length) :
     (functions.runTotal.copyThenSum source destination heapLimit entry
-      (halts safe hstack)).steps ≤ 37 * xs.length + 170 := by
+      (halts safe hstack)).steps ≤ 37 * xs.length + 160 := by
   have fit : destination.base.toNat + xs.length < 2 ^ 32 := by
     have within := destinationArray.2.2
     omega
@@ -82,8 +81,12 @@ theorem runTotal_steps_le {source destination : ArrayRef 32} {heapLimit : Nat}
     (function_timeBound (by decide : 0 < 32) sameLength fit disjoint)
     ⟨rfl, sourceArray, destinationArray⟩
   have callCount : LocalCompiler.Function.callSteps functions.registers
-      functions.function.copyThenSum (37 * xs.length + 107) + 1 = 37 * xs.length + 170 := by
-    ram_simp [LocalCompiler.Function.callSteps_eq, functions.result_eq.copyThenSum]
-  simpa only [functions.runTotal.copyThenSum, callCount] using bounded
+      functions.function.copyThenSum (37 * xs.length + 104) + 1 = 37 * xs.length + 160 := by
+    rw [LocalCompiler.Function.callSteps_eq]
+    change 37 * xs.length + 104 + 2 * 4 + 1 + 7 * 5 + 2 * 1 + 9 + 1 =
+      37 * xs.length + 160
+    omega
+  simpa only [functions.runTotal.copyThenSum,
+    max_eq_right (by decide : 1 ≤ functions.registers), callCount] using bounded
 
 end Ram.Examples.FunctionComposition

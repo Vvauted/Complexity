@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Source.Named.Basic
 import Complexity.Computability.Ram.Array.Ref
 import Complexity.Computability.Ram.Compiler.Local.Function.Total
+import Complexity.Computability.Ram.Verification.Function.Typed
 
 /-!
 # Source declarations in ordinary correctness proofs
@@ -19,15 +20,16 @@ Lean declarations for its functions and source names:
 * `p.functionIndex.f` is the function-table index of `f`;
 * `p.function_lookup.f` proves that this entry is `p.function.f`;
 * `p.params_eq.f` and `p.locals_eq.f` simplify its parameter and frame-slot counts;
-* `p.body_eq.f` and `p.result_eq.f` expose the lowered body and return expression;
+* `p.body_eq.f` and `p.result_eq.f` expose the lowered body and return fields;
+* `p.results_length.f` proves the field count of the declared result kind;
 * `p.arguments.f` takes word or `Ram.ArrayRef` parameters and constructs their word argument list;
 * `p.arguments_length.f` proves that this list has the function's declared arity;
 * `p.eval.f` observes the function's result and shared state through `Part`;
 * `p.bodyTime.f` observes its compiler-derived body count through `Part`;
 * `p.run.f` executes its compiled call without a supplied instruction limit;
 * `p.runTotal.f` executes a call proved to halt and retains its complete machine result;
-* `p.apply.f` returns that call's word value as an ordinary executable function;
-* `p.applyState.f` returns its word value together with the resulting source shared state;
+* `p.apply.f` projects that call's declared `Word`, `ArrayRef` or `Unit` value;
+* `p.applyState.f` returns its typed value together with the resulting source shared state;
 * `p.localReg.f.x` is the binding of `x` visible at the return of function `f`;
 * `p.mainReg.x` is a binding visible at the end of `main`, when present.
 
@@ -49,9 +51,16 @@ normal halt, not merely the presence of an optional result: faults are not
 successful function returns. The proof is erased at runtime; these entry points
 execute the existing runner, rather than extracting a value from a specification.
 Use `runTotal` to retain the actual machine state and transition count;
-`apply` projects only the returned word. None requires a time budget.
+`apply` projects only the declared value. Its word/array fields come from the
+actual runner, with their length justified by the function declaration; missing
+fields are never replaced by default words. None requires a time budget.
 
-`applyState` returns `Word w × Ram.Source.State w`. Its state restores the caller's
+The projection of a Unit result is `()`. Observing only that empty value cannot
+force a pure host computation to execute: use `applyState` for shared effects or
+`runTotal` for the state and count. This does not elide source Unit calls, whose
+bodies, effects and frame handling execute through the same compiled ABI.
+
+`applyState` pairs the declared result type with `Ram.Source.State w`. Its state restores the caller's
 registers, takes the executed heap contents below the heap boundary, and retains
 the entry memory outside it, so private target stack cells do not become source
 heap contents. Actual input/output effects are retained. This is a projection of
@@ -75,7 +84,7 @@ Existing term-form declarations need not be migrated.
 
 Within `ram_def`, `include other as Alias;` imports a previously declared collection
 before the local functions. Calls such as `Alias.f(xs)` retain the imported word/array
-signature. Linking relocates every imported internal call; local functions are lowered
+parameter and result signature. Linking relocates every imported internal call; local functions are lowered
 once with their final indices. `p.importMap.Alias` and `p.embeds.Alias` expose the index
 map and semantic embedding. Imported members receive the same function, argument and
 runtime entries under `p.function.Alias.f`, `p.arguments.Alias.f`, `p.run.Alias.f`, and so
@@ -87,6 +96,11 @@ require `ram_def`; ordinary term quotations without includes remain unchanged.
 namespace Ram.DSL
 
 open Lean.Parser.Term
+
+private def valueKindTerm : ValueKind → Lean.MacroM (Lean.TSyntax `term)
+  | .word => `(Ram.DSL.ValueKind.word)
+  | .array => `(Ram.DSL.ValueKind.array)
+  | .unit => `(Ram.DSL.ValueKind.unit)
 
 /-- Source signatures persist across imports; the executable definitions remain the
 ordinary named function tables. No function bodies are stored in this extension. -/
@@ -114,6 +128,7 @@ private def localRegisterDeclarations (scopeName : Lean.Name)
         declarations := declarations.push (← declare (binding.name ++ `base) binding.register)
         declarations := declarations.push
           (← declare (binding.name ++ `length) (binding.register + 1))
+    | .unit => pure ()
   return declarations
 
 private def argumentDeclarations (name fn : Lean.TSyntax `ident)
@@ -122,9 +137,10 @@ private def argumentDeclarations (name fn : Lean.TSyntax `ident)
   let argumentsName := Lean.mkIdentFrom fn (name.getId ++ `arguments ++ fn.getId)
   let lengthName := Lean.mkIdentFrom fn (name.getId ++ `arguments_length ++ fn.getId)
   let width := Lean.mkIdent (← Lean.Macro.addMacroScope `w)
-  let parameterType (kind : ParameterKind) := match kind with
+  let parameterType (kind : ValueKind) := match kind with
     | .word => `(Ram.Word $width:ident)
     | .array => `(Ram.ArrayRef $width:ident)
+    | .unit => `(Unit)
   let mut words : Array (Lean.TSyntax `term) := #[]
   for param in params do
     let name := param.name
@@ -133,6 +149,7 @@ private def argumentDeclarations (name fn : Lean.TSyntax `ident)
     | .array =>
         words := words.push (← `(($name:ident).base))
         words := words.push (← `(($name:ident).length))
+    | .unit => pure ()
   let mut value ← `(([$words,*] : List (Ram.Word $width:ident)))
   for param in params.reverse do
     let name := param.name
@@ -153,9 +170,12 @@ private def argumentDeclarations (name fn : Lean.TSyntax `ident)
   return #[arguments.raw, length.raw]
 
 private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
-    (params : Array Parameter) : Lean.MacroM (Array Lean.Syntax) := do
+    (params : Array Parameter) (resultKind : ValueKind) :
+    Lean.MacroM (Array Lean.Syntax) := do
   let argumentsName := Lean.mkIdentFrom fn (name.getId ++ `arguments ++ fn.getId)
   let indexName := Lean.mkIdentFrom fn (name.getId ++ `functionIndex ++ fn.getId)
+  let lookupName := Lean.mkIdentFrom fn (name.getId ++ `function_lookup ++ fn.getId)
+  let resultLengthName := Lean.mkIdentFrom fn (name.getId ++ `results_length ++ fn.getId)
   let evalName := Lean.mkIdentFrom fn (name.getId ++ `eval ++ fn.getId)
   let timeName := Lean.mkIdentFrom fn (name.getId ++ `bodyTime ++ fn.getId)
   let runName := Lean.mkIdentFrom fn (name.getId ++ `run ++ fn.getId)
@@ -165,13 +185,15 @@ private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
   let width := Lean.mkIdent (← Lean.Macro.addMacroScope `w)
   let heapLimit := Lean.mkIdent (← Lean.Macro.addMacroScope `heapLimit)
   let entry := Lean.mkIdent (← Lean.Macro.addMacroScope `entry)
+  let halts := Lean.mkIdent (← Lean.Macro.addMacroScope `halts)
+  let kind ← valueKindTerm resultKind
   let mut arguments ← `(@$argumentsName:ident $width:ident)
   for param in params do
     let parameter := param.name
     arguments ← `($arguments $parameter:ident)
   let mut eval ← `(fun ($heapLimit:ident : Nat) ($entry:ident : Ram.Source.State $width:ident) =>
-    Ram.Func.eval $functionName:ident ($name:ident).program $heapLimit:ident
-      $arguments $entry:ident)
+    Ram.Func.evalTyped $functionName:ident $kind $resultLengthName:ident
+      ($name:ident).program $heapLimit:ident $arguments $entry:ident)
   let mut time ← `(fun ($heapLimit:ident : Nat) ($entry:ident : Ram.Source.State $width:ident) =>
     Ram.Func.bodyTime $functionName:ident ($name:ident).program $heapLimit:ident
       $arguments $entry:ident)
@@ -184,19 +206,33 @@ private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
       ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
       $arguments $entry:ident)
   let mut application ← `(fun ($heapLimit:ident : Nat) ($entry:ident : Ram.Source.State $width:ident) =>
-    Ram.LocalCompiler.Function.apply (max 1 ($name:ident).registers)
-      ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
-      $arguments $entry:ident)
+    fun ($halts:ident : Ram.LocalCompiler.Function.Halts (max 1 ($name:ident).registers)
+        ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
+        $arguments $entry:ident) =>
+      Ram.DSL.ValueKind.decode $kind
+        (Ram.LocalCompiler.Function.apply (max 1 ($name:ident).registers)
+          ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
+          $arguments $entry:ident $halts:ident)
+        ((Ram.LocalCompiler.Function.apply_length_of_lookup $halts:ident
+          $lookupName:ident).trans $resultLengthName:ident))
   let mut applicationState ← `(fun ($heapLimit:ident : Nat)
       ($entry:ident : Ram.Source.State $width:ident) =>
-    Ram.LocalCompiler.Function.applyState (max 1 ($name:ident).registers)
-      ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
-      $arguments $entry:ident)
+    fun ($halts:ident : Ram.LocalCompiler.Function.Halts (max 1 ($name:ident).registers)
+        ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
+        $arguments $entry:ident) =>
+      let result := Ram.LocalCompiler.Function.applyState (max 1 ($name:ident).registers)
+        ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
+        $arguments $entry:ident $halts:ident
+      (Ram.DSL.ValueKind.decode $kind result.1
+        (show result.1.length = ($kind).width from
+          (Ram.LocalCompiler.Function.apply_length_of_lookup $halts:ident
+            $lookupName:ident).trans $resultLengthName:ident), result.2))
   for param in params.reverse do
     let parameter := param.name
     let type ← match param.kind with
       | .word => `(Ram.Word $width:ident)
       | .array => `(Ram.ArrayRef $width:ident)
+      | .unit => `(Unit)
     eval ← `(fun ($parameter:ident : $type) => $eval)
     time ← `(fun ($parameter:ident : $type) => $time)
     run ← `(fun ($parameter:ident : $type) => $run)
@@ -216,10 +252,11 @@ private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
     /-- Execute the declared function with a normal-halt proof, retaining its state and count. -/
     abbrev $runTotalName:ident {$width:ident : Nat} := $runTotal)
   let applyDeclaration ← `(command|
-    /-- Execute the declared function with a normal-halt proof and return its word value. -/
+    /-- Project the declared word, array, or Unit result of the normally terminating call.
+    Use `runTotal` or `applyState` to observe execution when the result is Unit. -/
     abbrev $applyName:ident {$width:ident : Nat} := $application)
   let applyStateDeclaration ← `(command|
-    /-- Execute the declared function and return its word and source shared state, excluding
+    /-- Execute the declared function and return its typed value and source shared state, excluding
     private stack cells and restoring caller registers while retaining actual stream effects. -/
     abbrev $applyStateName:ident {$width:ident : Nat} := $applicationState)
   return #[evalDeclaration.raw, timeDeclaration.raw, runDeclaration.raw,
@@ -235,8 +272,17 @@ private def layoutEquations (name fn functionName : Lean.TSyntax `ident)
     ($functionName:ident).locals = $locals := rfl)
   return #[paramsEquation.raw, localsEquation.raw]
 
+private def resultLengthEquation (name fn functionName : Lean.TSyntax `ident)
+    (kind : ValueKind) : Lean.MacroM Lean.Syntax := do
+  let lengthName := Lean.mkIdentFrom fn (name.getId ++ `results_length ++ fn.getId)
+  let width := Lean.Syntax.mkNumLit (toString kind.width)
+  let declaration ← `(command| @[simp] theorem $lengthName:ident :
+    ($functionName:ident).results.length = $width:num := rfl)
+  return declaration.raw
+
 private def functionEquations (name fn functionName : Lean.TSyntax `ident)
-    (lowered : Lean.TSyntax `term) : Lean.MacroM (Array Lean.Syntax) := do
+    (lowered : Lean.TSyntax `term) (kind : ValueKind) :
+    Lean.MacroM (Array Lean.Syntax) := do
   match lowered with
   | `(($_label:str, Ram.Func.mk $params:term $locals:term $body:term $result:term)) =>
       let bodyName := Lean.mkIdentFrom fn (name.getId ++ `body_eq ++ fn.getId)
@@ -244,9 +290,10 @@ private def functionEquations (name fn functionName : Lean.TSyntax `ident)
         ($functionName:ident).body = $body := rfl)
       let resultName := Lean.mkIdentFrom fn (name.getId ++ `result_eq ++ fn.getId)
       let resultEquation ← `(command| theorem $resultName:ident :
-        ($functionName:ident).result = $result := rfl)
+        ($functionName:ident).results = $result := rfl)
       return (← layoutEquations name fn functionName params locals) ++
-        #[bodyEquation.raw, resultEquation.raw]
+        #[bodyEquation.raw, resultEquation.raw,
+          ← resultLengthEquation name fn functionName kind]
   | _ => Lean.Macro.throwErrorAt lowered "expected a lowered RAM function"
 
 private def functionDeclarations (name : Lean.TSyntax `ident)
@@ -269,9 +316,10 @@ private def functionDeclarations (name : Lean.TSyntax `ident)
     let lookup ← `(command| theorem $lookupName:ident :
       ($name:ident).program[$indexName:ident]? = some $functionName:ident := by rfl)
     declarations := declarations.push lookup.raw
-    declarations := declarations ++ (← functionEquations name fn functionName lowered)
+    declarations := declarations ++ (← functionEquations name fn functionName lowered decl.resultKind)
     declarations := declarations ++ (← argumentDeclarations name fn decl.params functionName)
-    declarations := declarations ++ (← functionEntryPoints name fn functionName decl.params)
+    declarations := declarations ++
+      (← functionEntryPoints name fn functionName decl.params decl.resultKind)
     declarations := declarations ++ (← localRegisterDeclarations
       (name.getId ++ `localReg ++ fn.getId) scope)
     index := index + 1
@@ -331,10 +379,13 @@ private def importDeclarations (name : Lean.TSyntax `ident) (lowered : LoweredNa
         (sourceNames[position]! ++ `function ++ signature.name)
       declarations := declarations ++ (← layoutEquations name fn functionName
         (← `(($originalName:ident).params)) (← `(($originalName:ident).locals)))
+      declarations := declarations.push
+        (← resultLengthEquation name fn functionName signature.result)
       let params : Array Parameter := signature.params.map fun (parameter, kind) =>
         { name := Lean.mkIdent parameter, kind := kind }
       declarations := declarations ++ (← argumentDeclarations name fn params functionName)
-      declarations := declarations ++ (← functionEntryPoints name fn functionName params)
+      declarations := declarations ++
+        (← functionEntryPoints name fn functionName params signature.result)
   return declarations
 
 /-- Declare named RAM functions or a named bundle, exporting their functions,

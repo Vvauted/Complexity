@@ -41,7 +41,7 @@ theorem eval_eq {w heapLimit : Nat} {array : ArrayRef w}
     (represented : array.Rep heapLimit xs entry) :
     sumFunctions.eval.sum array heapLimit entry = Part.some (wordSum xs, entry) :=
   (sum_function_runs_of_ref (program := sumFunctions.program) (depth := 0)
-    hw fit entry represented).eval_eq_some
+    hw fit entry represented).evalTyped_eq_some sumFunctions.results_length.sum
 
 /-- A represented array and sufficient stack space make the compiled function
 halt. Only budget-free correctness is used to establish this fact. -/
@@ -84,7 +84,9 @@ theorem sum_eq {heapLimit : Nat} {array : ArrayRef 32}
       (sum_halts ⟨xs, represented, fit⟩ hstack) (execution := execution))
       [sumFunctions.function_lookup.sum]
     simpa using hstack
-  simpa only [sum, sumFunctions.apply.sum, wordSum_toNat] using congrArg BitVec.toNat result
+  simp only [sum, sumFunctions.apply.sum,
+    max_eq_right (by decide : 1 ≤ sumFunctions.registers), result,
+    DSL.ValueKind.decode_word, wordSum_toNat]
 
 /-- If the mathematical sum fits, the executable function returns that natural
 number exactly. This is a property of the same modular implementation. -/
@@ -103,7 +105,11 @@ natural number, full transition count and stopping reason. -/
 def runSum (array : ArrayRef 32) (heapLimit : Nat) (entry : Source.State 32) :
     Option (Nat × Nat × StopReason) :=
   (sumFunctions.run.sum array heapLimit entry).map fun result =>
-    ((result.state.regs 0).toNat, result.steps, result.reason)
+    ((DSL.ValueKind.decode .word
+        (LocalCompiler.Function.returnedValues sumFunctions.function.sum.results.length result.state)
+        ((LocalCompiler.Function.returnedValues_length _ _).trans
+          sumFunctions.results_length.sum)).toNat,
+      result.steps, result.reason)
 
 /-- The compiled function returns the mathematical sum and its exact full
 count. Stack capacity is a safety premise, not a supplied execution limit;
@@ -125,7 +131,7 @@ theorem runSum_eq {heapLimit : Nat} {array : ArrayRef 32}
   obtain ⟨target, returned, value, _⟩ := run
   simp only [runSum, sumFunctions.run.sum,
     max_eq_right (by decide : 1 ≤ sumFunctions.registers), returned, Option.map_some, value,
-    wordSum_toNat, sum_callSteps]
+    DSL.ValueKind.decode_word, wordSum_toNat, sum_callSteps]
 
 /-- The total executable application has the same complete transition count.
 This independent time proof is not used to define `sum` or prove it terminates. -/

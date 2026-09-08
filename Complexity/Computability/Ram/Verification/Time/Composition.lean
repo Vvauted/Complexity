@@ -124,18 +124,18 @@ theorem write {value : Expr} :
 /-- Reuse a callee's time bound at its actual argument state. The overhead
 comes from the same callee-sized save/restore blocks as measured execution.
 Calling-convention safety need not be reproved for this conditional bound. -/
-theorem call {dst fn : Nat} {args : List Expr} {f : Func}
+theorem call {fn : Nat} {dsts : List Reg} {args : List Expr} {f : Func}
     {calleePre : State w → Prop} {bodyBound : State w → Nat}
     (lookup : program[fn]? = some f)
     (pre : ∀ s, P s → calleePre (s.enter (args.map s.eval)))
     (cost : TimeBound control program heapLimit depth f.body calleePre bodyBound) :
-    TimeBound control program heapLimit (depth + 1) (.call dst fn args) P
+    TimeBound control program heapLimit (depth + 1) (.call dsts fn args) P
       (fun s => (ABI.callPrefixLocals control f.locals args 0).length + 1 +
         bodyBound (s.enter (args.map s.eval)) +
-        (ABI.returnCodeLocals control f.locals f.result).length + 1) := by
+        (ABI.returnCodeResultsLocals control f.locals f.results).length + dsts.length) := by
   intro s hs steps t hx
   cases hx with
-  | call found _ _ _ hb _ =>
+  | call found _ _ _ _ hb _ =>
     have hf : _ = f := Option.some.inj (found.symm.trans lookup)
     subst f
     have hbody := cost _ (pre s hs) _ _ hb

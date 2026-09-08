@@ -26,6 +26,17 @@ theorem evalArgs_length (n : Nat) (args : List Expr) (start : Nat) :
         List.map_cons, List.sum_cons, List.length_cons, List.length_nil]
       omega
 
+/-- Return-field evaluation charges every expression and its individual move. -/
+theorem evalResults_length (n : Nat) (results : List Expr) :
+    (evalResults n results).length =
+      (results.map (fun e => (e.compile (scratch n)).length)).sum + results.length := by
+  cases results with
+  | nil => rfl
+  | cons e es =>
+      simp only [evalResults, List.length_append, List.length_cons, evalArgs_length,
+        List.map_cons, List.sum_cons]
+      omega
+
 theorem callPrefix_length_eq (n : Nat) (args : List Expr) (returnPC : Nat) :
     (callPrefix n args returnPC).length =
       (args.map (fun e => (e.compile (scratch n)).length)).sum + args.length + 4 * n + 4 := by
@@ -33,11 +44,28 @@ theorem callPrefix_length_eq (n : Nat) (args : List Expr) (returnPC : Nat) :
     List.length_cons, List.length_nil, saveLocals_length, initLocals_length, advance]
   omega
 
+theorem returnPrefixResults_length (n : Nat) (results : List Expr) :
+    (returnPrefixResults n results).length =
+      (results.map (fun e => (e.compile (scratch n)).length)).sum +
+        results.length + 3 * n + 3 := by
+  simp only [returnPrefixResults, List.length_append, List.length_cons, List.length_nil,
+    evalResults_length,
+    retreat, restoreLocals_length]
+  omega
+
+theorem returnCodeResults_length (n : Nat) (results : List Expr) :
+    (returnCodeResults n results).length =
+      (results.map (fun e => (e.compile (scratch n)).length)).sum +
+        results.length + 3 * n + 4 := by
+  simp only [returnCodeResults, List.length_append, List.length_singleton,
+    returnPrefixResults_length]
+
 theorem returnPrefix_length (n : Nat) (result : Expr) :
     (returnPrefix n result).length = (result.compile (scratch n)).length + 3 * n + 4 := by
-  simp only [returnPrefix, evalResults_singleton, List.length_append,
-    List.length_cons, List.length_nil,
-    retreat, restoreLocals_length]
+  unfold returnPrefix
+  rw [returnPrefixResults_length]
+  simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
+    Nat.add_zero, List.length_cons, List.length_nil]
   omega
 
 theorem returnCode_length (n : Nat) (result : Expr) :
@@ -52,6 +80,18 @@ theorem call_steps_eq (n : Nat) (args : List Expr) (result : Expr)
       (args.map (fun e => (e.compile (scratch n)).length)).sum + bodySteps +
         (result.compile (scratch n)).length + 7 * n + args.length + 11 := by
   rw [callPrefix_length_eq, returnCode_length]
+  omega
+
+/-- A whole call counts argument evaluation, the body, every returned field,
+all frame instructions and both jumps. The outer program's halt is separate. -/
+theorem callResults_steps_eq (n : Nat) (args results : List Expr)
+    (dsts : List Reg) (returnPC bodySteps : Nat) (arity : dsts.length = results.length) :
+    (callPrefix n args returnPC).length + 1 + bodySteps +
+        (returnCodeResults n results).length + (receiveResults n 0 dsts).length =
+      (args.map (fun e => (e.compile (scratch n)).length)).sum + bodySteps +
+        (results.map (fun e => (e.compile (scratch n)).length)).sum +
+        7 * n + args.length + 2 * results.length + 9 := by
+  rw [callPrefix_length_eq, returnCodeResults_length, receiveResults_length, arity]
   omega
 
 end Ram.ABI

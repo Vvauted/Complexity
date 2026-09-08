@@ -24,8 +24,8 @@ return overhead is supplied by `Ram.Source.FunctionMeasuredExec.call`.
 
 namespace Ram.Source.Array
 
-/-- Copy the represented source into the represented destination. The return
-word is zero; both array contents and every destination-external memory word
+/-- Copy the represented source into the represented destination. No return
+fields are produced; both array contents and every destination-external memory word
 are described directly, without exposing the callee's parameter registers. -/
 theorem copy_function_contract {w heapLimit depth : Nat} {program : Program}
     {source destination : Word w} {xs ys : List (Word w)} (hw : 0 < w)
@@ -35,7 +35,7 @@ theorem copy_function_contract {w heapLimit depth : Nat} {program : Program}
       (fun args entry =>
         args = copyFunctions.arguments.copy source destination (BitVec.ofNat w xs.length) ∧
         ArrayAt heapLimit source xs entry ∧ ArrayAt heapLimit destination ys entry)
-      (fun _ entry value finish => value = 0 ∧
+      (fun _ entry value finish => value = [] ∧
         ArrayAt heapLimit source xs finish ∧ ArrayAt heapLimit destination xs finish ∧
         ArrayFrame destination xs.length entry.mem finish.mem ∧
         finish.input = entry.input ∧ finish.outputRev = entry.outputRev) := by
@@ -45,7 +45,7 @@ theorem copy_function_contract {w heapLimit depth : Nat} {program : Program}
   · intro entered pre
     obtain ⟨callee, execution, result⟩ :=
       copy_total_contract (program := program) (depth := depth) hw hlen hdisjoint entered pre
-    exact ⟨callee, execution, trivial, result⟩
+    exact ⟨callee, execution, by simp [copyFunctions.result_eq.copy], result⟩
   · rintro args entry ⟨rfl, _, _⟩
     exact copyFunctions.arguments_length.copy source destination (BitVec.ofNat w xs.length)
   · decide
@@ -57,7 +57,7 @@ theorem copy_function_contract {w heapLimit depth : Nat} {program : Program}
       result.input, result.output⟩
 
 /-- Invoke copy on existing arrays, without an entry point, input stream or
-destination register for the unused return word. The resulting heap contains
+destination register or dummy return word. The resulting heap contains
 the original list at both pointers. Caller locals are restored by the
 invocation relation, not an additional premise of this theorem. -/
 theorem copy_function_runs {w heapLimit depth : Nat} {program : Program}
@@ -69,11 +69,11 @@ theorem copy_function_runs {w heapLimit depth : Nat} {program : Program}
     ∃ finish,
       FunctionExec program heapLimit depth copyFunctions.function.copy
         (copyFunctions.arguments.copy source destination (BitVec.ofNat w xs.length))
-        entry 0 finish ∧
+        entry [] finish ∧
       ArrayAt heapLimit source xs finish ∧ ArrayAt heapLimit destination xs finish ∧
       ArrayFrame destination xs.length entry.mem finish.mem ∧
       finish.input = entry.input ∧ finish.outputRev = entry.outputRev := by
-  obtain ⟨value, finish, execution, zero, result⟩ :=
+  obtain ⟨value, finish, execution, empty, result⟩ :=
     copy_function_contract (program := program) (depth := depth) hw hlen hfit hdisjoint
       (copyFunctions.arguments.copy source destination (BitVec.ofNat w xs.length))
       entry ⟨rfl, hsource, hdestination⟩
@@ -111,12 +111,12 @@ theorem copy_function_runs_with_timeBound {w control heapLimit depth : Nat} {pro
     ∃ bodySteps finish,
       FunctionMeasuredExec control program heapLimit depth copyFunctions.function.copy
         (copyFunctions.arguments.copy source destination (BitVec.ofNat w xs.length))
-        bodySteps entry 0 finish ∧
+        bodySteps entry [] finish ∧
       ArrayAt heapLimit source xs finish ∧ ArrayAt heapLimit destination xs finish ∧
       ArrayFrame destination xs.length entry.mem finish.mem ∧
       finish.input = entry.input ∧ finish.outputRev = entry.outputRev ∧
       bodySteps ≤ 19 * xs.length + 2 := by
-  obtain ⟨bodySteps, value, finish, execution, ⟨zero, result⟩, bound⟩ :=
+  obtain ⟨bodySteps, value, finish, execution, ⟨empty, result⟩, bound⟩ :=
     (copy_function_contract (program := program) (depth := depth) hw hlen hfit hdisjoint).with_timeBound
       (copy_function_timeBound (control := control) hw hlen hfit hdisjoint)
       (copyFunctions.arguments.copy source destination (BitVec.ofNat w xs.length))

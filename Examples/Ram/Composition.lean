@@ -54,17 +54,17 @@ def incrementFunction : Func where
   params := 1
   locals := 1
   body := .assign 0 (.bin .add (.var 0) (.const 1))
-  result := .var 0
+  results := [.var 0]
 
 def doubleFunction : Func where
   params := 1
   locals := 1
   body := .assign 0 (.bin .mul (.const 2) (.var 0))
-  result := .var 0
+  results := [.var 0]
 
 /-- Each module has this same local main block; its function zero is resolved
 against that module's own declarations until `Component.comp` links them. -/
-def invoke : Stmt := .call 0 0 [.var 0]
+def invoke : Stmt := .call [0] 0 [.var 0]
 
 /-- Reading establishes the shared representation without a time budget. -/
 theorem read_total {w H depth x : Nat} (hx : legal w x) :
@@ -96,8 +96,8 @@ theorem increment_total {w H depth x : Nat}
   have body := SafeExec.assign (program := [incrementFunction]) (heapLimit := H)
     (d := 0) (s := s.enter ([Expr.var 0].map s.eval)) (dst := 0)
     (value := Expr.bin .add (.var 0) (.const 1)) (by simp [Expr.ReadsBelow])
-  have execution := SafeExec.call (f := incrementFunction) (dst := 0) (fn := 0)
-    (args := [Expr.var 0]) rfl rfl (by decide)
+  have execution := SafeExec.call (f := incrementFunction) (dsts := [0]) (fn := 0)
+    (args := [Expr.var 0]) rfl rfl rfl (by decide)
     (by simp [Expr.ReadsBelow]) body (by simp [incrementFunction, Expr.ReadsBelow])
   refine ⟨_, execution.mono hd, ?_⟩
   obtain ⟨_, hreg, hin, hout⟩ := hs
@@ -115,8 +115,8 @@ theorem double_total {w H depth x : Nat}
   have body := SafeExec.assign (program := [doubleFunction]) (heapLimit := H)
     (d := 0) (s := s.enter ([Expr.var 0].map s.eval)) (dst := 0)
     (value := Expr.bin .mul (.const 2) (.var 0)) (by simp [Expr.ReadsBelow])
-  have execution := SafeExec.call (f := doubleFunction) (dst := 0) (fn := 0)
-    (args := [Expr.var 0]) rfl rfl (by decide)
+  have execution := SafeExec.call (f := doubleFunction) (dsts := [0]) (fn := 0)
+    (args := [Expr.var 0]) rfl rfl rfl (by decide)
     (by simp [Expr.ReadsBelow]) body (by simp [doubleFunction, Expr.ReadsBelow])
   refine ⟨_, execution.mono hd, ?_⟩
   obtain ⟨_, hreg, hin, hout⟩ := hs
@@ -197,10 +197,10 @@ theorem increment_contract {w H depth x : Nat}
     Contract 1 [incrementFunction] H depth invoke (registerInterface.represents w x)
       (registerInterface.represents w (x + 1)) (fun _ => 25) := by
   have hcall := Contract.call (n := 1) (program := [incrementFunction])
-    (heapLimit := H) (depth := 0) (dst := 0) (fn := 0) (args := [Expr.var 0])
+    (heapLimit := H) (depth := 0) (dsts := [0]) (fn := 0) (args := [Expr.var 0])
     (P := registerInterface.represents w x) (Q := registerInterface.represents w (x + 1))
     (bodyBound := fun _ => 4)
-    (show [incrementFunction][0]? = some incrementFunction from rfl) rfl (by decide)
+    (show [incrementFunction][0]? = some incrementFunction from rfl) rfl rfl (by decide)
     (show ∀ s, registerInterface.represents w x s →
       ∀ arg ∈ [Expr.var 0], arg.ReadsBelow H s.regs s.mem from by
       intro s hs
@@ -208,9 +208,10 @@ theorem increment_contract {w H depth x : Nat}
     (show ∀ caller, registerInterface.represents w x caller →
       Contract 1 [incrementFunction] H 0 incrementFunction.body
         (fun s => s = caller.enter ([Expr.var 0].map caller.eval))
-        (fun finish => incrementFunction.result.ReadsBelow H finish.regs finish.mem ∧
+        (fun finish => (∀ result ∈ incrementFunction.results,
+            result.ReadsBelow H finish.regs finish.mem) ∧
           registerInterface.represents w (x + 1)
-            (caller.leave finish 0 incrementFunction.result)) (fun _ => 4) from by
+            (caller.leave finish [0] incrementFunction.results)) (fun _ => 4) from by
       intro caller hcaller
       obtain ⟨_, hreg, hin, hout⟩ := hcaller
       apply Source.Verification.verify
@@ -221,7 +222,7 @@ theorem increment_contract {w H depth x : Nat}
         Source.State.leave, Source.State.enter, Source.State.setReg, Source.State.eval,
         Expr.eval, BinOp.eval, hreg, hin, hout, BitVec.ofNat_add, incrementDomain] at hx ⊢
       exact hx)
-  simpa [invoke, ABI.callPrefixLocals_length_eq, ABI.returnCodeLocals_length,
+  simpa [invoke, ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length,
     incrementFunction, Expr.compile] using hcall.mono_depth hd
 
 /-- The second module also uses function zero, without referring to the
@@ -231,10 +232,10 @@ theorem double_contract {w H depth x : Nat}
     Contract 1 [doubleFunction] H depth invoke (registerInterface.represents w x)
       (registerInterface.represents w (2 * x)) (fun _ => 25) := by
   have hcall := Contract.call (n := 1) (program := [doubleFunction])
-    (heapLimit := H) (depth := 0) (dst := 0) (fn := 0) (args := [Expr.var 0])
+    (heapLimit := H) (depth := 0) (dsts := [0]) (fn := 0) (args := [Expr.var 0])
     (P := registerInterface.represents w x) (Q := registerInterface.represents w (2 * x))
     (bodyBound := fun _ => 4)
-    (show [doubleFunction][0]? = some doubleFunction from rfl) rfl (by decide)
+    (show [doubleFunction][0]? = some doubleFunction from rfl) rfl rfl (by decide)
     (show ∀ s, registerInterface.represents w x s →
       ∀ arg ∈ [Expr.var 0], arg.ReadsBelow H s.regs s.mem from by
       intro s hs
@@ -242,9 +243,10 @@ theorem double_contract {w H depth x : Nat}
     (show ∀ caller, registerInterface.represents w x caller →
       Contract 1 [doubleFunction] H 0 doubleFunction.body
         (fun s => s = caller.enter ([Expr.var 0].map caller.eval))
-        (fun finish => doubleFunction.result.ReadsBelow H finish.regs finish.mem ∧
+        (fun finish => (∀ result ∈ doubleFunction.results,
+            result.ReadsBelow H finish.regs finish.mem) ∧
           registerInterface.represents w (2 * x)
-            (caller.leave finish 0 doubleFunction.result)) (fun _ => 4) from by
+            (caller.leave finish [0] doubleFunction.results)) (fun _ => 4) from by
       intro caller hcaller
       obtain ⟨_, hreg, hin, hout⟩ := hcaller
       apply Source.Verification.verify
@@ -255,7 +257,7 @@ theorem double_contract {w H depth x : Nat}
         Source.State.leave, Source.State.enter, Source.State.setReg, Source.State.eval,
         Expr.eval, BinOp.eval, hreg, hin, hout, BitVec.ofNat_mul, doubleDomain] at hx ⊢
       exact hx)
-  simpa [invoke, ABI.callPrefixLocals_length_eq, ABI.returnCodeLocals_length,
+  simpa [invoke, ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length,
     doubleFunction, Expr.compile] using hcall.mono_depth hd
 
 def reader : PolyTimeComponent inputInterface registerInterface (fun x => x) legal where
@@ -355,7 +357,7 @@ theorem pipeline_functions : pipeline.functions = [incrementFunction, doubleFunc
 /-- The second module's original call to zero has automatically become a call
 to one. No edit to `double_contract` was needed. -/
 theorem pipeline_body : pipeline.body =
-    .seq (.seq (.read 0) (.seq (.call 0 0 [.var 0]) (.call 0 1 [.var 0])))
+    .seq (.seq (.read 0) (.seq (.call [0] 0 [.var 0]) (.call [0] 1 [.var 0])))
       (.write (.var 0)) := rfl
 
 theorem pipeline_time (n : Nat) : pipeline.toComponent.totalTime n = 55 := by

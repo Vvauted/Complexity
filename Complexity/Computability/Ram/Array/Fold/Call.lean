@@ -26,7 +26,7 @@ namespace Ram.Source.Array.Fold.Call
 
 /-- A fixed call computes the next accumulator before the cursor advances. -/
 def body (registers : Registers) (fn : Nat) (args : List Expr) : Stmt :=
-  .seq (.call registers.accumulator fn args) (advanceCursor registers)
+  .seq (.call [registers.accumulator] fn args) (advanceCursor registers)
 
 /-- The same call site is executed for every represented element. -/
 def loop (registers : Registers) (fn : Nat) (args : List Expr) : Stmt :=
@@ -40,7 +40,7 @@ theorem body_safe (registers : Registers) {program : Program} {f : Func}
     {P : Word w → Word w → List (Word w) → State w → Prop}
     (lookup : program[fn]? = some f)
     (contract : ∀ accumulator x, FunctionContract program heapLimit depth f (P accumulator x)
-      (fun _ entry value finish => value = step accumulator x ∧ finish = entry))
+      (fun _ entry value finish => value = [step accumulator x] ∧ finish = entry))
     (s : State w)
     (reads : ∀ arg ∈ args, arg.ReadsBelow heapLimit s.regs s.mem)
     (pre : P (s.regs registers.accumulator) (s.mem (s.regs registers.pointer))
@@ -50,7 +50,10 @@ theorem body_safe (registers : Registers) {program : Program} {f : Func}
         (step (s.regs registers.accumulator) (s.mem (s.regs registers.pointer))) s) := by
   obtain ⟨value, finish, execution, rfl, rfl⟩ :=
     contract _ _ (args.map s.eval) s pre
-  exact .seq (execution.call lookup reads) (advanceCursor_safe registers _ _)
+  have resultCount : [registers.accumulator].length = f.results.length := by
+    simpa only [List.length_cons, List.length_nil] using execution.length_eq
+  exact .seq (execution.call (dsts := [registers.accumulator]) lookup resultCount reads)
+    (advanceCursor_safe registers _ _)
 
 /-- Fold a represented list through one fixed, verified function call. The
 contract and argument adapter implement each mathematical step; cursor safety,
@@ -61,7 +64,7 @@ theorem loop_safe (registers : Registers) {program : Program} {f : Func}
     {P : Word w → Word w → List (Word w) → State w → Prop}
     (hw : 0 < w) (lookup : program[fn]? = some f)
     (contract : ∀ accumulator x, FunctionContract program heapLimit depth f (P accumulator x)
-      (fun _ entry value finish => value = step accumulator x ∧ finish = entry))
+      (fun _ entry value finish => value = [step accumulator x] ∧ finish = entry))
     (reads : ∀ s, R s → (s.regs registers.pointer).toNat < heapLimit →
       ∀ arg ∈ args, arg.ReadsBelow heapLimit s.regs s.mem)
     (pre : ∀ s, R s → (s.regs registers.pointer).toNat < heapLimit →
@@ -94,22 +97,26 @@ theorem body_remaining (registers : Registers) {program : Program}
   cases h with
   | seq first rest =>
     cases first with
-    | call _ _ _ _ _ _ =>
+    | call _ _ _ _ _ _ _ =>
       simpa [State.leave, registers.remaining_ne_accumulator] using
         advanceCursor_remaining registers rest
 
-/-- The real call instruction blocks surrounding a separately measured body. -/
+/-- The real call instruction blocks surrounding a separately measured body.
+The scalar fold receives one field; its safe call proves that the helper returns
+exactly one field. All helper return expressions are still charged here. -/
 def callSteps (control : Nat) (f : Func) (args : List Expr) (bodySteps : Nat) : Nat :=
   (ABI.callPrefixLocals control f.locals args 0).length + 1 + bodySteps +
-    (ABI.returnCodeLocals control f.locals f.result).length + 1
+    (ABI.returnCodeResultsLocals control f.locals f.results).length + 1
 
 /-- Reduce the actual call count using the compiler's existing code-length
 identity. Return-expression evaluation is included, even for an empty body. -/
 theorem callSteps_eq (control : Nat) (f : Func) (args : List Expr) (bodySteps : Nat) :
     callSteps control f args bodySteps =
       (args.map (fun e => (e.compile (ABI.scratch control)).length)).sum + bodySteps +
-        (f.result.compile (ABI.scratch control)).length + 7 * f.locals + args.length + 11 :=
-  ABI.callLocals_steps_eq control f.locals args f.result 0 bodySteps
+        (f.results.map (fun result => (result.compile (ABI.scratch control)).length)).sum +
+        7 * f.locals + args.length + f.results.length + 10 := by
+  rw [callSteps, ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length]
+  omega
 
 /-- The concrete iteration includes the full call and eight cursor instructions.
 The callee count is a theorem about every completed execution of its body. -/
@@ -126,12 +133,12 @@ theorem body_localMeasured (registers : Registers) {program : Program} {f : Func
   | seq first rest =>
     obtain ⟨steps, measured⟩ := first.exists_localMeasured control
     cases measured with
-    | call found arity frame arguments callee result =>
+    | call found arity resultCount frame arguments callee results =>
       have same : _ = f := Option.some.inj (found.symm.trans lookup)
       subst f
       have count := cost callee
-      have call := LocalMeasuredExec.call (dst := registers.accumulator)
-        found arity frame arguments callee result
+      have call := LocalMeasuredExec.call (dsts := [registers.accumulator])
+        found arity resultCount frame arguments callee results
       rw [count] at call
       exact .seq call (advanceCursor_localMeasured registers rest)
 

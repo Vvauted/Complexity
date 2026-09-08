@@ -40,8 +40,8 @@ theorem recursive_timeBound (hw : 2 ≤ w)
     have hright : right.length = n - n / 2 := List.length_drop ..
     by_cases hsmall : n ≤ 1
     · have impossible : TimeBound control functions heapLimit (Nat.clog 2 n)
-          (.seq setup (.seq (.call 4 selfFn leftArgs)
-            (.seq (.call 4 selfFn rightArgs) Combine.program)))
+          (.seq setup (.seq (.call [4] selfFn leftArgs)
+            (.seq (.call [4] selfFn rightArgs) Combine.program)))
           (fun s => s = entry ∧ s.eval condition ≠ 0) (fun _ => 0) := by
         rintro s ⟨rfl, nonzero⟩
         have large := (condition_ne_zero_iff (by omega) hp).mp nonzero
@@ -75,27 +75,27 @@ theorem recursive_timeBound (hw : 2 ≤ w)
       let afterRight := Stage heapLimit (entry.regs 0) (entry.regs 1) xs
         (sorted left) (sorted right) entry
       have leftCall : TotalContract functions heapLimit (Nat.clog 2 left.length + 1)
-          (.call 4 selfFn leftArgs) (fun s => s = initialized entry) afterLeft := by
+          (.call [4] selfFn leftArgs) (fun s => s = initialized entry) afterLeft := by
         rintro s rfl
-        apply leftTotal.wp_call lookup rfl (by change 3 ≤ 9; decide)
+        apply leftTotal.wp_call lookup rfl rfl (by change 3 ≤ 9; decide)
         · simp [leftArgs, Expr.ReadsBelow]
         · exact left_pre (selfFn := selfFn) hw hp
         · exact Nat.le_refl _
         · intro callee post
           exact after_left (selfFn := selfFn) hw hp post
       have rightCall : TotalContract functions heapLimit (Nat.clog 2 right.length + 1)
-          (.call 4 selfFn rightArgs) afterLeft afterRight := by
+          (.call [4] selfFn rightArgs) afterLeft afterRight := by
         intro caller stage
-        apply rightTotal.wp_call lookup rfl (by change 3 ≤ 9; decide)
+        apply rightTotal.wp_call lookup rfl rfl (by change 3 ≤ 9; decide)
         · simp [rightArgs, Expr.ReadsBelow]
         · exact right_pre (selfFn := selfFn) hp stage
         · exact Nat.le_refl _
         · intro callee post
           exact after_right (selfFn := selfFn) hp stage post
       have leftCost : TimeBound control functions heapLimit (Nat.clog 2 n)
-          (.call 4 selfFn leftArgs) (fun s => s = initialized entry)
+          (.call [4] selfFn leftArgs) (fun s => s = initialized entry)
           (fun _ => budget left.length + 81) := by
-        have original := TimeBound.call (dst := 4) lookup
+        have original := TimeBound.call (dsts := [4]) lookup
           (fun s (same : s = initialized entry) => by
             subst s
             exact left_pre (selfFn := selfFn) hw hp) leftTime
@@ -105,9 +105,9 @@ theorem recursive_timeBound (hw : 2 ≤ w)
         intro s same
         exact Nat.le_of_eq (left_call_steps control (budget left.length))
       have rightCost : TimeBound control functions heapLimit (Nat.clog 2 n)
-          (.call 4 selfFn rightArgs) afterLeft
+          (.call [4] selfFn rightArgs) afterLeft
           (fun _ => budget right.length + 87) := by
-        have original := TimeBound.call (dst := 4) lookup
+        have original := TimeBound.call (dsts := [4]) lookup
           (fun s (stage : afterLeft s) => right_pre (selfFn := selfFn) hp stage) rightTime
         have enlarged := original.change_capacity
           (heapLimit' := heapLimit) (depth' := Nat.clog 2 n) rightCall
@@ -126,13 +126,13 @@ theorem recursive_timeBound (hw : 2 ≤ w)
           omega
         simpa only [hsum] using bounded
       have rightRest : TimeBound control functions heapLimit (Nat.clog 2 n)
-          (.seq (.call 4 selfFn rightArgs) Combine.program) afterLeft
+          (.seq (.call [4] selfFn rightArgs) Combine.program) afterLeft
           (fun _ => budget right.length + 87 + (53 * n + 26)) :=
         TimeBound.seq (rightCall.mono_depth rightDepth) rightCost combineCost
           (fun _ _ _ _ => Nat.le_refl _)
       have leftRest : TimeBound control functions heapLimit (Nat.clog 2 n)
-          (.seq (.call 4 selfFn leftArgs)
-            (.seq (.call 4 selfFn rightArgs) Combine.program))
+          (.seq (.call [4] selfFn leftArgs)
+            (.seq (.call [4] selfFn rightArgs) Combine.program))
           (fun s => s = initialized entry)
           (fun _ => budget left.length + 81 + (budget right.length + 87 + (53 * n + 26))) :=
         TimeBound.seq (leftCall.mono_depth leftDepth) leftCost rightRest

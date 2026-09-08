@@ -69,15 +69,16 @@ inductive LocalMeasuredExec (control : Nat) (program : Program) (heapLimit : Nat
         (LocalCompiler.stmtSize control (LocalCompiler.calleeLocals program) (.write value))
         s { s with outputRev := s.eval value :: s.outputRev }
   | call (lookup : program[fn]? = some f) (arity : args.length = f.params)
+      (hresultCount : dsts.length = f.results.length)
       (frame : f.params ≤ f.locals)
       (arguments : ∀ arg ∈ args, arg.ReadsBelow heapLimit s.regs s.mem)
       (body : LocalMeasuredExec control program heapLimit d f.body bodySteps
         (s.enter (args.map s.eval)) callee)
-      (result : f.result.ReadsBelow heapLimit callee.regs callee.mem) :
-      LocalMeasuredExec control program heapLimit (d + 1) (.call dst fn args)
+      (results : ∀ result ∈ f.results, result.ReadsBelow heapLimit callee.regs callee.mem) :
+      LocalMeasuredExec control program heapLimit (d + 1) (.call dsts fn args)
         ((ABI.callPrefixLocals control f.locals args 0).length + 1 + bodySteps +
-          (ABI.returnCodeLocals control f.locals f.result).length + 1)
-        s (s.leave callee dst f.result)
+          (ABI.returnCodeResultsLocals control f.locals f.results).length + dsts.length)
+        s (s.leave callee dsts f.results)
 
 namespace LocalMeasuredExec
 
@@ -98,8 +99,8 @@ theorem erase {control heapLimit depth steps : Nat} {program : Program} {stmt : 
       exact .whileTrue reads condition body rest
   | read available => exact .read available
   | write reads => exact .write reads
-  | call lookup arity frame arguments _ result body =>
-      exact .call lookup arity frame arguments body result
+  | call lookup arity hresultCount frame arguments _ results body =>
+      exact .call lookup arity hresultCount frame arguments body results
 
 /-- Additional allowed call nesting does not alter the executed count. -/
 theorem depth_add {control heapLimit depth steps : Nat} {program : Program} {stmt : Stmt}
@@ -119,9 +120,9 @@ theorem depth_add {control heapLimit depth steps : Nat} {program : Program} {stm
       exact .whileTrue reads condition body rest
   | read available => exact .read available
   | write reads => exact .write reads
-  | call lookup arity frame arguments _ result body =>
+  | call lookup arity hresultCount frame arguments _ results body =>
       simpa only [Nat.add_right_comm _ 1 extra] using
-        (LocalMeasuredExec.call lookup arity frame arguments body result)
+        (LocalMeasuredExec.call lookup arity hresultCount frame arguments body results)
 
 theorem mono {control heapLimit depth depth' steps : Nat} {program : Program} {stmt : Stmt}
     {s t : State w} (h : LocalMeasuredExec control program heapLimit depth stmt steps s t)
@@ -167,9 +168,10 @@ theorem rebase {control heapLimit depth steps : Nat} {program : Program} {stmt :
       simpa only [LocalCompiler.stmtSize, LocalCompiler.compileStmt,
         List.length_append, hlength] using
         (LocalMeasuredExec.write (control := control') reads)
-  | call lookup arity frame arguments _ result body =>
-      simpa only [ABI.callPrefixLocals_length_eq, ABI.returnCodeLocals_length, hlength] using
-        (LocalMeasuredExec.call lookup arity frame arguments body result)
+  | call lookup arity hresultCount frame arguments _ results body =>
+      simpa only [ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length,
+        hlength] using
+        (LocalMeasuredExec.call lookup arity hresultCount frame arguments body results)
 
 end LocalMeasuredExec
 
@@ -202,9 +204,9 @@ theorem SafeExec.exists_localMeasured {program : Program} {heapLimit depth : Nat
       exact ⟨_, .whileTrue reads condition hb hr⟩
   | read available => exact ⟨_, .read available⟩
   | write reads => exact ⟨_, .write reads⟩
-  | call lookup arity frame arguments _ result body =>
+  | call lookup arity hresultCount frame arguments _ results body =>
       obtain ⟨nb, hb⟩ := body
-      exact ⟨_, .call lookup arity frame arguments hb result⟩
+      exact ⟨_, .call lookup arity hresultCount frame arguments hb results⟩
 
 theorem localMeasured_iff_safe {control heapLimit depth : Nat} {program : Program}
     {stmt : Stmt} {s t : State w} :
@@ -241,14 +243,14 @@ theorem simulate_measured {control locals heapLimit depth steps : Nat} {program 
       exact simulation_whileTrue_exact hwf.1 reads condition (body hwf.2) (rest hwf)
   | read available => exact simulation_read_exact hwf available
   | write reads => exact simulation_write_exact hwf reads
-  | call lookup arity frame arguments _ result body =>
+  | call lookup arity hresultCount frame arguments _ results body =>
       have hf := hvalid.2.2 _ (List.mem_of_getElem? lookup)
       have hcount : _ ≤ _ := frame
       rw [← arity] at hcount
       intro hcaller
       exact simulate_call_exact hcaller hf.2.1 (calleeLocals_lookup lookup)
-        hwf.1 hwf.2 arguments hcount hf.1.2.2 result (rawLink_function lookup)
-        hcodefit (body hf.1.2.1) hcaller
+        hwf.1 hwf.2 arguments hcount hresultCount hf.2.2.2 hf.1.2.2 results
+        (rawLink_function lookup) hcodefit (body hf.1.2.1) hcaller
 
 /-- A safe source execution determines a single exact count uniformly for all
 matching target states, rather than a target-dependent count chosen afterward. -/

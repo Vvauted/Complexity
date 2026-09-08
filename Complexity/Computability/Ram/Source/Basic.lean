@@ -11,8 +11,8 @@ import Complexity.Computability.Ram.Source.Expr
 This language has ordinary structured control flow and first-order functions.
 A call evaluates its arguments in the caller, initializes a fresh local frame,
 and shares memory and input/output with its caller. Functions may call
-themselves or each other. Returning restores the caller's local registers,
-except for the destination of the returned value.
+themselves or each other. Returning evaluates every result in the callee's final
+state, restores the caller's locals, and assigns the results in destination order.
 
 `Source.Exec` describes successful finite execution. It is deliberately not a
 cost semantics: a source call, expression, or loop is not one RAM instruction.
@@ -30,17 +30,18 @@ inductive Stmt where
   | while (condition : Expr) (body : Stmt)
   | read (dst : Reg)
   | write (value : Expr)
-  | call (dst : Reg) (fn : Nat) (args : List Expr)
+  | call (dsts : List Reg) (fn : Nat) (args : List Expr)
   deriving DecidableEq, Repr
 
 /-- `locals` is the total local-register bound, including the `params`
 parameter registers. Parameter `i` is passed in local register `i`.
-`result` is evaluated after the body has completed. -/
+Every expression in `results` is evaluated in the same state after the body has
+completed. An empty result list represents a function returning no value. -/
 structure Func where
   params : Nat
   locals : Nat
   body : Stmt
-  result : Expr
+  results : List Expr
   deriving DecidableEq, Repr
 
 abbrev Program := List Func
@@ -60,14 +61,16 @@ def WellFormed (stmt : Stmt) (locals : Nat) : Prop :=
   | .while condition body => condition.Bounded locals ∧ body.WellFormed locals
   | .read dst => dst < locals
   | .write value => value.Bounded locals
-  | .call dst _ args => dst < locals ∧ ∀ arg ∈ args, arg.Bounded locals
+  | .call dsts _ args =>
+      (∀ dst ∈ dsts, dst < locals) ∧ ∀ arg ∈ args, arg.Bounded locals
 
 end Stmt
 
 namespace Func
 
 def WellFormed (f : Func) : Prop :=
-  f.params ≤ f.locals ∧ f.body.WellFormed f.locals ∧ f.result.Bounded f.locals
+  f.params ≤ f.locals ∧ f.body.WellFormed f.locals ∧
+    ∀ result ∈ f.results, result.Bounded f.locals
 
 end Func
 
@@ -92,6 +95,11 @@ def eval (s : State w) (e : Expr) : Word w := e.eval s.regs s.mem
 def setReg (s : State w) (dst : Reg) (value : Word w) : State w :=
   { s with regs := fun r => if r = dst then value else s.regs r }
 
+/-- Assign already evaluated values in destination order. Repeated destinations
+keep their last assigned value. Calls separately require equal list lengths. -/
+def setRegs (s : State w) (dsts : List Reg) (values : List (Word w)) : State w :=
+  (dsts.zip values).foldl (fun t field => t.setReg field.1 field.2) s
+
 def setMem (s : State w) (address value : Word w) : State w :=
   { s with mem := fun a => if a = address then value else s.mem a }
 
@@ -102,13 +110,11 @@ the argument list start at zero; the callee shares memory and input/output. -/
 def enter (s : State w) (args : List (Word w)) : State w :=
   { s with regs := fun r => args[r]?.getD 0 }
 
-/-- Evaluate the result in the callee's final state and restore the caller's
-local frame. Callee memory and input/output effects are retained. -/
-def leave (caller callee : State w) (dst : Reg) (result : Expr) : State w :=
-  { regs := fun r => if r = dst then callee.eval result else caller.regs r
-    mem := callee.mem
-    input := callee.input
-    outputRev := callee.outputRev }
+/-- Evaluate all results in the original callee's final state, restore the
+caller's local frame, then receive those values in order. Callee memory and
+input/output effects are retained, including when no result is returned. -/
+def leave (caller callee : State w) (dsts : List Reg) (results : List Expr) : State w :=
+  { callee with regs := caller.regs }.setRegs dsts (results.map callee.eval)
 
 @[simp] theorem setReg_same (s : State w) (dst : Reg) (value : Word w) :
     (s.setReg dst value).regs dst = value := by
@@ -117,6 +123,62 @@ def leave (caller callee : State w) (dst : Reg) (result : Expr) : State w :=
 @[simp] theorem setReg_ne (s : State w) (dst r : Reg) (value : Word w)
     (h : r ≠ dst) : (s.setReg dst value).regs r = s.regs r := by
   simp [setReg, h]
+
+@[simp] theorem setRegs_nil (s : State w) (values : List (Word w)) :
+    s.setRegs [] values = s := rfl
+
+@[simp] theorem setRegs_nil_values (s : State w) (dsts : List Reg) :
+    s.setRegs dsts [] = s := by
+  cases dsts <;> rfl
+
+@[simp] theorem setRegs_cons (s : State w) (dst : Reg) (dsts : List Reg)
+    (value : Word w) (values : List (Word w)) :
+    s.setRegs (dst :: dsts) (value :: values) = (s.setReg dst value).setRegs dsts values :=
+  rfl
+
+@[simp] theorem setRegs_singleton (s : State w) (dst : Reg) (value : Word w) :
+    s.setRegs [dst] [value] = s.setReg dst value := rfl
+
+/-- Assigning return fields preserves every unassigned local, without requiring
+the destinations to be distinct. -/
+@[simp] theorem setRegs_ne (s : State w) (dsts : List Reg) (values : List (Word w))
+    (r : Reg) (h : r ∉ dsts) : (s.setRegs dsts values).regs r = s.regs r := by
+  induction dsts generalizing s values with
+  | nil => rfl
+  | cons dst dsts ih =>
+      cases values with
+      | nil => rfl
+      | cons value values =>
+          have hne : r ≠ dst := fun heq => h (by simp [heq])
+          have htail : r ∉ dsts := fun hmem => h (by simp [hmem])
+          rw [setRegs_cons, ih _ _ htail, setReg_ne _ _ _ _ hne]
+
+@[simp] theorem setRegs_mem (s : State w) (dsts : List Reg) (values : List (Word w)) :
+    (s.setRegs dsts values).mem = s.mem := by
+  induction dsts generalizing s values with
+  | nil => rfl
+  | cons dst dsts ih =>
+      cases values with
+      | nil => rfl
+      | cons value values => simpa only [setRegs_cons] using ih (s.setReg dst value) values
+
+@[simp] theorem setRegs_input (s : State w) (dsts : List Reg) (values : List (Word w)) :
+    (s.setRegs dsts values).input = s.input := by
+  induction dsts generalizing s values with
+  | nil => rfl
+  | cons dst dsts ih =>
+      cases values with
+      | nil => rfl
+      | cons value values => simpa only [setRegs_cons] using ih (s.setReg dst value) values
+
+@[simp] theorem setRegs_outputRev (s : State w) (dsts : List Reg)
+    (values : List (Word w)) : (s.setRegs dsts values).outputRev = s.outputRev := by
+  induction dsts generalizing s values with
+  | nil => rfl
+  | cons dst dsts ih =>
+      cases values with
+      | nil => rfl
+      | cons value values => simpa only [setRegs_cons] using ih (s.setReg dst value) values
 
 @[simp] theorem setMem_same (s : State w) (address value : Word w) :
     (s.setMem address value).mem address = value := by
@@ -136,27 +198,32 @@ def leave (caller callee : State w) (dst : Reg) (result : Expr) : State w :=
     (s.enter args).outputRev = s.outputRev := rfl
 
 @[simp] theorem leave_dst (caller callee : State w) (dst : Reg) (result : Expr) :
-    (caller.leave callee dst result).regs dst = callee.eval result := by
+    (caller.leave callee [dst] [result]).regs dst = callee.eval result := by
   simp [leave]
 
-@[simp] theorem leave_ne (caller callee : State w) (dst r : Reg) (result : Expr)
-    (h : r ≠ dst) : (caller.leave callee dst result).regs r = caller.regs r := by
+@[simp] theorem leave_ne (caller callee : State w) (dsts : List Reg) (r : Reg)
+    (results : List Expr) (h : r ∉ dsts) :
+    (caller.leave callee dsts results).regs r = caller.regs r := by
   simp [leave, h]
 
-@[simp] theorem leave_mem (caller callee : State w) (dst : Reg) (result : Expr) :
-    (caller.leave callee dst result).mem = callee.mem := rfl
+@[simp] theorem leave_mem (caller callee : State w) (dsts : List Reg) (results : List Expr) :
+    (caller.leave callee dsts results).mem = callee.mem := by
+  simp [leave]
 
-@[simp] theorem leave_input (caller callee : State w) (dst : Reg) (result : Expr) :
-    (caller.leave callee dst result).input = callee.input := rfl
+@[simp] theorem leave_input (caller callee : State w) (dsts : List Reg) (results : List Expr) :
+    (caller.leave callee dsts results).input = callee.input := by
+  simp [leave]
 
-@[simp] theorem leave_outputRev (caller callee : State w) (dst : Reg) (result : Expr) :
-    (caller.leave callee dst result).outputRev = callee.outputRev := rfl
+@[simp] theorem leave_outputRev (caller callee : State w) (dsts : List Reg)
+    (results : List Expr) : (caller.leave callee dsts results).outputRev = callee.outputRev := by
+  simp [leave]
 
 end State
 
 /-- Successful finite execution. A true branch is any nonzero word. An empty
 input stream has no successful `read` derivation. Calls check function lookup,
-arity, and the parameter-frame bound, and recursively execute the callee body.
+argument and result arities, and the parameter-frame bound, and recursively
+execute the callee body.
 In particular, no rule assumes termination of a recursive call. -/
 inductive Exec (program : Program) : Stmt → State w → State w → Prop where
   | skip : Exec program .skip s s
@@ -178,9 +245,10 @@ inductive Exec (program : Program) : Stmt → State w → State w → Prop where
   | write : Exec program (.write value) s
       { s with outputRev := s.eval value :: s.outputRev }
   | call (lookup : program[fn]? = some f) (arity : args.length = f.params)
+      (hresultCount : dsts.length = f.results.length)
       (frame : f.params ≤ f.locals)
       (body : Exec program f.body (s.enter (args.map s.eval)) callee) :
-      Exec program (.call dst fn args) s (s.leave callee dst f.result)
+      Exec program (.call dsts fn args) s (s.leave callee dsts f.results)
 
 /-- Source-level total functional correctness. Cost is intentionally absent;
 the machine compilation theorem supplies the separate execution-cost claim. -/
@@ -200,11 +268,11 @@ theorem read_empty {program : Program} {s t : State w} {dst : Reg}
   | read available => simp [empty] at available
 
 theorem call_missing {program : Program} {s t : State w}
-    {dst : Reg} {fn : Nat} {args : List Expr}
-    (missing : program[fn]? = none) : ¬ Exec program (.call dst fn args) s t := by
+    {dsts : List Reg} {fn : Nat} {args : List Expr}
+    (missing : program[fn]? = none) : ¬ Exec program (.call dsts fn args) s t := by
   intro h
   cases h with
-  | call lookup _ _ _ => simp [missing] at lookup
+  | call lookup _ _ _ _ => simp [missing] at lookup
 
 end Source
 

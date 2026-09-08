@@ -67,15 +67,16 @@ inductive MeasuredExec (n : Nat) (program : Program) (heapLimit : Nat) {w : Nat}
         (Compiler.stmtSize n (.write value)) s
         { s with outputRev := s.eval value :: s.outputRev }
   | call (lookup : program[fn]? = some f) (arity : args.length = f.params)
+      (hresultCount : dsts.length = f.results.length)
       (frame : f.params ≤ f.locals)
       (arguments : ∀ arg ∈ args, arg.ReadsBelow heapLimit s.regs s.mem)
       (body : MeasuredExec n program heapLimit d f.body bodySteps
         (s.enter (args.map s.eval)) callee)
-      (result : f.result.ReadsBelow heapLimit callee.regs callee.mem) :
-      MeasuredExec n program heapLimit (d + 1) (.call dst fn args)
+      (results : ∀ result ∈ f.results, result.ReadsBelow heapLimit callee.regs callee.mem) :
+      MeasuredExec n program heapLimit (d + 1) (.call dsts fn args)
         ((ABI.callPrefix n args 0).length + 1 + bodySteps +
-          (ABI.returnCode n f.result).length + 1)
-        s (s.leave callee dst f.result)
+          (ABI.returnCodeResults n f.results).length + dsts.length)
+        s (s.leave callee dsts f.results)
 
 namespace MeasuredExec
 
@@ -96,8 +97,8 @@ theorem erase {n heapLimit depth steps : Nat} {program : Program} {stmt : Stmt}
       exact .whileTrue reads condition body rest
   | read available => exact .read available
   | write reads => exact .write reads
-  | call lookup arity frame arguments _ result body =>
-      exact .call lookup arity frame arguments body result
+  | call lookup arity hresultCount frame arguments _ results body =>
+      exact .call lookup arity hresultCount frame arguments body results
 
 /-- Increasing the allowed call depth does not change the measured execution. -/
 theorem depth_add {n heapLimit depth steps : Nat} {program : Program} {stmt : Stmt}
@@ -116,9 +117,9 @@ theorem depth_add {n heapLimit depth steps : Nat} {program : Program} {stmt : St
       exact .whileTrue reads condition body rest
   | read available => exact .read available
   | write reads => exact .write reads
-  | call lookup arity frame arguments _ result body =>
+  | call lookup arity hresultCount frame arguments _ results body =>
       simpa only [Nat.add_right_comm _ 1 extra] using
-        (MeasuredExec.call lookup arity frame arguments body result)
+        (MeasuredExec.call lookup arity hresultCount frame arguments body results)
 
 theorem mono {n heapLimit depth depth' steps : Nat} {program : Program} {stmt : Stmt}
     {s t : State w} (h : MeasuredExec n program heapLimit depth stmt steps s t)
@@ -157,9 +158,9 @@ theorem SafeExec.exists_measured {program : Program} {heapLimit depth : Nat}
       exact ⟨_, .whileTrue reads condition hb hr⟩
   | read available => exact ⟨_, .read available⟩
   | write reads => exact ⟨_, .write reads⟩
-  | call lookup arity frame arguments _ result body =>
+  | call lookup arity hresultCount frame arguments _ results body =>
       obtain ⟨nb, hb⟩ := body
-      exact ⟨_, .call lookup arity frame arguments hb result⟩
+      exact ⟨_, .call lookup arity hresultCount frame arguments hb results⟩
 
 theorem measured_iff_safe {n heapLimit depth : Nat} {program : Program} {stmt : Stmt}
     {s t : State w} :
@@ -196,13 +197,14 @@ theorem simulate_measured {n heapLimit depth steps : Nat} {program : Program}
       exact simulation_whileTrue_exact hwf.1 reads condition (body hwf.2) (rest hwf)
   | read available => exact simulation_read_exact hwf available
   | write reads => exact simulation_write_exact hwf reads
-  | call lookup arity frame arguments _ result body =>
+  | call lookup arity hresultCount frame arguments _ results body =>
       have hf := hvalid.2.2 _ (List.mem_of_getElem? lookup)
       have hbodyWF := hf.1.2.1.mono hf.2.1
       have hcount : _ ≤ n := Nat.le_trans frame hf.2.1
       rw [← arity] at hcount
       exact simulate_call_exact hwf.1 hwf.2 arguments hcount
-        (hf.1.2.2.mono hf.2.1) result (rawLink_function lookup) hcodefit (body hbodyWF)
+        hresultCount hf.2.2.2 (fun result hresult => (hf.1.2.2 result hresult).mono hf.2.1)
+        results (rawLink_function lookup) hcodefit (body hbodyWF)
 
 /-- A safe source execution has one measured count that works uniformly for
 every matching target frame, not a separately chosen count for each frame. -/

@@ -229,31 +229,33 @@ theorem ite {condition : Expr} {yes no : Stmt} {yesBound noBound : State w → N
     omega
 
 /-- Reuse a callee contract at a fresh local frame, then evaluate its return
-expression there and restore the caller. The budget includes argument setup,
-the entry jump, the body, the concrete return code, and the receive instruction.
+expressions there and restore the caller. The budget includes argument setup,
+the entry jump, the body, the concrete return code, and every receive instruction.
 Save/restore work is determined by `f.locals`, not the global register bound. -/
-theorem call {dst fn : Nat} {args : List Expr} {f : Func}
+theorem call {fn : Nat} {dsts : List Reg} {args : List Expr} {f : Func}
     {bodyBound : State w → Nat}
     (lookup : program[fn]? = some f) (arity : args.length = f.params)
+    (resultCount : dsts.length = f.results.length)
     (frame : f.params ≤ f.locals)
     (arguments : ∀ s, P s → ∀ arg ∈ args, arg.ReadsBelow heapLimit s.regs s.mem)
     (callee : ∀ caller, P caller →
       Contract n program heapLimit depth f.body
         (fun s => s = caller.enter (args.map caller.eval))
-        (fun finish => f.result.ReadsBelow heapLimit finish.regs finish.mem ∧
-          Q (caller.leave finish dst f.result)) (fun _ => bodyBound caller)) :
-    Contract n program heapLimit (depth + 1) (.call dst fn args) P Q
+        (fun finish => (∀ result ∈ f.results,
+          result.ReadsBelow heapLimit finish.regs finish.mem) ∧
+          Q (caller.leave finish dsts f.results)) (fun _ => bodyBound caller)) :
+    Contract n program heapLimit (depth + 1) (.call dsts fn args) P Q
       (fun caller => (ABI.callPrefixLocals n f.locals args 0).length + 1 + bodyBound caller +
-        (ABI.returnCodeLocals n f.locals f.result).length + 1) := by
+        (ABI.returnCodeResultsLocals n f.locals f.results).length + dsts.length) := by
   intro s hs
   obtain ⟨bodySteps, finish, hx, ⟨hr, hq⟩, hb⟩ :=
     callee s hs (s.enter (args.map s.eval)) rfl
   change bodySteps ≤ bodyBound s at hb
-  refine ⟨_, _, .call lookup arity frame (arguments s hs) hx hr, hq, ?_⟩
+  refine ⟨_, _, .call lookup arity resultCount frame (arguments s hs) hx hr, hq, ?_⟩
   exact Nat.add_le_add_right
     (Nat.add_le_add_right
       (Nat.add_le_add_left hb ((ABI.callPrefixLocals n f.locals args 0).length + 1))
-      (ABI.returnCodeLocals n f.locals f.result).length) 1
+      (ABI.returnCodeResultsLocals n f.locals f.results).length) dsts.length
 
 /-- Sequential budgets are evaluated at their actual respective entry states.
 The compatibility premise relates the intermediate budget to the original one. -/

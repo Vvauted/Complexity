@@ -11,8 +11,8 @@ import Examples.Ram.ArraySum
 /-!
 # Executable array copy with a reusable returned state
 
-`copy` executes the existing named copy function and returns its actual shared
-state through `applyState`. Ordinary list equations describe the copied memory;
+`copy` executes the existing Unit-returning copy function and returns its actual
+shared state through `applyState`. Ordinary list equations describe the copied memory;
 the logical lists occur only in erased safety proofs, never as runtime arguments.
 The implementation does not allocate or load either array.
 
@@ -39,7 +39,7 @@ def Safe (source destination length : Word 32) (heapLimit : Nat)
 private def copyCode : Code :=
   LocalCompiler.rawLink copyFunctions.registers copyFunctions.program
     (LocalCompiler.Function.trampoline copyFunctions.functionIndex.copy
-      copyFunctions.function.copy.params)
+      copyFunctions.function.copy.params copyFunctions.function.copy.results.length)
 
 private theorem compile_copy :
     LocalCompiler.Function.compile copyFunctions.registers copyFunctions.program
@@ -80,6 +80,37 @@ def copy (source destination length : Word 32) (heapLimit : Nat) (entry : Source
   (copyFunctions.applyState.copy source destination length heapLimit entry
     (copy_halts safe hstack)).2
 
+/-- Typed Unit application retains the actual copied shared state. The empty
+value does not replace execution: the destination contents, frame and streams
+come from the same compiled invocation. -/
+theorem copy_applyState_spec (safe : Safe source destination length heapLimit entry)
+    (hstack : heapLimit + ABI.frameSize copyFunctions.registers < 2 ^ 32)
+    {xs ys : List (Word 32)} (count : length.toNat = xs.length)
+    (sameLength : ys.length = xs.length)
+    (sourceArray : ArrayAt heapLimit source xs entry)
+    (destinationArray : ArrayAt heapLimit destination ys entry)
+    (disjoint : ArraysDisjoint source xs.length destination xs.length) :
+    let result := copyFunctions.applyState.copy source destination length heapLimit entry
+      (copy_halts safe hstack)
+    result.1 = () ∧
+      ArrayAt heapLimit source xs result.2 ∧ ArrayAt heapLimit destination xs result.2 ∧
+      ArrayFrame destination xs.length entry.mem result.2.mem ∧
+      result.2.input = entry.input ∧ result.2.outputRev = entry.outputRev := by
+  have lengthFit : xs.length < 2 ^ 32 := by
+    rw [← count]
+    exact length.isLt
+  have encoded : length = BitVec.ofNat 32 xs.length := by
+    rw [← count]
+    exact (Word.ofNat_toNat_self length).symm
+  have post := LocalCompiler.Function.applyState_spec (copy_halts safe hstack)
+    compile_copy copyFunctions.function_lookup.copy copyCode_length_lt (by simpa using hstack)
+    (copy_function_contract (program := copyFunctions.program) (depth := 0)
+      (by decide : 0 < 32) sameLength lengthFit disjoint)
+    ⟨by rw [encoded], sourceArray, destinationArray⟩
+  refine ⟨rfl, ?_⟩
+  simpa only [copyFunctions.applyState.copy,
+    max_eq_right (by decide : 1 ≤ copyFunctions.registers)] using post.2
+
 /-- The actual returned state contains the copied list at both pointers,
 preserves memory outside the destination, and retains both I/O streams. -/
 theorem copy_spec (safe : Safe source destination length heapLimit entry)
@@ -92,19 +123,8 @@ theorem copy_spec (safe : Safe source destination length heapLimit entry)
     let finish := copy source destination length heapLimit entry safe hstack
     ArrayAt heapLimit source xs finish ∧ ArrayAt heapLimit destination xs finish ∧
       ArrayFrame destination xs.length entry.mem finish.mem ∧
-      finish.input = entry.input ∧ finish.outputRev = entry.outputRev := by
-  have lengthFit : xs.length < 2 ^ 32 := by
-    rw [← count]
-    exact length.isLt
-  have encoded : length = BitVec.ofNat 32 xs.length := by
-    rw [← count]
-    exact (Word.ofNat_toNat_self length).symm
-  have post := LocalCompiler.Function.applyState_spec (copy_halts safe hstack)
-    compile_copy copyFunctions.function_lookup.copy copyCode_length_lt (by simpa using hstack)
-    (copy_function_contract (program := copyFunctions.program) (depth := 0)
-      (by decide : 0 < 32) sameLength lengthFit disjoint)
-    ⟨by rw [encoded], sourceArray, destinationArray⟩
-  simpa only [copy, copyFunctions.applyState.copy] using post.2
+      finish.input = entry.input ∧ finish.outputRev = entry.outputRev :=
+  (copy_applyState_spec safe hstack count sameLength sourceArray destinationArray disjoint).2
 
 /-- The ordinary list observation of the actual copied destination equals
 the source list. This reuses the existing representation-to-list theorem. -/
@@ -129,7 +149,7 @@ theorem runTotal_steps_le (safe : Safe source destination length heapLimit entry
     (destinationArray : ArrayAt heapLimit destination ys entry)
     (disjoint : ArraysDisjoint source xs.length destination xs.length) :
     (copyFunctions.runTotal.copy source destination length heapLimit entry
-      (copy_halts safe hstack)).steps ≤ 19 * xs.length + 42 := by
+      (copy_halts safe hstack)).steps ≤ 19 * xs.length + 39 := by
   have lengthFit : xs.length < 2 ^ 32 := by
     rw [← count]
     exact length.isLt
@@ -146,11 +166,13 @@ theorem runTotal_steps_le (safe : Safe source destination length heapLimit entry
     (copy_function_timeBound (by decide : 0 < 32) sameLength lengthFit disjoint)
     ⟨by rw [encoded], sourceArray, destinationArray⟩
   have callCount : LocalCompiler.Function.callSteps copyFunctions.registers
-      copyFunctions.function.copy (19 * xs.length + 2) + 1 = 19 * xs.length + 42 := by
+      copyFunctions.function.copy (19 * xs.length + 2) + 1 = 19 * xs.length + 39 := by
     rw [LocalCompiler.Function.callSteps_eq]
-    change 19 * xs.length + 2 + 2 * 3 + 1 + 7 * 3 + 11 + 1 = 19 * xs.length + 42
+    change 19 * xs.length + 2 + 2 * 3 + 0 + 7 * 3 + 2 * 0 + 9 + 1 =
+      19 * xs.length + 39
     omega
-  simpa only [copyFunctions.runTotal.copy, callCount] using bounded
+  simpa only [copyFunctions.runTotal.copy,
+    max_eq_right (by decide : 1 ≤ copyFunctions.registers), callCount] using bounded
 
 private theorem copy_stack_of_sum_stack
     (hstack : heapLimit + ABI.frameSize sumFunctions.registers < 2 ^ 32) :

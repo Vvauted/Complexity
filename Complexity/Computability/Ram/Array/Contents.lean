@@ -50,7 +50,8 @@ theorem enter {heapLimit : Nat} {base : Word w} {xs : List (Word w)}
 /-- Return retains the final callee heap while restoring caller registers. -/
 theorem leave {heapLimit : Nat} {base : Word w} {xs : List (Word w)}
     {callee : State w} (h : ArrayAt heapLimit base xs callee)
-    (caller : State w) (dst : Reg) (result : Expr) :
-    ArrayAt heapLimit base xs (caller.leave callee dst result) := h
+    (caller : State w) (dsts : List Reg) (results : List Expr) :
+    ArrayAt heapLimit base xs (caller.leave callee dsts results) := by
+  simpa only [ArrayAt, State.leave_mem] using h
 
 end Ram.Source.ArrayAt

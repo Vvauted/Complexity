@@ -302,20 +302,23 @@ theorem of_relContract {P : State w → Prop} {Q : State w → State w → Prop}
 
 /-- Apply a function specification without unfolding its body. Only real
 argument, return-read and call-depth safety obligations remain. -/
-theorem call {f : Func} {fn dst bodyDepth : Nat} {args : List Expr}
+theorem call {f : Func} {fn bodyDepth : Nat} {dsts : List Reg} {args : List Expr}
     {P : State w → Prop} {Q : State w → State w → Prop}
     (body : TotalRelContract program heapLimit bodyDepth f.body P
-      (fun entry finish => f.result.ReadsBelow heapLimit finish.regs finish.mem ∧
+      (fun entry finish => (∀ result ∈ f.results,
+        result.ReadsBelow heapLimit finish.regs finish.mem) ∧
         Q entry finish))
     (lookup : program[fn]? = some f) (arity : args.length = f.params)
+    (resultCount : dsts.length = f.results.length)
     (frame : f.params ≤ f.locals)
     (arguments : ∀ expr ∈ args, expr.ReadsBelow heapLimit s.regs s.mem)
     (pre : P (s.enter (args.map s.eval))) (nesting : bodyDepth + 1 ≤ depth)
     (continuation : ∀ callee, Q (s.enter (args.map s.eval)) callee →
-      post (s.leave callee dst f.result)) :
-    TotalWP program heapLimit depth (.call dst fn args) post s := by
+      post (s.leave callee dsts f.results)) :
+    TotalWP program heapLimit depth (.call dsts fn args) post s := by
   obtain ⟨callee, execution, reads, result⟩ := body _ pre
-  exact ⟨_, (SafeExec.call (dst := dst) lookup arity frame arguments execution reads).mono nesting,
+  exact ⟨_, (SafeExec.call (dsts := dsts) lookup arity resultCount frame
+    arguments execution reads).mono nesting,
     continuation callee result⟩
 
 /-- A mathematical well-founded relation supplies loop termination. There is

@@ -60,7 +60,7 @@ ram_def functions := ram_functions% {
 theorem square_contract (heapLimit : Nat) (x : Word w) :
     Source.FunctionContract functions.program heapLimit 0 functions.function.square
       (fun args _ => args = functions.arguments.square x)
-      (fun _ entry value finish => value = x * x ∧ finish = entry) := by
+      (fun _ entry value finish => value = [x * x] ∧ finish = entry) := by
   ram_total_vc args entry rfl [functions.body_eq.square, functions.result_eq.square]
 
 /-- The two calls compose through their returned values. Their private local
@@ -69,7 +69,7 @@ of intermediate local-variable states is needed. -/
 theorem squaredNorm_contract (heapLimit : Nat) (x y : Word w) :
     Source.FunctionContract functions.program heapLimit 1 functions.function.squaredNorm
       (fun args _ => args = functions.arguments.squaredNorm x y)
-      (fun _ entry value finish => value = x * x + y * y ∧ finish = entry) := by
+      (fun _ entry value finish => value = [x * x + y * y] ∧ finish = entry) := by
   ram_total_vc args entry rfl [functions.body_eq.squaredNorm, functions.result_eq.squaredNorm]
   ram_total_apply (square_contract heapLimit x) [functions.function_lookup.square]
   ram_total_apply (square_contract heapLimit y) [functions.function_lookup.square]
@@ -79,7 +79,7 @@ The accumulator and returned value are words; shared state is unchanged. -/
 theorem addSquare_contract (heapLimit : Nat) (accumulator x : Word w) :
     Source.FunctionContract functions.program heapLimit 1 functions.function.addSquare
       (fun args _ => args = functions.arguments.addSquare accumulator x)
-      (fun _ entry value finish => value = accumulator + x * x ∧ finish = entry) := by
+      (fun _ entry value finish => value = [accumulator + x * x] ∧ finish = entry) := by
   ram_total_vc args entry rfl [functions.body_eq.addSquare, functions.result_eq.addSquare]
   ram_total_apply (square_contract heapLimit x) [functions.function_lookup.square]
 
@@ -87,10 +87,9 @@ theorem addSquare_contract (heapLimit : Nat) (accumulator x : Word w) :
 the caller's registers, memory and streams. The equation includes termination. -/
 theorem squaredNorm_eval (heapLimit : Nat) (x y : Word w) (entry : Source.State w) :
     functions.eval.squaredNorm x y heapLimit entry = Part.some (x * x + y * y, entry) := by
-  obtain ⟨value, finish, equation, rfl, rfl⟩ :=
-    (squaredNorm_contract heapLimit x y).eval_spec
-      (args := functions.arguments.squaredNorm x y) (entry := entry) rfl
-  exact equation
+  obtain ⟨value, finish, execution, rfl, rfl⟩ :=
+    squaredNorm_contract heapLimit x y (functions.arguments.squaredNorm x y) entry rfl
+  exact execution.evalTyped_eq_some functions.results_length.squaredNorm
 
 /-- For encoded natural arguments the result is the encoded mathematical
 sum of squares; encoding retains the word model's modular arithmetic. -/
@@ -103,17 +102,17 @@ theorem squaredNorm_eval_ofNat (heapLimit x y : Nat) (entry : Source.State w) :
 private theorem square_call_steps {control heapLimit depth steps dst arg : Nat}
     {entry finish : Source.State w}
     (execution : Source.LocalMeasuredExec control functions.program heapLimit depth
-      (.call dst functions.functionIndex.square [.var arg]) steps entry finish) :
+      (.call [dst] functions.functionIndex.square [.var arg]) steps entry finish) :
     steps = 23 := by
   cases execution with
-  | «call» lookup _ _ _ body _ =>
+  | «call» lookup _ _ _ _ body _ =>
       have found : _ = functions.function.square :=
         Option.some.inj (lookup.symm.trans functions.function_lookup.square)
       cases found
       rw [functions.body_eq.square] at body
       cases body
-      simp only [ABI.callLocals_steps_eq]
-      change 1 + 0 + 3 + 7 * 1 + 1 + 11 = 23
+      simp only [ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length]
+      change (1 + 1 + 4 * 1 + 4) + 1 + 0 + (3 + 1 + 3 * 1 + 4) + 1 = 23
       decide
 
 /-- The fold step's body makes one actual square call. Its final addition and
@@ -152,7 +151,7 @@ identifies its cost without replaying the value computation. -/
 theorem squaredNorm_measured (heapLimit : Nat) (x y : Word w) (entry : Source.State w) :
     Source.FunctionMeasuredExec functions.registers functions.program heapLimit 1
       functions.function.squaredNorm (functions.arguments.squaredNorm x y) 46
-      entry (x * x + y * y) entry := by
+      entry [x * x + y * y] entry := by
   obtain ⟨value, finish, execution, rfl, rfl⟩ :=
     squaredNorm_contract heapLimit x y (functions.arguments.squaredNorm x y) entry rfl
   obtain ⟨steps, measured⟩ := execution.exists_measured functions.registers

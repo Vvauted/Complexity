@@ -51,8 +51,10 @@ Its argument builder takes an `ArrayRef` followed by a word. The
 The sum and pair contracts return ordinary modular list sums and preserve shared state.
 Because both operations are read-only, the two references may overlap. Constructing a
 reference does not establish its contents, range or ownership, and it does not load or
-allocate memory. Typed local bindings can hold descriptors for existing data;
-array-valued returns, allocation and automatic loading of Lean lists remain separate work. See
+allocate memory. Typed local bindings and array-valued function returns carry descriptors
+for existing data. The [slice function](##Examples.Ram.ArraySlice) returns a borrowed
+`ArrayRef` that its caller passes to sum. Allocation and automatic loading of Lean lists
+remain separate work. See
 [array references](##Complexity.Computability.Ram.Array.Ref) for the representation rules.
 
 Local descriptors can be constructed with `array(base, length)`, copied from another
@@ -61,7 +63,8 @@ executes two word assignments; it does not clone or allocate the referenced cell
 `subslice` starts from a bound handle, so bind constructed or nested handles first.
 Immutable bindings protect their fields, not the shared heap cells; `let mut`
 permits assigning the descriptor's `base` and `length`. Neither form supplies
-ownership, runtime bounds checks or an array-valued return convention.
+ownership or runtime bounds checks. Array-valued calls use the function's declared
+`: array` result and receive both descriptor fields through the same calling convention.
 
 The [ordinary sum application](##Examples.Ram.ArraySum) has the form
 `sum array heapLimit entry safe hstack : Nat`. Its data inputs are the reference,
@@ -70,18 +73,21 @@ inside the erased safety proof, not passed as another runtime argument. `sum_eq`
 connects this executable value to the modular list sum; the
 [graph client](##Examples.Ram.GraphDegree) uses that equation to prove `sum_eq_degree`
 with ordinary mathlib facts and no loop or frame proof. Neither application loads
-the represented array. The underlying `apply` projects only the returned word;
-use `applyState` for reusable source shared state or `runTotal` for machine state and steps.
+the represented array. Generated `apply` returns the declared `Word`, `ArrayRef` or `Unit`;
+use `applyState` for that value and reusable source shared state, or `runTotal` for
+machine state and steps. `TypedFunctionContract` keeps these typed values in mathematical
+postconditions; the raw execution still records their actual word fields.
 
 The [copy application](##Examples.Ram.ArrayCopyFunction) returns `Source.State 32`
-through `applyState`. `copy_contents` states that `arrayContents` of its destination
+by projecting the state from copy's actual `Unit`-valued `applyState`. `copy_contents`
+states that `arrayContents` of its destination
 equals the source list; `copy_spec` also retains the source array, the destination
 frame and unchanged streams. The lists occur in erased proofs, while actual RAM
 stores produce the destination. Both arrays must already be represented and disjoint.
 `copyThenSum` feeds this returned state to the existing sum application, reusing its
 representation. This host-level sequencing is not a single compiled RAM program;
-returning shared state is separate from local array descriptors and does not add
-array-valued function returns.
+returning shared state is separate from returning an array reference. This copy returns
+`Unit` while retaining its stores and shared effects; slice instead returns two descriptor fields.
 
 ## Fold through an expression or a proved function
 
@@ -131,7 +137,8 @@ the expression rule it handles specific read-only scalar folds, not arbitrary
 actual expressions or calls, not free Lean callbacks. Represented input,
 non-wrapping addresses and callee safety remain required. Richer bodies, multiple
 accumulators, short-circuiting and mutable-fold contracts are not supplied by these
-rules; neither are returned array values or automatic list loading. The lower-level
+rules, even though ordinary functions can return array references. Automatic list loading
+also remains outside these rules. The lower-level
 [call-based fold](##Complexity.Computability.Ram.Array.Fold.Call) remains available
 for explicitly configured cursor loops.
 
@@ -200,7 +207,8 @@ For a typed reference, `Ram.ArrayRef.Rep.subslice` reuses these rules to describ
 constructs host-side metadata without copying cells. Inside a source function,
 `let window : array := subslice(xs, offset, count);` instead executes the base-address
 arithmetic and descriptor assignments. The [slice sample](##Examples.Ram.ArraySlice)
-passes this local reference to the existing sum function and states its result using
+instead returns that borrowed reference from `slice` and passes it to the existing sum
+function. It states the result using
 ordinary list `drop` and `take`. Containment and non-wrapping premises remain explicit;
 arithmetic, bindings and calls retain their execution costs. A mathematical slice
 view does not silently perform any of those source instructions.

@@ -40,20 +40,20 @@ The generated call blocks account for all work outside the callee's body. -/
 theorem call {w control heapLimit depth : Nat} {program : Program} {f : Func}
     {P : List (Word w) → State w → Prop} {bound : List (Word w) → State w → Nat}
     (time : FunctionTimeBound control program heapLimit depth f P bound)
-    {dst fn : Nat} {args : List Expr} {R : State w → Prop}
+    {fn : Nat} {dsts : List Reg} {args : List Expr} {R : State w → Prop}
     (lookup : program[fn]? = some f)
     (pre : ∀ entry, R entry → P (args.map entry.eval) entry) :
-    TimeBound control program heapLimit (depth + 1) (.call dst fn args) R
+    TimeBound control program heapLimit (depth + 1) (.call dsts fn args) R
       (fun entry => (ABI.callPrefixLocals control f.locals args 0).length + 1 +
         bound (args.map entry.eval) entry +
-        (ABI.returnCodeLocals control f.locals f.result).length + 1) := by
+        (ABI.returnCodeResultsLocals control f.locals f.results).length + dsts.length) := by
   intro entry hp steps finish execution
   cases execution with
-  | call found arity frame arguments body result =>
+  | call found arity _ frame arguments body results =>
     have same : _ = f := Option.some.inj (found.symm.trans lookup)
     subst f
     have invocation := FunctionMeasuredExec.of_body
-      (by simpa only [List.length_map] using arity) frame body result
+      (by simpa only [List.length_map] using arity) frame body results
     have bounded := time _ entry (pre entry hp) _ _ _ invocation
     dsimp only
     omega
@@ -64,12 +64,12 @@ or functional-correctness premise is needed for this conditional conclusion. -/
 theorem call_at {w control heapLimit depth : Nat} {program : Program} {f : Func}
     {P : List (Word w) → State w → Prop} {bound : List (Word w) → State w → Nat}
     (time : FunctionTimeBound control program heapLimit depth f P bound)
-    {dst fn : Nat} {args : List Expr} {entry : State w} {overall : Nat}
+    {fn : Nat} {dsts : List Reg} {args : List Expr} {entry : State w} {overall : Nat}
     (lookup : program[fn]? = some f) (pre : P (args.map entry.eval) entry)
     (budget : (ABI.callPrefixLocals control f.locals args 0).length + 1 +
       bound (args.map entry.eval) entry +
-      (ABI.returnCodeLocals control f.locals f.result).length + 1 ≤ overall) :
-    TimeBound control program heapLimit (depth + 1) (.call dst fn args)
+      (ABI.returnCodeResultsLocals control f.locals f.results).length + dsts.length ≤ overall) :
+    TimeBound control program heapLimit (depth + 1) (.call dsts fn args)
       (fun s => s = entry) (fun _ => overall) := by
   apply (time.call (R := fun s => s = entry) lookup (by rintro s rfl; exact pre)).mono_budget
   rintro s rfl
@@ -82,31 +82,38 @@ those actual values; all call overhead remains charged by the compiler. -/
 theorem call_seq_at {w control heapLimit depth : Nat} {program : Program} {f : Func}
     {P : List (Word w) → State w → Prop} {bound : List (Word w) → State w → Nat}
     (time : FunctionTimeBound control program heapLimit depth f P bound)
-    {Q : List (Word w) → State w → Word w → State w → Prop}
+    {Q : List (Word w) → State w → List (Word w) → State w → Prop}
     (correct : FunctionContract program heapLimit depth f P Q)
-    {dst fn : Nat} {args : List Expr} {tail : Stmt} {entry : State w} {overall : Nat}
+    {fn : Nat} {dsts : List Reg} {args : List Expr}
+    {tail : Stmt} {entry : State w} {overall : Nat}
     (lookup : program[fn]? = some f)
     (arguments : ∀ expr ∈ args, expr.ReadsBelow heapLimit entry.regs entry.mem)
-    (pre : P (args.map entry.eval) entry) (nextBound : Word w → State w → Nat)
+    (pre : P (args.map entry.eval) entry) (nextBound : List (Word w) → State w → Nat)
     (continuation : ∀ value finish, Q (args.map entry.eval) entry value finish →
       finish.regs = entry.regs →
       TimeBound control program heapLimit (depth + 1) tail
-        (fun s => s = finish.setReg dst value) (fun _ => nextBound value finish))
+        (fun s => s = finish.setRegs dsts value) (fun _ => nextBound value finish))
     (budget : ∀ value finish, Q (args.map entry.eval) entry value finish →
       finish.regs = entry.regs →
       (ABI.callPrefixLocals control f.locals args 0).length + 1 +
         bound (args.map entry.eval) entry +
-        (ABI.returnCodeLocals control f.locals f.result).length + 1 +
+        (ABI.returnCodeResultsLocals control f.locals f.results).length + dsts.length +
         nextBound value finish ≤ overall) :
-    TimeBound control program heapLimit (depth + 1) (.seq (.call dst fn args) tail)
+    TimeBound control program heapLimit (depth + 1) (.seq (.call dsts fn args) tail)
       (fun s => s = entry) (fun _ => overall) := by
   obtain ⟨value, finish, invocation, post⟩ := correct _ entry pre
-  have firstTime := time.call (R := fun s => s = entry) (dst := dst) lookup
+  have firstTime := time.call (R := fun s => s = entry) (dsts := dsts) lookup
     (by rintro s rfl; exact pre)
   rintro s rfl steps last execution
   cases execution with
   | seq first second =>
-      have same := (invocation.call (dst := dst) lookup arguments).deterministic first.erase
+      have resultCount : dsts.length = f.results.length := by
+        cases first with
+        | call found _ count _ _ _ _ =>
+          have same : _ = f := Option.some.inj (found.symm.trans lookup)
+          simpa only [same] using count
+      have same :=
+        (invocation.call lookup resultCount arguments).deterministic first.erase
       rw [← same] at second
       have firstBound := firstTime _ rfl _ _ first
       have secondBound := continuation value finish post invocation.regs_eq _ rfl _ _ second

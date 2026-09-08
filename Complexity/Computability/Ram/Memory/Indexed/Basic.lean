@@ -150,8 +150,9 @@ theorem enter (h : IndexedAt heapLimit address values s) (args : List (Word w)) 
     IndexedAt heapLimit address values (s.enter args) := h
 
 theorem leave (h : IndexedAt heapLimit address values s)
-    (caller : State w) (dst : Reg) (result : Expr) :
-    IndexedAt heapLimit address values (caller.leave s dst result) := h
+    (caller : State w) (dsts : List Reg) (results : List Expr) :
+    IndexedAt heapLimit address values (caller.leave s dsts results) := by
+  simpa only [IndexedAt, State.leave_mem] using h
 
 /-- Only heap agreement is needed to move a model between source states. -/
 theorem heapEqBelow (h : IndexedAt heapLimit address values s)

@@ -9,12 +9,12 @@ import Complexity.Computability.Ram.Compiler.Local.Function
 # Executable results of terminating function calls
 
 `Halts` asserts that the existing executable function runner returns normally.
-`runTotal` extracts that actual run result, and `apply` reads its returned word.
+`runTotal` extracts that actual run result, and `apply` reads its returned fields.
 The termination proof is erased during execution: neither a mathematical answer
 nor a time budget is an input to the implementation.
 
 The result retains its machine state and measured steps. Correctness identifies
-the returned word and shared state of this same run; a separate time equation
+the returned fields and shared state of this same run; a separate time equation
 identifies its full call-and-halt count. Shared memory is observed below the heap
 boundary, without equating private target stack words with source memory.
 
@@ -47,12 +47,30 @@ def runTotal (control : Nat) (program : Program) (fn arity heapLimit : Nat)
     (h : Halts control program fn arity heapLimit args entry) : RunResult (Ram.State w) :=
   (runUntil control program fn arity heapLimit args entry).get h.isSome
 
-/-- Return the word produced by the actual executable function call.
+/-- Return every field produced by the actual executable function call.
 Use `runTotal` when the resulting shared state or instruction count is also needed. -/
 def «apply» (control : Nat) (program : Program) (fn arity heapLimit : Nat)
     (args : List (Word w)) (entry : Source.State w)
-    (h : Halts control program fn arity heapLimit args entry) : Word w :=
-  (runTotal control program fn arity heapLimit args entry h).state.regs 0
+    (h : Halts control program fn arity heapLimit args entry) : List (Word w) :=
+  returnedValues (resultArity program fn)
+    (runTotal control program fn arity heapLimit args entry h).state
+
+/-- Result projection reads precisely the declared number of received registers;
+no default value is inserted when a typed client observes these fields. -/
+@[simp] theorem apply_length (control : Nat) (program : Program)
+    (fn arity heapLimit : Nat) (args : List (Word w)) (entry : Source.State w)
+    (h : Halts control program fn arity heapLimit args entry) :
+    («apply» control program fn arity heapLimit args entry h).length =
+      resultArity program fn :=
+  returnedValues_length _ _
+
+/-- A declaration identifies the actual result-list length for safe typed indexing. -/
+theorem apply_length_of_lookup {control fn arity heapLimit : Nat} {program : Program}
+    {f : Func} {args : List (Word w)} {entry : Source.State w}
+    (h : Halts control program fn arity heapLimit args entry)
+    (hlookup : program[fn]? = some f) :
+    («apply» control program fn arity heapLimit args entry h).length = f.results.length := by
+  rw [apply_length, resultArity_lookup hlookup]
 
 /-- Recover source shared state without exposing the compiler's private stack.
 This is a host-side state projection, not a RAM loader or memory-copy operation. -/
@@ -68,11 +86,12 @@ def returnState (heapLimit : Nat) (entry : Source.State w) (target : Ram.State w
 The state retains the actual heap and I/O effects, with caller locals restored. -/
 def applyState (control : Nat) (program : Program) (fn arity heapLimit : Nat)
     (args : List (Word w)) (entry : Source.State w)
-    (h : Halts control program fn arity heapLimit args entry) : Word w × Source.State w :=
+    (h : Halts control program fn arity heapLimit args entry) :
+    List (Word w) × Source.State w :=
   let result := runTotal control program fn arity heapLimit args entry h
-  (result.state.regs 0, returnState heapLimit entry result.state)
+  (returnedValues (resultArity program fn) result.state, returnState heapLimit entry result.state)
 
-/-- Both application interfaces return the same word from the same run. -/
+/-- Both application interfaces return the same fields from the same run. -/
 @[simp] theorem applyState_fst (control : Nat) (program : Program)
     (fn arity heapLimit : Nat) (args : List (Word w)) (entry : Source.State w)
     (h : Halts control program fn arity heapLimit args entry) :
@@ -82,7 +101,8 @@ def applyState (control : Nat) (program : Program) (fn arity heapLimit : Nat)
 /-- Safe source execution identifies the projected state, including unchanged
 source memory outside the heap. No equality with the private target stack is used. -/
 theorem returnState_eq_of_execution {heapLimit depth : Nat} {program : Program}
-    {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+    {f : Func} {args : List (Word w)} {entry finish : Source.State w}
+    {value : List (Word w)}
     {target : Ram.State w}
     (execution : Source.FunctionExec program heapLimit depth f args entry value finish)
     (observed : Source.State.Observes heapLimit 0 finish target) :
@@ -122,7 +142,8 @@ theorem runTotal_spec {control fn arity heapLimit : Nat} {program : Program}
 /-- Safe source termination implies normal termination of its compiled call.
 No cost certificate or operational limit is required. -/
 theorem halts_of_execution {control heapLimit depth fn : Nat} {program : Program}
-    {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+    {f : Func} {args : List (Word w)} {entry finish : Source.State w}
+    {value : List (Word w)}
     {code : Code} (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
     (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
@@ -149,7 +170,7 @@ compiled call. Its postcondition and any separate time bound are not runtime inp
 theorem halts_of_contract {control heapLimit depth fn : Nat} {program : Program}
     {f : Func} {args : List (Word w)} {entry : Source.State w} {code : Code}
     {P : List (Word w) → Source.State w → Prop}
-    {Q : List (Word w) → Source.State w → Word w → Source.State w → Prop}
+    {Q : List (Word w) → Source.State w → List (Word w) → Source.State w → Prop}
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
     (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
@@ -160,13 +181,15 @@ theorem halts_of_contract {control heapLimit depth fn : Nat} {program : Program}
 
 /-- The actual total run returns the source value and observes its shared final state. -/
 theorem runTotal_correct_of_execution {control heapLimit depth fn : Nat} {program : Program}
-    {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+    {f : Func} {args : List (Word w)} {entry finish : Source.State w}
+    {value : List (Word w)}
     {code : Code} (h : Halts control program fn f.params heapLimit args entry)
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
     (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
     (execution : Source.FunctionExec program heapLimit depth f args entry value finish) :
-    (runTotal control program fn f.params heapLimit args entry h).state.regs 0 = value ∧
+    returnedValues f.results.length
+        (runTotal control program fn f.params heapLimit args entry h).state = value ∧
       Source.State.Observes heapLimit 0 finish
         (runTotal control program fn f.params heapLimit args entry h).state := by
   obtain ⟨bodySteps, target, returned, value, observed, _⟩ :=
@@ -174,21 +197,24 @@ theorem runTotal_correct_of_execution {control heapLimit depth fn : Nat} {progra
   rw [runTotal_eq_of_runUntil h returned]
   exact ⟨value, observed⟩
 
-/-- A source correctness proof identifies the ordinary executable returned word. -/
+/-- A source correctness proof identifies the ordinary executable returned fields. -/
 theorem apply_eq_of_execution {control heapLimit depth fn : Nat} {program : Program}
-    {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+    {f : Func} {args : List (Word w)} {entry finish : Source.State w}
+    {value : List (Word w)}
     {code : Code} (h : Halts control program fn f.params heapLimit args entry)
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
     (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
     (execution : Source.FunctionExec program heapLimit depth f args entry value finish) :
-    «apply» control program fn f.params heapLimit args entry h = value :=
-  (runTotal_correct_of_execution h hcompile hlookup hcode hstack execution).1
+    «apply» control program fn f.params heapLimit args entry h = value := by
+  simpa only [«apply», resultArity_lookup hlookup] using
+    (runTotal_correct_of_execution h hcompile hlookup hcode hstack execution).1
 
 /-- The executable stateful application returns exactly the source invocation's
 value and final shared state, suitable as the entry of another call. -/
 theorem applyState_eq_of_execution {control heapLimit depth fn : Nat} {program : Program}
-    {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+    {f : Func} {args : List (Word w)} {entry finish : Source.State w}
+    {value : List (Word w)}
     {code : Code} (h : Halts control program fn f.params heapLimit args entry)
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
@@ -197,14 +223,16 @@ theorem applyState_eq_of_execution {control heapLimit depth fn : Nat} {program :
     applyState control program fn f.params heapLimit args entry h = (value, finish) := by
   obtain ⟨returned, observed⟩ :=
     runTotal_correct_of_execution h hcompile hlookup hcode hstack execution
-  exact Prod.ext returned (returnState_eq_of_execution execution observed)
+  apply Prod.ext
+  · simpa only [applyState, resultArity_lookup hlookup] using returned
+  · exact returnState_eq_of_execution execution observed
 
 /-- An existing function contract proves any mathematical postcondition about
 the executable returned value and state, without another implementation proof. -/
 theorem applyState_spec {control heapLimit depth fn : Nat} {program : Program}
     {f : Func} {args : List (Word w)} {entry : Source.State w} {code : Code}
     {P : List (Word w) → Source.State w → Prop}
-    {Q : List (Word w) → Source.State w → Word w → Source.State w → Prop}
+    {Q : List (Word w) → Source.State w → List (Word w) → Source.State w → Prop}
     (h : Halts control program fn f.params heapLimit args entry)
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
@@ -219,7 +247,7 @@ theorem applyState_spec {control heapLimit depth fn : Nat} {program : Program}
 /-- A separate body-time theorem gives the full call-and-halt count of this same run. -/
 theorem runTotal_steps_eq_of_execution {control heapLimit depth bodySteps fn : Nat}
     {program : Program} {f : Func} {args : List (Word w)}
-    {entry finish : Source.State w} {value : Word w} {code : Code}
+    {entry finish : Source.State w} {value : List (Word w)} {code : Code}
     (h : Halts control program fn f.params heapLimit args entry)
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
@@ -235,7 +263,8 @@ theorem runTotal_steps_eq_of_execution {control heapLimit depth bodySteps fn : N
 /-- A separate conditional body-time bound controls the actual complete call.
 Correctness supplies termination; the bound adds no premise to the implementation. -/
 theorem runTotal_steps_le_of_timeBound {control heapLimit depth fn : Nat} {program : Program}
-    {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+    {f : Func} {args : List (Word w)} {entry finish : Source.State w}
+    {value : List (Word w)}
     {code : Code} {P : List (Word w) → Source.State w → Prop}
     {bound : List (Word w) → Source.State w → Nat}
     (h : Halts control program fn f.params heapLimit args entry)

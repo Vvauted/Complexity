@@ -34,9 +34,11 @@ theorem callBudget_eq {f : Func} {w : Nat} {Arg : Type}
     (spec : Spec f w Arg) (control : Nat) (args : List Expr) (arg : Arg) :
     spec.callBudget control args arg =
       (args.map (fun e => (e.compile (ABI.scratch control)).length)).sum +
-        spec.budget arg + (f.result.compile (ABI.scratch control)).length +
-        7 * f.locals + args.length + 11 :=
-  ABI.callLocals_steps_eq control f.locals args f.result 0 (spec.budget arg)
+        spec.budget arg +
+        (f.results.map (fun e => (e.compile (ABI.scratch control)).length)).sum +
+        7 * f.locals + args.length + 2 * f.results.length + 9 := by
+  rw [callBudget, ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length]
+  omega
 
 end Ram.Source.Recursion.Spec
 
@@ -53,8 +55,9 @@ macro_rules
       `(tactic|
         (simp (config := { failIfUnchanged := false }) only
           [Ram.Source.Recursion.Spec.callBudget_eq,
-            Ram.ABI.callLocals_steps_eq, Ram.ABI.callPrefixLocals_length_eq,
-            Ram.ABI.returnCodeLocals_length,
+            Ram.ABI.callResultsLocals_steps_eq, Ram.ABI.callLocals_steps_eq,
+            Ram.ABI.callPrefixLocals_length_eq, Ram.ABI.returnCodeResultsLocals_length,
+            Ram.ABI.returnCodeLocals_length, Ram.ABI.receiveResults_length,
             Ram.Source.Contract.sumBudget_eq, Ram.Source.Contract.guardCost,
             Ram.Tactic.stmtSize_assign, Ram.Tactic.stmtSize_store,
             Ram.Tactic.stmtSize_read, Ram.Tactic.stmtSize_write,
@@ -80,8 +83,9 @@ theorem callBudget_add_reserve_le {f : Func} {w control bodyBound reserve fuel :
     (hbody : spec.budget arg ≤ bodyBound)
     (hbudget :
       (args.map (fun e => (e.compile (ABI.scratch control)).length)).sum +
-        bodyBound + (f.result.compile (ABI.scratch control)).length +
-        7 * f.locals + args.length + 11 + reserve ≤ fuel) :
+        bodyBound +
+        (f.results.map (fun e => (e.compile (ABI.scratch control)).length)).sum +
+        7 * f.locals + args.length + 2 * f.results.length + 9 + reserve ≤ fuel) :
     spec.callBudget control args arg + reserve ≤ fuel := by
   ram_bound at hbudget ⊢
 

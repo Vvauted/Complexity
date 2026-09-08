@@ -34,7 +34,7 @@ def renameCalls (ρ : Nat → Nat) : Stmt → Stmt
   | .while c body => .while c (body.renameCalls ρ)
   | .read dst => .read dst
   | .write value => .write value
-  | .call dst fn args => .call dst (ρ fn) args
+  | .call dsts fn args => .call dsts (ρ fn) args
 
 @[simp] theorem renameCalls_id (stmt : Stmt) : stmt.renameCalls id = stmt := by
   induction stmt <;> simp_all [renameCalls]
@@ -51,8 +51,8 @@ end Stmt
 
 namespace Func
 
-/-- Relocate calls in a function while retaining its frame, arity, and result
-expression. In particular, relocation cannot change its call-frame cost. -/
+/-- Relocate calls in a function while retaining its frame, arity, and ordered
+result expressions. In particular, relocation cannot change its call-frame cost. -/
 def renameCalls (ρ : Nat → Nat) (f : Func) : Func :=
   { f with body := f.body.renameCalls ρ }
 
@@ -65,8 +65,8 @@ def renameCalls (ρ : Nat → Nat) (f : Func) : Func :=
 @[simp] theorem renameCalls_body (f : Func) (ρ : Nat → Nat) :
     (f.renameCalls ρ).body = f.body.renameCalls ρ := rfl
 
-@[simp] theorem renameCalls_result (f : Func) (ρ : Nat → Nat) :
-    (f.renameCalls ρ).result = f.result := rfl
+@[simp] theorem renameCalls_results (f : Func) (ρ : Nat → Nat) :
+    (f.renameCalls ρ).results = f.results := rfl
 
 @[simp] theorem renameCalls_id (f : Func) : f.renameCalls id = f := by
   cases f
@@ -80,7 +80,7 @@ def renameCalls (ρ : Nat → Nat) (f : Func) : Func :=
 @[simp] theorem wellFormed_renameCalls (f : Func) (ρ : Nat → Nat) :
     (f.renameCalls ρ).WellFormed ↔ f.WellFormed := by
   simp only [WellFormed, renameCalls_params, renameCalls_locals, renameCalls_body,
-    renameCalls_result, Stmt.wellFormed_renameCalls]
+    renameCalls_results, Stmt.wellFormed_renameCalls]
 
 end Func
 
@@ -134,7 +134,7 @@ end Program
 
 namespace Compiler
 
-/-- Linking preserves both function existence and arity at every call site. -/
+/-- Linking preserves function existence and argument/result arities at every call site. -/
 theorem CallsValid.renameCalls {source target : Program} {ρ : Nat → Nat} {stmt : Stmt}
     (h : CallsValid source stmt) (embedding : Program.Embeds ρ source target) :
     CallsValid target (stmt.renameCalls ρ) := by
@@ -148,8 +148,8 @@ theorem CallsValid.renameCalls {source target : Program} {ρ : Nat → Nat} {stm
   | read => trivial
   | write => trivial
   | call =>
-      obtain ⟨f, hf, ha⟩ := CallsValid.call_iff.mp h
-      exact CallsValid.call_iff.mpr ⟨f.renameCalls ρ, embedding hf, ha⟩
+      obtain ⟨f, hf, ha, hresults⟩ := CallsValid.call_iff.mp h
+      exact CallsValid.call_iff.mpr ⟨f.renameCalls ρ, embedding hf, ha, hresults⟩
 
 /-- Two independently valid modules become a valid sequential component under
 the maximum register boundary. No recursive function body is rechecked by an
@@ -167,12 +167,14 @@ theorem Valid.link {a b : Nat} {left right : Program} {leftMain rightMain : Stmt
   · intro f hf
     change f ∈ left ++ right.map (Func.renameCalls (fun i => left.length + i)) at hf
     rcases List.mem_append.mp hf with hf | hf
-    · obtain ⟨hwf, hlocals, hcalls⟩ := hl.2.2 f hf
-      refine ⟨hwf, Nat.le_trans hlocals (Nat.le_max_left a b), ?_⟩
+    · obtain ⟨hwf, hlocals, hcalls, hresults⟩ := hl.2.2 f hf
+      refine ⟨hwf, Nat.le_trans hlocals (Nat.le_max_left a b), ?_,
+        Nat.le_trans hresults (Nat.le_max_left a b)⟩
       simpa using hcalls.renameCalls el
     · obtain ⟨g, hg, rfl⟩ := List.mem_map.mp hf
-      obtain ⟨hwf, hlocals, hcalls⟩ := hr.2.2 g hg
-      refine ⟨?_, Nat.le_trans hlocals (Nat.le_max_right a b), ?_⟩
+      obtain ⟨hwf, hlocals, hcalls, hresults⟩ := hr.2.2 g hg
+      refine ⟨?_, Nat.le_trans hlocals (Nat.le_max_right a b), ?_,
+        Nat.le_trans hresults (Nat.le_max_right a b)⟩
       · simpa using hwf
       · exact hcalls.renameCalls er
 
@@ -217,9 +219,10 @@ theorem LocalMeasuredExec.mono_heap {control heapLimit heapLimit' depth steps : 
       exact .whileTrue (reads.mono_heap hle) condition body rest
   | read available => exact .read available
   | write reads => exact .write (reads.mono_heap hle)
-  | call lookup arity frame arguments _ result body =>
-      exact .call lookup arity frame (fun arg ha => (arguments arg ha).mono_heap hle)
-        body (result.mono_heap hle)
+  | call lookup arity hresultCount frame arguments _ results body =>
+      exact .call lookup arity hresultCount frame
+        (fun arg ha => (arguments arg ha).mono_heap hle)
+        body (fun result hr => (results result hr).mono_heap hle)
 
 theorem SafeExec.mono_heap {heapLimit heapLimit' depth : Nat} {program : Program}
     {stmt : Stmt} {s t : State w} (h : SafeExec program heapLimit depth stmt s t)
@@ -251,9 +254,9 @@ theorem LocalMeasuredExec.renameCalls {control heapLimit depth steps : Nat}
   | write reads =>
       simpa only [Stmt.renameCalls, LocalCompiler.stmtSize, LocalCompiler.compileStmt] using
         (LocalMeasuredExec.write (program := target) reads)
-  | call lookup arity frame arguments _ result body =>
+  | call lookup arity hresultCount frame arguments _ results body =>
       exact LocalMeasuredExec.call (f := Func.renameCalls ρ _)
-        (embedding lookup) arity frame arguments body result
+        (embedding lookup) arity hresultCount frame arguments body results
 
 /-- Reusing a module at a different global register boundary and in a larger
 function table leaves its complete measured execution count unchanged. -/

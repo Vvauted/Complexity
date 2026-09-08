@@ -43,7 +43,7 @@ def compileStmt (n : Nat) (entries : Nat → Nat) : Stmt → Nat → Code
       whileCode condCode (ABI.scratch n) bodyCode base
   | .read dst, _ => [.read dst]
   | .write value, _ => value.compile (ABI.scratch n) ++ [.write (ABI.scratch n)]
-  | .call dst fn args, base => ABI.callCode n (entries fn) dst args base
+  | .call dsts fn args, base => ABI.callCodeResults n (entries fn) dsts args base
 
 /-- Relocating code or resolving different function labels changes instructions,
 but not their number. This is a code-layout fact, not a running-time bound. -/
@@ -83,7 +83,7 @@ theorem compileStmt_length_eq (n : Nat) (stmt : Stmt)
       omega
   | read => rfl
   | write => rfl
-  | call => simp only [compileStmt, ABI.callCode_length]
+  | call => simp only [compileStmt, ABI.callCodeResults_length]
 
 /-- Static code size, obtained by generating the code at arbitrary labels. -/
 def stmtSize (n : Nat) (stmt : Stmt) : Nat :=
@@ -95,10 +95,10 @@ def stmtSize (n : Nat) (stmt : Stmt) : Nat :=
   compileStmt_length_eq n stmt entries (fun _ => 0) base 0
 
 def compileFunc (n : Nat) (entries : Nat → Nat) (f : Func) (base : Nat) : Code :=
-  compileStmt n entries f.body base ++ ABI.returnCode n f.result
+  compileStmt n entries f.body base ++ ABI.returnCodeResults n f.results
 
 def funcSize (n : Nat) (f : Func) : Nat :=
-  stmtSize n f.body + (ABI.returnCode n f.result).length
+  stmtSize n f.body + (ABI.returnCodeResults n f.results).length
 
 @[simp] theorem compileFunc_length (n : Nat) (entries : Nat → Nat)
     (f : Func) (base : Nat) : (compileFunc n entries f base).length = funcSize n f := by
@@ -200,17 +200,17 @@ theorem rawLink_function {n : Nat} {program : Program} {main : Stmt}
       (compileFunc n (entry n program main) f (entry n program main fn)) := by
   exact compileFuncs_codeAt (rawLink_functions n program main) hlookup
 
-/-- Function existence and arity are checked at every call site, including
-inside all function bodies. This finite check does not unfold recursive calls. -/
+/-- Function existence and argument/result arities are checked at every call
+site, including inside function bodies. This check does not unfold recursive calls. -/
 def CallsValid (program : Program) : Stmt → Prop
   | .skip | .assign _ _ | .store _ _ | .read _ | .write _ => True
   | .seq first second => CallsValid program first ∧ CallsValid program second
   | .ite _ yes no => CallsValid program yes ∧ CallsValid program no
   | .while _ body => CallsValid program body
-  | .call _ fn args =>
+  | .call dsts fn args =>
       match program[fn]? with
       | none => False
-      | some f => args.length = f.params
+      | some f => args.length = f.params ∧ dsts.length = f.results.length
 
 instance instDecidableCallsValid (program : Program) :
     (stmt : Stmt) → Decidable (CallsValid program stmt)
@@ -222,16 +222,19 @@ instance instDecidableCallsValid (program : Program) :
       @instDecidableAnd _ _ (instDecidableCallsValid program yes)
         (instDecidableCallsValid program no)
   | .while _ body => instDecidableCallsValid program body
-  | .call dst fn args =>
+  | .call dsts fn args =>
       match h : program[fn]? with
       | none => isFalse (by simp [CallsValid, h])
       | some f =>
-          if ha : args.length = f.params then isTrue (by simpa [CallsValid, h] using ha)
+          if ha : args.length = f.params ∧ dsts.length = f.results.length then
+            isTrue (by simpa [CallsValid, h] using ha)
           else isFalse (by simpa [CallsValid, h] using ha)
 
-theorem CallsValid.call_iff {program : Program} {dst fn : Nat} {args : List Expr} :
-    CallsValid program (.call dst fn args) ↔
-      ∃ f, program[fn]? = some f ∧ args.length = f.params := by
+theorem CallsValid.call_iff {program : Program} {dsts : List Reg} {fn : Nat}
+    {args : List Expr} :
+    CallsValid program (.call dsts fn args) ↔
+      ∃ f, program[fn]? = some f ∧ args.length = f.params ∧
+        dsts.length = f.results.length := by
   cases h : program[fn]? <;> simp [CallsValid, h]
 
 instance instDecidableStmtWellFormed :
@@ -253,24 +256,28 @@ instance instDecidableStmtWellFormed :
         (instDecidableStmtWellFormed body n)
   | .read dst, n => inferInstanceAs (Decidable (dst < n))
   | .write value, n => Expr.instDecidableBounded value n
-  | .call dst _ args, n =>
-      inferInstanceAs (Decidable (dst < n ∧ ∀ arg ∈ args, arg.Bounded n))
+  | .call dsts _ args, n =>
+      inferInstanceAs (Decidable ((∀ dst ∈ dsts, dst < n) ∧ ∀ arg ∈ args, arg.Bounded n))
 
 instance instDecidableFuncWellFormed (f : Func) : Decidable f.WellFormed :=
   inferInstanceAs (Decidable
-    (f.params ≤ f.locals ∧ f.body.WellFormed f.locals ∧ f.result.Bounded f.locals))
+    (f.params ≤ f.locals ∧ f.body.WellFormed f.locals ∧
+      ∀ result ∈ f.results, result.Bounded f.locals))
 
-/-- Static validity of the entire linked program. Heap/stack separation and
-word-width bounds are runtime proof obligations, not established by this check. -/
+/-- Static validity of the entire linked program, including the shared return
+buffer's capacity. Heap/stack separation and word-width bounds remain runtime
+proof obligations, not established by this check. -/
 def Valid (n : Nat) (program : Program) (main : Stmt) : Prop :=
   main.WellFormed n ∧ CallsValid program main ∧
-    ∀ f ∈ program, f.WellFormed ∧ f.locals ≤ n ∧ CallsValid program f.body
+    ∀ f ∈ program, f.WellFormed ∧ f.locals ≤ n ∧ CallsValid program f.body ∧
+      f.results.length - 1 ≤ n
 
 instance instDecidableValid (n : Nat) (program : Program) (main : Stmt) :
     Decidable (Valid n program main) :=
   inferInstanceAs (Decidable
     (main.WellFormed n ∧ CallsValid program main ∧
-      ∀ f ∈ program, f.WellFormed ∧ f.locals ≤ n ∧ CallsValid program f.body))
+      ∀ f ∈ program, f.WellFormed ∧ f.locals ≤ n ∧ CallsValid program f.body ∧
+        f.results.length - 1 ≤ n))
 
 /-- Checked source-to-code entry point. Invalid calls and local frames are
 rejected before an executable is returned; there is no fallback jump address. -/

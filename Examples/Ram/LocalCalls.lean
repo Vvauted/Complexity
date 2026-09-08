@@ -28,13 +28,13 @@ def increment : Func where
   params := 1
   locals := 1
   body := .assign 0 (.bin .add (.var 0) (.const 1))
-  result := .var 0
+  results := [.var 0]
 
 def unused (spareLocals : Nat) : Func where
   params := 0
   locals := spareLocals
   body := .skip
-  result := .const 0
+  results := [.const 0]
 
 def program (spareLocals : Nat) : Program := [increment, unused spareLocals]
 
@@ -42,7 +42,7 @@ def program (spareLocals : Nat) : Program := [increment, unused spareLocals]
 def main : Stmt :=
   .seq (.read 0)
     (.seq (.assign 1 (.const 99))
-      (.seq (.call 2 0 [.var 0])
+      (.seq (.call [2] 0 [.var 0])
         (.seq (.write (.var 0)) (.seq (.write (.var 1)) (.write (.var 2))))))
 
 def afterRead (n : Word w) : Source.State w :=
@@ -56,7 +56,7 @@ def calleeFinish (n : Word w) : Source.State w :=
   entered.setReg 0 (entered.eval (.bin .add (.var 0) (.const 1)))
 
 def afterCall (n : Word w) : Source.State w :=
-  (beforeCall n).leave (calleeFinish n) 2 increment.result
+  (beforeCall n).leave (calleeFinish n) [2] increment.results
 
 def emit (r : Reg) (s : Source.State w) : Source.State w :=
   { s with outputRev := s.regs r :: s.outputRev }
@@ -96,24 +96,25 @@ theorem call_steps (control spareLocals : Nat) :
     (ABI.callPrefixLocals control increment.locals [.var 0] 0).length + 1 +
         LocalCompiler.stmtSize control (LocalCompiler.calleeLocals (program spareLocals))
           increment.body +
-        (ABI.returnCodeLocals control increment.locals increment.result).length + 1 = 25 := by
-  simp [ABI.callPrefixLocals_length_eq, ABI.returnCodeLocals_length,
+        (ABI.returnCodeResultsLocals control increment.locals increment.results).length + 1 = 25 := by
+  simp [ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length,
     increment, LocalCompiler.stmtSize, LocalCompiler.compileStmt, Expr.compile]
 
 theorem call_measured (control spareLocals H : Nat) (n : Word w) :
     Source.LocalMeasuredExec control (program spareLocals) H 1
-      (.call 2 0 [.var 0]) 25 (beforeCall n) (afterCall n) := by
+      (.call [2] 0 [.var 0]) 25 (beforeCall n) (afterCall n) := by
   have hb : Source.LocalMeasuredExec control (program spareLocals) H 0
       increment.body
       (LocalCompiler.stmtSize control (LocalCompiler.calleeLocals (program spareLocals))
         increment.body)
       ((beforeCall n).enter ([Expr.var 0].map (beforeCall n).eval)) (calleeFinish n) :=
     .assign ⟨trivial, trivial⟩
-  have hc := Source.LocalMeasuredExec.call (dst := 2) (fn := 0)
-    (show (program spareLocals)[0]? = some increment from rfl) rfl (by decide)
+  have hc := Source.LocalMeasuredExec.call (dsts := [2]) (fn := 0)
+    (show (program spareLocals)[0]? = some increment from rfl) rfl rfl (by decide)
     (show ∀ arg ∈ [Expr.var 0], arg.ReadsBelow H (beforeCall n).regs (beforeCall n).mem
       from by simp [Expr.ReadsBelow]) hb
-    (show increment.result.ReadsBelow H _ _ from trivial)
+    (show ∀ result ∈ increment.results, result.ReadsBelow H _ _ from
+      by simp [increment, Expr.ReadsBelow])
   simpa only [call_steps] using hc
 
 /-- Source execution is constructed from ordinary read, assignment, call, and
@@ -159,8 +160,8 @@ theorem code_length (control spareLocals : Nat) :
   rw [code, LocalCompiler.rawLink_length]
   simp [main, program, increment, unused, LocalCompiler.funcSize,
     LocalCompiler.stmtSize, LocalCompiler.compileStmt, LocalCompiler.calleeLocals,
-    ABI.callCodeLocals_length, ABI.callPrefixLocals_length_eq,
-    ABI.returnCodeLocals_length, Expr.compile]
+    ABI.callCodeResultsLocals_length, ABI.callPrefixLocals_length_eq,
+    ABI.returnCodeResultsLocals_length, Expr.compile]
   omega
 
 /-- Exact full execution for arbitrary word input and arbitrary unrelated

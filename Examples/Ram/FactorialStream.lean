@@ -39,7 +39,7 @@ def named : Named.Bundle :=
 def main : Stmt := named.main
 
 theorem main_expands : main =
-    .seq (.read 0) (.seq (.call 1 self [.var 0]) (.write (.var 1))) := rfl
+    .seq (.read 0) (.seq (.call [1] self [.var 0]) (.write (.var 1))) := rfl
 
 def afterRead (w k : Nat) : Source.State w :=
   { (Source.State.initial [BitVec.ofNat w k]).setReg 0 (BitVec.ofNat w k)
@@ -59,7 +59,7 @@ theorem main_total (H k : Nat) (hk : k < 2 ^ w) :
   subst s
   rw [main_expands, Source.Verification.TotalWP.seq_iff, Source.Verification.TotalWP.read_iff]
   change Source.Verification.TotalWP program H (k + 1)
-    (.seq (.call 1 self [.var 0]) (.write (.var 1))) _ (afterRead w k)
+    (.seq (.call [1] self [.var 0]) (.write (.var 1))) _ (afterRead w k)
   ram_total_apply (call_refines H (k + 1) (afterRead w k) k)
   · simp [afterRead, hk]
   · ram_total_vc [sourceFinal, value]
@@ -76,10 +76,10 @@ theorem main_contract (H k : Nat) (hk : k < 2 ^ w) :
   rw [main_expands, Source.Verification.WP.seq_iff, Source.Verification.WP.read_iff]
   refine ⟨by change 1 ≤ 37 * k + 35; omega, ?_⟩
   change Source.Verification.WP 2 program H (k + 1)
-    (.seq (.call 1 self [.var 0]) (.write (.var 1))) _ (afterRead w k) (37 * k + 35 - 1)
+    (.seq (.call [1] self [.var 0]) (.write (.var 1))) _ (afterRead w k) (37 * k + 35 - 1)
   rw [Source.Verification.WP.seq_iff]
   apply (recursive_contract H k).wp_call
-    (show program[self]? = some factorial from rfl) rfl (by decide)
+    (show program[self]? = some factorial from rfl) rfl rfl (by decide)
   · simp [Expr.ReadsBelow]
   · exact ⟨hk, by simp [Source.State.enter, afterRead, Source.State.eval, Expr.eval]⟩
   · exact Nat.le_refl _
@@ -89,7 +89,7 @@ theorem main_contract (H k : Nat) (hk : k < 2 ^ w) :
     change callee = ((afterRead w k).enter _).setReg 1 (value w k) at hcallee
     subst callee
     change Source.Verification.WP 2 program H (k + 1) (.write (.var 1)) _
-      ((afterRead w k).leave (((afterRead w k).enter _).setReg 1 (value w k)) 1 (.var 1)) remaining
+      ((afterRead w k).leave (((afterRead w k).enter _).setReg 1 (value w k)) [1] [.var 1]) remaining
     rw [leave_answer]
     have hremaining' : 2 ≤ remaining := by
       rw [initial_call_budget] at hremaining

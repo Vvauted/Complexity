@@ -57,14 +57,14 @@ theorem copy_prefix_finish (xs ys : List α) (hlen : ys.length = xs.length) :
 /-- One reusable copy function. Arrays are passed by pointer and length;
 the function neither reads an input stream nor allocates either array. -/
 ram_def copyFunctions := ram_functions% {
-  fn copy(source, destination, remaining) locals () {
+  fn copy(source, destination, remaining) locals () : Unit {
     while remaining {
       store[destination] := load[source];
       source := source + 1;
       destination := destination + 1;
       remaining := remaining - 1;
     }
-    return 0;
+    return;
   }
 }
 

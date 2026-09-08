@@ -55,12 +55,13 @@ inductive SafeExec (program : Program) (heapLimit : Nat) {w : Nat} :
       SafeExec program heapLimit d (.write value) s
         { s with outputRev := s.eval value :: s.outputRev }
   | call (lookup : program[fn]? = some f) (arity : args.length = f.params)
+      (hresultCount : dsts.length = f.results.length)
       (frame : f.params ≤ f.locals)
       (arguments : ∀ arg ∈ args, arg.ReadsBelow heapLimit s.regs s.mem)
       (body : SafeExec program heapLimit d f.body (s.enter (args.map s.eval)) callee)
-      (result : f.result.ReadsBelow heapLimit callee.regs callee.mem) :
-      SafeExec program heapLimit (d + 1) (.call dst fn args) s
-        (s.leave callee dst f.result)
+      (results : ∀ result ∈ f.results, result.ReadsBelow heapLimit callee.regs callee.mem) :
+      SafeExec program heapLimit (d + 1) (.call dsts fn args) s
+        (s.leave callee dsts f.results)
 
 namespace SafeExec
 
@@ -79,7 +80,8 @@ theorem erase {program : Program} {heapLimit depth : Nat}
   | whileTrue _ condition _ _ body rest => exact .whileTrue condition body rest
   | read available => exact .read available
   | write _ => exact .write
-  | call lookup arity frame _ _ _ body => exact .call lookup arity frame body
+  | call lookup arity hresultCount frame _ _ _ body =>
+      exact .call lookup arity hresultCount frame body
 
 /-- Safe source execution preserves every memory word outside its heap boundary. -/
 theorem mem_eq_of_le {program : Program} {heapLimit depth : Nat}
@@ -101,7 +103,7 @@ theorem mem_eq_of_le {program : Program} {heapLimit depth : Nat}
   | whileTrue _ _ _ _ body rest => exact rest.trans body
   | read _ => rfl
   | write _ => rfl
-  | call _ _ _ _ _ _ body => exact body
+  | call _ _ _ _ _ _ _ body => simpa only [State.leave_mem, State.enter_mem] using body
 
 /-- Unused call-depth capacity can be added without changing the execution. -/
 theorem depth_add {program : Program} {heapLimit depth : Nat}
@@ -121,9 +123,9 @@ theorem depth_add {program : Program} {heapLimit depth : Nat}
       exact .whileTrue reads condition body rest
   | read available => exact .read available
   | write reads => exact .write reads
-  | call lookup arity frame arguments _ result body =>
+  | call lookup arity hresultCount frame arguments _ results body =>
       simpa only [Nat.add_right_comm _ 1 extra] using
-        (SafeExec.call lookup arity frame arguments body result)
+        (SafeExec.call lookup arity hresultCount frame arguments body results)
 
 /-- The depth index is an upper bound, not a demand for exactly that depth. -/
 theorem mono {program : Program} {heapLimit depth depth' : Nat}

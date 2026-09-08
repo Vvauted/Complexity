@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Verification.Recursion.Total
 import Complexity.Computability.Ram.Verification.Function
+import Complexity.Computability.Ram.Verification.Function.Typed
 import Complexity.Tactic.Ram.Basic
 
 /-!
@@ -20,15 +21,19 @@ and logical structure are introduced by `rintro`; no representation predicate
 is unfolded by this pattern support unless its structure must be matched.
 
 `ram_total_vc args entry hp [definitions, facts]` starts a `FunctionContract`
-proof directly from its arguments and entry state. It uses `FunctionContract.of_wp`
-to generate arity, frame and body obligations, without a separate specification
+or `TypedFunctionContract` proof directly from its arguments and entry state.
+It selects the corresponding proved `of_wp` rule to generate result-shape,
+arity, frame and body obligations, without a separate specification
 of intermediate local-variable states. The precondition may again be a pattern,
 such as `rfl` or `⟨rfl, hbound⟩`. Closed frame bounds are discharged by `decide`;
 unresolved arity, frame and program obligations remain as ordinary goals.
 
 `ram_total_apply contract [definitions, facts]` applies an already proved
 contract or recursive function specification, including an existing measured
-contract after forgetting its time bound. Calls and loops remain opaque: the
+contract after forgetting its time bound. An explicitly instantiated WP rule is
+also accepted: `ram_total_apply (contract.wp_call (arg := input))` selects a
+typed input by ordinary Lean application, without guessing it from an encoding.
+Calls and loops remain opaque: the
 tactic uses the supplied specification without unfolding its implementation.
 The optional simplification facts can discharge fixed lookup, arity and local
 frame facts; input-dependent safety and functional obligations remain explicit.
@@ -60,7 +65,9 @@ macro_rules
             Ram.Source.Verification.TotalWP.read_iff,
             Ram.Source.Verification.TotalWP.write_iff,
             Ram.Source.Verification.TotalWP.seq_iff,
-            Ram.Source.Verification.TotalWP.ite_iff, $args,*] <;> ram_simp [$args,*]))
+            Ram.Source.Verification.TotalWP.ite_iff, $args,*] <;>
+          ram_simp [Ram.DSL.ValueKind.width, Ram.DSL.ValueKind.encode,
+            Ram.DSL.ValueKind.decode, Ram.ArrayRef.args, $args,*]))
   | `(tactic| ram_total_vc $s:ident $hs:rcasesPat) => `(tactic| ram_total_vc $s $hs [])
   | `(tactic| ram_total_vc $s:ident $hs:rcasesPat [$args,*]) =>
       `(tactic|
@@ -71,14 +78,19 @@ macro_rules
          rintro $hs:rcasesPat <;> ram_total_vc [$args,*]))
   | `(tactic| ram_total_vc $xs:ident $s:ident $hs:rcasesPat) =>
       `(tactic| ram_total_vc $xs $s $hs [])
+elab_rules : tactic
   | `(tactic| ram_total_vc $xs:ident $s:ident $hs:rcasesPat [$args,*]) =>
-      `(tactic|
-        (apply Ram.Source.FunctionContract.of_wp
+      Lean.Elab.Tactic.withMainContext do
+        let target ← Lean.Elab.Tactic.getMainTarget
+        let rule := Lean.mkCIdent <| if target.isAppOf ``Ram.Source.TypedFunctionContract then
+          ``Ram.Source.TypedFunctionContract.of_wp else ``Ram.Source.FunctionContract.of_wp
+        Lean.Elab.Tactic.evalTactic (← `(tactic|
+        (apply $rule:ident
          all_goals
            first
            | (intro $xs:ident $s:ident
               rintro $hs:rcasesPat <;> ram_total_vc [$args,*])
-           | try (first | decide | ram_simp [$args,*])))
+           | try (first | decide | ram_simp [Ram.DSL.ValueKind.width, $args,*]))))
 
 /-- Apply an opaque functional specification, opening a leading sequence if
 necessary, then simplify only the supplied facts and ordinary RAM vocabulary. -/
@@ -90,13 +102,16 @@ macro_rules
   | `(tactic| ram_total_apply $contract [$args,*]) => do
       if !args.getElems.isEmpty then
         return ← `(tactic|
-          (ram_total_apply $contract <;> ram_simp [$args,*] <;>
+          (ram_total_apply $contract <;>
+            ram_simp [Ram.DSL.ValueKind.width, Ram.DSL.ValueKind.encode,
+              Ram.DSL.ValueKind.decode, Ram.ArrayRef.args, $args,*] <;>
             simp (config := { failIfUnchanged := false }) only
               [Ram.Expr.ReadsBelow, and_true, true_and] <;> try assumption))
       `(tactic|
         (first
         | apply Ram.Source.Verification.TotalWP.of_relContract $contract
         | apply Ram.Source.Verification.TotalWP.of_contract $contract
+        | apply Ram.Source.TypedFunctionContract.wp_call $contract
         | apply Ram.Source.FunctionContract.wp_call $contract
         | apply Ram.Source.Recursion.TotalSpec.Correct.wp_call $contract
         | apply Ram.Source.Verification.TotalWP.call $contract
@@ -106,10 +121,12 @@ macro_rules
             (Ram.Source.Contract.total $contract)
         | apply Ram.Source.Recursion.TotalSpec.Correct.wp_call
             (Ram.Source.Recursion.Spec.Correct.total $contract)
+        | apply $contract
         | (rw [Ram.Source.Verification.TotalWP.seq_iff]
            first
            | apply Ram.Source.Verification.TotalWP.of_relContract $contract
            | apply Ram.Source.Verification.TotalWP.of_contract $contract
+           | apply Ram.Source.TypedFunctionContract.wp_call $contract
            | apply Ram.Source.FunctionContract.wp_call $contract
            | apply Ram.Source.Recursion.TotalSpec.Correct.wp_call $contract
            | apply Ram.Source.Verification.TotalWP.call $contract
@@ -118,7 +135,10 @@ macro_rules
            | apply Ram.Source.Verification.TotalWP.of_contract
                (Ram.Source.Contract.total $contract)
            | apply Ram.Source.Recursion.TotalSpec.Correct.wp_call
-               (Ram.Source.Recursion.Spec.Correct.total $contract)) <;> ram_simp [$args,*]))
+               (Ram.Source.Recursion.Spec.Correct.total $contract)
+           | apply $contract) <;>
+          ram_simp [Ram.DSL.ValueKind.width, Ram.DSL.ValueKind.encode,
+            Ram.DSL.ValueKind.decode, Ram.ArrayRef.args, $args,*]))
 
 namespace Ram.Source.Verification.TotalWP
 

@@ -13,8 +13,8 @@ import Complexity.Computability.Ram.Compiler.Local.Function.Total
 # Composing imported functions in one executable source
 
 `functions` imports the existing copy and sum implementations and calls them
-from a new function. Copy is called for its shared-memory effect, without a
-dummy source binding for its return value. No callee body is duplicated. The
+from a new function. Copy returns Unit and is called for its shared-memory
+effect, without a dummy result field or destination. No callee body is duplicated. The
 copy's mathematical postcondition supplies the destination representation needed
 by sum, and their previously proved contracts are transported through the
 generated embeddings.
@@ -48,7 +48,7 @@ theorem function_contract {w heapLimit : Nat} {source destination : ArrayRef w}
     FunctionContract functions.program heapLimit 1 functions.function.copyThenSum
       (fun args entry => args = functions.arguments.copyThenSum source destination ∧
         source.Rep heapLimit xs entry ∧ destination.Rep heapLimit ys entry)
-      (fun _ entry value finish => value = wordSum xs ∧
+      (fun _ entry value finish => value = [wordSum xs] ∧
         ArrayAt heapLimit source.base xs finish ∧
         ArrayAt heapLimit destination.base xs finish ∧
         ArrayFrame destination.base xs.length entry.mem finish.mem ∧
@@ -60,7 +60,7 @@ theorem function_contract {w heapLimit : Nat} {source destination : ArrayRef w}
     hw sameLength sourceArray.length_lt disjoint).renameCalls functions.embeds.Copy
   ram_total_apply copyContract
     [functions.function_lookup.Copy.copy, sourceArray.length_eq,
-      sourceArray.2, destinationArray.2]
+      sourceArray.2, destinationArray.2, copyFunctions.result_eq.copy]
   · exact ⟨sourceArray.2, destinationArray.2⟩
   · rintro value middle rfl sourceCopied destinationCopied frame input output registers
     have destinationRep : destination.Rep heapLimit xs middle :=
@@ -87,7 +87,8 @@ theorem eval_eq {w heapLimit : Nat} {source destination : ArrayRef w}
       arrayContents finish.mem destination.base xs.length = xs := by
   obtain ⟨value, finish, execution, rfl, _, copied, _⟩ :=
     function_contract hw sameLength fit disjoint _ entry ⟨rfl, sourceArray, destinationArray⟩
-  exact ⟨finish, execution.eval_eq_some, copied.1.contents_eq⟩
+  refine ⟨finish, ?_, copied.1.contents_eq⟩
+  exact execution.evalTyped_eq_some (kind := .word) functions.results_length.copyThenSum
 
 /-- An imported function's own calls are relocated as well. The original
 two-array theorem transfers without reopening either sum call or its loop. -/
@@ -100,7 +101,8 @@ theorem imported_sumPair_eval {w heapLimit : Nat} {left right : ArrayRef w}
       Part.some (wordSum (xs ++ ys), entry) := by
   rw [wordSum_append]
   have original := sumPair_function_runs (depth := 0) hw leftFit rightFit entry leftArray rightArray
-  exact (original.renameCalls functions.embeds.Sum).eval_eq_some
+  have imported := original.renameCalls functions.embeds.Sum
+  exact imported.evalTyped_eq_some (kind := .word) functions.results_length.Sum.sumPair
 
 /-- Existing disjoint arrays with matching lengths. Their contents are logical
 witnesses, not arguments used to execute the source program. -/
@@ -114,7 +116,7 @@ def Safe (source destination : ArrayRef 32) (heapLimit : Nat)
 def code : Code :=
   LocalCompiler.rawLink functions.registers functions.program
     (LocalCompiler.Function.trampoline functions.functionIndex.copyThenSum
-      functions.function.copyThenSum.params)
+      functions.function.copyThenSum.params functions.function.copyThenSum.results.length)
 
 theorem compile_copyThenSum :
     LocalCompiler.Function.compile functions.registers functions.program
@@ -172,8 +174,9 @@ theorem copyThenSum_spec (safe : Safe source destination heapLimit entry)
     (function_contract (by decide : 0 < 32) sameLength fit disjoint)
     ⟨rfl, sourceArray, destinationArray⟩
   refine ⟨?_, post.2.2.1.1.contents_eq, post.2.2.2⟩
-  change (LocalCompiler.Function.applyState functions.registers _ _ _ _ _ _ _).1.toNat = _
-  exact (congrArg BitVec.toNat post.1).trans (wordSum_toNat xs)
+  simp only [copyThenSum, functions.applyState.copyThenSum,
+    max_eq_right (by decide : 1 ≤ functions.registers), post.1,
+    DSL.ValueKind.decode_word, wordSum_toNat]
 
 -- Runtime data is explicitly preloaded; the function itself performs the copy.
 private def sampleState : Source.State 32 :=

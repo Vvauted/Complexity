@@ -113,16 +113,26 @@ def callPrefix (n : Nat) (args : List Expr) (returnPC : Nat) : Code :=
   evalArgs n 0 args ++ saveReturn n returnPC ++ saveLocals n n ++
     initLocals n args.length n ++ advance n
 
-/-- The return label is the receive instruction immediately after the call
-jump. Label values do not change the prefix length. -/
-def callCode (n entry dst : Nat) (args : List Expr) (base : Nat) : Code :=
+/-- A call receives each returned field after its entry jump. With no fields,
+the saved return address points directly to the caller's continuation. -/
+def callCodeResults (n entry : Nat) (dsts : List Reg) (args : List Expr) (base : Nat) : Code :=
   let returnPC := base + (callPrefix n args 0).length + 1
-  callPrefix n args returnPC ++ .jump entry :: receiveResults n 0 [dst]
+  callPrefix n args returnPC ++ .jump entry :: receiveResults n 0 dsts
 
-/-- Evaluate the result in the callee frame, then restore the caller frame. -/
-def returnPrefix (n : Nat) (result : Expr) : Code :=
-  evalResults n [result] ++ retreat n ++
+/-- Buffer all return expressions before restoring the caller's local frame. -/
+def returnPrefixResults (n : Nat) (results : List Expr) : Code :=
+  evalResults n results ++ retreat n ++
     [.load (ra n) (sp n)] ++ restoreLocals n n
+
+/-- Return the buffered fields by jumping to the saved caller continuation. -/
+def returnCodeResults (n : Nat) (results : List Expr) : Code :=
+  returnPrefixResults n results ++ [.jumpReg (ra n)]
+
+def callCode (n entry dst : Nat) (args : List Expr) (base : Nat) : Code :=
+  callCodeResults n entry [dst] args base
+
+def returnPrefix (n : Nat) (result : Expr) : Code :=
+  returnPrefixResults n [result]
 
 def returnCode (n : Nat) (result : Expr) : Code :=
   returnPrefix n result ++ [.jumpReg (ra n)]
@@ -149,10 +159,15 @@ theorem callPrefix_length (n : Nat) (args : List Expr) (a b : Nat) :
     (callPrefix n args a).length = (callPrefix n args b).length := by
   simp [callPrefix, saveReturn]
 
-theorem callCode_length (n entry dst : Nat) (args : List Expr) (base : Nat) :
-    (callCode n entry dst args base).length = (callPrefix n args 0).length + 2 := by
-  simp only [callCode, List.length_append, List.length_cons, receiveResults_length,
-    List.length_nil]
+theorem callCodeResults_length (n entry : Nat) (dsts : List Reg)
+    (args : List Expr) (base : Nat) :
+    (callCodeResults n entry dsts args base).length =
+      (callPrefix n args 0).length + (dsts.length + 1) := by
+  simp only [callCodeResults, List.length_append, List.length_cons, receiveResults_length]
   rw [callPrefix_length n args _ 0]
+
+theorem callCode_length (n entry dst : Nat) (args : List Expr) (base : Nat) :
+    (callCode n entry dst args base).length = (callPrefix n args 0).length + 2 :=
+  callCodeResults_length n entry [dst] args base
 
 end Ram.ABI

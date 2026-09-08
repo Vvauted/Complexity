@@ -70,13 +70,15 @@ theorem function_contract {program : Program} {heapLimit depth : Nat} {base : Wo
       (fun args entry =>
         args = sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩ ∧
         ArrayAt heapLimit base (adjacencyRow G v w) entry)
-      (fun _ entry value finish => value.toNat = G.degree v ∧ finish = entry) := by
+      (fun _ entry values finish =>
+        ∃ value, values = [value] ∧ value.toNat = G.degree v ∧ finish = entry) := by
   apply (sum_function_contract (program := program) (depth := depth)
     (base := base) (xs := adjacencyRow G v w) hw (by simpa using hfit)).consequence
   · intro args entry pre
     simpa only [length_adjacencyRow] using pre
   · rintro args entry value finish _ ⟨rfl, same⟩
-    exact ⟨wordSum_adjacencyRow_toNat G v hw (by omega), same⟩
+    exact ⟨wordSum (adjacencyRow G v w), rfl,
+      wordSum_adjacencyRow_toNat G v hw (by omega), same⟩
 
 /-- Compute a graph degree without a `main`, an input stream or an output
 instruction. This is an invocation of the actual fixed array-sum function. -/
@@ -85,9 +87,9 @@ theorem function_runs {program : Program} {heapLimit depth : Nat} {base : Word w
     (represented : ArrayAt heapLimit base (adjacencyRow G v w) entry) :
     ∃ value,
       FunctionExec program heapLimit depth sumFunctions.function.sum
-        (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) entry value entry ∧
+        (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) entry [value] entry ∧
       value.toNat = G.degree v := by
-  obtain ⟨value, finish, execution, correct, rfl⟩ :=
+  obtain ⟨values, finish, execution, value, rfl, correct, rfl⟩ :=
     function_contract G v (program := program) (depth := depth) hw hfit
       (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) entry ⟨rfl, represented⟩
   exact ⟨value, execution, correct⟩
@@ -113,9 +115,9 @@ theorem function_runs_with_timeBound {program : Program} {control heapLimit dept
     (represented : ArrayAt heapLimit base (adjacencyRow G v w) entry) :
     ∃ bodySteps value,
       FunctionMeasuredExec control program heapLimit depth sumFunctions.function.sum
-        (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) bodySteps entry value entry ∧
+        (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) bodySteps entry [value] entry ∧
       value.toNat = G.degree v ∧ bodySteps ≤ 18 * n + 8 := by
-  obtain ⟨bodySteps, value, finish, execution, ⟨correct, rfl⟩, bound⟩ :=
+  obtain ⟨bodySteps, values, finish, execution, ⟨value, rfl, correct, rfl⟩, bound⟩ :=
     (function_contract G v (program := program) (depth := depth) hw hfit).with_timeBound
       (function_timeBound G v (control := control) hw hfit)
       (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) entry ⟨rfl, represented⟩

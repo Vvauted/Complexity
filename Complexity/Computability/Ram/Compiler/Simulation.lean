@@ -29,7 +29,9 @@ theorem Stmt.WellFormed.mono {stmt : Stmt} {n m : Nat}
   | «while» _ _ body => exact ⟨h.1.mono hnm, body h.2⟩
   | read => exact Nat.lt_of_lt_of_le h hnm
   | write => exact Expr.Bounded.mono h hnm
-  | call => exact ⟨Nat.lt_of_lt_of_le h.1 hnm, fun e he => (h.2 e he).mono hnm⟩
+  | call =>
+      exact ⟨fun dst hd => Nat.lt_of_lt_of_le (h.1 dst hd) hnm,
+        fun e he => (h.2 e he).mono hnm⟩
 
 namespace Compiler
 
@@ -329,8 +331,8 @@ theorem simulate {n heapLimit depth : Nat} {code : Code} {entries : Nat → Nat}
       exact simulation_whileTrue hwf.1 reads condition (body hwf.2 hcalls) (rest hwf hcalls)
   | read available => exact simulation_read hwf available
   | write reads => exact simulation_write hwf reads
-  | call lookup arity frame arguments body result _ =>
-      exact hcalls _ _ _ _ _ (.call lookup arity frame arguments body result) hwf
+  | call lookup arity resultCount frame arguments body results _ =>
+      exact hcalls _ _ _ _ _ (.call lookup arity resultCount frame arguments body results) hwf
 
 end Compiler
 end Ram

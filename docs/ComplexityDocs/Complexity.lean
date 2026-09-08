@@ -16,9 +16,11 @@ ordinary Lean functions and mathlib supply the sums, recurrences and asymptotics
 ## Keep correctness separate
 
 For a callable function, `Ram.Source.FunctionMeasuredExec` observes both its actual
-returned value and its compiled body count. `Ram.Source.FunctionTimeBound` bounds
+returned fields and its compiled body count. `Ram.Source.FunctionTimeBound` bounds
 that count separately from `Ram.Source.FunctionContract`; combine them with
 `Ram.Source.FunctionContract.with_timeBound` when a bounded invocation is needed.
+For a typed specification, `Ram.Source.TypedFunctionContract.raw` reuses the same
+execution and postcondition at the chosen input in these independent time rules.
 The body count includes nested calls, but excludes the enclosing call site's argument
 evaluation and frame/return sequence. `Ram.Source.FunctionMeasuredExec.call` adds
 those exact generated costs. A body bound alone is not the whole call's time.
@@ -57,10 +59,11 @@ generated body used by the correctness proof:
   the actual returned value, shared-state postcondition and preserved caller locals.
 
 Call expressions and destinations are inferred from the source body, including
-anonymous destinations of discarded calls. Generated lookup, `params_eq` and
+private destinations of discarded non-`Unit` calls and empty destinations for true
+`Unit` calls. Generated lookup, `params_eq` and
 `locals_eq` equations let proved call-length formulas account for the actual
 argument, frame and return costs without unfolding the callee's implementation.
-Supply the generated `result_eq` equation when the return expression remains
+Supply the generated `result_eq` equation when the return expressions remain
 abstract. Other supplied facts handle mathematical argument values and
 representations; remaining obligations are ordinary Lean goals.
 
@@ -86,9 +89,10 @@ premise; these rules compose separately proved costs of the same implementation.
 
 ## Keep actual steps with ordinary application
 
-The executable `p.apply.f` returns a word from `p.runTotal.f`; the latter retains
+The executable `p.apply.f` returns the declared word, array reference or `Unit` from
+`p.runTotal.f`; the latter retains
 the actual machine result and its `steps`. `p.applyState.f` projects the same run's
-word and source shared state; that pair does not contain the step count.
+typed result and source shared state; that pair does not contain the step count.
 Their normal-halt proof supplies neither a step formula nor an execution limit
 and is erased at runtime.
 `Ram.LocalCompiler.Function.runTotal_steps_eq_of_execution` combines the independent
@@ -105,7 +109,7 @@ compiled calls in Lean, passing the first call's returned state to the second.
 It is not a single compiled RAM program and has no combined full-run cost theorem.
 `Ram.LocalCompiler.Function.runTotal_steps_le_of_timeBound` transports an independent
 conditional body bound to actual full-call steps, including generated call and halt costs.
-The client's `runTotal_steps_le` bounds the single copy invocation by `19 * xs.length + 42`;
+The client's `runTotal_steps_le` bounds the single copy invocation by `19 * xs.length + 39`;
 this bound is not used to define the executable copy or prove it terminates.
 State projection and host preloading are not RAM loads or copies; each operation's
 cost theorems still concern its own machine execution.
@@ -177,25 +181,28 @@ The [source-composition time proof](##Examples.Ram.FunctionCompositionTime) uses
 the source-facing tactics above for copy and sum. It reserves `18 * xs.length + 66`
 for the remaining sum invocation, then proves that bound from the existing sum
 time theorem. Copy's budget-free contract supplies the intermediate destination
-representation, while the call rules retain the source body's real anonymous
-destination and caller locals. No call expression list, discarded-result name or
+representation, while the call rules retain copy's empty return and the caller locals.
+No call expression list, discarded-result name or
 intermediate register invariant is reconstructed by this body proof.
 
-For `n = xs.length`, `function_timeBound` bounds the body by
-`37 * n + 107`, and `runTotal_steps_le` bounds the actual complete invocation by
-`37 * n + 170`. These are upper bounds, not general exact step-count equations.
+For `n = xs.length`, `function_timeBound` bounds the body by `37 * n + 104`,
+and `runTotal_steps_le` bounds the actual complete invocation by `37 * n + 160`.
+These are upper bounds, not general exact step-count equations.
 The full bound includes both inner calls, the outer call and halt, but no host-side
 heap preloading. This is a cost argument for one compiled source function, distinct
-from adding claims about two host-level runners. Discarding copy's returned word
-changes neither its execution nor the cost charged for its private destination.
+from adding claims about two host-level runners. Copy genuinely returns `Unit`, so it
+evaluates no dummy result and receives no field. Its stores, frame and control transfers
+are still charged.
 
-The [local-slice sample](##Examples.Ram.ArraySlice) adds a descriptor initializer
-before a call to imported sum. Its separate proof uses `ram_time_vc` to advance
-both local assignments and `ram_time_call` to reuse sum's independent time bound.
+The [slice sample](##Examples.Ram.ArraySlice) calls `slice`, receives its returned array
+reference, then calls imported sum. The slice body is empty, but its address arithmetic,
+two returned fields and full call overhead are included in the caller's time proof.
+That proof then reuses sum's independent time bound.
 Containment and representation identify the actual called slice; no sum-loop proof,
 temporary-register list or frame arithmetic is reconstructed in the body proof.
-For `n = count.toNat`, `function_timeBound` proves a body bound of `18 * n + 72`,
-and `runTotal_steps_le` proves a full-invocation bound of `18 * n + 142`.
+For `n = count.toNat`, `function_timeBound` gives the body bound `18 * n + 119`,
+and `runTotal_steps_le` gives the full-invocation bound `18 * n + 189` for this
+call-based implementation.
 These are upper bounds, not general exact-count equations.
 The full-run bound additionally counts the outer invocation and halt, while
 host-side heap preloading remains outside that run. The ordinary result equation

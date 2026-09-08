@@ -38,13 +38,40 @@ namespace Ram.LocalCompiler.Function
 def arguments (arity : Nat) : List Expr :=
   (List.range arity).map Expr.var
 
-/-- A fixed source call returns in register zero; the linker supplies the halt. -/
-def trampoline (fn arity : Nat) : Stmt :=
-  .call 0 fn (arguments arity)
+/-- The declared number of result fields. The default only makes lookup total;
+checked compilation rejects a missing function rather than treating it as `Unit`. -/
+def resultArity (program : Program) (fn : Nat) : Nat :=
+  ((program[fn]?).map (fun f => f.results.length)).getD 0
+
+@[simp] theorem resultArity_lookup {program : Program} {fn : Nat} {f : Func}
+    (h : program[fn]? = some f) : resultArity program fn = f.results.length := by
+  simp [resultArity, h]
+
+/-- A fixed source call receives every field in consecutive caller registers;
+the linker supplies the halt. An empty return needs no destination register. -/
+def trampoline (fn arity resultArity : Nat) : Stmt :=
+  .call (List.range resultArity) fn (arguments arity)
 
 /-- Checked compilation depends on the function table and arity, not argument values. -/
 def compile (control : Nat) (program : Program) (fn arity : Nat) : Option Code :=
-  compileChecked control program (trampoline fn arity)
+  compileChecked control program (trampoline fn arity (resultArity program fn))
+
+/-- An absent declaration cannot become a successful empty-result invocation. -/
+theorem compile_missing {control fn arity : Nat} {program : Program}
+    (missing : program[fn]? = none) : compile control program fn arity = none := by
+  apply compileChecked_none_iff.mpr
+  intro valid
+  obtain ⟨f, lookup, _, _⟩ := Compiler.CallsValid.call_iff.mp valid.2.1
+  simp [missing] at lookup
+
+/-- Read the actual fields received by the trampoline. This does not inspect
+the output stream or reconstruct values from a mathematical specification. -/
+def returnedValues (arity : Nat) (target : Ram.State w) : List (Word w) :=
+  (List.range arity).map target.regs
+
+@[simp] theorem returnedValues_length (arity : Nat) (target : Ram.State w) :
+    (returnedValues arity target).length = arity := by
+  simp [returnedValues]
 
 /-- A preloaded function launch preserves shared data and binds actual parameters.
 The reserved stack pointer is initialized separately from source registers. -/
@@ -82,19 +109,21 @@ def runUntil (control : Nat) (program : Program) (fn arity heapLimit : Nat)
 /-- The enclosing call count comes from its actual generated instruction blocks. -/
 def callSteps (control : Nat) (f : Func) (bodySteps : Nat) : Nat :=
   (ABI.callPrefixLocals control f.locals (arguments f.params) 0).length + 1 + bodySteps +
-    (ABI.returnCodeLocals control f.locals f.result).length + 1
+    (ABI.returnCodeResultsLocals control f.locals f.results).length + f.results.length
 
 /-- The fixed trampoline passes variables, so its complete call count reduces
 to the actual body count, return-expression length and declared frame size.
 This is a length identity for generated code, not a supplied cost annotation. -/
 theorem callSteps_eq (control : Nat) (f : Func) (bodySteps : Nat) :
     callSteps control f bodySteps = bodySteps + 2 * f.params +
-      (f.result.compile (ABI.scratch control)).length + 7 * f.locals + 11 := by
+      (f.results.map (fun e => (e.compile (ABI.scratch control)).length)).sum +
+      7 * f.locals + 2 * f.results.length + 9 := by
   have argumentCost :
       ((arguments f.params).map (fun e => (e.compile (ABI.scratch control)).length)).sum =
         f.params := by
     simp [arguments, List.map_map, Function.comp_def, Expr.compile, List.map_const']
-  rw [callSteps, ABI.callLocals_steps_eq, argumentCost]
+  rw [callSteps, ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length,
+    argumentCost]
   simp only [arguments, List.length_map, List.length_range]
   omega
 
@@ -125,7 +154,8 @@ theorem start_matches (control heapLimit : Nat) (args : List (Word w))
 /-- The actual call and halt return the function's value and shared observations.
 No input/output main or externally selected instruction budget is required. -/
 theorem runs_measured {control heapLimit depth bodySteps fn : Nat} {program : Program}
-    {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+    {f : Func} {args : List (Word w)} {entry finish : Source.State w}
+    {value : List (Word w)}
     {code : Code}
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
@@ -134,44 +164,60 @@ theorem runs_measured {control heapLimit depth bodySteps fn : Nat} {program : Pr
       entry value finish) :
     ∃ target, Ram.Exec code (callSteps control f bodySteps + 1)
         (start control heapLimit args entry) target ∧
-      target.status = .halted ∧ target.regs 0 = value ∧
+      target.status = .halted ∧ returnedValues f.results.length target = value ∧
       Source.State.Observes heapLimit 0 finish target := by
-  have hvalid := (compileChecked_some_iff.mp hcompile).1
-  have hcontrol : 0 < control := hvalid.1.1
+  have hcompiled : compileChecked control program
+      (trampoline fn f.params f.results.length) = some code := by
+    simpa only [compile, resultArity_lookup hlookup] using hcompile
+  have hvalid := (compileChecked_some_iff.mp hcompiled).1
   obtain ⟨arity, frame, callee, body, reads, rfl, rfl⟩ := execution
   have hargs : (arguments f.params).map (entry.enter args).eval = args := by
     simpa only [arity] using arguments_eval args entry
   have call : Source.LocalMeasuredExec control program heapLimit (depth + 1)
-      (trampoline fn f.params) (callSteps control f bodySteps) (entry.enter args)
-      ((entry.enter args).leave callee 0 f.result) := by
-    apply Source.LocalMeasuredExec.call hlookup
-    · simp [arguments]
-    · exact frame
-    · intro expr hmem
-      obtain ⟨i, hi, rfl⟩ := List.mem_map.mp hmem
+      (trampoline fn f.params f.results.length) (callSteps control f bodySteps)
+      (entry.enter args) ((entry.enter args).leave callee (List.range f.results.length)
+        f.results) := by
+    have argumentReads : ∀ expr ∈ arguments f.params,
+        expr.ReadsBelow heapLimit (entry.enter args).regs (entry.enter args).mem := by
+      intro expr hmem
+      obtain ⟨i, _, rfl⟩ := List.mem_map.mp hmem
       trivial
-    · rw [hargs]
-      exact body
-    · exact reads
+    simpa only [trampoline, callSteps, List.length_range] using
+      (Source.LocalMeasuredExec.call (dsts := List.range f.results.length) hlookup
+        (by simp [arguments]) List.length_range frame argumentReads
+        (by simpa only [hargs] using body) reads)
   have hheap : heapLimit < 2 ^ w := by omega
   have hsp : ((start control heapLimit args entry).regs (ABI.sp control)).toNat =
       heapLimit := by
     rw [start_sp, Word.ofNat_toNat_of_lt hheap]
   obtain ⟨target, run, halted, observed, _⟩ :=
-    compileChecked_block_runs_observed hcompile hcode call
+    compileChecked_block_runs_observed hcompiled hcode call
       (start_matches control heapLimit args entry) rfl (by rw [hsp]) (by
         change ((start control heapLimit args entry).regs (ABI.sp control)).toNat +
           (depth + 1) * ABI.frameSize control < 2 ^ w
         simpa only [hsp] using hstack)
   refine ⟨target, run, halted, ?_, ?_⟩
-  · simpa only [Source.State.leave, if_pos rfl] using (observed.regs 0 hcontrol).symm
-  · exact ⟨fun r hr => False.elim (Nat.not_lt_zero r hr), observed.heap,
-      observed.input, observed.output⟩
+  · apply List.ext_getElem
+    · simp only [returnedValues_length, List.length_map]
+    · intro i hi hj
+      have hir : i < f.results.length := by simpa only [returnedValues_length] using hi
+      have hlocal : i < control := hvalid.1.1 i (List.mem_range.mpr hir)
+      have field := Source.State.leave_getElem (entry.enter args) callee
+        (List.range f.results.length) f.results List.nodup_range
+        List.length_range i (by simpa only [List.length_range] using hir)
+      simp only [List.getElem_range] at field
+      simpa only [returnedValues, List.getElem_map, List.getElem_range] using
+        (observed.regs i hlocal).symm.trans field
+  · refine ⟨fun r hr => False.elim (Nat.not_lt_zero r hr), ?_, ?_, ?_⟩
+    · simpa only [Source.State.leave_mem] using observed.heap
+    · simpa only [Source.State.leave_input] using observed.input
+    · simpa only [Source.State.leave_outputRev] using observed.output
 
 /-- Safe function termination produces a halted target call before any time
 bound is chosen. Its result and body count agree with the semantic observations. -/
 theorem runs {control heapLimit depth fn : Nat} {program : Program} {f : Func}
-    {args : List (Word w)} {entry finish : Source.State w} {value : Word w} {code : Code}
+    {args : List (Word w)} {entry finish : Source.State w} {value : List (Word w)}
+    {code : Code}
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
     (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
@@ -180,7 +226,7 @@ theorem runs {control heapLimit depth fn : Nat} {program : Program} {f : Func}
       ∃ bodySteps target, f.bodyTime program heapLimit args entry = Part.some bodySteps ∧
         Ram.Exec code (callSteps control f bodySteps + 1)
           (start control heapLimit args entry) target ∧
-        target.status = .halted ∧ target.regs 0 = value ∧
+        target.status = .halted ∧ returnedValues f.results.length target = value ∧
         Source.State.Observes heapLimit 0 finish target := by
   obtain ⟨bodySteps, measured⟩ := execution.exists_measured control
   obtain ⟨target, run, halted, result, observed⟩ :=
@@ -192,7 +238,7 @@ theorem runs {control heapLimit depth fn : Nat} {program : Program} {f : Func}
 operational limit permits the actual call and final halt. -/
 theorem run_eq_of_measured {control heapLimit depth bodySteps fn budget : Nat}
     {program : Program} {f : Func} {args : List (Word w)}
-    {entry finish : Source.State w} {value : Word w} {code : Code}
+    {entry finish : Source.State w} {value : List (Word w)} {code : Code}
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
     (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
@@ -201,7 +247,8 @@ theorem run_eq_of_measured {control heapLimit depth bodySteps fn budget : Nat}
     (hbudget : callSteps control f bodySteps + 1 ≤ budget) :
     ∃ target, run control program fn f.params heapLimit budget args entry =
         some ⟨target, callSteps control f bodySteps + 1, .halted⟩ ∧
-      target.regs 0 = value ∧ Source.State.Observes heapLimit 0 finish target := by
+      returnedValues f.results.length target = value ∧
+      Source.State.Observes heapLimit 0 finish target := by
   obtain ⟨target, executed, halted, returned, observed⟩ :=
     runs_measured hcompile hlookup hcode hstack execution
   refine ⟨target, ?_, returned, observed⟩
@@ -212,7 +259,7 @@ theorem run_eq_of_measured {control heapLimit depth bodySteps fn budget : Nat}
 result and exact count. No proposed runtime limit occurs in this statement. -/
 theorem runUntil_eq_of_measured {control heapLimit depth bodySteps fn : Nat}
     {program : Program} {f : Func} {args : List (Word w)}
-    {entry finish : Source.State w} {value : Word w} {code : Code}
+    {entry finish : Source.State w} {value : List (Word w)} {code : Code}
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
     (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
@@ -220,7 +267,8 @@ theorem runUntil_eq_of_measured {control heapLimit depth bodySteps fn : Nat}
       entry value finish) :
     ∃ target, runUntil control program fn f.params heapLimit args entry =
         some ⟨target, callSteps control f bodySteps + 1, .halted⟩ ∧
-      target.regs 0 = value ∧ Source.State.Observes heapLimit 0 finish target := by
+      returnedValues f.results.length target = value ∧
+      Source.State.Observes heapLimit 0 finish target := by
   obtain ⟨target, executed, halted, returned, observed⟩ :=
     runs_measured hcompile hlookup hcode hstack execution
   refine ⟨target, ?_, returned, observed⟩
@@ -232,7 +280,7 @@ observation. Callers need not reopen the measured execution to identify its
 count; determinism connects the equation to this very invocation. -/
 theorem runUntil_eq_of_execution {control heapLimit depth bodySteps fn : Nat}
     {program : Program} {f : Func} {args : List (Word w)}
-    {entry finish : Source.State w} {value : Word w} {code : Code}
+    {entry finish : Source.State w} {value : List (Word w)} {code : Code}
     (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
     (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
@@ -240,7 +288,8 @@ theorem runUntil_eq_of_execution {control heapLimit depth bodySteps fn : Nat}
     (time : f.bodyTime program heapLimit args entry = Part.some bodySteps) :
     ∃ target, runUntil control program fn f.params heapLimit args entry =
         some ⟨target, callSteps control f bodySteps + 1, .halted⟩ ∧
-      target.regs 0 = value ∧ Source.State.Observes heapLimit 0 finish target := by
+      returnedValues f.results.length target = value ∧
+      Source.State.Observes heapLimit 0 finish target := by
   obtain ⟨steps, measured⟩ := execution.exists_measured control
   have same : steps = bodySteps :=
     Part.some_injective (measured.bodyTime_eq_some.symm.trans time)
@@ -251,14 +300,16 @@ theorem runUntil_eq_of_execution {control heapLimit depth bodySteps fn : Nat}
 The observed body count and full call count describe that same invocation;
 neither a cost certificate nor an operational limit is needed to call it. -/
 theorem runUntil_of_execution {control heapLimit depth fn : Nat} {program : Program}
-    {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+    {f : Func} {args : List (Word w)} {entry finish : Source.State w}
+    {value : List (Word w)}
     {code : Code} (hcompile : compile control program fn f.params = some code)
     (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
     (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
     (execution : Source.FunctionExec program heapLimit depth f args entry value finish) :
     ∃ bodySteps target, runUntil control program fn f.params heapLimit args entry =
         some ⟨target, callSteps control f bodySteps + 1, .halted⟩ ∧
-      target.regs 0 = value ∧ Source.State.Observes heapLimit 0 finish target ∧
+      returnedValues f.results.length target = value ∧
+      Source.State.Observes heapLimit 0 finish target ∧
       f.bodyTime program heapLimit args entry = Part.some bodySteps := by
   obtain ⟨bodySteps, measured⟩ := execution.exists_measured control
   obtain ⟨target, returned, value, observed⟩ :=

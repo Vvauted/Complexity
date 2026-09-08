@@ -31,10 +31,12 @@ theorem eval_eq_of_perm {w heapLimit : Nat} {program : Program}
     (fit₂ : right.base.toNat + ys.length < 2 ^ w)
     (array₁ : left.Rep heapLimit xs entry₁)
     (array₂ : right.Rep heapLimit ys entry₂) :
-    (countFunctions.function.count.eval program heapLimit
+    (countFunctions.function.count.evalTyped .word countFunctions.results_length.count
+      program heapLimit
       (countFunctions.arguments.count left target) entry₁).map
         (fun result => result.1.toNat) =
-    (countFunctions.function.count.eval program heapLimit
+    (countFunctions.function.count.evalTyped .word countFunctions.results_length.count
+      program heapLimit
       (countFunctions.arguments.count right target) entry₂).map
         (fun result => result.1.toNat) := by
   rw [count_function_eval_toNat_of_ref hw fit₁ array₁,
@@ -46,7 +48,12 @@ The runner returns a value separately from the untouched output stream. -/
 def runCount (array : ArrayRef 32) (target : Word 32) (heapLimit : Nat)
     (entry : Source.State 32) : Option (Nat × Nat × StopReason) :=
   (countFunctions.run.count array target heapLimit entry).map fun result =>
-    ((result.state.regs 0).toNat, result.steps, result.reason)
+    ((DSL.ValueKind.decode .word
+        (LocalCompiler.Function.returnedValues
+          countFunctions.function.count.results.length result.state)
+        ((LocalCompiler.Function.returnedValues_length _ _).trans
+          countFunctions.results_length.count)).toNat,
+      result.steps, result.reason)
 
 /-- The real mixed-argument invocation returns the exact list count, with all
 call, iteration and halt instructions included. The represented length bounds
@@ -60,7 +67,7 @@ theorem runCount_eq {heapLimit : Nat} {array : ArrayRef 32} {target : Word 32}
       some (xs.count target, 20 * xs.length + 76, .halted) := by
   let code := LocalCompiler.rawLink countFunctions.registers countFunctions.program
     (LocalCompiler.Function.trampoline countFunctions.functionIndex.count
-      countFunctions.function.count.params)
+      countFunctions.function.count.params countFunctions.function.count.results.length)
   have hcompile : LocalCompiler.Function.compile countFunctions.registers countFunctions.program
       countFunctions.functionIndex.count countFunctions.function.count.params = some code := by
     set_option maxRecDepth 4096 in decide
@@ -80,7 +87,7 @@ theorem runCount_eq {heapLimit : Nat} {array : ArrayRef 32} {target : Word 32}
     decide
   simp only [runCount, countFunctions.run.count,
     max_eq_right (by decide : 1 ≤ countFunctions.registers), returned, Option.map_some, value,
-    Word.ofNat_toNat_of_lt exactCount, count]
+    DSL.ValueKind.decode_word, Word.ofNat_toNat_of_lt exactCount, count]
 
 -- The preloaded array is [1, 2, 1, 1], and the runtime target is 1.
 #eval runCount ⟨0, 4⟩ 1 4

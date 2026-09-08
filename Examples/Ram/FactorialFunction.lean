@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Source.Function.Eval
+import Complexity.Computability.Ram.Verification.Function.Typed
 import Examples.Ram.Factorial
 
 /-!
@@ -37,8 +37,11 @@ noncomputable def bodyTime (n : Word w) : Part Nat :=
 theorem eval_eq (n : Word w) :
     eval n = Part.some (Nat.factorial n.toNat % 2 ^ w) := by
   have execution := function_runs 0 n.toNat n.isLt (Source.State.initial [])
-  have result := execution.eval_eq_some
-  simpa only [Word.ofNat_toNat_self, eval, Part.map_some, value_toNat, factorialNat] using
+  have result : functions.eval.factorial n 0 (Source.State.initial []) =
+      Part.some (value w n.toNat, Source.State.initial []) := by
+    simpa only [Word.ofNat_toNat_self, factorial, program] using
+      execution.evalTyped_eq_some (kind := .word) functions.results_length.factorial
+  simpa only [eval, Part.map_some, value_toNat, factorialNat] using
     congrArg (Part.map (fun result : Word w × Source.State w => result.1.toNat)) result
 
 /-- When the result fits, an ordinary function-value equation states correctness. -/
@@ -58,11 +61,13 @@ agrees with a call in any shared state, and that state is preserved on return. -
 theorem eval_eq_of_execution {heapLimit depth : Nat} {n result : Word w}
     {entry finish : Source.State w}
     (execution : Source.FunctionExec functions.program heapLimit depth factorial
-      (functions.arguments.factorial n) entry result finish) :
+      (functions.arguments.factorial n) entry [result] finish) :
     eval n = Part.some result.toNat ∧ finish = entry := by
   have canonical := function_runs heapLimit n.toNat n.isLt entry
   simp only [Word.ofNat_toNat_self] at canonical
-  obtain ⟨rfl, rfl⟩ := execution.deterministic canonical
+  obtain ⟨returned, rfl⟩ := execution.deterministic canonical
+  have result_eq : result = value w n.toNat := List.cons.inj returned |>.1
+  subst result
   exact ⟨by simpa only [value_toNat, factorialNat] using eval_eq n, rfl⟩
 
 /-- The time equation is proved from the existing exact body execution,
@@ -74,7 +79,7 @@ theorem bodyTime_eq (n : Word w) : bodyTime n = Part.some (37 * n.toNat + 4) := 
     (by simp [Source.State.enter, functions.arguments.factorial])
   have invocation := Source.FunctionMeasuredExec.of_body
     (f := factorial) (functions.arguments_length.factorial n) (by decide)
-    measured (by trivial)
+    measured (by simp [factorial, functions.result_eq.factorial, Expr.ReadsBelow])
   exact invocation.bodyTime_eq_some
 
 /-- The time observation agrees with every actual invocation, not just the
@@ -82,14 +87,14 @@ canonical initial state hidden by `bodyTime`. -/
 theorem bodyTime_eq_of_execution {control heapLimit depth steps : Nat} {n result : Word w}
     {entry finish : Source.State w}
     (execution : Source.FunctionMeasuredExec control functions.program heapLimit depth factorial
-      (functions.arguments.factorial n) steps entry result finish) :
+      (functions.arguments.factorial n) steps entry [result] finish) :
     bodyTime n = Part.some steps := by
   have measured := body_measured heapLimit n.toNat
     (entry.enter (functions.arguments.factorial n)) n.isLt
     (by simp [Source.State.enter, functions.arguments.factorial])
   have invocation := Source.FunctionMeasuredExec.of_body
     (f := factorial) (functions.arguments_length.factorial n) (by decide)
-    measured (by trivial)
+    measured (by simp [factorial, functions.result_eq.factorial, Expr.ReadsBelow])
   rw [bodyTime_eq, (execution.deterministic invocation).1]
 
 end Ram.Examples.FactorialFunction

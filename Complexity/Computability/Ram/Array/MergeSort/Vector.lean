@@ -54,7 +54,7 @@ theorem call_vector_stateM_refines {base scratch : Word w}
     (length : Nat) (original : State w) (dst : Reg) (hw : 2 ≤ w)
     (lookup : functions[selfFn]? = some (function selfFn)) :
     Refines functions heapLimit (Nat.clog 2 length + 1)
-      (.call dst selfFn [.var 0, .var 1, .var 2])
+      (.call [dst] selfFn [.var 0, .var 1, .var 2])
       (fun (values : List.Vector (Word w) length) entry =>
         Pre heapLimit base scratch values.val entry ∧ entry = original)
       (fun (result : PUnit × List.Vector (Word w) length) finish => finish.regs dst = 0 ∧
@@ -76,7 +76,7 @@ theorem call_fin_stateM_refines {base scratch : Word w}
     (length : Nat) (original : State w) (dst : Reg) (hw : 2 ≤ w)
     (lookup : functions[selfFn]? = some (function selfFn)) :
     Refines functions heapLimit (Nat.clog 2 length + 1)
-      (.call dst selfFn [.var 0, .var 1, .var 2])
+      (.call [dst] selfFn [.var 0, .var 1, .var 2])
       (fun (values : Fin length → Word w) entry =>
         Pre heapLimit base scratch (List.ofFn values) entry ∧ entry = original)
       (fun (result : PUnit × (Fin length → Word w)) finish => finish.regs dst = 0 ∧

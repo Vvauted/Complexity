@@ -36,16 +36,27 @@ the machine-word range. This definition is not part of the executed program. -/
 def wordSum (xs : List (Word w)) : Word w :=
   BitVec.ofNat w (xs.map BitVec.toNat).sum
 
+/-- The encoded mathematical sum is the ordinary sum of machine words.
+The standard list algebra therefore applies without a separate modular fold. -/
+theorem wordSum_eq_sum (xs : List (Word w)) : wordSum xs = xs.sum := by
+  unfold wordSum
+  change BitVec.ofNat w ((xs.map BitVec.toNat).foldr (· + ·) 0) =
+    xs.foldr (· + ·) (BitVec.ofNat w 0)
+  rw [List.foldr_map]
+  exact (List.foldr_hom (BitVec.ofNat w) (l := xs) (init := 0)
+    (g₁ := fun x y => x.toNat + y) (g₂ := fun x y => x + y)
+    (fun x y => by rw [BitVec.ofNat_add, Word.ofNat_toNat_self])).symm
+
 @[simp] theorem wordSum_nil : wordSum ([] : List (Word w)) = 0 := rfl
 
 @[simp] theorem wordSum_cons (x : Word w) (xs : List (Word w)) :
     wordSum (x :: xs) = x + wordSum xs := by
-  simp [wordSum, BitVec.ofNat_add]
+  simp only [wordSum_eq_sum, List.sum_cons]
 
 /-- Summing a concatenation is ordinary addition of the two modular sums. -/
 theorem wordSum_append (xs ys : List (Word w)) :
     wordSum (xs ++ ys) = wordSum xs + wordSum ys := by
-  simp [wordSum, List.sum_append, BitVec.ofNat_add]
+  simp only [wordSum_eq_sum, List.sum_append]
 
 theorem wordSum_toNat (xs : List (Word w)) :
     (wordSum xs).toNat = (xs.map BitVec.toNat).sum % 2 ^ w := by
@@ -67,15 +78,6 @@ ram_def sumFunctions := ram_functions% {
   }
 }
 
--- Ordinary list algebra is the only algorithm-specific induction.
-private theorem sum_foldl (xs : List (Word w)) (acc : Word w) :
-    xs.foldl (fun a x => a + x) acc = acc + wordSum xs := by
-  induction xs generalizing acc with
-  | nil => simp
-  | cons x xs ih =>
-      rw [List.foldl_cons, ih, wordSum_cons]
-      exact BitVec.add_assoc _ _ _
-
 /-- The array-sum function returns the modular sum and leaves the entire caller
 state unchanged. Preconditions describe only arguments and the mathematical
 array view; there is no input/output entry point or instruction budget. -/
@@ -86,14 +88,16 @@ theorem sum_function_contract {w heapLimit depth : Nat} {program : Program}
       (fun args entry =>
         args = sumFunctions.arguments.sum ⟨base, BitVec.ofNat w xs.length⟩ ∧
         ArrayAt heapLimit base xs entry)
-      (fun _ entry value finish => value = wordSum xs ∧ finish = entry) := by
+      (fun _ entry value finish => value = [wordSum xs] ∧ finish = entry) := by
   have hlength : xs.length < 2 ^ w := by omega
   have correct := ForIn.Expression.function_contract
     (program := program) (heapLimit := heapLimit) (depth := depth) (step := fun a x => a + x)
     sumFunctions.body_eq.sum sumFunctions.result_eq.sum
     (⟨base, BitVec.ofNat w xs.length⟩ : ArrayRef w) [] rfl (by decide) hw
     (fun _ _ => ⟨trivial, trivial⟩) (fun _ _ => rfl) xs hfit
-  simpa [sum_foldl, ArrayRef.rep_mk_iff hlength] using correct
+  rw [wordSum_eq_sum, List.sum_eq_foldl]
+  simpa only [List.append_nil, ArrayRef.rep_mk_iff hlength,
+    sumFunctions.arguments.sum, ArrayRef.args] using correct
 
 /-- Call array sum directly on represented contents. No caller register, input
 stream or output buffer is needed, and every caller state field is preserved. -/
@@ -103,7 +107,7 @@ theorem sum_function_runs {w heapLimit depth : Nat} {program : Program}
     (entry : State w) (represented : ArrayAt heapLimit base xs entry) :
     FunctionExec program heapLimit depth sumFunctions.function.sum
       (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w xs.length⟩)
-      entry (wordSum xs) entry := by
+      entry [wordSum xs] entry := by
   obtain ⟨value, finish, execution, rfl, rfl⟩ :=
     sum_function_contract (program := program) (depth := depth) hw hfit
       (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w xs.length⟩)
@@ -119,12 +123,13 @@ theorem sum_function_result {w heapLimit depth : Nat} {program : Program}
     (represented : ArrayAt heapLimit base xs entry)
     (hsum : (xs.map BitVec.toNat).sum < 2 ^ w)
     (execution : FunctionExec program heapLimit depth sumFunctions.function.sum
-      (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w xs.length⟩) entry value finish) :
+      (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w xs.length⟩) entry [value] finish) :
     value.toNat = (xs.map BitVec.toNat).sum ∧ finish = entry := by
   obtain ⟨result, unchanged⟩ :=
     (sum_function_contract (program := program) (depth := depth) hw hfit).post
       ⟨rfl, represented⟩ execution
-  exact ⟨by rw [result, wordSum_toNat, Nat.mod_eq_of_lt hsum], unchanged⟩
+  have returned : value = wordSum xs := (List.cons.inj result).1
+  exact ⟨by rw [returned, wordSum_toNat, Nat.mod_eq_of_lt hsum], unchanged⟩
 
 /-- The same function body has its compiler-derived linear bound, independently
 of the correctness theorem. Enclosing argument evaluation, frame setup and
@@ -157,7 +162,7 @@ theorem sum_function_runs_with_timeBound {w control heapLimit depth : Nat} {prog
     ∃ bodySteps,
       FunctionMeasuredExec control program heapLimit depth sumFunctions.function.sum
         (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w xs.length⟩)
-        bodySteps entry (wordSum xs) entry ∧ bodySteps ≤ 18 * xs.length + 8 := by
+        bodySteps entry [wordSum xs] entry ∧ bodySteps ≤ 18 * xs.length + 8 := by
   obtain ⟨bodySteps, value, finish, execution, ⟨rfl, rfl⟩, bound⟩ :=
     (sum_function_contract (program := program) (depth := depth) hw hfit).with_timeBound
       (sum_function_timeBound (control := control) hw hfit)
@@ -173,7 +178,7 @@ theorem sum_function_contract_of_ref {w heapLimit depth : Nat} {program : Progra
     FunctionContract program heapLimit depth sumFunctions.function.sum
       (fun args entry => args = sumFunctions.arguments.sum array ∧
         array.Rep heapLimit xs entry)
-      (fun _ entry value finish => value = wordSum xs ∧ finish = entry) := by
+      (fun _ entry value finish => value = [wordSum xs] ∧ finish = entry) := by
   apply (sum_function_contract (program := program) (depth := depth)
     (base := array.base) (xs := xs) hw hfit).consequence
   · rintro args entry ⟨rfl, represented⟩
@@ -205,7 +210,7 @@ theorem sum_function_runs_of_ref {w heapLimit depth : Nat} {program : Program}
     (hfit : array.base.toNat + xs.length < 2 ^ w)
     (entry : State w) (represented : array.Rep heapLimit xs entry) :
     FunctionExec program heapLimit depth sumFunctions.function.sum
-      (sumFunctions.arguments.sum array) entry (wordSum xs) entry := by
+      (sumFunctions.arguments.sum array) entry [wordSum xs] entry := by
   obtain ⟨value, finish, execution, rfl, rfl⟩ :=
     sum_function_contract_of_ref (program := program) (depth := depth) hw hfit
       (sumFunctions.arguments.sum array) entry ⟨rfl, represented⟩
@@ -218,7 +223,7 @@ theorem sum_function_measured_of_ref {w control heapLimit depth : Nat} {program 
     (hfit : array.base.toNat + xs.length < 2 ^ w)
     (entry : State w) (represented : array.Rep heapLimit xs entry) :
     FunctionMeasuredExec control program heapLimit depth sumFunctions.function.sum
-      (sumFunctions.arguments.sum array) (18 * xs.length + 8) entry (wordSum xs) entry := by
+      (sumFunctions.arguments.sum array) (18 * xs.length + 8) entry [wordSum xs] entry := by
   have execution :=
     sum_function_runs_of_ref (program := program) (depth := depth) hw hfit entry represented
   exact ForIn.Expression.function_measured sumFunctions.body_eq.sum
@@ -235,7 +240,7 @@ theorem sumPair_function_contract {w heapLimit depth : Nat} {program : Program}
     FunctionContract program heapLimit (depth + 1) sumFunctions.function.sumPair
       (fun args entry => args = sumFunctions.arguments.sumPair left right ∧
         left.Rep heapLimit xs entry ∧ right.Rep heapLimit ys entry)
-      (fun _ entry value finish => value = wordSum xs + wordSum ys ∧ finish = entry) := by
+      (fun _ entry value finish => value = [wordSum xs + wordSum ys] ∧ finish = entry) := by
   ram_total_vc args entry ⟨rfl, leftArray, rightArray⟩
     [sumFunctions.body_eq.sumPair, sumFunctions.result_eq.sumPair]
   ram_total_apply (sum_function_contract_of_ref (program := program) (depth := depth)
@@ -252,7 +257,7 @@ theorem sumPair_function_runs {w heapLimit depth : Nat}
     (entry : State w) (leftArray : left.Rep heapLimit xs entry)
     (rightArray : right.Rep heapLimit ys entry) :
     FunctionExec sumFunctions.program heapLimit (depth + 1) sumFunctions.function.sumPair
-      (sumFunctions.arguments.sumPair left right) entry (wordSum xs + wordSum ys) entry := by
+      (sumFunctions.arguments.sumPair left right) entry [wordSum xs + wordSum ys] entry := by
   obtain ⟨value, finish, execution, rfl, rfl⟩ :=
     sumPair_function_contract (depth := depth) hw leftFit rightFit sumFunctions.function_lookup.sum
       (sumFunctions.arguments.sumPair left right) entry ⟨rfl, leftArray, rightArray⟩
@@ -261,10 +266,10 @@ theorem sumPair_function_runs {w heapLimit depth : Nat}
 private theorem sum_call_steps (control pointer length bodySteps : Nat) :
     (ABI.callPrefixLocals control sumFunctions.function.sum.locals
       [.var pointer, .var length] 0).length + 1 + bodySteps +
-        (ABI.returnCodeLocals control sumFunctions.function.sum.locals
-          sumFunctions.function.sum.result).length + 1 = bodySteps + 58 := by
-  rw [ABI.callLocals_steps_eq]
-  change 2 + bodySteps + 1 + 7 * 6 + 2 + 11 = bodySteps + 58
+        (ABI.returnCodeResultsLocals control sumFunctions.function.sum.locals
+          sumFunctions.function.sum.results).length + 1 = bodySteps + 58 := by
+  rw [ABI.callPrefixLocals_length_eq, ABI.returnCodeResultsLocals_length]
+  change 2 + 2 + 4 * 6 + 4 + 1 + bodySteps + (1 + 1 + 3 * 6 + 4) + 1 = bodySteps + 58
   omega
 
 /-- Exact execution of the pair body: both inner calls include their actual
@@ -279,25 +284,27 @@ theorem sumPair_function_measured {w control heapLimit depth : Nat} {program : P
     (rightArray : right.Rep heapLimit ys entry) :
     FunctionMeasuredExec control program heapLimit (depth + 1) sumFunctions.function.sumPair
       (sumFunctions.arguments.sumPair left right) (18 * (xs.length + ys.length) + 132)
-      entry (wordSum xs + wordSum ys) entry := by
+      entry [wordSum xs + wordSum ys] entry := by
   let entered := entry.enter (sumFunctions.arguments.sumPair left right)
   let middle := entered.setReg sumFunctions.localReg.sumPair.leftSum (wordSum xs)
   have first : FunctionMeasuredExec control program heapLimit depth sumFunctions.function.sum
       ([.var sumFunctions.localReg.sumPair.left.base,
         .var sumFunctions.localReg.sumPair.left.length].map entered.eval)
-      (18 * xs.length + 8) entered (wordSum xs) entered :=
+      (18 * xs.length + 8) entered [wordSum xs] entered :=
     sum_function_measured_of_ref hw leftFit entered (leftArray.enter _)
-  have firstCall := first.call (dst := sumFunctions.localReg.sumPair.leftSum) lookup
-    (by simp [Expr.ReadsBelow])
+  have firstCall := first.call (dsts := [sumFunctions.localReg.sumPair.leftSum]) lookup
+    rfl (by simp [Expr.ReadsBelow])
+  simp only [List.length_singleton, State.setRegs_singleton] at firstCall
   rw [sum_call_steps] at firstCall
   have second : FunctionMeasuredExec control program heapLimit depth sumFunctions.function.sum
       ([.var sumFunctions.localReg.sumPair.right.base,
         .var sumFunctions.localReg.sumPair.right.length].map middle.eval)
-      (18 * ys.length + 8) middle (wordSum ys) middle :=
+      (18 * ys.length + 8) middle [wordSum ys] middle :=
     sum_function_measured_of_ref hw rightFit middle
       ((rightArray.enter _).setReg sumFunctions.localReg.sumPair.leftSum (wordSum xs))
-  have secondCall := second.call (dst := sumFunctions.localReg.sumPair.rightSum) lookup
-    (by simp [Expr.ReadsBelow])
+  have secondCall := second.call (dsts := [sumFunctions.localReg.sumPair.rightSum]) lookup
+    rfl (by simp [Expr.ReadsBelow])
+  simp only [List.length_singleton, State.setRegs_singleton] at secondCall
   rw [sum_call_steps] at secondCall
   have body : LocalMeasuredExec control program heapLimit (depth + 1)
       sumFunctions.function.sumPair.body (18 * (xs.length + ys.length) + 132)
@@ -308,7 +315,8 @@ theorem sumPair_function_measured {w control heapLimit depth : Nat} {program : P
     rw [← counts]
     exact firstCall.seq secondCall
   exact FunctionMeasuredExec.of_body
-    (sumFunctions.arguments_length.sumPair left right) (by decide) body ⟨trivial, trivial⟩
+    (sumFunctions.arguments_length.sumPair left right) (by decide) body
+    (by simp [sumFunctions.result_eq.sumPair, Expr.ReadsBelow])
 
 /-- The semantic body-time observation has the count proved from the same two
 real calls. The outer call and any executable adapter are outside its scope. -/

@@ -35,14 +35,19 @@ theorem eval_append {w heapLimit : Nat} {left right : ArrayRef w}
         Part.some (wordSum (xs ++ ys), entry) := by
   rw [wordSum_append]
   exact (sumPair_function_runs (depth := 0) hw leftFit rightFit entry
-    leftArray rightArray).eval_eq_some
+    leftArray rightArray).evalTyped_eq_some sumFunctions.results_length.sumPair
 
 /-- Execute the typed two-array function on already represented 32-bit data.
 The returned count includes both inner calls, the outer call, return and halt. -/
 def runSumPair (left right : ArrayRef 32) (heapLimit : Nat) (entry : Source.State 32) :
     Option (Nat × Nat × StopReason) :=
   (sumFunctions.run.sumPair left right heapLimit entry).map fun result =>
-      ((result.state.regs 0).toNat, result.steps, result.reason)
+    ((DSL.ValueKind.decode .word
+        (LocalCompiler.Function.returnedValues
+          sumFunctions.function.sumPair.results.length result.state)
+        ((LocalCompiler.Function.returnedValues_length _ _).trans
+          sumFunctions.results_length.sumPair)).toNat,
+      result.steps, result.reason)
 
 /-- The executable call returns the mathematical concatenation sum and its
 actual full transition count. Stack capacity is a safety premise, not a supplied
@@ -58,7 +63,7 @@ theorem runSumPair_eq {heapLimit : Nat} {left right : ArrayRef 32}
         18 * (xs.length + ys.length) + 197, .halted) := by
   let code := LocalCompiler.rawLink sumFunctions.registers sumFunctions.program
     (LocalCompiler.Function.trampoline sumFunctions.functionIndex.sumPair
-      sumFunctions.function.sumPair.params)
+      sumFunctions.function.sumPair.params sumFunctions.function.sumPair.results.length)
   have hcompile : LocalCompiler.Function.compile sumFunctions.registers sumFunctions.program
       sumFunctions.functionIndex.sumPair sumFunctions.function.sumPair.params = some code := by
     set_option maxRecDepth 4096 in decide
@@ -78,7 +83,7 @@ theorem runSumPair_eq {heapLimit : Nat} {left right : ArrayRef 32}
     decide
   simp only [runSumPair, sumFunctions.run.sumPair,
     max_eq_right (by decide : 1 ≤ sumFunctions.registers), returned, Option.map_some, value,
-    ← wordSum_append, wordSum_toNat, count]
+    DSL.ValueKind.decode_word, ← wordSum_append, wordSum_toNat, count]
 
 -- Heap cells 0, 1, 2, 3 contain 1, 2, 3, 4. Preparing this state is explicit
 -- host-side preloading, not an uncharged RAM operation inside sumPair.

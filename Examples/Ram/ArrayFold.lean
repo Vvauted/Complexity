@@ -49,12 +49,13 @@ theorem function_contract {heapLimit : Nat} {array : ArrayRef w} {xs : List (Wor
       (fun args entry => args = functions.arguments.sumSquares array ∧
         array.Rep heapLimit xs entry)
       (fun _ entry value finish =>
-        value = BitVec.ofNat w (xs.map (fun x => x.toNat ^ 2)).sum ∧ finish = entry) := by
+        value = [BitVec.ofNat w (xs.map (fun x => x.toNat ^ 2)).sum] ∧ finish = entry) := by
   have correct := ForIn.function_contract functions.body_eq.sumSquares
     functions.result_eq.sumSquares rfl (by decide) hw functions.function_lookup.addSquare
     (addSquare_contract heapLimit) array xs fit
   exact correct.consequence (fun _ _ pre => pre)
-    (fun _ _ _ _ _ post => ⟨post.1.trans (foldl_addSquare xs), post.2⟩)
+    (fun _ _ _ _ _ post =>
+      ⟨post.1.trans (congrArg (fun value => [value]) (foldl_addSquare xs)), post.2⟩)
 
 /-- Observe the same implemented function using an ordinary list expression. -/
 theorem eval_eq {heapLimit : Nat} {array : ArrayRef w} {xs : List (Word w)}
@@ -62,9 +63,9 @@ theorem eval_eq {heapLimit : Nat} {array : ArrayRef w} {xs : List (Word w)}
     (represented : array.Rep heapLimit xs entry) :
     functions.eval.sumSquares array heapLimit entry =
       Part.some (BitVec.ofNat w (xs.map (fun x => x.toNat ^ 2)).sum, entry) := by
-  obtain ⟨value, finish, equation, rfl, rfl⟩ :=
-    (function_contract hw fit).eval_spec ⟨rfl, represented⟩
-  exact equation
+  obtain ⟨value, finish, execution, rfl, rfl⟩ :=
+    function_contract hw fit (functions.arguments.sumSquares array) entry ⟨rfl, represented⟩
+  exact execution.evalTyped_eq_some functions.results_length.sumSquares
 
 /-- When the mathematical sum fits, the decoded result is exactly that natural
 number. The modular theorem above does not assume intermediate no-overflow. -/
@@ -111,7 +112,7 @@ theorem runSumSquares_eq {heapLimit : Nat} {array : ArrayRef 32}
       some ((xs.map (fun x => x.toNat ^ 2)).sum % 2 ^ 32, 76 * xs.length + 67, .halted) := by
   let code := LocalCompiler.rawLink functions.registers functions.program
     (LocalCompiler.Function.trampoline functions.functionIndex.sumSquares
-      functions.function.sumSquares.params)
+      functions.function.sumSquares.params functions.function.sumSquares.results.length)
   have hcompile : LocalCompiler.Function.compile functions.registers functions.program
       functions.functionIndex.sumSquares functions.function.sumSquares.params = some code := by
     set_option maxRecDepth 4096 in decide
@@ -123,12 +124,14 @@ theorem runSumSquares_eq {heapLimit : Nat} {array : ArrayRef 32}
     LocalCompiler.Function.runUntil_eq_of_execution hcompile
       functions.function_lookup.sumSquares hcode hstack execution
       (bodyTime_eq (by decide : 0 < 32) fit represented)
+  change [target.regs 0] = [BitVec.ofNat 32 (xs.map (fun x => x.toNat ^ 2)).sum] at value
+  have scalarValue := (List.cons.inj value).1
   have count : LocalCompiler.Function.callSteps functions.registers
       functions.function.sumSquares (76 * xs.length + 8) + 1 = 76 * xs.length + 67 := by
     simp [LocalCompiler.Function.callSteps_eq, Nat.add_assoc]
     decide
   simp only [runSumSquares, functions.run.sumSquares,
-    max_eq_right (by decide : 1 ≤ functions.registers), returned, Option.map_some, value,
+    max_eq_right (by decide : 1 ≤ functions.registers), returned, Option.map_some, scalarValue,
     BitVec.toNat_ofNat, count]
 
 -- The three preloaded words are 1, 2, 3. Every visited word triggers both

@@ -115,17 +115,6 @@ theorem evalResults_exec {code : Code} {n : Nat} {results : List Expr} {s : Stat
     Exec code (evalResults n results).length s (execBlock (evalResults n results) s) :=
   execBlock_exec hcode (evalResults_linear n results) hrun
 
-/-- Return-field evaluation charges every expression and its individual move. -/
-theorem evalResults_length (n : Nat) (results : List Expr) :
-    (evalResults n results).length =
-      (results.map (fun e => (e.compile (scratch n)).length)).sum + results.length := by
-  cases results with
-  | nil => rfl
-  | cons e es =>
-      simp only [evalResults, List.length_append, List.length_cons, evalArgs_length,
-        List.map_cons, List.sum_cons]
-      omega
-
 /-- Return buffering preserves a source match even when the callee uses fewer
 locals than the program-wide register bound. -/
 theorem ResultsEvaluated.matches {n locals heapLimit : Nat} {results : List Expr}

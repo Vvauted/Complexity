@@ -41,9 +41,9 @@ def function (selfFn : Nat) : Func where
   params := 3
   locals := 9
   body := .ite condition
-    (.seq setup (.seq (.call 4 selfFn leftArgs)
-      (.seq (.call 4 selfFn rightArgs) Combine.program))) .skip
-  result := .const 0
+    (.seq setup (.seq (.call [4] selfFn leftArgs)
+      (.seq (.call [4] selfFn rightArgs) Combine.program))) .skip
+  results := [.const 0]
 
 def program : Program := [function 0]
 
@@ -85,13 +85,13 @@ theorem initialize_code_size (control : Nat) (localsTable : Nat → Nat) :
 control transfers are included in these generated-list length identities. -/
 theorem left_call_steps (control bodySteps : Nat) :
     (ABI.callPrefixLocals control 9 leftArgs 0).length + 1 + bodySteps +
-      (ABI.returnCodeLocals control 9 (.const 0)).length + 1 = bodySteps + 81 := by
+      (ABI.returnCodeResultsLocals control 9 [.const 0]).length + 1 = bodySteps + 81 := by
   change 46 + 1 + bodySteps + 33 + 1 = bodySteps + 81
   omega
 
 theorem right_call_steps (control bodySteps : Nat) :
     (ABI.callPrefixLocals control 9 rightArgs 0).length + 1 + bodySteps +
-      (ABI.returnCodeLocals control 9 (.const 0)).length + 1 = bodySteps + 87 := by
+      (ABI.returnCodeResultsLocals control 9 [.const 0]).length + 1 = bodySteps + 87 := by
   change 52 + 1 + bodySteps + 33 + 1 = bodySteps + 87
   omega
 
@@ -174,14 +174,14 @@ theorem after_left {heapLimit selfFn : Nat} {base scratch : Word w}
     (hc : (recursionSpec heapLimit selfFn w).post (xs.take (xs.length / 2))
       ((initialized entry).enter (leftArgs.map (initialized entry).eval)) callee) :
     Stage heapLimit base scratch xs (sorted (xs.take (xs.length / 2)))
-      (xs.drop (xs.length / 2)) entry ((initialized entry).leave callee 4 (.const 0)) := by
+      (xs.drop (xs.length / 2)) entry ((initialized entry).leave callee [4] [.const 0]) := by
   rw [initialized_leftArgs hp] at hc
   change Post heapLimit base scratch (xs.take (xs.length / 2)) _ callee at hc
   let k := xs.length / 2
   have hk : k ≤ xs.length := Nat.div_le_self _ _
   have htlen : (xs.take k).length = k := List.length_take_of_le hk
   obtain ⟨workspace, hlen, hs⟩ := hp.scratch_array
-  let finish := (initialized entry).leave callee 4 (.const 0)
+  let finish := (initialized entry).leave callee [4] [.const 0]
   have hf : TwoBufferFrame base k scratch k entry.mem finish.mem := by
     have hf' := hc.frame
     change TwoBufferFrame base (xs.take k).length scratch (xs.take k).length
@@ -213,10 +213,10 @@ theorem after_left {heapLimit selfFn : Nat} {base scratch : Word w}
   · obtain ⟨now, hn, ha⟩ := hs.exists_contents finish
     exact ⟨now, hn.trans hlen, ha⟩
   · rw [length_sorted, htlen]
-  · simp [initialized, State.leave, State.setReg, hp.base_reg]
-  · simp [initialized, State.leave, State.setReg, hp.scratch_reg]
-  · simpa [finish, initialized, State.leave, State.setReg] using hp.length_reg
-  · simpa [finish, initialized, State.leave, State.setReg] using half_toNat hw hp
+  · simp [initialized, State.leave_singleton, State.setReg, hp.base_reg]
+  · simp [initialized, State.leave_singleton, State.setReg, hp.scratch_reg]
+  · simpa [finish, initialized, State.leave_singleton, State.setReg] using hp.length_reg
+  · simpa [finish, initialized, State.leave_singleton, State.setReg] using half_toNat hw hp
 
 theorem stage_rightArgs {heapLimit : Nat} {base scratch : Word w}
     {xs front back : List (Word w)} {entry caller : State w}
@@ -269,7 +269,7 @@ theorem after_right {heapLimit selfFn : Nat} {base scratch : Word w}
     (hc : (recursionSpec heapLimit selfFn w).post (xs.drop (xs.length / 2))
       (caller.enter (rightArgs.map caller.eval)) callee) :
     Stage heapLimit base scratch xs (sorted (xs.take (xs.length / 2)))
-      (sorted (xs.drop (xs.length / 2))) entry (caller.leave callee 4 (.const 0)) := by
+      (sorted (xs.drop (xs.length / 2))) entry (caller.leave callee [4] [.const 0]) := by
   rw [stage_rightArgs hs] at hc
   change Post heapLimit (arrayAddr base (xs.length / 2)) (arrayAddr scratch (xs.length / 2))
     (xs.drop (xs.length / 2)) _ callee at hc
@@ -278,7 +278,7 @@ theorem after_right {heapLimit selfFn : Nat} {base scratch : Word w}
   have htlen : (xs.take k).length = k := List.length_take_of_le hk
   obtain ⟨workspace, hlen, hspace⟩ := hs.scratch_array
   have hwhole : ArrayAt heapLimit base (sorted (xs.take k) ++ xs.drop k) caller := hs.source_array
-  let finish := caller.leave callee 4 (.const 0)
+  let finish := caller.leave callee [4] [.const 0]
   have hf : TwoBufferFrame (arrayAddr base k) (xs.drop k).length
       (arrayAddr scratch k) (xs.drop k).length caller.mem finish.mem := hc.frame
   have hfront : ArrayAt heapLimit base (sorted (xs.take k)) caller := by
@@ -317,10 +317,10 @@ theorem after_right {heapLimit selfFn : Nat} {base scratch : Word w}
     exact ⟨now, hn.trans hlen, ha⟩
   · rw [length_sorted, htlen]
   · rw [length_sorted, List.length_drop]
-  · simpa [finish, State.leave] using hs.source_reg
-  · simpa [finish, State.leave] using hs.scratch_reg
-  · simpa [finish, State.leave] using hs.length_reg
-  · simpa [finish, State.leave] using hs.split_reg
+  · simpa [finish, State.leave_singleton] using hs.source_reg
+  · simpa [finish, State.leave_singleton] using hs.scratch_reg
+  · simpa [finish, State.leave_singleton] using hs.length_reg
+  · simpa [finish, State.leave_singleton] using hs.split_reg
 
 theorem combine_pre {heapLimit : Nat} {base scratch : Word w}
     {xs front back : List (Word w)} {entry caller : State w}

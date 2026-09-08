@@ -37,7 +37,7 @@ theorem scaleAndSum_expands : scaleAndSum =
                 (.bin .mul (.load (.bin .add (.var 0) (.var 3))) (.var 2)))
               (.seq (.assign 4 (.bin .add (.var 4) (.load (.bin .add (.var 0) (.var 3)))))
                 (.assign 3 (.bin .add (.var 3) (.const 1)))))))
-      result := .var 4 } := rfl
+      results := [.var 4] } := rfl
 
 /-- A static function-table name. Putting `euclid` at index zero makes the
 call below recursive; the syntax does not inline it or assume it terminates. -/
@@ -57,8 +57,8 @@ theorem euclid_expands : euclid =
     { params := 2
       locals := 3
       body := .ite (.bin .eq (.var 1) (.const 0)) (.assign 2 (.var 0))
-        (.call 2 euclidId [.var 1, .bin .umod (.var 0) (.var 1)])
-      result := .var 2 } := rfl
+        (.call [2] euclidId [.var 1, .bin .umod (.var 0) (.var 1)])
+      results := [.var 2] } := rfl
 
 /-- Direct statement syntax also accepts caller-provided Lean register names. -/
 def readStoreWrite (base value : Reg) : Stmt := ram% {
@@ -83,8 +83,8 @@ def separateScopes : Func := ram_fun% (outerTarget) locals (answer) {
 
 theorem separateScopes_expands : separateScopes =
     { params := 1, locals := 2
-      body := .call 1 3 [.var 0]
-      result := .const 3 } := rfl
+      body := .call [1] 3 [.var 0]
+      results := [.const 3] } := rfl
 
 end Examples
 end Ram.DSL

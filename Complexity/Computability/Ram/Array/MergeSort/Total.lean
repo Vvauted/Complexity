@@ -46,9 +46,12 @@ theorem recursive_total (hw : 2 ≤ w)
   change Pre heapLimit (entry.regs 0) (entry.regs 1) xs entry at hp
   change Verification.TotalWP functions heapLimit (Nat.clog 2 xs.length)
     (.ite condition
-      (.seq setup (.seq (.call 4 selfFn leftArgs)
-        (.seq (.call 4 selfFn rightArgs) Combine.program))) .skip)
-    (fun finish => True ∧ Post heapLimit (entry.regs 0) (entry.regs 1) xs entry finish) entry
+      (.seq setup (.seq (.call [4] selfFn leftArgs)
+        (.seq (.call [4] selfFn rightArgs) Combine.program))) .skip)
+    (fun finish => (∀ result ∈ [Expr.const 0],
+      result.ReadsBelow heapLimit finish.regs finish.mem) ∧
+      Post heapLimit (entry.regs 0) (entry.regs 1) xs entry finish) entry
+  simp only [List.mem_singleton, forall_eq, Expr.ReadsBelow]
   rw [Verification.TotalWP.ite_iff]
   refine ⟨by simp [condition, Expr.ReadsBelow], ?_⟩
   by_cases hsmall : xs.length ≤ 1
@@ -82,14 +85,14 @@ theorem recursive_total (hw : 2 ≤ w)
     rw [if_neg hnonzero]
     ram_total_apply (initialize_total_contract (functions := functions)
       (heapLimit := heapLimit) (depth := Nat.clog 2 xs.length) entry)
-    apply leftCorrect.wp_call lookup rfl (by change 3 ≤ 9; decide)
+    apply leftCorrect.wp_call lookup rfl rfl (by change 3 ≤ 9; decide)
     · simp [leftArgs, Expr.ReadsBelow]
     · exact left_pre (selfFn := selfFn) hw hp
     · exact hleftDepth
     · intro leftCallee leftPost
       have leftStage := after_left (selfFn := selfFn) hw hp leftPost
       simp only [Verification.TotalWP.seq_iff]
-      apply rightCorrect.wp_call lookup rfl (by change 3 ≤ 9; decide)
+      apply rightCorrect.wp_call lookup rfl rfl (by change 3 ≤ 9; decide)
       · simp [rightArgs, Expr.ReadsBelow]
       · exact right_pre (selfFn := selfFn) hp leftStage
       · exact hrightDepth

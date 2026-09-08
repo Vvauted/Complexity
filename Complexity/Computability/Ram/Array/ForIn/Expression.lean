@@ -18,8 +18,8 @@ equations determine all private locals, with no client-supplied cursor record or
 loop invariant.
 
 The expression's safety and mathematical meaning remain proof obligations.
-The result is an ordinary `List.foldl`, not an executable Lean callback. The
-separate measured rule counts the expression's compiled instructions, element
+The one returned field is an ordinary `List.foldl`, not an executable Lean callback.
+The separate measured rule counts the expression's compiled instructions, element
 loads, cursor updates, guards and initialization. It does not require a proposed
 time bound or change the invocation's returned value and shared state.
 -/
@@ -60,7 +60,7 @@ theorem function_contract {program : Program} {f : Func}
     {step : Word w → Word w → Word w}
     (bodyShape : f.body = .seq (.assign accumulator (.const seed))
       (Stmt.forIn pointer remaining element (.var 0) (.var 1) (.assign accumulator expression)))
-    (resultShape : f.result = .var accumulator)
+    (resultShape : f.results = [.var accumulator])
     (array : ArrayRef w) (captures : List (Word w))
     (params : f.params = 2 + captures.length)
     (layout : (List.range f.params ++ [accumulator, pointer, remaining, element]).Nodup ∧
@@ -76,7 +76,7 @@ theorem function_contract {program : Program} {f : Func}
     FunctionContract program heapLimit depth f
       (fun args entry => args = array.args ++ captures ∧ array.Rep heapLimit xs entry)
       (fun _ entry value finish =>
-        value = xs.foldl step (BitVec.ofNat w seed) ∧ finish = entry) := by
+        value = [xs.foldl step (BitVec.ofNat w seed)] ∧ finish = entry) := by
   let registers := registersOfNodup (List.nodup_append.mp layout.1).2.1
   have fresh := @parameter_ne f.params accumulator pointer remaining element layout.1
   have hzero : 0 < f.params := by omega
@@ -137,10 +137,10 @@ theorem function_contract {program : Program} {f : Func}
         (by simpa only [baseValue] using fit)
     rw [bodyShape, Verification.TotalWP.seq_iff, Verification.TotalWP.assign_iff]
     refine ⟨trivial, finish, execution, ?_, ?_, ?_⟩
-    · rw [resultShape]
-      trivial
-    · simpa only [resultShape, State.eval, Expr.eval, start, State.setReg_same,
-        registers, registersOfNodup] using result
+    · simp [resultShape, Expr.ReadsBelow]
+    · simpa only [resultShape, List.map_cons, List.map_nil, State.eval, Expr.eval,
+        start, State.setReg_same, registers, registersOfNodup] using
+        congrArg (fun value => [value]) result
     · change State.mk entry.regs finish.mem finish.input finish.outputRev = entry
       rw [memory, input, output]
       rfl
@@ -155,7 +155,7 @@ theorem function_measured {program : Program} {f : Func}
     (array : ArrayRef w) (captures : List (Word w))
     (params : f.params = 2 + captures.length)
     (layout : (List.range f.params ++ [accumulator, pointer, remaining, element]).Nodup)
-    (hw : 0 < w) (xs : List (Word w)) {entry finish : State w} {value : Word w}
+    (hw : 0 < w) (xs : List (Word w)) {entry finish : State w} {value : List (Word w)}
     (represented : array.Rep heapLimit xs entry)
     (execution : FunctionExec program heapLimit depth f (array.args ++ captures) entry value finish) :
     FunctionMeasuredExec control program heapLimit depth f (array.args ++ captures)
@@ -218,7 +218,7 @@ theorem function_bodyTime {program : Program} {f : Func}
     (array : ArrayRef w) (captures : List (Word w))
     (params : f.params = 2 + captures.length)
     (layout : (List.range f.params ++ [accumulator, pointer, remaining, element]).Nodup)
-    (hw : 0 < w) (xs : List (Word w)) {entry finish : State w} {value : Word w}
+    (hw : 0 < w) (xs : List (Word w)) {entry finish : State w} {value : List (Word w)}
     (represented : array.Rep heapLimit xs entry)
     (execution : FunctionExec program heapLimit depth f (array.args ++ captures) entry value finish) :
     f.bodyTime program heapLimit (array.args ++ captures) entry = Part.some

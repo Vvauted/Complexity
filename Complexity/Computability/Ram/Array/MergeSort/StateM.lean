@@ -71,8 +71,9 @@ theorem body_stateM_refines {base scratch : Word w} (length : Nat) (original : S
         entry.mem = original.mem ∧ entry.input = original.input ∧
         entry.outputRev = original.outputRev)
       (fun result finish =>
-        (function selfFn).result.ReadsBelow heapLimit finish.regs finish.mem ∧
-        finish.eval (function selfFn).result = 0 ∧
+        (∀ expr ∈ (function selfFn).results,
+          expr.ReadsBelow heapLimit finish.regs finish.mem) ∧
+        (function selfFn).results.map finish.eval = [0] ∧
         SharedStateRep heapLimit base scratch length original result.2
           finish.mem finish.input finish.outputRev)
       (sortState (w := w)).run := by
@@ -83,7 +84,8 @@ theorem body_stateM_refines {base scratch : Word w} (length : Nat) (original : S
   have correct := recursive_total (heapLimit := heapLimit) hw lookup xs
   change TotalRelContract functions heapLimit (Nat.clog 2 xs.length) (function selfFn).body
     ((recursionSpec heapLimit selfFn w).pre xs)
-    (fun start finish => (function selfFn).result.ReadsBelow heapLimit finish.regs finish.mem ∧
+    (fun start finish => (∀ expr ∈ (function selfFn).results,
+      expr.ReadsBelow heapLimit finish.regs finish.mem) ∧
       (recursionSpec heapLimit selfFn w).post xs start finish) at correct
   apply Verification.TotalWP.of_relContract
     (correct.mono_depth (depth' := Nat.clog 2 length)
@@ -104,7 +106,7 @@ theorem call_stateM_refines {base scratch : Word w} (length : Nat) (original : S
     (dst : Reg) (hw : 2 ≤ w)
     (lookup : functions[selfFn]? = some (function selfFn)) :
     Refines functions heapLimit (Nat.clog 2 length + 1)
-      (.call dst selfFn [.var 0, .var 1, .var 2])
+      (.call [dst] selfFn [.var 0, .var 1, .var 2])
       (fun xs entry => xs.length = length ∧ Pre heapLimit base scratch xs entry ∧
         entry = original)
       (fun result finish => finish.regs dst = 0 ∧
@@ -113,20 +115,20 @@ theorem call_stateM_refines {base scratch : Word w} (length : Nat) (original : S
         ∀ r, r ≠ dst → finish.regs r = original.regs r)
       (sortState (w := w)).run := by
   have called := (body_stateM_refines (heapLimit := heapLimit) (base := base) (scratch := scratch)
-    length original hw lookup).stateM_call (dst := dst) (args := [.var 0, .var 1, .var 2])
-      (returnRep := fun (_ : PUnit) value => value = 0) original lookup rfl
+    length original hw lookup).stateM_call (dsts := [dst]) (args := [.var 0, .var 1, .var 2])
+      (returnRep := fun (_ : PUnit) values => values = [0]) original lookup rfl rfl (by simp)
       (by change 3 ≤ 9; decide)
       (by simp [Expr.ReadsBelow]) (Nat.le_refl _)
   rintro xs entry ⟨hlen, hp, same⟩
   subst entry
-  exact called xs original ⟨rfl, hlen, hp.enter_params, rfl, rfl, rfl⟩
+  simpa using called xs original ⟨rfl, hlen, hp.enter_params, rfl, rfl, rfl⟩
 
 /-- Native functional verification recovers the existing caller postcondition.
 No instruction budget or callee-register restoration proof is required here. -/
 theorem call_total_contract {base scratch : Word w} {xs : List (Word w)} (dst : Reg)
     (hw : 2 ≤ w) (lookup : functions[selfFn]? = some (function selfFn)) :
     TotalRelContract functions heapLimit (Nat.clog 2 xs.length + 1)
-      (.call dst selfFn [.var 0, .var 1, .var 2])
+      (.call [dst] selfFn [.var 0, .var 1, .var 2])
       (Pre heapLimit base scratch xs)
       (fun entry finish => Post heapLimit base scratch xs entry finish ∧
         (∀ r, r ≠ dst → finish.regs r = entry.regs r) ∧ finish.regs dst = 0) := by

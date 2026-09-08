@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.ABI.Arguments.Memory
 import Complexity.Computability.Ram.Compiler.ABI.Frame.Memory
+import Complexity.Computability.Ram.Compiler.ABI.Results.Receive
 import Complexity.Computability.Ram.Compiler.Local.ABI.Basic
 
 /-!
@@ -375,5 +376,257 @@ theorem returnCodeLocals_prefix_mem {code : Code} {control locals k : Nat}
     (execution : Exec code k s current) : current.mem = s.mem :=
   execution.prefix_mem_eq_of_heapWrites_empty hk
     (returnCodeLocals_heapWrites_eq_empty atBlock running)
+
+private theorem receiveResults_instr_heapAccesses {control start : Nat}
+    {dsts : List Reg} {instr : Instr}
+    (member : instr ∈ receiveResults control start dsts) (s : State w) :
+    instr.heapAccesses s = ∅ := by
+  induction dsts generalizing start with
+  | nil => simp only [receiveResults, List.not_mem_nil] at member
+  | cons dst dsts ih =>
+      simp only [receiveResults, List.mem_cons] at member
+      rcases member with rfl | member
+      · rfl
+      · exact ih member
+
+/-- Receiving any number of result fields executes only register moves. This
+includes repeated destinations and requires no result-bank capacity premise. -/
+theorem receiveResults_heapAccesses_eq_empty {code : Code} {control start : Nat}
+    {dsts : List Reg} {s : State w}
+    (atBlock : CodeAt code s.pc (receiveResults control start dsts))
+    (running : s.status = .running) :
+    heapAccesses code (receiveResults control start dsts).length s = ∅ :=
+  no_accesses atBlock (receiveResults_linear control start dsts) running
+    (fun _ member t => receiveResults_instr_heapAccesses member t)
+
+/-- The actual result-receive trace writes no memory. -/
+theorem receiveResults_heapWrites_eq_empty {code : Code} {control start : Nat}
+    {dsts : List Reg} {s : State w}
+    (atBlock : CodeAt code s.pc (receiveResults control start dsts))
+    (running : s.status = .running) :
+    heapWrites code (receiveResults control start dsts).length s = ∅ :=
+  no_writes_of_no_accesses (receiveResults_heapAccesses_eq_empty atBlock running)
+
+/-- Evaluating all return expressions performs no stores, independently of
+the expression read bounds and the size of the protected result bank. -/
+theorem evalResults_heapWrites_eq_empty {code : Code} {control : Nat}
+    {results : List Expr} {s : State w}
+    (atBlock : CodeAt code s.pc (evalResults control results))
+    (running : s.status = .running) :
+    heapWrites code (evalResults control results).length s = ∅ := by
+  cases results with
+  | nil => simp only [evalResults, List.length_nil, heapWrites_zero]
+  | cons result results =>
+      simp only [evalResults] at atBlock ⊢
+      obtain ⟨atMove, readyMove, _, writesExpr⟩ :=
+        split_memory atBlock (result.compile_linear (scratch control)) running
+      obtain ⟨atTail, readyTail, _, writesMove⟩ :=
+        split_memory (left := [.move (rv control) (scratch control)]) atMove
+          (by simp [Instr.Linear]) readyMove
+      simp only [List.singleton_append] at writesMove
+      rw [writesExpr, writesMove,
+        Expr.compile_heapWrites_eq_empty atBlock.append_left running,
+        evalArgs_heapWrites_eq_empty atTail readyTail, List.length_singleton,
+        heapWrites_one, stepHeapWrites_of_fetch readyMove atMove.head]
+      rfl
+
+/-- All return-field reads stay in the supplied source heap. Earlier result
+buffering leaves the source registers and memory used by later fields intact. -/
+theorem evalResults_heapAccesses_below {code : Code} {control heapLimit : Nat}
+    {results : List Expr} {s : State w}
+    (bounded : ∀ e ∈ results, e.Bounded control)
+    (reads : ∀ e ∈ results, e.ReadsBelow heapLimit s.regs s.mem)
+    (atBlock : CodeAt code s.pc (evalResults control results))
+    (running : s.status = .running) {address : Word w}
+    (member : address ∈ heapAccesses code (evalResults control results).length s) :
+    address.toNat < heapLimit := by
+  cases results with
+  | nil =>
+      simp only [evalResults, List.length_nil, heapAccesses_zero, Finset.notMem_empty] at member
+  | cons result results =>
+      let evaluated := execBlock (result.compile (scratch control)) s
+      let buffered := execBlock [.move (rv control) (scratch control)] evaluated
+      simp only [evalResults] at atBlock member
+      obtain ⟨atMove, readyMove, accessesExpr, _⟩ :=
+        split_memory atBlock (result.compile_linear (scratch control)) running
+      obtain ⟨atTail, readyTail, accessesMove, _⟩ :=
+        split_memory (left := [.move (rv control) (scratch control)]) atMove
+          (by simp [Instr.Linear]) readyMove
+      simp only [List.singleton_append] at accessesMove
+      have scratchFit : control ≤ scratch control := by unfold scratch; omega
+      have headBound := bounded result (by simp)
+      have correct := Expr.compile_correct (headBound.mono scratchFit) s
+      have tailBound : ∀ e ∈ results, e.Bounded control :=
+        fun e he => bounded e (List.mem_cons_of_mem _ he)
+      have bufferedRegs : ∀ r, r < control → buffered.regs r = s.regs r := by
+        intro r hr
+        have ne : r ≠ rv control := by unfold rv; omega
+        simpa only [buffered, execBlock_cons, execBlock_nil, execInstr,
+          State.next_regs, State.setReg_ne _ _ _ _ ne] using
+            correct.below r (hr.trans_le scratchFit)
+      have bufferedMem : buffered.mem = s.mem := correct.memory
+      have tailReads : ∀ e ∈ results,
+          e.ReadsBelow heapLimit buffered.regs buffered.mem := by
+        intro e he
+        exact Expr.readsBelow_congr (tailBound e he)
+          (reads e (List.mem_cons_of_mem _ he))
+          (fun r hr => (bufferedRegs r hr).symm)
+          (fun a _ => congrFun bufferedMem.symm a)
+      rw [accessesExpr, Finset.mem_union] at member
+      rcases member with expression | remaining
+      · exact Expr.compile_heapAccesses_below (headBound.mono scratchFit)
+          (reads result (by simp)) atBlock.append_left running expression
+      · rw [accessesMove, Finset.mem_union] at remaining
+        rcases remaining with move | tail
+        · rw [List.length_singleton, heapAccesses_one,
+            stepHeapAccesses_of_fetch readyMove atMove.head] at move
+          exact (Finset.notMem_empty address move).elim
+        · exact evalArgs_heapAccesses_below tailBound tailReads atTail readyTail tail
+
+private theorem returnPrefixResults_memory {code : Code} {control locals : Nat}
+    {results : List Expr} {s : State w}
+    (atBlock : CodeAt code s.pc (returnPrefixResultsLocals control locals results))
+    (running : s.status = .running) :
+    let buffered := execBlock (evalResults control results) s
+    let retreated := execBlock (retreatLocals control locals) buffered
+    let addressed := execBlock [.load (ra control) (sp control)] retreated
+    (locals ≤ control →
+      heapAccesses code (returnPrefixResultsLocals control locals results).length s =
+        heapAccesses code (evalResults control results).length s ∪
+          ({retreated.regs (sp control)} ∪ (Finset.range locals).image
+            (fun i => arrayAddr (addressed.regs (sp control)) (i + 1)))) ∧
+    heapWrites code (returnPrefixResultsLocals control locals results).length s = ∅ := by
+  dsimp only
+  simp only [returnPrefixResultsLocals, List.append_assoc] at atBlock ⊢
+  obtain ⟨atRetreat, readyRetreat, accessResults, writeResults⟩ :=
+    split_memory atBlock (evalResults_linear control results) running
+  obtain ⟨atLoad, readyLoad, accessRetreat, writeRetreat⟩ :=
+    split_memory atRetreat (retreatLocals_linear control locals) readyRetreat
+  obtain ⟨atRestore, readyRestore, accessLoad, writeLoad⟩ :=
+    split_memory (left := [.load (ra control) (sp control)]) atLoad
+      (by simp [Instr.Linear]) readyLoad
+  have retreatEmpty := retreatLocals_heapAccesses_eq_empty atRetreat.append_left readyRetreat
+  constructor
+  · intro localFit
+    rw [accessResults, accessRetreat, accessLoad, retreatEmpty, restoreLocals_length,
+      restoreLocals_heapAccesses localFit atRestore readyRestore, List.length_singleton,
+      heapAccesses_one, stepHeapAccesses_of_fetch readyLoad atLoad.head]
+    simp only [Instr.heapAccesses, Finset.empty_union]
+  · rw [writeResults, writeRetreat, writeLoad,
+      evalResults_heapWrites_eq_empty atBlock.append_left running,
+      no_writes_of_no_accesses retreatEmpty, restoreLocals_length,
+      restoreLocals_heapWrites atRestore readyRestore, List.length_singleton,
+      heapWrites_one, stepHeapWrites_of_fetch readyLoad atLoad.head]
+    simp only [Instr.heapWrites, Finset.empty_union]
+
+/-- Every multi-field return prefix is write-free on its actual trace. -/
+theorem returnPrefixResultsLocals_heapWrites_eq_empty {code : Code} {control locals : Nat}
+    {results : List Expr} {s : State w}
+    (atBlock : CodeAt code s.pc (returnPrefixResultsLocals control locals results))
+    (running : s.status = .running) :
+    heapWrites code (returnPrefixResultsLocals control locals results).length s = ∅ :=
+  (returnPrefixResults_memory atBlock running).2
+
+/-- Return-field evaluation is followed by the real SP retreat and saved-frame
+loads. The result capacity ensures that buffering retains the control registers. -/
+theorem returnPrefixResultsLocals_heapAccesses {code : Code} {control locals : Nat}
+    {results : List Expr} {s : State w} {base : Word w}
+    (localFit : locals ≤ control) (resultCapacity : results.length - 1 ≤ control)
+    (bounded : ∀ e ∈ results, e.Bounded locals)
+    (stack : (s.regs (sp control)).toNat = base.toNat + frameSize locals)
+    (fits : base.toNat + frameSize locals < 2 ^ w)
+    (atBlock : CodeAt code s.pc (returnPrefixResultsLocals control locals results))
+    (running : s.status = .running) :
+    heapAccesses code (returnPrefixResultsLocals control locals results).length s =
+      heapAccesses code (evalResults control results).length s ∪
+        ({base} ∪ (Finset.range locals).image (fun i => arrayAddr base (i + 1))) := by
+  let buffered := execBlock (evalResults control results) s
+  let retreated := execBlock (retreatLocals control locals) buffered
+  let addressed := execBlock [.load (ra control) (sp control)] retreated
+  have correct := evalResults_correct resultCapacity (fun e he => (bounded e he).mono localFit) s
+  have spBuffered : buffered.regs (sp control) = s.regs (sp control) :=
+    correct.preserved (sp control) (by change control < control + 5; omega)
+      (by simp [sp, rv])
+  have spRetreated : retreated.regs (sp control) = base :=
+    retreatLocals_sp control locals buffered base (by rw [spBuffered]; exact stack) fits
+  have spAddressed : addressed.regs (sp control) = base := by
+    have ne : sp control ≠ ra control := by simp [sp, ra]
+    simpa only [addressed, execBlock_cons, execBlock_nil, execInstr,
+      State.next_regs, State.setReg_ne _ _ _ _ ne] using spRetreated
+  have footprint := (returnPrefixResults_memory atBlock running).1 localFit
+  change heapAccesses code (returnPrefixResultsLocals control locals results).length s =
+    heapAccesses code (evalResults control results).length s ∪
+      ({retreated.regs (sp control)} ∪ (Finset.range locals).image
+        (fun i => arrayAddr (addressed.regs (sp control)) (i + 1))) at footprint
+  simpa only [spRetreated, spAddressed] using footprint
+
+/-- Every multi-field return access is a declared source-heap read or one
+of the saved-frame loads after the actual retreat. -/
+theorem returnPrefixResultsLocals_heapAccesses_bounded
+    {code : Code} {control locals heapLimit : Nat} {results : List Expr} {s : State w}
+    {base : Word w} (localFit : locals ≤ control)
+    (resultCapacity : results.length - 1 ≤ control)
+    (bounded : ∀ e ∈ results, e.Bounded locals)
+    (reads : ∀ e ∈ results, e.ReadsBelow heapLimit s.regs s.mem)
+    (stack : (s.regs (sp control)).toNat = base.toNat + frameSize locals)
+    (fits : base.toNat + frameSize locals < 2 ^ w)
+    (atBlock : CodeAt code s.pc (returnPrefixResultsLocals control locals results))
+    (running : s.status = .running) {address : Word w}
+    (member : address ∈ heapAccesses code
+      (returnPrefixResultsLocals control locals results).length s) :
+    address.toNat < heapLimit ∨
+      base.toNat ≤ address.toNat ∧ address.toNat < base.toNat + frameSize locals := by
+  rw [returnPrefixResultsLocals_heapAccesses localFit resultCapacity bounded stack fits
+    atBlock running, Finset.mem_union] at member
+  rcases member with expression | frame
+  · exact Or.inl (evalResults_heapAccesses_below (fun e he => (bounded e he).mono localFit)
+      reads atBlock.append_left.append_left.append_left running expression)
+  · exact Or.inr (frame_member_bounds fits frame)
+
+/-- The final indirect return jump has no memory effect after any result list. -/
+theorem returnCodeResultsLocals_footprints {code : Code} {control locals : Nat}
+    {results : List Expr} {s : State w}
+    (atBlock : CodeAt code s.pc (returnCodeResultsLocals control locals results))
+    (running : s.status = .running) :
+    heapAccesses code (returnCodeResultsLocals control locals results).length s =
+      heapAccesses code (returnPrefixResultsLocals control locals results).length s ∧
+    heapWrites code (returnCodeResultsLocals control locals results).length s = ∅ := by
+  unfold returnCodeResultsLocals at atBlock ⊢
+  obtain ⟨atJump, readyJump, accesses, writes⟩ :=
+    split_memory atBlock (returnPrefixResultsLocals_linear control locals results) running
+  constructor
+  · rw [accesses, List.length_singleton, heapAccesses_one,
+      stepHeapAccesses_of_fetch readyJump atJump.head]
+    exact Finset.union_empty _
+  · rw [writes, returnPrefixResultsLocals_heapWrites_eq_empty atBlock.append_left running,
+      List.length_singleton, heapWrites_one, stepHeapWrites_of_fetch readyJump atJump.head]
+    rfl
+
+/-- Complete multi-field returns, including their jump, execute no stores. -/
+theorem returnCodeResultsLocals_heapWrites_eq_empty {code : Code} {control locals : Nat}
+    {results : List Expr} {s : State w}
+    (atBlock : CodeAt code s.pc (returnCodeResultsLocals control locals results))
+    (running : s.status = .running) :
+    heapWrites code (returnCodeResultsLocals control locals results).length s = ∅ :=
+  (returnCodeResultsLocals_footprints atBlock running).2
+
+/-- Source-heap and restored-frame bounds hold through the final return jump. -/
+theorem returnCodeResultsLocals_heapAccesses_bounded
+    {code : Code} {control locals heapLimit : Nat} {results : List Expr} {s : State w}
+    {base : Word w} (localFit : locals ≤ control)
+    (resultCapacity : results.length - 1 ≤ control)
+    (bounded : ∀ e ∈ results, e.Bounded locals)
+    (reads : ∀ e ∈ results, e.ReadsBelow heapLimit s.regs s.mem)
+    (stack : (s.regs (sp control)).toNat = base.toNat + frameSize locals)
+    (fits : base.toNat + frameSize locals < 2 ^ w)
+    (atBlock : CodeAt code s.pc (returnCodeResultsLocals control locals results))
+    (running : s.status = .running) {address : Word w}
+    (member : address ∈ heapAccesses code
+      (returnCodeResultsLocals control locals results).length s) :
+    address.toNat < heapLimit ∨
+      base.toNat ≤ address.toNat ∧ address.toNat < base.toNat + frameSize locals := by
+  rw [(returnCodeResultsLocals_footprints atBlock running).1] at member
+  exact returnPrefixResultsLocals_heapAccesses_bounded localFit resultCapacity bounded
+    reads stack fits atBlock.append_left running member
 
 end Ram.ABI

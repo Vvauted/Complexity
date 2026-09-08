@@ -35,7 +35,7 @@ theorem sort_row_stateM (entry : State w) (i : Fin m) (dst : Reg)
     (lookup : functions[selfFn]? = some (Array.MergeSort.function selfFn))
     (hdisjoint : ArraysDisjoint scratch n base (m * n)) :
     Refines functions heapLimit (Nat.clog 2 n + 1)
-      (.call dst selfFn [.var 0, .var 1, .var 2])
+      (.call [dst] selfFn [.var 0, .var 1, .var 2])
       (fun A s => s = entry ∧ MatrixAt heapLimit base A s ∧
         (∃ workspace, workspace.length = n ∧ ArrayAt heapLimit scratch workspace s) ∧
         s.regs 0 = arrayAddr base (i.val * n) ∧ s.regs 1 = scratch ∧
