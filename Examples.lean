@@ -3,6 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
+import Examples.Language.Scalar
 import Examples.Ram.AmortizedClear
 import Examples.Ram.Arithmetic
 import Examples.Ram.ArrayArguments

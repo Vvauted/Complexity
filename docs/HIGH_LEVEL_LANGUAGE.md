@@ -1,8 +1,11 @@
 # High-level language design
 
-Status: design decision, not an implemented language or API. The
-[roadmap](ROADMAP.md) defines the implementation gates. All program syntax and
-theorem names below are schematic.
+Status: architecture under implementation. An independent scalar core, source
+total-correctness rules and scalar-operation lowering are implemented; the
+Lean-like surface and automatic whole-function proof transfer are not. The
+[roadmap](ROADMAP.md) records these boundaries and defines completion gates.
+Program sketches and proposed interfaces below are schematic, not a claim that
+the complete language/API is available.
 
 ## 1. The abstraction boundary
 

@@ -34,10 +34,17 @@ documentation, see [development](##ComplexityDocs.Development).
 
 ## What is available
 
-Programs currently use a structured word-RAM language with named variables, functions and
-recursion. Correctness proofs can use mathematical relations, pure Lean functions or native
+The complete executable workflow currently uses a structured word-RAM language with
+named variables, functions and recursion. Correctness proofs can use mathematical
+relations, pure Lean functions or native
 `StateM` specifications. The implementation-to-model connection is still an explicit proof;
 ordinary Lean functions are not automatically compiled into RAM programs.
+
+An [independent scalar core](##Complexity.Language.Basic) and
+[source correctness rules](##Complexity.Language.Verification) are also available.
+They support a mathematical proof of a real helper-call/branch program without
+registers; its Lean-like surface and whole-function compiled proof transfer are
+still under development. See [the scalar example](##Examples.Language.Scalar).
 
 Functions can be declared without a `main` and verified through their arguments,
 returned value and shared effects. Start with the

@@ -116,6 +116,12 @@ Status: substantial rules already exist; the following interface and automation
 work remains open. Extend those rules for real lowering cases rather than
 introducing another backend or a parallel verification framework.
 
+The first return-stage refactor reuses the existing frame and result-buffer
+contracts, replacing repeated intermediate-state equalities with direct
+composition and a shared reserved-register separation lemma. Its public theorem
+signatures, generated code and step counts are unchanged. This simplifies the
+proof; no measured compilation-speed improvement is claimed.
+
 1. **Register states and frames, starting with M1.** Reuse state-update lemmas,
    `State.LocalFrame`, `Stmt.writtenRegs` and the compiler's matching relations.
    Factor repeated read-after-write, fresh-slot, unchanged-local and saved-frame
@@ -162,6 +168,26 @@ certificates and by humans. Neither tactic count nor a new test harness is a
 completion criterion.
 
 ## M1 — Independent source meaning and the first automatic proof transfer
+
+Status: in progress, not complete.
+
+- [Typed scalar syntax](../Complexity/Language/Basic.lean) and
+  [independent finite execution](../Complexity/Language/Semantics.lean) now cover
+  lexical bindings, actual calls, sequences, branches and returns. Determinism
+  includes the control outcome; missing returns fault, including for Unit.
+- [Source total-WP rules](../Complexity/Language/Verification.lean) support
+  budget-free mathematical contracts. The
+  [scalar consumer](../Examples/Language/Scalar.lean) proves an actual helper-call
+  and branch program returns `min (n + 1) limit`, without a RAM proof.
+- [Scalar lowering](../Complexity/Computability/Ram/Compiler/Language/Scalar.lean)
+  connects Nat/Bool atoms and operations to the existing expression compiler,
+  with source range conditions, preserved state and counted machine execution.
+  Unit is not represented by a dummy scalar word.
+
+Next: infer function layouts and compose let/call/branch/return lowering proofs,
+including actual frame and outer-call costs. The consumer above does **not** yet
+receive a whole-function compiled theorem. The surface frontend, semantic
+`Part`/Std.Do adapter, mutable data and loops also remain unimplemented.
 
 Build one complete scalar path before extending the surface language broadly.
 The first executable subset is Nat/Bool literals, addition/comparison, lexical

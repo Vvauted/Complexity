@@ -3,8 +3,9 @@
 The [roadmap](ROADMAP.md) sets development priorities. The
 [high-level language design](HIGH_LEVEL_LANGUAGE.md) specifies the next
 architecture: an independently interpreted typed core, source-level proofs and
-automatically checked lowering to the existing RAM backend. This language is
-planned, not already implemented by the current named syntax.
+automatically checked lowering to the existing RAM backend. Its independent
+scalar core is implemented separately; the current named syntax still directly
+targets register IR. Automatic whole-function proof transfer remains unfinished.
 
 The sections below document the existing implementation and the semantic
 boundaries that its reuse must preserve. Here, `Source` means the current

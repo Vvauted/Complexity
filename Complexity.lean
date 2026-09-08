@@ -87,6 +87,7 @@ import Complexity.Computability.Ram.Compiler.Effects
 import Complexity.Computability.Ram.Compiler.Exact
 import Complexity.Computability.Ram.Compiler.Expr.Basic
 import Complexity.Computability.Ram.Compiler.Expr.Memory
+import Complexity.Computability.Ram.Compiler.Language.Scalar
 import Complexity.Computability.Ram.Compiler.Local.ABI.Basic
 import Complexity.Computability.Ram.Compiler.Local.ABI.Lifetime
 import Complexity.Computability.Ram.Compiler.Local.ABI.Memory
@@ -243,6 +244,9 @@ import Complexity.Data.List.Fold
 import Complexity.Data.List.InsertIdx
 import Complexity.Data.List.StateM
 import Complexity.Data.Nat.Log
+import Complexity.Language.Basic
+import Complexity.Language.Semantics
+import Complexity.Language.Verification
 import Complexity.LinearAlgebra.Matrix.Update
 import Complexity.Tactic.Ram.Array
 import Complexity.Tactic.Ram.Basic

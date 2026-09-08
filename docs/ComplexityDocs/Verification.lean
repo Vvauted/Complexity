@@ -13,9 +13,26 @@ Start with the mathematical result you want, then connect it to the implementati
 The correctness interface includes safety and termination, but asks for no time budget.
 A separate [complexity proof](##ComplexityDocs.Complexity) can reuse the same invariants.
 
+## Independent scalar source proofs
+
+The new [typed core](##Complexity.Language.Basic) has its own
+[finite execution semantics](##Complexity.Language.Semantics), independent of RAM.
+`Complexity.Language.TotalWP` has separate normal-continuation and return
+postconditions; faults cannot satisfy it. `FunctionTotal` requires an actual
+returned value, with no proposed instruction bound. See the
+[source verification rules](##Complexity.Language.Verification).
+
+The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
+branches on its returned value and proves the result equals `min (n + 1) limit`
+using ordinary Nat facts. The current interface is typed core syntax, not yet
+the planned Lean-like frontend. [Scalar-operation lowering](##Complexity.Computability.Ram.Compiler.Language.Scalar)
+already connects individual operations to counted RAM execution; automatic
+whole-function transfer is still being implemented. The executable workflow
+and backend proof interfaces described below remain separately available.
+
 ## Choose a specification
 
-For source-facing proofs, start with `Ram.Source.TypedFunctionContract`. Its precondition
+For the existing word-RAM language, start with `Ram.Source.TypedFunctionContract`. Its precondition
 describes typed arguments and caller state; its postcondition describes the declared
 `Word w`, `ArrayRef w` or `Unit` result and shared-state effects. The argument encoder
 and result kind reuse the [source-value representation](##Complexity.Computability.Ram.Source.Value).
