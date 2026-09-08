@@ -9,6 +9,7 @@ import Complexity.Computability.Ram.Array.Ref
 import Complexity.Computability.Ram.Source.Function.Eval
 import Complexity.Computability.Ram.Source.Function.Time
 import Complexity.Computability.Ram.Source.Named.Declaration
+import Complexity.Tactic.Ram.Total
 
 /-!
 # A callable function summing a represented array
@@ -455,25 +456,12 @@ theorem sumPair_function_contract {w heapLimit depth : Nat} {program : Program}
       (fun args entry => args = sumFunctions.arguments.sumPair left right ∧
         left.Rep heapLimit xs entry ∧ right.Rep heapLimit ys entry)
       (fun _ entry value finish => value = wordSum xs + wordSum ys ∧ finish = entry) := by
-  apply FunctionContract.of_wp
-  · rintro args entry ⟨rfl, _, _⟩
-    exact sumFunctions.arguments_length.sumPair left right
-  · decide
-  · rintro args entry ⟨rfl, leftArray, rightArray⟩
-    rw [sumFunctions.body_eq.sumPair, Verification.TotalWP.seq_iff]
-    apply (sum_function_contract_of_ref (program := program) (depth := depth)
-      (array := left) (xs := xs) hw leftFit).wp_call lookup
-    · simp [Expr.ReadsBelow]
-    · exact ⟨rfl, by simpa using leftArray⟩
-    · exact Nat.le_refl _
-    · rintro leftValue middle ⟨rfl, rfl⟩ _
-      apply (sum_function_contract_of_ref (program := program) (depth := depth)
-        (array := right) (xs := ys) hw rightFit).wp_call lookup
-      · simp [Expr.ReadsBelow]
-      · exact ⟨rfl, by simpa using rightArray⟩
-      · exact Nat.le_refl _
-      · rintro rightValue finish ⟨rfl, rfl⟩ _
-        exact ⟨⟨trivial, trivial⟩, rfl, rfl⟩
+  ram_total_vc args entry ⟨rfl, leftArray, rightArray⟩
+    [sumFunctions.body_eq.sumPair, sumFunctions.result_eq.sumPair]
+  ram_total_apply (sum_function_contract_of_ref (program := program) (depth := depth)
+    (array := left) (xs := xs) hw leftFit) [lookup, leftArray]
+  ram_total_apply (sum_function_contract_of_ref (program := program) (depth := depth)
+    (array := right) (xs := ys) hw rightFit) [lookup, rightArray]
 
 /-- Invoke the typed pair function on any two represented arrays, using its
 actual declaration table and preserving the full caller state. -/

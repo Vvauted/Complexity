@@ -62,6 +62,13 @@ call takes no instruction limit. The represented input heap and sufficient code
 and stack capacity remain explicit; loading or concatenating the lists is not
 part of this program. Concatenation appears only in its mathematical specification.
 
+`Ram.LocalCompiler.Function.runUntil_eq_of_execution` joins the independently
+proved function execution and body-time equation into an exact executable-call
+theorem. Determinism identifies the measured count with that same invocation.
+`Ram.LocalCompiler.Function.callSteps_eq` then reduces the outer call overhead
+using generated code lengths, the declared parameter count and frame size.
+Neither lemma supplies an unproved cost or removes the stack-capacity premise.
+
 ## Choose the argument that matches the loop
 
 Supply the invariant and progress facts from the correctness proof. The available rules

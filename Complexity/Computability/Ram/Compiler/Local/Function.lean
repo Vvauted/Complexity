@@ -84,6 +84,20 @@ def callSteps (control : Nat) (f : Func) (bodySteps : Nat) : Nat :=
   (ABI.callPrefixLocals control f.locals (arguments f.params) 0).length + 1 + bodySteps +
     (ABI.returnCodeLocals control f.locals f.result).length + 1
 
+/-- The fixed trampoline passes variables, so its complete call count reduces
+to the actual body count, return-expression length and declared frame size.
+This is a length identity for generated code, not a supplied cost annotation. -/
+theorem callSteps_eq (control : Nat) (f : Func) (bodySteps : Nat) :
+    callSteps control f bodySteps = bodySteps + 2 * f.params +
+      (f.result.compile (ABI.scratch control)).length + 7 * f.locals + 11 := by
+  have argumentCost :
+      ((arguments f.params).map (fun e => (e.compile (ABI.scratch control)).length)).sum =
+        f.params := by
+    simp [arguments, List.map_map, Function.comp_def, Expr.compile, List.map_const']
+  rw [callSteps, ABI.callLocals_steps_eq, argumentCost]
+  simp only [arguments, List.length_map, List.length_range]
+  omega
+
 private theorem arguments_eval (args : List (Word w)) (entry : Source.State w) :
     (arguments args.length).map (entry.enter args).eval = args := by
   apply List.ext_getElem
@@ -212,6 +226,26 @@ theorem runUntil_eq_of_measured {control heapLimit depth bodySteps fn : Nat}
   refine ⟨target, ?_, returned, observed⟩
   simp only [runUntil, execution.1, ↓reduceIte, hcompile, Option.bind_some,
     Ram.runUntil_of_exec executed halted]
+
+/-- Combine a safe invocation with a separately proved equation for its time
+observation. Callers need not reopen the measured execution to identify its
+count; determinism connects the equation to this very invocation. -/
+theorem runUntil_eq_of_execution {control heapLimit depth bodySteps fn : Nat}
+    {program : Program} {f : Func} {args : List (Word w)}
+    {entry finish : Source.State w} {value : Word w} {code : Code}
+    (hcompile : compile control program fn f.params = some code)
+    (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
+    (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
+    (execution : Source.FunctionExec program heapLimit depth f args entry value finish)
+    (time : f.bodyTime program heapLimit args entry = Part.some bodySteps) :
+    ∃ target, runUntil control program fn f.params heapLimit args entry =
+        some ⟨target, callSteps control f bodySteps + 1, .halted⟩ ∧
+      target.regs 0 = value ∧ Source.State.Observes heapLimit 0 finish target := by
+  obtain ⟨steps, measured⟩ := execution.exists_measured control
+  have same : steps = bodySteps :=
+    Part.some_injective (measured.bodyTime_eq_some.symm.trans time)
+  subst steps
+  exact runUntil_eq_of_measured hcompile hlookup hcode hstack measured
 
 /-- Functional correctness alone ensures an actual returned executable value.
 The observed body count and full call count describe that same invocation;

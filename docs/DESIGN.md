@@ -15,8 +15,11 @@ and compilation chain, not introduce a second independently maintained program.
 Intermediate functions are the primary programming interface. Their arguments,
 return values and shared-data effects must be available without a stream-based
 `main`. Reading and writing external input belong to an optional outer driver.
-Parameter binding and result observations should be derived from the same source
-declaration, not restated by each caller.
+Parameter binding and result observations are derived from the same source
+declaration, not restated by each caller. Named declarations generate `eval`,
+`bodyTime` and `run` entries with the declared typed parameters, followed by heap
+capacity and caller state. They reuse the existing semantics and runner; they do
+not fill in a reference result, a cost formula or a correctness proof.
 
 The generic execution state retains input and output fields because functions
 may have effects. Merely carrying those fields does not execute stream operations.

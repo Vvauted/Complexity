@@ -13,10 +13,12 @@ functions, recursive calls, verified compilation and executable runners.
 Budget-free total correctness, separate time bounds, mathematical refinement
 and bridges to native `StateM` verification are implemented.
 
-Function-only declarations and generated typed argument lists support independent
-function contracts. Return values, shared effects and body counts are observations
-of the existing execution, with actual call overhead added at call sites. Factorial,
-array-copy and array-sum expose this interface. A graph-degree client reuses the
+Function-only declarations generate typed argument lists and `eval`, `bodyTime`
+and `run` entry points. The declared word or array parameters come first, followed
+by heap capacity and caller state; no input/output `main` is required. Return values,
+shared effects and body counts are observations of the existing execution, with
+actual call overhead added at call sites. Factorial, array-copy and array-sum
+expose this interface. A graph-degree client reuses the
 sum contract and mathlib's `SimpleGraph.degree` without register or stack proofs.
 Array sum and occurrence counting share a read-only expression-fold rule, including
 cursor progress, termination, framing and compiler-derived costs. Lexical `let`,
@@ -35,6 +37,9 @@ call until it stops, with no supplied instruction limit; `Function.run` retains 
 limit for interruptible exploration. Both are connected to actual machine traces,
 returned values and exact counts, under code and stack representability premises.
 A divergent unbounded call keeps running; the interface does not decide termination.
+An exact runner theorem can combine a function's correctness proof with a separate
+equation for its body-time observation. A shared generated-code-length lemma handles
+outer call overhead, rather than repeating frame arithmetic in each runtime client.
 
 Named functions accept array parameters as well as words: `fn sum(xs : array)`
 and `call sum(xs)` pass a by-value base address and length through the existing ABI.
@@ -78,10 +83,13 @@ refinement has been supplied; it does not derive that refinement automatically.
   stream operations: the factorial function contract holds at every caller state
   and proves it unchanged. Its `read`/`write` driver is a separate optional program.
 - The sum-of-squares sample composes two helper calls with lexical value bindings.
-  Its direct `FunctionContract.of_wp` proof needs no separate intermediate-state
-  specification, register names or stack layouts. Call-contract selection and
-  proof obligations are still explicit; richer array and recursive clients must
-  reach the same level of convenience.
+  `ram_total_vc args entry hp` starts its function contract directly; supplied
+  call contracts and simplification facts handle the calls without a separate
+  intermediate-state specification, register names or stack layouts. The two-array
+  sum uses the same rules, reusing each array's representation across scalar-result
+  binding. Mathematical preconditions, invariants and contract selection remain
+  the proof author's work;
+  richer array and recursive clients must reach the same level of convenience.
 - Array arguments remove pointer/length assembly at typed call sites. The
   two-array sample states its result using list concatenation, although the
   program only adds two returned sums and never allocates a concatenated array.
@@ -105,9 +113,10 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
 
 - Make the source declaration the single executable definition. Expose parameters,
   local variables and returned values to proofs without register arithmetic.
-- Publish and call intermediate functions without an I/O entry point. Generate
-  parameter binding, return observations and semantic equations from the same
-  declaration; keep the input/output driver as an optional executable adapter.
+- Build on the generated parameter binding, return/time observations and runtime
+  entry points. Generate source-facing semantic equations that make larger body
+  proofs compositional; keep the input/output driver as an optional executable
+  adapter. Producing the entry points alone does not prove an algorithm's contract.
 - Build on typed array calls and the executable function adapter: support useful
   local data bindings and return values through that same compiled call path.
   Do not confuse proof-level `Part` observations with a runnable frontend, or

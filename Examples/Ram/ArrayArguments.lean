@@ -31,8 +31,7 @@ theorem eval_append {w heapLimit : Nat} {left right : ArrayRef w}
     (leftFit : left.base.toNat + xs.length < 2 ^ w)
     (rightFit : right.base.toNat + ys.length < 2 ^ w)
     (leftArray : left.Rep heapLimit xs entry) (rightArray : right.Rep heapLimit ys entry) :
-    sumFunctions.function.sumPair.eval sumFunctions.program heapLimit
-      (sumFunctions.arguments.sumPair left right) entry =
+    sumFunctions.eval.sumPair left right heapLimit entry =
         Part.some (wordSum (xs ++ ys), entry) := by
   rw [wordSum_append]
   exact (sumPair_function_runs (depth := 0) hw leftFit rightFit entry
@@ -42,9 +41,7 @@ theorem eval_append {w heapLimit : Nat} {left right : ArrayRef w}
 The returned count includes both inner calls, the outer call, return and halt. -/
 def runSumPair (left right : ArrayRef 32) (heapLimit : Nat) (entry : Source.State 32) :
     Option (Nat × Nat × StopReason) :=
-  (LocalCompiler.Function.runUntil sumFunctions.registers sumFunctions.program
-    sumFunctions.functionIndex.sumPair sumFunctions.function.sumPair.params heapLimit
-    (sumFunctions.arguments.sumPair left right) entry).map fun result =>
+  (sumFunctions.run.sumPair left right heapLimit entry).map fun result =>
       ((result.state.regs 0).toNat, result.steps, result.reason)
 
 /-- The executable call returns the mathematical concatenation sum and its
@@ -67,21 +64,21 @@ theorem runSumPair_eq {heapLimit : Nat} {left right : ArrayRef 32}
     decide
   have hcode : code.length < 2 ^ 32 := by
     set_option maxRecDepth 4096 in decide
-  have measured := sumPair_function_measured (control := sumFunctions.registers) (depth := 0)
-    (by decide : 0 < 32) leftFit rightFit sumFunctions.function_lookup.sum
-    entry leftArray rightArray
+  have execution := sumPair_function_runs (depth := 0)
+    (by decide : 0 < 32) leftFit rightFit entry leftArray rightArray
+  have time := sumPair_bodyTime_eq (by decide : 0 < 32) leftFit rightFit
+    sumFunctions.function_lookup.sum entry leftArray rightArray
   obtain ⟨target, returned, value, _⟩ :=
-    LocalCompiler.Function.runUntil_eq_of_measured hcompile
-      sumFunctions.function_lookup.sumPair hcode hstack measured
+    LocalCompiler.Function.runUntil_eq_of_execution hcompile
+      sumFunctions.function_lookup.sumPair hcode hstack execution time
   have count : LocalCompiler.Function.callSteps sumFunctions.registers
       sumFunctions.function.sumPair (16 * (xs.length + ys.length) + 82) + 1 =
         16 * (xs.length + ys.length) + 147 := by
-    unfold LocalCompiler.Function.callSteps
-    rw [ABI.callLocals_steps_eq]
-    change 4 + (16 * (xs.length + ys.length) + 82) + 3 + 7 * 6 + 4 + 11 + 1 = _
-    omega
-  simp only [runSumPair, returned, Option.map_some, value, ← wordSum_append,
-    wordSum_toNat, count]
+    simp [LocalCompiler.Function.callSteps_eq, Nat.add_assoc]
+    decide
+  simp only [runSumPair, sumFunctions.run.sumPair,
+    max_eq_right (by decide : 1 ≤ sumFunctions.registers), returned, Option.map_some, value,
+    ← wordSum_append, wordSum_toNat, count]
 
 -- Heap cells 0, 1, 2, 3 contain 1, 2, 3, 4. Preparing this state is explicit
 -- host-side preloading, not an uncharged RAM operation inside sumPair.

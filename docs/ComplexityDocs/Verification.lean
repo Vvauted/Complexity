@@ -31,6 +31,9 @@ In the factorial contract, the precondition only restricts the argument list and
 postcondition says `finish = entry`. Thus `function_runs` proves termination and the
 factorial result for arbitrary initial stream contents, while preserving those contents.
 The optional `read`/call/`write` main is verified separately.
+Choosing `Source.State.initial []` in a wrapper only chooses an entry state: it does
+not add a read, supply function arguments through a stream or prove independence
+from other entry states.
 
 The [factorial example](##Examples.Ram.Factorial) returns a word and preserves caller state.
 The [array-copy function](##Complexity.Computability.Ram.Array.Function) instead changes
@@ -38,20 +41,44 @@ represented arrays in shared memory. Its public contract hides parameter registe
 retains genuine address-range, length and non-overlap assumptions.
 `Ram.Source.FunctionContract.wp_call` reuses a contract at another function's call site;
 the continuation receives the returned word, the proved postcondition and preserved caller locals.
-The [local-binding sample](##Examples.Ram.LocalBindings) uses that rule twice to
-prove a sum of squares from the contract of `square`, without expanding callee
-frames or maintaining a second syntax tree. `Ram.Source.FunctionContract.of_wp`
-starts a direct body proof with the declared arguments bound and the desired
-postcondition applied to the actual return value and shared state. The sample
-needs no separately specified intermediate state relation. `of_body` remains
-useful when a body refinement or invariant is already available. Automatic
-discovery of invariants and reusable operation contracts is not supplied.
+The [local-binding sample](##Examples.Ram.LocalBindings) composes that rule twice
+through `ram_total_apply`. Its direct proof uses the source declaration from
+[getting started](##ComplexityDocs.GettingStarted) and the existing `square_contract`:
+
+```lean
+theorem squaredNorm_contract (heapLimit : Nat) (x y : Word w) :
+    Source.FunctionContract functions.program heapLimit 1 functions.function.squaredNorm
+      (fun args _ => args = functions.arguments.squaredNorm x y)
+      (fun _ entry value finish => value = x * x + y * y ∧ finish = entry) := by
+  ram_total_vc args entry rfl [functions.body_eq.squaredNorm, functions.result_eq.squaredNorm]
+  ram_total_apply (square_contract heapLimit x) [functions.function_lookup.square]
+  ram_total_apply (square_contract heapLimit y) [functions.function_lookup.square]
+```
+
+`ram_total_vc args entry pattern [facts]` starts the `FunctionContract` using
+`Ram.Source.FunctionContract.of_wp`: declared arguments are bound, and the
+postcondition observes the real return expression and shared state. The pattern
+`rfl` here substitutes the specified argument list. Each `ram_total_apply` uses
+the supplied function contract and lookup fact without unfolding `square`'s body.
+Here simplification automatically substitutes the postcondition's equalities for
+the returned value and final state into the continuation. No manual `rintro` or
+final `rfl` is needed. Non-equational postconditions still leave ordinary continuation
+goals. This proof needs no separate intermediate-state specification, register
+arithmetic or stack layout.
+Unresolved arity, frame and safety obligations remain explicit. `of_body` remains
+useful when a body refinement or invariant is already available; the tactics do not
+discover invariants or select reusable contracts automatically.
 The sample's independent `squaredNorm_bodyTime` theorem identifies the same body's count
 as 46. It includes both calls to `square`, not `squaredNorm`'s own final return expression
 or its enclosing calling convention.
 
-For function-value equations, use `Ram.Func.eval`. It observes an actual safe invocation
-through mathlib's `Part`; `eval = Part.some result` includes termination. The
+For a named declaration `p`, use `p.eval.f` for function-value equations and
+`p.bodyTime.f` for separate body-count equations. These generated entry points take
+the declared word or array parameters, then `heapLimit` and `entry`. They specialize
+`Ram.Func.eval` and `Ram.Func.bodyTime`, observing the same actual invocation through
+mathlib's `Part`. The value equation has the form
+`p.eval.f ... heapLimit entry = Part.some (value, finish)` and includes termination;
+the returned word and shared state are both retained. The
 [factorial function-value sample](##Examples.Ram.FactorialFunction) hides its canonical
 entry state once and proves agreement with every actual caller state. Subsequent
 mathematical propositions mention only its argument and observed value.
@@ -63,16 +90,25 @@ capacity can make an observation undefined.
 the postcondition can be a mathematical relation, not necessarily a reference algorithm.
 `Ram.Source.FunctionContract.eval_with_timeBound` adds a separate bound to the same
 invocation's `Ram.Func.bodyTime`. Neither observation is defined using the proposed
-result property or time bound.
+result property or time bound. Body time excludes this function's own final return
+expression and enclosing call overhead; it includes completed calls inside its body.
 
-To execute the proved function, use `Ram.LocalCompiler.Function.runUntil` rather than the
-noncomputable `Part` observation. Its `runUntil_of_execution` bridge derives a returned
+To execute a declared function, use `p.run.f` with the same typed parameters,
+`heapLimit` and `entry`, rather than the noncomputable `Part` observation.
+It specializes `Ram.LocalCompiler.Function.runUntil` and returns
+`Option (Ram.RunResult (Ram.State w))`, retaining machine state, actual steps and
+stopping reason. It requires no instruction limit and does not discard effects.
+The underlying `runUntil_of_execution` bridge derives a returned
 machine result and its actual count from `FunctionExec`, with no proposed time budget.
-Code and stack still have to fit the selected word width. The
-[runnable factorial sample](##Examples.Ram.FunctionRun) applies this bridge and proves
-the result of the same application used by `#eval`. General divergent programs do not
-return a nontermination flag; use the bounded `run` interface when an operational limit
-is desired.
+Code and stack still have to fit the selected word width. To identify the count,
+`runUntil_eq_of_execution` combines `FunctionExec` with a separately proved
+`bodyTime = Part.some bodySteps` equation. The
+[runnable factorial sample](##Examples.Ram.FunctionRun) uses this second bridge with
+`FactorialFunction.bodyTime_eq` to identify the value and full count of the same
+application used by `#eval`. General divergent programs do not
+return a nontermination flag; use `Ram.LocalCompiler.Function.run` when an operational
+limit is desired. Unlike body time, the complete run counts the outer call, return
+and halt. The generated entry point does not prove capacity or construct represented arrays.
 
 Use `Ram.Source.TotalContract` when the precondition and postcondition directly describe
 the source state. `Ram.Source.TotalRelContract` also lets the postcondition refer to the
@@ -134,7 +170,12 @@ exact length and existing memory representation. `sum_function_contract_of_ref` 
 `sumPair_function_contract` expose the returned list sums and unchanged shared state.
 The two read-only references may overlap: this client does not need a disjointness premise.
 Mutating operations still need their own aliasing and frame conditions. Passing a reference
-does not prove its representation or execute a list loader.
+does not prove its representation or execute a list loader. The
+[array-argument sample](##Examples.Ram.ArrayArguments) uses
+`sumFunctions.eval.sumPair left right heapLimit entry` for the mathematical result and
+`sumFunctions.run.sumPair left right heapLimit entry` for actual compiled execution.
+Its explicit heap and stack premises are separate from any time estimate; the
+mathematical list concatenation does not allocate a new runtime array.
 
 For a read-only scalar accumulation, [the shared fold](##Complexity.Computability.Ram.Array.Fold)
 provides cursor progress, termination and framing. A client proves that its actual
@@ -212,8 +253,13 @@ the model-to-memory connection. Reuse an existing bridge where one is available.
 ## Automate the routine work
 
 `ram_refine x s hs [facts]` starts a refinement proof;
-`ram_total_vc s hs [facts]` starts a total-contract proof.
-Use `ram_total_apply h` to apply a supplied operation or function contract.
+`ram_total_vc s pattern [facts]` starts a state-based total-contract proof;
+`ram_total_vc args entry pattern [facts]` starts a `FunctionContract` directly.
+Precondition patterns include `rfl` and `⟨rfl, hbound⟩`. Closed frame bounds may
+be discharged automatically; unresolved obligations remain ordinary Lean goals.
+Use `ram_total_apply contract [facts]` to apply a supplied operation, function or
+recursive specification while keeping its implementation opaque. The facts can
+include generated lookup equations and known arity or local-frame facts.
 `ram_model [facts]` simplifies observations, and `ram_word [facts]` normalizes word arithmetic
 with the available range conditions. Remaining obligations are ordinary Lean goals.
 

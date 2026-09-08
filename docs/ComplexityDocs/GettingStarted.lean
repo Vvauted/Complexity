@@ -9,7 +9,7 @@ import Examples
 /-!
 # Getting started
 
-This page takes you from a checkout to a running program and a complete checked proof.
+This page introduces function declarations, execution and proofs from one source program.
 The current language is a structured word-RAM language; specifications can use ordinary
 Lean functions, relations and mathlib.
 
@@ -78,7 +78,8 @@ are not current constructs.
 This is the function declaration from [the factorial example](##Examples.Ram.Factorial).
 No `main`, input stream or output stream is required. `functions.function.factorial`
 is the actual function; `functions.arguments.factorial` constructs its argument list
-from typed word parameters. Both are generated from this one declaration.
+from typed word parameters. The same declaration also generates
+`functions.eval.factorial`, `functions.bodyTime.factorial` and `functions.run.factorial`.
 The [declaration interface](##Complexity.Computability.Ram.Source.Named.Declaration)
 also exports lookup facts and source-local names for implementation proofs.
 Generated body and return equations let verification unfold the same declaration.
@@ -109,6 +110,24 @@ The sample separately proves a body count of 46: two real calls to `square`, eac
 23 transitions. The final `sx + sy` return expression and the enclosing call/return are
 outside this body count and are charged when `squaredNorm` is called.
 
+For a declaration named `p`, the generated entry points take the declared parameters
+in order, followed by `heapLimit : Nat` and `entry : Ram.Source.State w`.
+Word parameters take `Ram.Word w`; array parameters take `Ram.ArrayRef w`.
+For the `squaredNorm` declaration above, the three views are:
+
+| Entry point | Result and meaning |
+| --- | --- |
+| `functions.eval.squaredNorm x y heapLimit entry` | `Part (Word w × Source.State w)`: the returned word and final shared state |
+| `functions.bodyTime.squaredNorm x y heapLimit entry` | `Part Nat`: the same invocation's compiler-derived body count |
+| `functions.run.squaredNorm x y heapLimit entry` | `Option (RunResult (Ram.State w))`: the complete compiled run, without an instruction limit |
+
+`eval` and `bodyTime` are noncomputable semantic observations, not executable Lean
+functions. `run` executes the existing compiled call path. It retains the final machine
+state, step count and stopping reason; it does not merely return a word or discard effects.
+All three refer to the same declared implementation. The explicit heap boundary and
+entry state are not a time budget, and generating an entry point does not establish
+code or stack capacity.
+
 ## Pass an existing array
 
 An array parameter groups its base address and length. The
@@ -134,7 +153,9 @@ ram_def sumFunctions := ram_functions% {
 ```
 
 `sumFunctions.arguments.sum` takes one `Ram.ArrayRef w`; the `sumPair` argument builder
-takes two. Each reference contains two words, `base` and `length`, passed through the
+takes two. So do the generated `sumFunctions.eval.sumPair left right heapLimit entry`
+and `sumFunctions.run.sumPair left right heapLimit entry` entry points.
+Each reference contains two words, `base` and `length`, passed through the
 existing function ABI. The mathematical list of contents appears only in the contract.
 Passing a reference does not allocate a descriptor, load a Lean list or copy array cells.
 The calls above pass existing references and perform the actual array reads in `sum`.
@@ -151,8 +172,22 @@ representation boundary and current limits on array-valued source expressions.
 
 ## State properties of a function value
 
+The [local-binding sample](##Examples.Ram.LocalBindings) states its result directly
+through the generated observation:
+
+```lean
+theorem squaredNorm_eval (heapLimit : Nat) (x y : Word w) (entry : Source.State w) :
+    functions.eval.squaredNorm x y heapLimit entry = Part.some (x * x + y * y, entry)
+```
+
+This includes safe termination, the returned word and preservation of shared state.
+The corresponding `squaredNorm_bodyTime` theorem separately observes `Part.some 46`.
+
 [The function-value factorial sample](##Examples.Ram.FactorialFunction) exposes
 the actual return value as `eval n` and its actual body count as `bodyTime n`.
+These specialize `functions.eval.factorial n 0 (Source.State.initial [])` and
+`functions.bodyTime.factorial n 0 (Source.State.initial [])`; the value view also
+projects and decodes the returned word.
 Its correctness theorem has the following mathematical shape:
 
 ```lean
@@ -175,23 +210,29 @@ also has `input` and `outputRev` fields so that functions which really use I/O c
 Their presence does not execute a `read` or `write`. Factorial's `function_runs` theorem
 allows any initial input stream and existing output history, and proves the final shared
 state is unchanged. `eval_eq_of_execution` shows that hiding this state in `eval n` did
-not change the result at any actual caller. The optional driver below is a separate program.
+not change the result at any actual caller. `Source.State.initial []` merely selects
+a canonical empty-stream state; it neither inserts a read operation nor proves
+state independence by itself. The optional driver below is a separate program.
 
 ## Execute a function without a driver
 
-The [function runner sample](##Examples.Ram.FunctionRun) calls the same factorial
-implementation directly:
+The [function runner sample](##Examples.Ram.FunctionRun) calls the generated
+`Factorial.functions.run.factorial n 0 (Source.State.initial [])` entry point.
+Its `runFactorialUntil` wrapper projects the full result to the returned word in
+`result.state.regs 0`, `result.steps` and `result.reason`, decoding the word as a natural:
 
 ```lean
 #eval runFactorialUntil (BitVec.ofNat 32 5)
 -- some (120, 218, Ram.StopReason.halted)
 ```
 
-Its adapter is `Ram.LocalCompiler.Function.runUntil`. It compiles a fixed call-and-halt
-sequence, places runtime arguments in parameter registers, and returns the result
-without reading or writing an input/output stream. The 218 transitions include the
-enclosing call, return and halt, unlike the separate function-body observation.
-No time budget is supplied. The sample's `runFactorialUntil_eq` proves its returned
+The generated `run` uses `Ram.LocalCompiler.Function.runUntil`. It compiles a fixed
+call-and-halt sequence and places runtime arguments in parameter registers. Argument
+passing and result extraction are not stream operations; this factorial body also
+performs no I/O. Other declared bodies may have stream effects, retained in the full result.
+The 218 transitions include the enclosing call, return and halt, unlike the separate
+function-body observation.
+No time budget is supplied. The sample's `runFactorialUntil_eq` states its returned
 value and exact count under the stack-capacity premise. For bounded exploration,
 `runFactorial n limit` uses `Ram.LocalCompiler.Function.run` on the same code and
 reports `outOfFuel` if its operational limit is reached.
@@ -200,6 +241,7 @@ The unbounded runner is executable, unlike the proof-only `Part` view. It uses L
 `partial_fixpoint` over the existing machine transition. A divergent program keeps running;
 `Option` is not a runtime nontermination detector. Static compilation or arity failure can
 return `none` from the function adapter, while a run that stops retains its stopping reason.
+Inspect that reason before interpreting the result register as a successful return.
 
 The [compiler bridge](##Complexity.Computability.Ram.Compiler.Local.Function)
 relates the runtime value, visible shared state and step count to the function
@@ -207,6 +249,9 @@ proofs. Code and stack must fit the word address space. Heap contents are preloa
 explicitly, and host-side preparation is not counted as a RAM loader. Array references use
 the generated word argument lists, but this adapter does not automatically turn arbitrary
 Lean lists into loaded array data.
+The [array-argument sample](##Examples.Ram.ArrayArguments) uses the generated
+`sumFunctions.run.sumPair` on an explicitly prepared heap. Its mathematical list
+concatenation describes the returned sum; no concatenated array or list loader is executed.
 
 ## Add an executable driver when needed
 
@@ -255,7 +300,7 @@ Continue with [proving correctness](##ComplexityDocs.Verification).
 
 ## Choose a larger example
 
-| What you want to study | Checked example |
+| What you want to study | Example |
 | --- | --- |
 | Linking independently verified programs | [Composition](##Examples.Ram.Composition) |
 | Array traversal and an ordinary list model | [Array sum](##Examples.Ram.ArraySum) |
@@ -263,6 +308,7 @@ Continue with [proving correctness](##ComplexityDocs.Verification).
 | Recursive mathematical specifications | [Factorial](##Examples.Ram.Factorial) |
 | Function-value equations and separate cost observations | [Factorial function](##Examples.Ram.FactorialFunction) |
 | Executing a function with no input/output main | [Function runner](##Examples.Ram.FunctionRun) |
+| Typed array calls on explicitly preloaded data | [Array arguments](##Examples.Ram.ArrayArguments) |
 | Composing calls with lexical value bindings | [Local bindings](##Examples.Ram.LocalBindings) |
 | Reusing a list operation for a mathlib graph property | [Graph degree](##Examples.Ram.GraphDegree) |
 | A logarithmic time bound | [Bit length](##Examples.Ram.BitLength) |

@@ -19,6 +19,13 @@ The precondition name can also be a native `rcases` pattern, as in
 and logical structure are introduced by `rintro`; no representation predicate
 is unfolded by this pattern support unless its structure must be matched.
 
+`ram_total_vc args entry hp [definitions, facts]` starts a `FunctionContract`
+proof directly from its arguments and entry state. It uses `FunctionContract.of_wp`
+to generate arity, frame and body obligations, without a separate specification
+of intermediate local-variable states. The precondition may again be a pattern,
+such as `rfl` or `⟨rfl, hbound⟩`. Closed frame bounds are discharged by `decide`;
+unresolved arity, frame and program obligations remain as ordinary goals.
+
 `ram_total_apply contract [definitions, facts]` applies an already proved
 contract or recursive function specification, including an existing measured
 contract after forgetting its time bound. Calls and loops remain opaque: the
@@ -35,6 +42,11 @@ open Lean.Parser.Tactic
 /-- Generate functional verification conditions without choosing a time
 budget. Calls and loops are left to their supplied total specifications. -/
 syntax (name := ramTotalVC) "ram_total_vc" (ppSpace ident ppSpace rcasesPat)?
+  (" [" simpArg,* "]")? : tactic
+
+/-- Start a callable function proof from its arguments and entry state, leaving
+unresolved calling-convention and functional obligations visible. -/
+syntax (name := ramTotalVCFunction) "ram_total_vc" ppSpace ident ppSpace ident ppSpace rcasesPat
   (" [" simpArg,* "]")? : tactic
 
 macro_rules
@@ -57,6 +69,16 @@ macro_rules
           | apply Ram.Source.Verification.verify_total_rel)
          intro $s:ident
          rintro $hs:rcasesPat <;> ram_total_vc [$args,*]))
+  | `(tactic| ram_total_vc $xs:ident $s:ident $hs:rcasesPat) =>
+      `(tactic| ram_total_vc $xs $s $hs [])
+  | `(tactic| ram_total_vc $xs:ident $s:ident $hs:rcasesPat [$args,*]) =>
+      `(tactic|
+        (apply Ram.Source.FunctionContract.of_wp
+         all_goals
+           first
+           | (intro $xs:ident $s:ident
+              rintro $hs:rcasesPat <;> ram_total_vc [$args,*])
+           | try (first | decide | ram_simp [$args,*])))
 
 /-- Apply an opaque functional specification, opening a leading sequence if
 necessary, then simplify only the supplied facts and ordinary RAM vocabulary. -/
@@ -65,7 +87,12 @@ syntax (name := ramTotalApply) "ram_total_apply " term:max
 
 macro_rules
   | `(tactic| ram_total_apply $contract) => `(tactic| ram_total_apply $contract [])
-  | `(tactic| ram_total_apply $contract [$args,*]) =>
+  | `(tactic| ram_total_apply $contract [$args,*]) => do
+      if !args.getElems.isEmpty then
+        return ← `(tactic|
+          (ram_total_apply $contract <;> ram_simp [$args,*] <;>
+            simp (config := { failIfUnchanged := false }) only
+              [Ram.Expr.ReadsBelow, and_true, true_and] <;> try assumption))
       `(tactic|
         (first
         | apply Ram.Source.Verification.TotalWP.of_relContract $contract

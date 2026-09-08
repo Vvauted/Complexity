@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Source.Named.Basic
 import Complexity.Computability.Ram.Array.Ref
+import Complexity.Computability.Ram.Compiler.Local.Function
 
 /-!
 # Source declarations in ordinary correctness proofs
@@ -20,12 +21,23 @@ Lean declarations for its functions and source names:
 * `p.body_eq.f` and `p.result_eq.f` expose the lowered body and return expression;
 * `p.arguments.f` takes word or `Ram.ArrayRef` parameters and constructs their word argument list;
 * `p.arguments_length.f` proves that this list has the function's declared arity;
+* `p.eval.f` observes the function's result and shared state through `Part`;
+* `p.bodyTime.f` observes its compiler-derived body count through `Part`;
+* `p.run.f` executes its compiled call without a supplied instruction limit;
 * `p.localReg.f.x` is the binding of `x` visible at the return of function `f`;
 * `p.mainReg.x` is a binding visible at the end of `main`, when present.
 
 An array parameter `xs` exports `p.localReg.f.xs.base` and
 `p.localReg.f.xs.length`. The typed argument builder passes those same two
 words; it does not allocate or load an in-memory descriptor.
+
+The generated `eval`, `bodyTime` and `run` take the declared word or array
+parameters first, then a heap capacity and an existing source state. The first
+two are noncomputable observations of the same function, not executable
+specifications. `run` retains the complete machine result, including its shared
+memory, input/output, stopping status and count. Its code and stack
+representability premises are those of the existing function runner; generating
+an entry point does not discharge them. A diverging unbounded call does not return.
 
 Thus contracts can use `s.regs p.localReg.f.x` and `s.setReg p.mainReg.x value`
 without reproducing register numbers. The register abbreviations use the
@@ -51,8 +63,8 @@ private def localRegisterDeclarations (scopeName : Lean.Name)
     (scope : LocalScope) : Lean.MacroM (Array Lean.Syntax) := do
   let declare (name : Lean.Name) (index : Nat) := do
     let register := Lean.Syntax.mkNumLit (toString index)
-    let alias := Lean.mkIdent (scopeName ++ name)
-    let declaration ← `(command| abbrev $alias:ident : Ram.Reg := $register:num)
+    let registerName := Lean.mkIdent (scopeName ++ name)
+    let declaration ← `(command| abbrev $registerName:ident : Ram.Reg := $register:num)
     pure declaration.raw
   let mut declarations := #[]
   for binding in scope do
@@ -100,6 +112,49 @@ private def argumentDeclarations (name fn : Lean.TSyntax `ident)
   let length ← `(command| theorem $lengthName:ident {$width:ident : Nat} : $arity := $proof)
   return #[arguments.raw, length.raw]
 
+private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
+    (params : Array Parameter) : Lean.MacroM (Array Lean.Syntax) := do
+  let argumentsName := Lean.mkIdentFrom fn (name.getId ++ `arguments ++ fn.getId)
+  let indexName := Lean.mkIdentFrom fn (name.getId ++ `functionIndex ++ fn.getId)
+  let evalName := Lean.mkIdentFrom fn (name.getId ++ `eval ++ fn.getId)
+  let timeName := Lean.mkIdentFrom fn (name.getId ++ `bodyTime ++ fn.getId)
+  let runName := Lean.mkIdentFrom fn (name.getId ++ `run ++ fn.getId)
+  let width := Lean.mkIdent (← Lean.Macro.addMacroScope `w)
+  let heapLimit := Lean.mkIdent (← Lean.Macro.addMacroScope `heapLimit)
+  let entry := Lean.mkIdent (← Lean.Macro.addMacroScope `entry)
+  let mut arguments ← `(@$argumentsName:ident $width:ident)
+  for param in params do
+    let parameter := param.name
+    arguments ← `($arguments $parameter:ident)
+  let mut eval ← `(fun ($heapLimit:ident : Nat) ($entry:ident : Ram.Source.State $width:ident) =>
+    Ram.Func.eval $functionName:ident ($name:ident).program $heapLimit:ident
+      $arguments $entry:ident)
+  let mut time ← `(fun ($heapLimit:ident : Nat) ($entry:ident : Ram.Source.State $width:ident) =>
+    Ram.Func.bodyTime $functionName:ident ($name:ident).program $heapLimit:ident
+      $arguments $entry:ident)
+  let mut run ← `(fun ($heapLimit:ident : Nat) ($entry:ident : Ram.Source.State $width:ident) =>
+    Ram.LocalCompiler.Function.runUntil (max 1 ($name:ident).registers)
+      ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
+      $arguments $entry:ident)
+  for param in params.reverse do
+    let parameter := param.name
+    let type ← match param.kind with
+      | .word => `(Ram.Word $width:ident)
+      | .array => `(Ram.ArrayRef $width:ident)
+    eval ← `(fun ($parameter:ident : $type) => $eval)
+    time ← `(fun ($parameter:ident : $type) => $time)
+    run ← `(fun ($parameter:ident : $type) => $run)
+  let evalDeclaration ← `(command|
+    /-- The declared function's result and shared state, observed through its actual execution. -/
+    noncomputable abbrev $evalName:ident {$width:ident : Nat} := $eval)
+  let timeDeclaration ← `(command|
+    /-- The declared function's compiled body count, excluding its enclosing call overhead. -/
+    noncomputable abbrev $timeName:ident {$width:ident : Nat} := $time)
+  let runDeclaration ← `(command|
+    /-- Execute the declared function's compiled call, retaining the complete machine result. -/
+    abbrev $runName:ident {$width:ident : Nat} := $run)
+  return #[evalDeclaration.raw, timeDeclaration.raw, runDeclaration.raw]
+
 private def functionEquations (name fn functionName : Lean.TSyntax `ident)
     (lowered : Lean.TSyntax `term) : Lean.MacroM (Array Lean.Syntax) := do
   match lowered with
@@ -135,6 +190,7 @@ private def functionDeclarations (name : Lean.TSyntax `ident)
     declarations := declarations.push lookup.raw
     declarations := declarations ++ (← functionEquations name fn functionName lowered)
     declarations := declarations ++ (← argumentDeclarations name fn decl.params functionName)
+    declarations := declarations ++ (← functionEntryPoints name fn functionName decl.params)
     declarations := declarations ++ (← localRegisterDeclarations
       (name.getId ++ `localReg ++ fn.getId) scope)
     index := index + 1

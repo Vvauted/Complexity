@@ -34,9 +34,7 @@ def runFactorial (n : Word 32) (limit : Nat) : Option (Nat × Nat × StopReason)
 /-- The same compiled factorial application, with no supplied time budget.
 The function is still word-valued: this observation decodes its returned word. -/
 def runFactorialUntil (n : Word 32) : Option (Nat × Nat × StopReason) :=
-  (LocalCompiler.Function.runUntil Factorial.functions.registers Factorial.functions.program
-    Factorial.functions.functionIndex.factorial Factorial.factorial.params 0
-    (Factorial.functions.arguments.factorial n) (Source.State.initial [])).map fun result =>
+  (Factorial.functions.run.factorial n 0 (Source.State.initial [])).map fun result =>
       ((result.state.regs 0).toNat, result.steps, result.reason)
 
 /-- Correctness of the executable application, with its full call and halt count.
@@ -55,17 +53,18 @@ theorem runFactorialUntil_eq (n : Word 32)
   have hcode : code.length < 2 ^ 32 := by decide
   have execution := Factorial.function_runs 0 n.toNat n.isLt (Source.State.initial [])
   simp only [Word.ofNat_toNat_self] at execution
-  obtain ⟨bodySteps, target, returned, value, _, bodyCount⟩ :=
-    LocalCompiler.Function.runUntil_of_execution hcompile
+  obtain ⟨target, returned, value, _⟩ :=
+    LocalCompiler.Function.runUntil_eq_of_execution hcompile
       Factorial.functions.function_lookup.factorial hcode (by simpa using hstack) execution
-  change FactorialFunction.bodyTime n = Part.some bodySteps at bodyCount
-  have count := Part.some_injective ((FactorialFunction.bodyTime_eq n).symm.trans bodyCount)
-  have callCount : LocalCompiler.Function.callSteps Factorial.functions.registers
-      Factorial.factorial bodySteps = bodySteps + 28 := Factorial.initial_call_steps bodySteps
+      (FactorialFunction.bodyTime_eq n)
   have steps : LocalCompiler.Function.callSteps Factorial.functions.registers
-      Factorial.factorial bodySteps + 1 = 37 * n.toNat + 33 := by
-    rw [callCount, ← count]
-  simp only [runFactorialUntil, returned, Option.map_some, value, Factorial.value_toNat, steps]
+      Factorial.factorial (37 * n.toNat + 4) + 1 = 37 * n.toNat + 33 := by
+    simp [LocalCompiler.Function.callSteps_eq, Nat.add_assoc]
+    decide
+  simp only [Factorial.factorial] at returned steps
+  simp only [runFactorialUntil, Factorial.functions.run.factorial,
+    max_eq_right (by decide : 1 ≤ Factorial.functions.registers), returned,
+    Option.map_some, value, Factorial.value_toNat, steps]
 
 #eval runFactorialUntil (BitVec.ofNat 32 5)
 

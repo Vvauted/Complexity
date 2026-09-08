@@ -27,13 +27,11 @@ open Factorial
 
 /-- Observe the implemented function's decoded return value, without an I/O main. -/
 noncomputable def eval (n : Word w) : Part Nat :=
-  (factorial.eval functions.program 0 (functions.arguments.factorial n)
-    (Source.State.initial [])).map (fun result => result.1.toNat)
+  (functions.eval.factorial n 0 (Source.State.initial [])).map (fun result => result.1.toNat)
 
 /-- Observe its actual body count, independently of any bound or specification. -/
 noncomputable def bodyTime (n : Word w) : Part Nat :=
-  factorial.bodyTime functions.program 0 (functions.arguments.factorial n)
-    (Source.State.initial [])
+  functions.bodyTime.factorial n 0 (Source.State.initial [])
 
 /-- Every word argument terminates with factorial modulo the word range. -/
 theorem eval_eq (n : Word w) :
