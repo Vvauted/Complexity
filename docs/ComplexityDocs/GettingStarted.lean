@@ -281,16 +281,23 @@ from the formal RAM transition count.
 
 ## Follow a complete proof
 
-Start with [the factorial example](##Examples.Ram.Factorial).
-Its function is defined independently of the optional stream adapter.
-Read its declarations in this order:
+Start with the result equation in
+[the function-value factorial sample](##Examples.Ram.FactorialFunction):
+`eval_eq_factorial` states equality with mathlib's factorial when the result fits.
+The left-hand side observes the implemented recursive function; it is not defined
+to equal the mathematical specification. Its proof uses the function-only theorems
+in [the factorial implementation](##Examples.Ram.Factorial). Read those in this order:
 
 1. `Ram.Examples.Factorial.function_contract` states the returned value and unchanged caller state.
 2. `Ram.Examples.Factorial.function_runs` gives a safe invocation with an explicit argument.
 3. `Ram.Examples.Factorial.function_result` identifies the returned natural number with
    mathlib's factorial when the result fits in a word.
 4. `Ram.Examples.Factorial.function_timeBound` separately bounds the same body's execution.
-5. `Ram.Examples.Factorial.runs` includes the optional stream adapter and all machine overhead.
+
+The same file also contains a separate `read`/`write` driver. Its `runs` theorem
+includes that adapter and all machine overhead; it is not a prerequisite for the
+function interface above. The no-stream compiled application is illustrated in
+[the function runner](##Examples.Ram.FunctionRun).
 
 The general result is factorial modulo the word range, not unbounded arithmetic.
 The source-level recursive proof still needs local representation facts; the public
@@ -305,6 +312,7 @@ Continue with [proving correctness](##ComplexityDocs.Verification).
 | Linking independently verified programs | [Composition](##Examples.Ram.Composition) |
 | Array traversal and an ordinary list model | [Array sum](##Examples.Ram.ArraySum) |
 | Reusing a fold and ordinary permutation invariance | [Array count](##Examples.Ram.ArrayCount) |
+| Calling a proved function at each array element | [Call-based fold](##Examples.Ram.ArrayFold) |
 | Recursive mathematical specifications | [Factorial](##Examples.Ram.Factorial) |
 | Function-value equations and separate cost observations | [Factorial function](##Examples.Ram.FactorialFunction) |
 | Executing a function with no input/output main | [Function runner](##Examples.Ram.FunctionRun) |

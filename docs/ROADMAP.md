@@ -20,8 +20,11 @@ shared effects and body counts are observations of the existing execution, with
 actual call overhead added at call sites. Factorial, array-copy and array-sum
 expose this interface. A graph-degree client reuses the
 sum contract and mathlib's `SimpleGraph.degree` without register or stack proofs.
-Array sum and occurrence counting share a read-only expression-fold rule, including
-cursor progress, termination, framing and compiler-derived costs. Lexical `let`,
+Array sum, occurrence counting and the call-based sum of squares share cursor
+progress, termination, framing and compiler-derived loop costs. A fold step can
+be a read-only source expression or a real call to an already proved function.
+The call-based exact-count rule currently requires a constant callee-body count.
+Lexical `let`,
 `let mut` and call-result bindings allocate locals at their declaration sites.
 The implementations' internal representation proofs still show why the
 source-facing work below is unfinished.
@@ -73,16 +76,16 @@ refinement has been supplied; it does not derive that refinement automatically.
 - Reuse can avoid machine-level proofs: the graph client never opens the sum
   loop, register assignments or frame handling. Sum and count now share those
   traversal arguments through `Array.Fold`; count's permutation-invariance proof
-  is ordinary `List.Perm.count_eq`. The reusable rule currently handles one word
-  accumulator and a read-only source expression, not arbitrary callbacks,
-  short-circuiting or mutable traversals.
+  is ordinary `List.Perm.count_eq`. The reusable rules handle one word accumulator
+  with a read-only expression or a fixed verified function call, not arbitrary
+  Lean callbacks, short-circuiting or mutable traversals.
 - Function-value equations make later mathematical proofs natural, but do not
   make the implementation proof automatic. Semantic `Part` observations and
   executable function application are distinct interfaces, now connected for both
   bounded and unbounded runners. State fields for input and output do not imply
   stream operations: the factorial function contract holds at every caller state
   and proves it unchanged. Its `read`/`write` driver is a separate optional program.
-- The sum-of-squares sample composes two helper calls with lexical value bindings.
+- The two-argument squared-norm sample composes helper calls with lexical value bindings.
   `ram_total_vc args entry hp` starts its function contract directly; supplied
   call contracts and simplification facts handle the calls without a separate
   intermediate-state specification, register names or stack layouts. The two-array
@@ -90,6 +93,14 @@ refinement has been supplied; it does not derive that refinement automatically.
   binding. Mathematical preconditions, invariants and contract selection remain
   the proof author's work;
   richer array and recursive clients must reach the same level of convenience.
+- The array sum-of-squares sample calls `addSquare`, which calls the same `square`
+  used by the two-argument sample. Its proof reuses that contract and an ordinary
+  `List.foldl` identity; it never expands the helper's implementation. Its result
+  is the encoded natural-number sum of squared decoded words. A separate body
+  equation proves `74 * n + 4`, and executable application proves `74 * n + 42`
+  including all calls and halt. These are properties of one implementation, not
+  supplied results or cost annotations. The source still spells out a `while`
+  and cursor updates, and the body proof still identifies those named locals.
 - Array arguments remove pointer/length assembly at typed call sites. The
   two-array sample states its result using list concatenation, although the
   program only adds two returned sums and never allocates a concatenated array.
@@ -117,6 +128,10 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
   entry points. Generate source-facing semantic equations that make larger body
   proofs compositional; keep the input/output driver as an optional executable
   adapter. Producing the entry points alone does not prove an algorithm's contract.
+- Use the shared expression/call fold as the first traversal interface: source
+  bindings should identify the element and accumulator, while the library handles
+  cursor setup and advancement. Derive the proof rule from that declaration so
+  clients do not separately extract its call expressions or assemble register roles.
 - Build on typed array calls and the executable function adapter: support useful
   local data bindings and return values through that same compiled call path.
   Do not confuse proof-level `Part` observations with a runnable frontend, or
@@ -148,11 +163,12 @@ objects. Do not add more data-structure wrappers merely to expand a feature list
 
 - Expose each operation's mathematical effect, safety assumptions and unchanged
   state through a reusable call interface.
-- Extend the shared array cursor and read-only expression-fold interface to
-  verified call-based steps and richer existing consumers. Reuse ordinary `List`
-  folds and their algebraic properties, while requiring a proved source
-  implementation of each step. Mathematical callbacks are not executable
-  primitives, and their work must not be silently free.
+- Build on the shared expression and verified-call folds for richer existing
+  consumers: short-circuiting, multiple accumulators and mutable traversals need
+  their actual effects and progress rules. Reuse ordinary `List` folds and their
+  algebraic properties, while requiring a proved source implementation of each
+  step. Mathematical callbacks are not executable primitives, and their work
+  must not be silently free.
 - Handle subarrays, two live data objects and caller data that must survive a
   call. Keep genuine range, overflow and non-aliasing obligations visible.
 - Separate changes of mathematical view from actual data conversion.
@@ -173,6 +189,10 @@ them to source programs with less mechanical bookkeeping.
   intermediate values. Reuse functional invariants and output-size facts.
 - Expose the implementation's loop sums, recursive-call sizes and nonrecursive
   work without rebuilding the machine simulation in an algorithm proof.
+- Extend the constant-cost call fold to data-dependent step bounds using the
+  existing finite-sum rules and actual intermediate accumulator/element values.
+  A callee contract and a separate cost theorem should compose without a new
+  loop induction or manual calling-convention arithmetic in each client.
 - Keep the choice of recurrence, invariant or potential as a mathematical
   obligation. Use mathlib to solve the resulting bounds.
 - Reuse `Component.Realization` to discharge complete-program obligations:

@@ -55,6 +55,29 @@ allocate memory. General array-valued local bindings, returned array values and 
 loading of Lean lists are not supplied by this parameter syntax. See
 [array references](##Complexity.Computability.Ram.Array.Ref) for the representation rules.
 
+## Fold through a proved function
+
+The [call-based fold](##Complexity.Computability.Ram.Array.Fold.Call) connects a fixed
+source function call at each array element to ordinary `List.foldl`.
+`Ram.Source.Array.Fold.Call.loop_safe` reuses the existing cursor, termination and
+framing rules. The client supplies the actual callee's `FunctionContract`, its lookup
+and argument adapter, and safe-read premises. That contract must return the mathematical
+step value and preserve shared state; the calling convention restores caller locals.
+No time bound is needed for this correctness proof.
+
+The [array-fold sample](##Examples.Ram.ArrayFold) reuses `sumSquares` from the same
+`LocalBindings.functions` declaration. Each iteration calls `addSquare`, which calls
+the existing `square`. Its contract and `eval_eq` theorem describe the returned word
+as the encoded ordinary sum `(xs.map (fun x => x.toNat ^ 2)).sum` and preserve caller
+state. `eval_toNat` recovers the exact natural-number result when that sum fits;
+the general equation retains modular word arithmetic.
+
+This is a read-only scalar fold, not a free Lean callback or a new `for` construct.
+The source still contains an explicit `while`, call and cursor updates. The proof
+configures the named pointer, remaining-length and accumulator locals and relates
+the declared body to the fold rule. Represented input, non-wrapping addresses and
+callee safety remain required; mutable folds and automatic list loading are not supplied.
+
 ## Choose what the proof needs to observe
 
 | Mathematical view | Representation or observation | Useful properties |

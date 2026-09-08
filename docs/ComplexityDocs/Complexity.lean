@@ -69,6 +69,30 @@ theorem. Determinism identifies the measured count with that same invocation.
 using generated code lengths, the declared parameter count and frame size.
 Neither lemma supplies an unproved cost or removes the stack-capacity premise.
 
+## Count calls inside an array fold
+
+`Ram.Source.Array.Fold.Call.loop_localMeasured` adds an exact count to the same
+completed loop established by the budget-free fold rule. It requires a proof that
+every completed callee-body execution has the constant count `bodySteps`.
+`callSteps` includes that body, evaluated arguments, frame handling and the return
+expression. With `n` remaining elements, the loop count is `(callSteps + 11) * n + 2`:
+eight cursor instructions, the true guard and back edge are included per iteration,
+and the final false guard is counted even for an empty array.
+
+In [the array-fold sample](##Examples.Ram.ArrayFold), `sumSquares` calls `addSquare`
+for each word, and `addSquare` calls the existing `square`. The separate helper-body
+proof gives 23 steps; its complete call at this loop site takes 63. Including
+accumulator initialization, `bodyTime_eq` gives `74 * n + 4` for the function body.
+`runSumSquares_eq` adds the outer call, return and halt, giving `74 * n + 42` on
+the same represented input. These are real compiled calls, not priced mathematical
+callbacks. Code and stack must fit, and host-side heap preloading is not a RAM loader
+included in this count.
+
+This specialized rule covers constant callee-body counts. Data-dependent step costs
+are not yet packaged as a dedicated call-fold rule; use the general time-bound and
+loop-composition interfaces below. The mathematical `List.foldl` view supplies neither
+free execution nor a cost annotation.
+
 ## Choose the argument that matches the loop
 
 Supply the invariant and progress facts from the correctness proof. The available rules

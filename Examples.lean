@@ -9,6 +9,7 @@ import Examples.Ram.ArrayArguments
 import Examples.Ram.ArrayCopy
 import Examples.Ram.ArraySum
 import Examples.Ram.ArrayCount
+import Examples.Ram.ArrayFold
 import Examples.Ram.BinarySearch
 import Examples.Ram.BitLength
 import Examples.Ram.Composition

@@ -85,6 +85,13 @@ callbacks or unchecked ticks. Operation costs come from proved executions of
 emitted instructions, including argument evaluation, frame save/restore and
 control-flow overhead.
 
+The read-only array fold shares one cursor, termination and framing proof for
+expression updates and fixed function calls. A call-based step uses a contract
+of the actual callee to establish its mathematical `List.foldl` update and
+unchanged shared state. Its separate exact-count rule adds the real call and
+loop instructions to a proved constant callee-body count. This does not make
+ordinary Lean callbacks executable or provide a data-dependent fold-cost rule.
+
 ## The current machine model
 
 Words and addresses are finite bit vectors. Arithmetic has the specified modular

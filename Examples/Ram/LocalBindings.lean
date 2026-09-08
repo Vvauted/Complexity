@@ -15,6 +15,10 @@ in lexical locals. Neither function needs a `main` program, input/output
 streams or a hand-written register table. Their correctness proofs use the
 same source declarations and the reusable contract for `square`.
 
+The `addSquare` helper reuses `square` for one accumulator update. The
+`sumSquares` array traversal calls this helper at each element; its complete
+list specification and separate cost proof are in `Examples.Ram.ArrayFold`.
+
 The result equation observes the implementation through `Ram.Func.eval`.
 Arithmetic is machine-word arithmetic: the natural-number corollary encodes
 the sum of squares modulo the word range, without claiming that overflow is
@@ -39,6 +43,19 @@ ram_def functions := ram_functions% {
     let sy ← call square(y);
     return sx + sy;
   }
+  fn addSquare(accumulator, x) {
+    let squareValue ← call square(x);
+    return accumulator + squareValue;
+  }
+  fn sumSquares(xs : array) {
+    let mut accumulator := 0;
+    while xs.length {
+      accumulator := call addSquare(accumulator, load[xs.base]);
+      xs.base += 1;
+      xs.length -= 1;
+    }
+    return accumulator;
+  }
 }
 
 /-- Squaring returns a word and leaves all caller state unchanged. -/
@@ -58,6 +75,15 @@ theorem squaredNorm_contract (heapLimit : Nat) (x y : Word w) :
   ram_total_vc args entry rfl [functions.body_eq.squaredNorm, functions.result_eq.squaredNorm]
   ram_total_apply (square_contract heapLimit x) [functions.function_lookup.square]
   ram_total_apply (square_contract heapLimit y) [functions.function_lookup.square]
+
+/-- One array-fold step reuses the same square function through its contract.
+The accumulator and returned value are words; shared state is unchanged. -/
+theorem addSquare_contract (heapLimit : Nat) (accumulator x : Word w) :
+    Source.FunctionContract functions.program heapLimit 1 functions.function.addSquare
+      (fun args _ => args = functions.arguments.addSquare accumulator x)
+      (fun _ entry value finish => value = accumulator + x * x ∧ finish = entry) := by
+  ram_total_vc args entry rfl [functions.body_eq.addSquare, functions.result_eq.addSquare]
+  ram_total_apply (square_contract heapLimit x) [functions.function_lookup.square]
 
 /-- The program's semantic value is the sum of squares, independently of
 the caller's registers, memory and streams. The equation includes termination. -/
@@ -91,6 +117,16 @@ private theorem square_call_steps {control heapLimit depth steps dst arg : Nat}
       simp only [ABI.callLocals_steps_eq]
       change 1 + 0 + 3 + 7 * 1 + 1 + 11 = 23
       decide
+
+/-- The fold step's body makes one actual square call. Its final addition and
+the enclosing call are counted by its caller, independently of this body equation. -/
+theorem addSquare_body_steps {control heapLimit depth steps : Nat}
+    {entry finish : Source.State w}
+    (execution : Source.LocalMeasuredExec control functions.program heapLimit depth
+      functions.function.addSquare.body steps entry finish) :
+    steps = 23 := by
+  rw [functions.body_eq.addSquare] at execution
+  exact square_call_steps execution
 
 /-- Every completed body execution has the same count, obtained by adding
 the actual generated call blocks. No result specification enters this proof. -/

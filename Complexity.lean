@@ -18,6 +18,7 @@ import Complexity.Computability.Ram.Array.Frame
 import Complexity.Computability.Ram.Array.Function
 import Complexity.Computability.Ram.Array.Count
 import Complexity.Computability.Ram.Array.Fold
+import Complexity.Computability.Ram.Array.Fold.Call
 import Complexity.Computability.Ram.Array.Sum
 import Complexity.Computability.Ram.Array.Indexed
 import Complexity.Computability.Ram.Array.Insertion.Basic
