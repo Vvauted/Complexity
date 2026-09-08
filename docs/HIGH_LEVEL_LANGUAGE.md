@@ -1,8 +1,9 @@
 # High-level language design
 
-Status: architecture under implementation. An independent scalar core, source
-total-correctness rules and scalar-operation lowering are implemented; the
-Lean-like surface and automatic whole-function proof transfer are not. The
+Status: architecture under implementation. The independent scalar core now has
+source correctness rules, generic whole-function lowering and proof transfer to
+the existing executable RAM runner. The Lean-like surface, source-level cost
+bounds and size-efficient return lowering remain unfinished. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.

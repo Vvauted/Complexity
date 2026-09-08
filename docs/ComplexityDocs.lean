@@ -43,8 +43,11 @@ ordinary Lean functions are not automatically compiled into RAM programs.
 An [independent scalar core](##Complexity.Language.Basic) and
 [source correctness rules](##Complexity.Language.Verification) are also available.
 They support a mathematical proof of a real helper-call/branch program without
-registers; its Lean-like surface and whole-function compiled proof transfer are
-still under development. See [the scalar example](##Examples.Language.Scalar).
+registers. [Generic proof transfer](##Complexity.Computability.Ram.Compiler.Language.Execution)
+connects its source range and call-nesting conditions to the existing executable
+runner. See [the source example](##Examples.Language.Scalar) and its
+[compiled invocation](##Examples.Language.ScalarCompiled). The Lean-like surface,
+source-level cost bounds and size-efficient return lowering remain in development.
 
 Functions can be declared without a `main` and verified through their arguments,
 returned value and shared effects. Start with the

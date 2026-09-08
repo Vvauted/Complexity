@@ -87,7 +87,15 @@ import Complexity.Computability.Ram.Compiler.Effects
 import Complexity.Computability.Ram.Compiler.Exact
 import Complexity.Computability.Ram.Compiler.Expr.Basic
 import Complexity.Computability.Ram.Compiler.Expr.Memory
+import Complexity.Computability.Ram.Compiler.Language.Effects
+import Complexity.Computability.Ram.Compiler.Language.Execution
+import Complexity.Computability.Ram.Compiler.Language.Layout
+import Complexity.Computability.Ram.Compiler.Language.Lowering
+import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Compiler.Language.Scalar
+import Complexity.Computability.Ram.Compiler.Language.Simulation
+import Complexity.Computability.Ram.Compiler.Language.Validity
+import Complexity.Computability.Ram.Compiler.Language.Values
 import Complexity.Computability.Ram.Compiler.Local.ABI.Basic
 import Complexity.Computability.Ram.Compiler.Local.ABI.Lifetime
 import Complexity.Computability.Ram.Compiler.Local.ABI.Memory
@@ -164,6 +172,8 @@ import Complexity.Computability.Ram.Problem.Basic
 import Complexity.Computability.Ram.Problem.Encoding
 import Complexity.Computability.Ram.Reduction
 import Complexity.Computability.Ram.Source.Basic
+import Complexity.Computability.Ram.Source.Bounds
+import Complexity.Computability.Ram.Source.Effects
 import Complexity.Computability.Ram.Source.Expr
 import Complexity.Computability.Ram.Source.ForIn
 import Complexity.Computability.Ram.Source.Frame

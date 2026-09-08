@@ -167,6 +167,15 @@ Tactics remain conveniences over checked theorems, usable separately by compiler
 certificates and by humans. Neither tactic count nor a new test harness is a
 completion criterion.
 
+Implemented consumers now include the scalar whole-function simulation:
+[register bounds](../Complexity/Computability/Ram/Source/Bounds.lean) infer local
+operands from actual IR; [layouts](../Complexity/Computability/Ram/Compiler/Language/Layout.lean)
+compose compact parameter entry, fresh binding and ordered return reception.
+[Shared-state effects](../Complexity/Computability/Ram/Source/Effects.lean) reuse
+the existing register frame to cover actual recursive calls. They distinguish
+restored caller locals from unchanged memory and streams. These are ordinary
+backend lemmas, available without source-cursor metadata or the high-level frontend.
+
 ## M1 — Independent source meaning and the first automatic proof transfer
 
 Status: in progress, not complete.
@@ -183,11 +192,39 @@ Status: in progress, not complete.
   connects Nat/Bool atoms and operations to the existing expression compiler,
   with source range conditions, preserved state and counted machine execution.
   Unit is not represented by a dummy scalar word.
+- [Whole-function lowering](../Complexity/Computability/Ram/Compiler/Language/Lowering.lean)
+  and [generic simulation](../Complexity/Computability/Ram/Compiler/Language/Simulation.lean)
+  compose lexical binding, sequences, branches, real calls and early returns.
+  [Static validity](../Complexity/Computability/Ram/Compiler/Language/Validity.lean)
+  infers frames and the reserved-register boundary and proves checked compilation
+  succeeds. These obligations are not supplied by algorithm authors.
+- [Realization rules](../Complexity/Computability/Ram/Compiler/Language/Realization.lean)
+  keep actual scalar ranges and maximum call nesting separate from mathematical
+  source contracts and instruction budgets.
+  [Execution transfer](../Complexity/Computability/Ram/Compiler/Language/Execution.lean)
+  connects them to the existing halted runner, exact returned fields and actual
+  body-count observation. The [compiled scalar consumer](../Examples/Language/ScalarCompiled.lean)
+  reuses the original minimum proof without a register proof. No new runtime is used.
 
-Next: infer function layouts and compose let/call/branch/return lowering proofs,
-including actual frame and outer-call costs. The consumer above does **not** yet
-receive a whole-function compiled theorem. The surface frontend, semantic
-`Part`/Std.Do adapter, mutable data and loops also remain unimplemented.
+Next, before broadening the frontend:
+
+1. Remove continuation duplication from the initial lowering. Currently
+   `(if b then skip else skip); tail` copies `tail` into both branches; repeating
+   this produces exponentially large emitted code from linear-size source, even
+   though a single execution follows only one path. First share the tail of
+   fragments with no outward return. General early returns also need shared
+   joins or a proved internal return flag; the latter reuses the existing IR
+   but its extra assignments and tests must be counted. A no-return fast path
+   alone must not be advertised as a general linear-size guarantee.
+2. Derive a source-facing cost interpretation and its bound from that same,
+   size-efficient lowering, including operand moves, internal calls, actual
+   frame operations and the outer call/halt exactly once. The existing runner
+   gives an actual existential count, **not yet a source-level complexity bound**.
+3. Add the Lean-like surface and semantic `Part`/Std.Do adapter over the proved
+   core, without exposing backend layout or simulation obligations.
+
+Mutable data and loops remain subsequent milestones. M1 is not complete merely
+because static compilation and functional transfer now succeed.
 
 Build one complete scalar path before extending the surface language broadly.
 The first executable subset is Nat/Bool literals, addition/comparison, lexical

@@ -24,11 +24,26 @@ returned value, with no proposed instruction bound. See the
 
 The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
 branches on its returned value and proves the result equals `min (n + 1) limit`
-using ordinary Nat facts. The current interface is typed core syntax, not yet
-the planned Lean-like frontend. [Scalar-operation lowering](##Complexity.Computability.Ram.Compiler.Language.Scalar)
-already connects individual operations to counted RAM execution; automatic
-whole-function transfer is still being implemented. The executable workflow
-and backend proof interfaces described below remain separately available.
+using ordinary Nat facts. Its
+[compiled invocation](##Examples.Language.ScalarCompiled) supplies only source-level
+range and call-nesting facts, then reuses that mathematical proof. In particular,
+`n + 1` must fit even when the final minimum is small. These conditions do not
+include a proposed instruction budget.
+
+[Generic simulation](##Complexity.Computability.Ram.Compiler.Language.Simulation)
+handles lexical layouts, real callees and returned fields.
+[Static validity](##Complexity.Computability.Ram.Compiler.Language.Validity)
+chooses the register boundary and discharges checked-compilation conditions;
+[execution transfer](##Complexity.Computability.Ram.Compiler.Language.Execution)
+then gives the existing halted runner, actual result and same-execution count.
+Code and stack capacity remain explicit. Shared-state preservation is derived
+from the actual lowered program, not assumed from restored caller registers.
+
+The interface is still typed core syntax, not the planned Lean-like frontend.
+An existential instruction count is not a source-level complexity bound. The
+initial continuation-copying lowering also does not guarantee linear code size;
+the roadmap prioritizes shared-tail lowering before larger control-flow clients.
+The executable word-RAM workflow and maintainer interfaces below remain available.
 
 ## Choose a specification
 
