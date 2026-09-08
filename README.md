@@ -1,25 +1,21 @@
 # Complexity
 
-A Lean library for proving what programs compute and how much work they do.
+A Lean library for verified programming and complexity analysis, built on mathlib.
 
-We want program proofs to use ordinary Lean values and mathlib theorems, with
-implementation details handled by reusable correctness and cost proofs.
-The current backend is a word-RAM with verified compilation, separate
-correctness and time-bound interfaces, and array, matrix and finite-map libraries.
+Our goal is to write a program once and prove both its correctness and
+complexity using ordinary mathematical reasoning. Verified compilation connects
+these proofs to execution, while reusable interfaces handle machine details.
 
-The mathematical tools include asymptotic bounds, recurrences, amortized analysis
-and polynomial-time composition. Time counts RAM transitions, not bit operations
-or interpreter runtime. A general high-level frontend is still in progress;
-see the [roadmap](docs/ROADMAP.md).
+The library currently provides a verified word-RAM backend, program and array
+proof interfaces, and tools for asymptotic, recurrence and amortized analysis.
+Work on the higher-level programming and proof interface is ongoing.
 
 ## Documentation
 
-- [User guide](docs/ComplexityDocs.lean): setup, programming and proofs.
-- [HTML manual and API](https://vvauted.github.io/Complexity/ComplexityDocs.html)
-  (available when GitHub Pages is enabled).
-- [Contributing](CONTRIBUTING.md) and [AI development guide](AGENTS.md).
-
-Requires the Lean and mathlib versions pinned in this repository.
+- [Getting started](https://vvauted.github.io/Complexity/ComplexityDocs/GettingStarted.html)
+- [User manual](https://vvauted.github.io/Complexity/ComplexityDocs.html)
+- [API reference](https://vvauted.github.io/Complexity/)
+- [Roadmap](docs/ROADMAP.md) and [contributing](CONTRIBUTING.md)
 
 ## AIGC
 

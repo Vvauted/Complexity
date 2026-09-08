@@ -48,9 +48,7 @@ jobs:
           path: docbuild/.lake/build/doc
 
   deploy-docs:
-    if: >-
-      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
-      vars.PUBLISH_DOCS == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -60,6 +58,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
       - name: Deploy Lean documentation
         id: deployment
         uses: actions/deploy-pages@v4
