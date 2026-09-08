@@ -563,6 +563,15 @@ still choose the contract and typed input, but need not repeat caller/callee
 argument-builder definitions. Bodies, return expressions and mathematical
 representation lemmas are not registered in this set.
 
+For a typed function call, `ram_total_apply contract on input [facts]` selects
+the actual mathematical input and passes the returned value and shared effects
+to a continuation with caller locals restored. It only attempts to close the
+lookup, result-count, argument-read and argument-value obligations completely.
+The functional precondition, call-depth condition and continuation retain their
+original form. In particular, supplying a slice definition to match runtime
+arguments does not also expand every represented slice in the continuation.
+Merge sort uses this form for both recursive calls, merge and copy-back.
+
 Use `ram_total_bind mid hmid [definitions, facts]` on a `TotalWP` assignment
 or a sequence beginning with one to name that assignment's actual word value.
 The continuation receives `mid` and `hmid : mid = entry.eval expression` without

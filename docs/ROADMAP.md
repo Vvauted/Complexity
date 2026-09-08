@@ -166,6 +166,12 @@ reuse declaration-generated bindings. The time rule can derive a remaining
 reserve after proving the complete compiled call fits, or accept an explicit
 continuation bound depending on the actual returned value, as slice does.
 
+The explicit-input `ram_total_apply contract on input` form follows the same
+selective premise handling as the time interface. Merge sort's recursive,
+merge and copy-back calls preserve their mathematical slice expressions in
+continuations instead of expanding them merely to match argument bindings.
+This reuses restored-call rules; it is not a new stage semantics.
+
 `TimeExact` supplies exact-count composition over the existing measured
 execution. Factorial's upper bound and measured endpoint reuse its one cost
 induction. `ram_run_eq` and `ram_run_bound` account for real outer-call overhead.
@@ -180,8 +186,10 @@ depends on changed data.
 **Next work:**
 
 - Reduce repeated source-stage composition in recursive correctness and time
-  proofs, starting with merge sort. The author should supply the recurrence and
-  nonrecursive toll, not repeatedly unfold call ASTs or reconstruct register states.
+  proofs. Merge sort's typed calls already avoid raw call ASTs and restoration
+  equations; its remaining split/reassembly mathematics should not be mistaken
+  for missing calling-convention automation. Target actual repeated bookkeeping,
+  retaining the recurrence, nonrecursive toll and changed-data facts.
 - Extend exact composition to value/state-dependent continuations when an
   existing exact-count client needs it. Do not add an unused exact wrapper to a
   client already served by an upper bound.

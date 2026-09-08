@@ -40,15 +40,22 @@ contract or recursive function specification, including an existing measured
 contract after forgetting its time bound. An explicitly instantiated WP rule is
 also accepted: `ram_total_apply (contract.wp_call (arg := input))` selects a
 typed input by ordinary Lean application, without guessing it from an encoding.
-Calls and loops remain opaque: the
-tactic uses the supplied specification without unfolding its implementation.
+
+`ram_total_apply contract on input [facts]` selects a typed input and exposes
+the actual shared effects with caller bindings restored. It tries only complete
+solutions of lookup, result-shape and argument obligations. The mathematical
+precondition, call-depth obligation and continuation are left unchanged, so
+supplied facts do not unfold the continuation's representations or array views.
+
+Calls and loops remain opaque: the tactic uses the supplied specification
+without unfolding its implementation.
 Named lookup, argument fields and fixed arities come from `ram_def`'s dedicated
 binding equations, including imported signatures. The author still chooses the
 contract and typed input; input-dependent safety and functional obligations
 remain explicit. Optional facts supply their mathematical or representation
 reasoning, rather than repeating the caller and callee's argument definitions.
 
-These are transparent macros over the proved total rules and `ram_simp`.
+These tactics reuse the proved total rules and `ram_simp`.
 They introduce no execution semantics, resource annotations or trusted solver.
 -/
 
@@ -126,6 +133,30 @@ elab_rules : tactic
 necessary, then simplify only the supplied facts and ordinary RAM vocabulary. -/
 syntax (name := ramTotalApply) "ram_total_apply " term:max
   (" [" simpArg,* "]")? : tactic
+
+/-- Select a typed input and continue with restored caller bindings. Only
+completely solved lookup, result-shape and argument goals are discharged;
+mathematical preconditions, call depth and the continuation remain unchanged. -/
+syntax (name := ramTotalApplyTyped) "ram_total_apply " term:max
+  " on " term:max (" [" simpArg,* "]")? : tactic
+
+macro_rules
+  | `(tactic| ram_total_apply $contract on $input) =>
+      `(tactic| ram_total_apply $contract on $input [])
+
+elab_rules : tactic
+  | `(tactic| ram_total_apply $contract on $input [$args,*]) =>
+      Lean.Elab.Tactic.focus do
+        Lean.Elab.Tactic.evalTactic (← `(tactic|
+          first
+          | apply Ram.Source.TypedFunctionContract.wp_call_restored $contract (arg := $input)
+          | (rw [Ram.Source.Verification.TotalWP.seq_iff]
+             apply Ram.Source.TypedFunctionContract.wp_call_restored $contract (arg := $input))))
+        for goal in ← Lean.Elab.Tactic.getUnsolvedGoals do
+          goal.setTag (← goal.getTag).eraseMacroScopes
+        Lean.Elab.Tactic.evalTactic (← `(tactic|
+          case' lookup | resultCount | arguments | argumentValues =>
+            try (solve | (ram_simp [$args,*] <;> assumption))))
 
 macro_rules
   | `(tactic| ram_total_apply $contract) => `(tactic| ram_total_apply $contract [])
