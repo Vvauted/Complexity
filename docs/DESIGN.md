@@ -236,9 +236,20 @@ The client still proves the actual expression's read safety and mathematical
 evaluation using those parameter equalities. A separate measured rule counts
 the compiled expression and traversal instructions in that same invocation.
 These rules cover one initialized scalar accumulator with an expression update
-or the supported fixed helper call. Richer bodies, multiple accumulators,
-short-circuiting, mutation and array-valued accumulators need further interfaces;
-acceptance by the source parser alone does not supply their proofs.
+or the supported fixed helper call. General `TotalWP.forIn` instead accepts an
+arbitrary loop-head invariant and a contract for the real loaded-body entry and
+advanced-body endpoint. It imposes no whole-heap or I/O preservation condition.
+Its count-preservation premise concerns the body's own loaded entry; the element
+and remaining locals must be distinct to connect this to the loop-head count.
+The invariant before loading is not automatically available after loading.
+
+The separate uniform `TimeBound.forIn` bounds completed traversals without body
+totality. It reuses the existing linear-loop rule and includes the load, both
+cursor updates, guards and setup. The general rules take three register roles,
+not a dummy scalar accumulator. They do not yet provide a declaration-level
+mathematical adapter for arbitrary mutable bodies or an early-exit construct.
+Array contents are read live; an in-place map proof must justify the unread
+elements it relies on. A scalar fold consumer does not establish that interface.
 
 Local binding adapters can use `State.LocalFrame` to transport a collection of
 unchanged parameters through those actual state updates. Its register relation

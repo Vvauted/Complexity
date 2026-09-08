@@ -144,6 +144,15 @@ sortedness, containment and aliasing premises remain mathematical obligations.
 This motivates improving our existing call rules, not porting Sepref or treating
 an abstract operation as an uncharged RAM instruction.
 
+The same Section 4.2 distinction guides general loop-body support: a structural
+rule should handle iteration mechanics while concrete operation contracts retain
+their side conditions. Our `forIn` rules therefore separate real loads and cursor
+updates from the arbitrary body invariant, and keep a conditional time theorem
+independent of body totality. Existing scalar-fold conveniences remain useful;
+making their clients repeat a general invariant would not itself improve the
+proof experience. This is our application of the methodology, not a claim to
+have implemented Sepref's synthesis or its different cost model.
+
 ## 6. Separate behavior and cost without changing the machine
 
 Yue Niu, Jonathan Sterling, Harrison Grodin and Robert Harper,

@@ -351,8 +351,8 @@ and a stack-capacity proof, both erased at runtime; `sum_eq` identifies the actu
 returned natural number. No mathematical list is passed as executable data.
 Fixed verified helper calls have their own
 [source-derived rule](##Complexity.Computability.Ram.Array.ForIn.Function);
-richer bodies, multiple accumulators, mutation and short-circuiting still need
-further proof interfaces.
+these two conveniences remain specialized scalar folds. General bodies use the
+invariant rule below; short-circuiting still needs a separate language interface.
 
 These rules operate on fixed source statements. They do not turn an arbitrary mathematical
 function into executable code. See [data models](##ComplexityDocs.Models) for array, matrix,
@@ -365,6 +365,31 @@ For a loop, choose a mathematical invariant and a well-founded progress argument
 and eventual result. If a decreasing natural number is enough,
 `Ram.Source.Verification.TotalWP.while_variant` provides a direct total-correctness rule.
 The guard, representation and safety obligations remain at the implementation boundary.
+
+For an arbitrary body of `Stmt.forIn`,
+`Ram.Source.Verification.TotalWP.forIn` handles setup, each actual element load
+and the two cursor updates. Supply an invariant at the loop head and prove the
+body from `ForIn.loadedState` into an invariant after `ForIn.advanceState`.
+The body must preserve the remaining count of its loaded entry state. The rule
+uses ordinary natural descent, not a proposed time budget. The invariant need
+not describe a single accumulator or unchanged heap: it can relate several
+locals and mutable data to ordinary mathematical values.
+
+This is an implementation-side combinator, not automatic invariant inference.
+The loop-head invariant is not assumed to survive the element assignment.
+Each load reads the current heap; body effects reach the next iteration.
+Initialization evaluates length after assigning the pointer, and address safety
+is required only when the guard is nonzero. The rule does not assert that an
+arbitrary body preserves the original array contents or pointer trajectory.
+See [general foreach correctness](##Complexity.Computability.Ram.Verification.ForIn).
+
+The independent `Ram.Source.TimeBound.forIn` accepts a uniform conditional body
+bound `B` and preservation of the remaining count on completed body executions.
+It adds the actual setup expression lengths, `(B + 14) * count` and the remaining
+four setup/final-guard instructions. No body totality or heap-purity premise is
+needed for this conditional result. The existing helper-call traversal reuses
+this rule; its separate prefix-dependent bounds remain available.
+See [general foreach costs](##Complexity.Computability.Ram.Verification.Time.ForIn).
 
 For local binding adapters, `Ram.Source.State.LocalFrame writes before after`
 packages unchanged memory and I/O with mathlib's

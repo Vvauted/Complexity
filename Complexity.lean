@@ -219,10 +219,12 @@ import Complexity.Computability.Ram.Verification.Time.Basic
 import Complexity.Computability.Ram.Verification.Time.Capacity
 import Complexity.Computability.Ram.Verification.Time.Composition
 import Complexity.Computability.Ram.Verification.Time.Exact
+import Complexity.Computability.Ram.Verification.Time.ForIn
 import Complexity.Computability.Ram.Verification.Time.Function
 import Complexity.Computability.Ram.Verification.Time.Typed
 import Complexity.Computability.Ram.Verification.Time.StraightLine
 import Complexity.Computability.Ram.Verification.Total
+import Complexity.Computability.Ram.Verification.ForIn
 import Complexity.Computability.Ram.Word
 import Complexity.Computability.Recurrence.AkraBazzi
 import Complexity.Computability.Recurrence.Balanced

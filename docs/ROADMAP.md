@@ -225,6 +225,23 @@ a few lines; search's two single-register reads remain simpler without a set
 frame. Do not migrate such proofs just to demonstrate the new interface. The
 remaining `Nodup`/register-role adapter and expression meaning are still explicit.
 
+**General loop-body foundation:** `TotalWP.forIn` accepts arbitrary source bodies
+and loop-head invariants, without imposing one accumulator or unchanged shared
+state. The independent uniform `TimeBound.forIn` needs only a conditional body
+bound and count preservation on completed body executions. Both reuse the
+existing while rules and the actual load/setup/cursor instructions. The helper-call
+traversal uses the common cost rule instead of maintaining its own execution
+decomposition; its original domain and bounds are unchanged.
+
+This is not yet the final named-variable proof interface. Scalar sum/count
+clients keep their simpler existing rules. They do not demonstrate heap mutation
+or several accumulators. The next general-body consumer should be an actual
+reusable operation, such as in-place array mapping, with ordinary `List.map`
+correctness and independent compiled cost. Reuse `ArrayAt.setMem`, array frames
+and upstream list identities; prove preservation of the unread part rather than
+pretending that live reads observe an entry snapshot. Do not rewrite the existing
+copy implementation merely to force it into a different loop form.
+
 **Remaining work:**
 
 - Make local-block proofs follow the source structure without exposing numeric

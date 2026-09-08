@@ -8,6 +8,7 @@ import Complexity.Computability.Ram.Array.Fold.Call
 import Complexity.Computability.Ram.Array.Model
 import Complexity.Data.List.Fold
 import Complexity.Computability.Ram.Verification.Time.Composition
+import Complexity.Computability.Ram.Verification.Time.ForIn
 import Complexity.Computability.Ram.Verification.Time.Function
 
 /-!
@@ -161,39 +162,19 @@ theorem forIn_localMeasured (registers : Registers) {program : Program} {f : Fun
   ForIn.forIn_localMeasured registers hw (body_remaining registers)
     (body_localMeasured registers lookup cost) h
 
-/-- Bound one actual loaded-element iteration using the helper's conditional
-function bound. The load and the two cursor assignments retain their real costs. -/
-private theorem iteration_timeBound (registers : Registers) {program : Program} {f : Func}
+/-- Apply the helper's conditional bound to the actual two-argument call. -/
+private theorem body_timeBound (registers : Registers) {program : Program} {f : Func}
     {w control fn heapLimit depth bodyBudget : Nat}
     (lookup : program[fn]? = some f)
     (time : FunctionTimeBound (w := w) control program heapLimit depth f
       (fun args _ => args.length = 2) (fun _ _ => bodyBudget)) :
-    TimeBound (w := w) control program heapLimit (depth + 1)
-      (Stmt.forInBody registers.pointer registers.remaining registers.element (body registers fn))
-      (fun _ => True)
+    TimeBound (w := w) control program heapLimit (depth + 1) (body registers fn) (fun _ => True)
       (fun _ => Fold.Call.callSteps control f
-        [.var registers.accumulator, .var registers.element] bodyBudget + 11) := by
-  have callBound : TimeBound (w := w) control program heapLimit (depth + 1) (body registers fn)
-      (fun _ => True) (fun _ => Fold.Call.callSteps control f
         [.var registers.accumulator, .var registers.element] bodyBudget) := by
-    simpa only [body, Fold.Call.callSteps, List.length_cons, List.length_nil] using
-      time.call (dsts := [registers.accumulator])
-        (args := [.var registers.accumulator, .var registers.element])
-        (R := fun _ => True) lookup (fun _ _ => by simp)
-  intro s _ steps t execution
-  cases execution with
-  | seq loaded rest =>
-    cases loaded with
-    | assign _ =>
-      cases rest with
-      | seq called advance =>
-        have callCount := callBound _ trivial _ _ called
-        have advanceCount := (advance.deterministic
-          (Fold.advanceCursor_localMeasured registers.toRegisters advance.erase)).1
-        change 3 + (_ + _) ≤ Fold.Call.callSteps control f
-          [.var registers.accumulator, .var registers.element] bodyBudget + 11
-        dsimp only at callCount
-        omega
+  simpa only [body, Fold.Call.callSteps, List.length_cons, List.length_nil] using
+    time.call (dsts := [registers.accumulator])
+      (args := [.var registers.accumulator, .var registers.element])
+      (R := fun _ => True) lookup (fun _ _ => by simp)
 
 /-- Bound every completed iteration loop without assuming that its helper
 terminates on other inputs. The existing linear-loop rule is applied only to
@@ -208,53 +189,10 @@ theorem loop_timeBound (registers : Registers) {program : Program} {f : Func}
       (fun _ => True)
       (fun s => (Fold.Call.callSteps control f
         [.var registers.accumulator, .var registers.element] bodyBudget + 14) *
-          (s.regs registers.remaining).toNat + 2) := by
-  let iteration :=
-    Stmt.forInBody registers.pointer registers.remaining registers.element (body registers fn)
-  let completed := fun s : State w => ∃ finish,
-    SafeExec program heapLimit (depth + 1) (.while (.var registers.remaining) iteration) s finish
-  have functional : TotalRelContract program heapLimit (depth + 1) iteration
-      (fun s => completed s ∧ s.eval (.var registers.remaining) ≠ 0)
-      (fun s t => completed t ∧
-        (t.regs registers.remaining).toNat < (s.regs registers.remaining).toNat) := by
-    rintro s ⟨⟨finish, execution⟩, nonzero⟩
-    cases execution with
-    | whileFalse _ zero => exact False.elim (nonzero zero)
-    | whileTrue _ _ first rest =>
-      refine ⟨_, first, ⟨_, rest⟩, ?_⟩
-      have decrease := ForIn.body_remaining registers (body_remaining registers) first
-      change s.regs registers.remaining ≠ 0 at nonzero
-      have positive : 0 < (s.regs registers.remaining).toNat :=
-        Nat.pos_of_ne_zero (fun zero => nonzero ((Word.toNat_eq_zero_iff _).mp zero))
-      rw [decrease]
-      have one : (1 : Word w).toNat = 1 := BitVec.toNat_one hw
-      change (BinOp.eval .sub (s.regs registers.remaining) 1).toNat <
-        (s.regs registers.remaining).toNat
-      rw [BinOp.eval_sub_toNat_of_le _ _ (by rw [one]; omega), one]
-      omega
-  have cost : TimeBound control program heapLimit (depth + 1) iteration
-      (fun s => completed s ∧ s.eval (.var registers.remaining) ≠ 0)
-      (fun _ => Fold.Call.callSteps control f
-        [.var registers.accumulator, .var registers.element] bodyBudget + 11) :=
-    (iteration_timeBound registers lookup time).consequence
-      (fun _ _ => trivial) (fun _ _ => Nat.le_refl _)
-  have bound := TimeBound.while_linear completed
-    (fun s => (s.regs registers.remaining).toNat)
-    (Fold.Call.callSteps control f
-      [.var registers.accumulator, .var registers.element] bodyBudget + 11)
-    functional cost
-  intro s _ steps finish execution
-  have bounded := bound s ⟨_, execution.erase⟩ steps finish execution
-  change steps ≤ (s.regs registers.remaining).toNat *
-    (1 + 1 + (Fold.Call.callSteps control f
-      [.var registers.accumulator, .var registers.element] bodyBudget + 11) + 1) +
-    (1 + 1) at bounded
-  have coefficient : 1 + 1 + (Fold.Call.callSteps control f
-      [.var registers.accumulator, .var registers.element] bodyBudget + 11) + 1 =
-      Fold.Call.callSteps control f
-        [.var registers.accumulator, .var registers.element] bodyBudget + 14 := by omega
-  rw [coefficient] at bounded
-  simpa only [Nat.reduceAdd, Nat.mul_comm] using bounded
+          (s.regs registers.remaining).toNat + 2) :=
+  TimeBound.forInLoop registers.pointer registers.remaining registers.element hw
+    registers.pointer_ne_remaining registers.element_ne_remaining
+    (body_remaining registers) (body_timeBound registers lookup time)
 
 /-- The conditional bound for the complete iteration construct includes both
 descriptor copies, all actual calls and loads, cursor writes and the final guard. -/
@@ -270,22 +208,10 @@ theorem forIn_timeBound (registers : Registers) {program : Program} {f : Func}
         (length.compile (ABI.scratch control)).length +
         (Fold.Call.callSteps control f [.var registers.accumulator, .var registers.element]
           bodyBudget + 14) *
-          ((s.setReg registers.pointer (s.eval base)).eval length).toNat + 4) := by
-  intro s _ steps finish execution
-  cases execution with
-  | seq first rest =>
-    cases first with
-    | assign _ =>
-      cases rest with
-      | seq second traversal =>
-        cases second with
-        | assign _ =>
-          have bounded := loop_timeBound registers hw lookup time _ trivial _ _ traversal
-          dsimp only at bounded ⊢
-          simp only [State.setReg_same] at bounded
-          simp only [LocalCompiler.stmtSize, LocalCompiler.compileStmt,
-            List.length_append, List.length_singleton]
-          omega
+          ((s.setReg registers.pointer (s.eval base)).eval length).toNat + 4) :=
+  TimeBound.forIn registers.pointer registers.remaining registers.element hw
+    registers.pointer_ne_remaining registers.element_ne_remaining
+    (body_remaining registers) (body_timeBound registers lookup time)
 
 /-! ## Bounds depending on the actual fold prefixes -/
 
