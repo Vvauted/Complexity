@@ -205,23 +205,37 @@ Status: in progress, not complete.
   connects them to the existing halted runner, exact returned fields and actual
   body-count observation. The [compiled scalar consumer](../Examples/Language/ScalarCompiled.lean)
   reuses the original minimum proof without a register proof. No new runtime is used.
+- Lowering now uses a separate, initialized return flag: every source child and
+  external continuation is emitted once, including general early-return paths.
+  [Flag-preservation rules](../Complexity/Computability/Ram/Compiler/Language/Control.lean)
+  and the core simulation discharge separation from live variables and actual
+  result fields. Callee return does not raise the caller's flag. Unit has zero
+  result fields; the flag is a real control word, not a dummy result.
+- [Exact code-size formulas](../Complexity/Computability/Ram/Compiler/Language/CodeSize.lean)
+  connect the structural lowering to emitted RAM instruction-list length.
+  Sequence and branch subtrees contribute once; the external continuation has
+  one copy plus five wrapper instructions. Calls retain actual argument and
+  callee-frame expansion. This eliminates exponential continuation copying,
+  but is not an unconditional linear bound in bare source-node count or a
+  runtime bound. Static size-composition lemmas now live in the foundational
+  local compiler module, without importing its execution simulation.
 
 Next, before broadening the frontend:
 
-1. Remove continuation duplication from the initial lowering. Currently
-   `(if b then skip else skip); tail` copies `tail` into both branches; repeating
-   this produces exponentially large emitted code from linear-size source, even
-   though a single execution follows only one path. First share the tail of
-   fragments with no outward return. General early returns also need shared
-   joins or a proved internal return flag; the latter reuses the existing IR
-   but its extra assignments and tests must be counted. A no-return fast path
-   alone must not be advertised as a general linear-size guarantee.
-2. Derive a source-facing cost interpretation and its bound from that same,
-   size-efficient lowering, including operand moves, internal calls, actual
-   frame operations and the outer call/halt exactly once. The existing runner
-   gives an actual existential count, **not yet a source-level complexity bound**.
-3. Add the Lean-like surface and semantic `Part`/Std.Do adapter over the proved
+1. Derive a source-facing cost interpretation and its bound from the same
+   lowering, including operand moves, internal calls, actual frame operations,
+   and private-flag initialization/updates/dispatch. A returned path still pays
+   for the flag checks in each enclosing sequence it crosses. The selected
+   lowered body's flag wrapper belongs to its body charge; count the outer
+   calling convention and final halt separately, exactly once. The existing
+   runner gives an actual existential count, **not yet a source-level complexity bound**.
+2. Add the Lean-like surface and semantic `Part`/Std.Do adapter over the proved
    core, without exposing backend layout or simulation obligations.
+
+Later remove redundant flag checks or specialize no-return fragments only
+through proved optimizations and revised costs. The current size-safe lowering
+can add instructions and enlarge frames compared with small CPS examples;
+smaller code on branching families is not a claim of universally faster runs.
 
 Mutable data and loops remain subsequent milestones. M1 is not complete merely
 because static compilation and functional transfer now succeed.

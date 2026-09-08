@@ -44,8 +44,28 @@ theorem call_callsValid {signatures : List Signature}
   exact ⟨lowerFunc program fn, lowerProgram_lookup program fn,
     argsExprs_length layout args, by simp only [valueRegs_length, lowerFunc_results_length]⟩
 
+/-- Every core call retains its typed argument and result arities. Return-flag
+assignments and guards add no function references. -/
+theorem lowerStmtCore_callsValid {signatures : List Signature}
+    (program : Complexity.Language.Program signatures) {Γ : List Ty} {result : Ty}
+    (layout : RegisterMap Γ) (next resultSlot flag : Reg)
+    (stmt : Complexity.Language.Stmt signatures Γ result) :
+    Compiler.CallsValid (lowerProgram program)
+      (lowerStmtCore layout next resultSlot flag stmt) := by
+  induction stmt generalizing next resultSlot flag with
+  | skip => trivial
+  | letPrim value body ih =>
+      exact ⟨lowerPrim_callsValid _ _ _ _, ih _ _ _ _⟩
+  | call fn args body ih =>
+      exact ⟨call_callsValid program layout fn args next, ih _ _ _ _⟩
+  | seq first second ihFirst ihSecond =>
+      exact ⟨ihFirst _ _ _ _, trivial, ihSecond _ _ _ _⟩
+  | ite condition yes no ihYes ihNo =>
+      exact ⟨ihYes _ _ _ _, ihNo _ _ _ _⟩
+  | ret value => exact ⟨lowerReturn_callsValid _ _ _ _, trivial⟩
+
 /-- A call-valid normal continuation stays call-valid under syntax-directed
-lowering, including branches and returns that bypass that continuation. -/
+lowering. The return flag prevents a returned path from executing the tail. -/
 theorem lowerStmt_callsValid {signatures : List Signature}
     (program : Complexity.Language.Program signatures) {Γ : List Ty} {result : Ty}
     (layout : RegisterMap Γ) (next resultSlot : Reg)
@@ -53,17 +73,7 @@ theorem lowerStmt_callsValid {signatures : List Signature}
     (tailValid : Compiler.CallsValid (lowerProgram program) continuation) :
     Compiler.CallsValid (lowerProgram program)
       (lowerStmt layout next resultSlot stmt continuation) := by
-  induction stmt generalizing next resultSlot continuation with
-  | skip => exact tailValid
-  | letPrim value body ih =>
-      exact ⟨lowerPrim_callsValid _ _ _ _, ih _ _ _ _ tailValid⟩
-  | call fn args body ih =>
-      exact ⟨call_callsValid program layout fn args next, ih _ _ _ _ tailValid⟩
-  | seq first second ihFirst ihSecond =>
-      exact ihFirst _ _ _ _ (ihSecond _ _ _ _ tailValid)
-  | ite condition yes no ihYes ihNo =>
-      exact ⟨ihYes _ _ _ _ tailValid, ihNo _ _ _ _ tailValid⟩
-  | ret value => exact lowerReturn_callsValid _ _ _ _
+  exact ⟨trivial, lowerStmtCore_callsValid program _ _ _ _ _, trivial, tailValid⟩
 
 /-- All calls in a lowered function body resolve in the generated table. -/
 theorem lowerBody_callsValid {signatures : List Signature}

@@ -5,8 +5,10 @@ The [roadmap](ROADMAP.md) sets development priorities. The
 architecture: an independently interpreted typed core, source-level proofs and
 automatically checked lowering to the existing RAM backend. Its independent
 scalar core and whole-function proof transfer are implemented separately; the
-current named syntax still directly targets register IR. The new core's surface,
-source-level cost bounds and size-efficient control-flow lowering remain unfinished.
+current named syntax still directly targets register IR. A private return flag
+avoids copying continuations; its exact static code-size formulas retain real
+callee-frame expansion. The new core's surface and source-level runtime cost
+bounds remain unfinished.
 
 The sections below document the existing implementation and the semantic
 boundaries that its reuse must preserve. Here, `Source` means the current

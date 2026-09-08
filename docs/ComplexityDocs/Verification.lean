@@ -41,8 +41,12 @@ from the actual lowered program, not assumed from restored caller registers.
 
 The interface is still typed core syntax, not the planned Lean-like frontend.
 An existential instruction count is not a source-level complexity bound. The
-initial continuation-copying lowering also does not guarantee linear code size;
-the roadmap prioritizes shared-tail lowering before larger control-flow clients.
+compiler lowers each statement child once and uses a private return flag to
+skip tails after a return; calls restore the caller's flag.
+[Exact code-size formulas](##Complexity.Computability.Ram.Compiler.Language.CodeSize)
+include each branch once, plus actual argument and callee-frame expansion.
+The new flag operations are real work, and a source-level runtime cost theorem
+remains unfinished. Optimizing code size does not imply every execution is faster.
 The executable word-RAM workflow and maintainer interfaces below remain available.
 
 ## Choose a specification

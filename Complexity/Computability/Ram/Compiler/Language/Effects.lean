@@ -34,24 +34,33 @@ theorem lowerReturn_noSharedWrites (layout : RegisterMap Γ) (resultSlot : Reg)
     (atom : Atom Γ τ) : (lowerReturn layout resultSlot atom).NoSharedWrites := by
   cases τ <;> trivial
 
+/-- The core lowering only writes local values and the private return flag.
+Actual callees are covered by the separate program-wide body condition. -/
+theorem lowerStmtCore_noSharedWrites {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    (layout : RegisterMap Γ) (next resultSlot flag : Reg)
+    (stmt : Complexity.Language.Stmt signatures Γ result) :
+    (lowerStmtCore layout next resultSlot flag stmt).NoSharedWrites := by
+  induction stmt generalizing next resultSlot flag with
+  | skip => trivial
+  | letPrim value body ih =>
+    exact ⟨lowerPrim_noSharedWrites layout next value, ih _ _ _ _⟩
+  | call fn args body ih =>
+    exact ⟨trivial, ih _ _ _ _⟩
+  | seq first second firstIH secondIH =>
+    exact ⟨firstIH _ _ _ _, trivial, secondIH _ _ _ _⟩
+  | ite test yes no yesIH noIH =>
+    exact ⟨yesIH _ _ _ _, noIH _ _ _ _⟩
+  | ret value => exact ⟨lowerReturn_noSharedWrites layout resultSlot value, trivial⟩
+
 /-- Scalar statement lowering retains the no-shared-writes condition of its
-normal continuation. A source return discards that continuation as usual. -/
+normal continuation. The private return flag guards that continuation without
+adding a shared-state write. -/
 theorem lowerStmt_noSharedWrites {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (layout : RegisterMap Γ) (next resultSlot : Reg)
     (stmt : Complexity.Language.Stmt signatures Γ result) (continuation : Ram.Stmt)
     (condition : continuation.NoSharedWrites) :
     (lowerStmt layout next resultSlot stmt continuation).NoSharedWrites := by
-  induction stmt generalizing next continuation with
-  | skip => exact condition
-  | letPrim value body ih =>
-    exact ⟨lowerPrim_noSharedWrites layout next value, ih _ _ _ condition⟩
-  | call fn args body ih =>
-    exact ⟨trivial, ih _ _ _ condition⟩
-  | seq first second firstIH secondIH =>
-    exact firstIH _ _ _ (secondIH _ _ _ condition)
-  | ite test yes no yesIH noIH =>
-    exact ⟨yesIH _ _ _ condition, noIH _ _ _ condition⟩
-  | ret value => exact lowerReturn_noSharedWrites layout resultSlot value
+  exact ⟨trivial, lowerStmtCore_noSharedWrites _ _ _ _ _, trivial, condition⟩
 
 /-- Every lowered scalar function body satisfies the shared-write condition. -/
 theorem lowerBody_noSharedWrites {signatures : List Signature}

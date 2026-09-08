@@ -2,8 +2,9 @@
 
 Status: architecture under implementation. The independent scalar core now has
 source correctness rules, generic whole-function lowering and proof transfer to
-the existing executable RAM runner. The Lean-like surface, source-level cost
-bounds and size-efficient return lowering remain unfinished. The
+the existing executable RAM runner. Return-flag lowering avoids continuation
+duplication and has exact static code-size formulas. The Lean-like surface and
+source-level runtime cost bounds remain unfinished. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -121,8 +122,10 @@ register decoding supplied by the algorithm author.
 Specify normal continuation and function return as different control outcomes
 from the start. A return crosses nested blocks and loops and is caught by the
 function boundary; sequencing executes its tail only on normal continuation.
-The first compiler milestone may reject nonterminal returns, but its interface
-must not assume all blocks fall through. `break/continue` and tagged
+The scalar compiler already handles returns through nested bindings, branches
+and sequences using a private flag, without duplicating the remaining code.
+The future loop lowering must propagate the same control outcome.
+`break/continue` and tagged
 `Option/Sum` values are subsequent supported constructs, with real control and
 tag/payload lowering, not dummy returned words.
 
@@ -383,9 +386,11 @@ updates for calls inside the body. A source call does not have a
 layout-independent exact constant. Ghost mathematics is erased; actual runtime
 work is not.
 
-Use one accounting convention: `sourceCharge` covers the selected function body
-and all complete internal calls. `outerOverhead` covers only the generated entry
-wrapper, outermost call/return and final halt. No instruction belongs to both.
+Use one accounting convention: `sourceCharge` covers the selected lowered
+function body and all complete internal calls. This includes the body's private
+flag initialization and final dispatch, as well as checks crossed after an
+early return. `outerOverhead` covers only the external entry trampoline,
+outermost calling convention and final halt. No instruction belongs to both.
 
 The upper-bound connection must have the useful direction:
 

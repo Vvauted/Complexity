@@ -87,6 +87,8 @@ import Complexity.Computability.Ram.Compiler.Effects
 import Complexity.Computability.Ram.Compiler.Exact
 import Complexity.Computability.Ram.Compiler.Expr.Basic
 import Complexity.Computability.Ram.Compiler.Expr.Memory
+import Complexity.Computability.Ram.Compiler.Language.CodeSize
+import Complexity.Computability.Ram.Compiler.Language.Control
 import Complexity.Computability.Ram.Compiler.Language.Effects
 import Complexity.Computability.Ram.Compiler.Language.Execution
 import Complexity.Computability.Ram.Compiler.Language.Layout

@@ -14,12 +14,13 @@ range proofs and cost bounds. Scalar bindings receive fresh local slots; Unit
 bindings have no fields. Calls flatten the typed arguments and receive the
 actual result fields using the existing calling convention.
 
-Statements are lowered with a normal continuation. A return writes the fixed
-function-result slot and discards that continuation, so a return nested in a
-binding, branch or sequence bypasses the enclosing tail. Falling through a
-source function is not certified as a successful source return by this syntax
-construction. Behavioral transfer is a separate theorem about executions that
-actually return.
+Each statement child is lowered once. An internal return flag records whether
+the function returned; sequence tails and the final normal continuation inspect
+that flag instead of copying the tail into every branch. The flag is a real
+local word and its assignments and tests are emitted by the existing compiler.
+It is separate from the result fields, including a Unit result's empty tuple.
+Falling through a source function is not certified as a successful source
+return. Behavioral transfer concerns executions that actually return.
 
 Function-local bounds are inferred from the generated IR. No instruction cost
 or source execution relation is defined here.
@@ -63,29 +64,46 @@ def lowerReturn (layout : RegisterMap Γ) (resultSlot : Reg) :
   | .bool, atom => .assign resultSlot (atomExpr layout atom .bool)
   | .unit, _ => .skip
 
-/-- Lower a statement with its normal continuation. Source returns discard it.
-Fresh lexical slots can be reused after their scopes finish; caller registers
-are restored by the existing function-call semantics. -/
-def lowerStmt {signatures : List Signature} {Γ : List Ty} {result : Ty}
-    (layout : RegisterMap Γ) (next resultSlot : Reg) :
-    Complexity.Language.Stmt signatures Γ result → Ram.Stmt → Ram.Stmt
-  | .skip, continuation => continuation
-  | .letPrim (τ := τ) value body, continuation =>
+/-- Lower each source child once, with an initialized, separate return flag.
+Calls restore the caller's flag before assigning their fresh result fields.
+This internal lowering requires its register-separation invariants; `lowerStmt`
+chooses the flag and initializes it automatically. -/
+def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    (layout : RegisterMap Γ) (next resultSlot flag : Reg) :
+    Complexity.Language.Stmt signatures Γ result → Ram.Stmt
+  | .skip => .skip
+  | .letPrim (τ := τ) value body =>
       .seq (lowerPrim layout next value)
-        (lowerStmt (RegisterMap.extend layout τ next)
-          (next + fieldCount τ) resultSlot body continuation)
-  | .call fn args body, continuation =>
+        (lowerStmtCore (RegisterMap.extend layout τ next)
+          (next + fieldCount τ) resultSlot flag body)
+  | .call fn args body =>
       .seq (.call (valueRegs signatures[fn].result next) fn.val (argsExprs layout args))
-        (lowerStmt (RegisterMap.extend layout signatures[fn].result next)
-          (next + fieldCount signatures[fn].result) resultSlot body continuation)
-  | .seq first second, continuation =>
-      lowerStmt layout next resultSlot first
-        (lowerStmt layout next resultSlot second continuation)
-  | .ite condition yes no, continuation =>
+        (lowerStmtCore (RegisterMap.extend layout signatures[fn].result next)
+          (next + fieldCount signatures[fn].result) resultSlot flag body)
+  | .seq first second =>
+      .seq (lowerStmtCore layout next resultSlot flag first)
+        (.ite (.var flag) .skip (lowerStmtCore layout next resultSlot flag second))
+  | .ite condition yes no =>
       .ite (atomExpr layout condition .bool)
-        (lowerStmt layout next resultSlot yes continuation)
-        (lowerStmt layout next resultSlot no continuation)
-  | .ret value, _ => lowerReturn layout resultSlot value
+        (lowerStmtCore layout next resultSlot flag yes)
+        (lowerStmtCore layout next resultSlot flag no)
+  | .ret value => .seq (lowerReturn layout resultSlot value) (.assign flag (.const 1))
+
+/-- Reserve the flag above live source slots and actual result fields. Unit
+reserves no result word; the flag itself always performs real control work. -/
+def returnFlag (result : Ty) (next resultSlot : Reg) : Reg :=
+  max next (resultSlot + fieldCount result)
+
+/-- Lower a statement and retain its normal continuation exactly once. The
+fresh flag hides internal return bookkeeping from both the source program and
+the public simulation's register hypotheses. Source returns bypass the tail. -/
+def lowerStmt {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    (layout : RegisterMap Γ) (next resultSlot : Reg)
+    (stmt : Complexity.Language.Stmt signatures Γ result) (continuation : Ram.Stmt) : Ram.Stmt :=
+  let flag := returnFlag result next resultSlot
+  .seq (.assign flag (.const 0))
+    (.seq (lowerStmtCore layout (flag + 1) resultSlot flag stmt)
+      (.ite (.var flag) .skip continuation))
 
 /-- Read precisely the declared result fields after the lowered body finishes. -/
 def resultExprs (τ : Ty) (resultSlot : Reg) : List Expr :=

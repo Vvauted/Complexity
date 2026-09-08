@@ -47,7 +47,9 @@ registers. [Generic proof transfer](##Complexity.Computability.Ram.Compiler.Lang
 connects its source range and call-nesting conditions to the existing executable
 runner. See [the source example](##Examples.Language.Scalar) and its
 [compiled invocation](##Examples.Language.ScalarCompiled). The Lean-like surface,
-source-level cost bounds and size-efficient return lowering remain in development.
+source-level runtime cost bounds remain in development. Private return-flag
+lowering already avoids continuation duplication and has
+[exact code-size formulas](##Complexity.Computability.Ram.Compiler.Language.CodeSize).
 
 Functions can be declared without a `main` and verified through their arguments,
 returned value and shared effects. Start with the

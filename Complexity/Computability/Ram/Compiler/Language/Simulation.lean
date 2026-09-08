@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.Values
+import Complexity.Computability.Ram.Compiler.Language.Control
 import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Verification.Total
 
@@ -11,10 +11,12 @@ import Complexity.Computability.Ram.Verification.Total
 # Simulation of independent scalar source executions
 
 The proof follows a source execution, not an evaluation of its compiled syntax.
-Normal completion runs the supplied continuation with the outer lexical values
-still represented. A source return bypasses that continuation and exposes the
-actual encoded result. Calls execute the selected lowered function and restore
-caller locals using the existing RAM calling convention.
+Normal completion preserves the represented lexical values and a zero return
+flag. A source return writes its actual result and sets the flag; enclosing
+sequences then skip their remaining statements. Calls execute the selected
+lowered function and restore caller locals, including the caller's private
+flag, using the existing RAM calling convention. Each source child appears
+only once in the generated structured code.
 
 The final function theorem combines this generic simulation with an independent
 mathematical source contract. Algorithm-specific register layouts or lowering
@@ -33,6 +35,29 @@ private theorem parameterMap_bodyBound (Γ : List Ty) (result : Ty) :
     simpa only [Nat.zero_add] using (parameterMap_bounded Γ 0 scalar v)
   exact Nat.lt_of_lt_of_le bound (Nat.le_add_right _ _)
 
+/-- Normal completion retains the lexical environment; return exposes its
+actual fields. The private flag distinguishes these outcomes without requiring
+returned executions to preserve source bindings that are no longer live. -/
+def ControlMatches (layout : RegisterMap Γ) (resultSlot flag : Reg) (finish : Env Γ)
+    (control : Control result) (target : Source.State w) : Prop :=
+  match control with
+  | .normal => layout.Matches finish target.regs ∧ target.regs flag = 0
+  | .returned value =>
+      (resultExprs result resultSlot).map target.eval = valueWords w value ∧
+        target.regs flag = 1
+  | .fault _ => False
+
+/-- Finishing a lexical binding drops only its temporary environment entry. -/
+theorem ControlMatches.tail {layout : RegisterMap Γ} {finish : Env (τ :: Γ)}
+    {target : Source.State w} {control : Control result}
+    (matched : ControlMatches (RegisterMap.extend layout τ dst)
+      resultSlot flag finish control target) :
+    ControlMatches layout resultSlot flag finish.tail control target := by
+  cases control with
+  | normal => exact ⟨RegisterMap.Matches.tail matched.1, matched.2⟩
+  | returned _ => exact matched
+  | fault _ => exact matched
+
 namespace RealizedExec
 
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
@@ -40,12 +65,16 @@ variable {w depth heapLimit : Nat} {Γ : List Ty} {result : Ty}
 variable {stmt : Complexity.Language.Stmt signatures Γ result}
 variable {entry finish : Env Γ} {control : Control result}
 
-/-- Generic continuation simulation. Register preservation is needed only when
-normal source completion reaches the continuation; a return supplies the actual
-result fields instead. The target postcondition can therefore be chosen by a
-caller without exposing a per-program register invariant. -/
-theorem lower (execution : RealizedExec program w depth stmt entry finish control)
-    (hw : 0 < w) :
+/-- Initialize the private flag, run the core simulation, and dispatch the
+normal continuation. The same wrapper serves an external statement and the
+callee induction hypothesis, so calls do not require a separate lowering proof. -/
+private theorem lower_of_core (hw : 0 < w)
+    (core : ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
+      layout.Bounded next → layout.Matches entry s.regs → layout.Avoids flag →
+      flag < next → resultSlot + fieldCount result ≤ flag → s.regs flag = 0 →
+      ∃ t, Source.SafeExec (lowerProgram program) heapLimit depth
+        (lowerStmtCore layout next resultSlot flag stmt) s t ∧
+        ControlMatches layout resultSlot flag finish control t) :
     ∀ (layout : RegisterMap Γ) (next resultSlot : Reg) (s : Source.State w)
       (continuation : Ram.Stmt) (post : Source.State w → Prop),
       layout.Bounded next → layout.Matches entry s.regs →
@@ -56,38 +85,90 @@ theorem lower (execution : RealizedExec program w depth stmt entry finish contro
         (resultExprs result resultSlot).map t.eval = valueWords w value → post t) →
       Source.Verification.TotalWP (lowerProgram program) heapLimit depth
         (lowerStmt layout next resultSlot stmt continuation) post s := by
+  intro layout next resultSlot s continuation post bounded matched normal returned
+  let flag := returnFlag result next resultSlot
+  have nextFlag : next ≤ flag := Nat.le_max_left _ _
+  have resultFlag : resultSlot + fieldCount result ≤ flag := Nat.le_max_right _ _
+  have avoids : layout.Avoids flag := by
+    intro τ scalar v
+    exact Nat.ne_of_lt (Nat.lt_of_lt_of_le (bounded scalar v) nextFlag)
+  have bounded' : layout.Bounded (flag + 1) := by
+    intro τ scalar v
+    exact Nat.lt_of_lt_of_le (bounded scalar v) (Nat.le_trans nextFlag (Nat.le_succ flag))
+  have matched' : layout.Matches entry (s.setReg flag 0).regs :=
+    RegisterMap.Matches.setReg_of_ne matched avoids 0
+  obtain ⟨t, body, property⟩ := core layout (flag + 1) resultSlot flag (s.setReg flag 0)
+    bounded' matched' avoids (Nat.lt_succ_self flag) resultFlag
+    (Source.State.setReg_same s flag 0)
+  have flagInit : Source.SafeExec (lowerProgram program) heapLimit depth
+      (.assign flag (.const 0)) s (s.setReg flag 0) := .assign trivial
+  cases control with
+  | normal =>
+      obtain ⟨u, tail, property'⟩ := normal rfl t property.1
+      exact ⟨u, .seq flagInit (.seq body (.iteFalse trivial property.2 tail)), property'⟩
+  | returned value =>
+      have raised : t.eval (.var flag) ≠ 0 := by
+        change t.regs flag ≠ 0
+        rw [property.2]
+        exact Word.one_ne_zero hw
+      exact ⟨t, .seq flagInit (.seq body (.iteTrue trivial raised .skip)),
+        returned value rfl t property.1⟩
+  | fault _ => exact False.elim property
+
+/-- Simulate the linear-size core with its private flag already initialized.
+All register separation belongs to the compiler proof; `lower` chooses these
+slots and discharges these conditions for callers automatically. -/
+theorem lowerCore (execution : RealizedExec program w depth stmt entry finish control)
+    (hw : 0 < w) :
+    ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
+      layout.Bounded next → layout.Matches entry s.regs → layout.Avoids flag →
+      flag < next → resultSlot + fieldCount result ≤ flag → s.regs flag = 0 →
+      ∃ t, Source.SafeExec (lowerProgram program) heapLimit depth
+        (lowerStmtCore layout next resultSlot flag stmt) s t ∧
+        ControlMatches layout resultSlot flag finish control t := by
   induction execution with
   | skip entry =>
-      intro layout next resultSlot s continuation post bounded matched normal returned
-      exact normal rfl s matched
+      intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
+      exact ⟨s, .skip, matched, flagZero⟩
   | @letPrim Γ τ result depth value body entry finish control fits execution ih =>
-      intro layout next resultSlot s continuation post bounded matched normal returned
+      intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
       have first := lowerPrim_safe (program := lowerProgram program)
         (heapLimit := heapLimit) (depth := depth) layout next value entry s hw matched fits
       have matching : RegisterMap.Matches (RegisterMap.extend layout τ next)
           (Env.cons (value.eval entry) entry)
           (s.setRegs (valueRegs τ next) (valueWords w (value.eval entry))).regs :=
         lowerPrim_matches layout next value entry s hw matched fits bounded
+      have flagPreserved :
+          (s.setRegs (valueRegs τ next) (valueWords w (value.eval entry))).regs flag = 0 :=
+        (valueRegs_setRegs_other s τ next flag (valueWords w (value.eval entry))
+          (Nat.ne_of_gt fresh)).trans flagZero
       obtain ⟨t, rest, property⟩ := ih (RegisterMap.extend layout τ next)
-        (next + fieldCount τ) resultSlot _ continuation post
+        (next + fieldCount τ) resultSlot flag _
         (RegisterMap.extend_bounded bounded) matching
-        (fun h t ht => normal h t ht.tail) returned
-      exact ⟨t, .seq first rest, property⟩
+        (RegisterMap.Avoids.extend avoids (Nat.ne_of_gt fresh))
+        (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag flagPreserved
+      exact ⟨t, .seq first rest, ControlMatches.tail property⟩
   | @seqNormal Γ result depth first second entry middle finish control head tail ihHead ihTail =>
-      intro layout next resultSlot s continuation post bounded matched normal returned
-      exact ihHead layout next resultSlot s
-        (lowerStmt layout next resultSlot second continuation) post bounded matched
-        (fun _ t ht => ihTail layout next resultSlot t continuation post bounded ht
-          normal returned)
-        (fun value impossible => nomatch impossible)
+      intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
+      obtain ⟨middleTarget, firstRun, middleMatches⟩ :=
+        ihHead layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
+      obtain ⟨t, secondRun, property⟩ :=
+        ihTail layout next resultSlot flag middleTarget bounded middleMatches.1 avoids
+          fresh resultFlag middleMatches.2
+      exact ⟨t, .seq firstRun (.iteFalse trivial middleMatches.2 secondRun), property⟩
   | seqReturn head ih =>
-      intro layout next resultSlot s continuation post bounded matched normal returned
-      exact ih layout next resultSlot s _ post bounded matched
-        (fun impossible => nomatch impossible) returned
+      intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
+      obtain ⟨t, firstRun, property⟩ :=
+        ih layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
+      have raised : t.eval (.var flag) ≠ 0 := by
+        change t.regs flag ≠ 0
+        rw [property.2]
+        exact Word.one_ne_zero hw
+      exact ⟨t, .seq firstRun (.iteTrue trivial raised .skip), property⟩
   | @iteTrue Γ result depth condition yes no entry finish control test body ih =>
-      intro layout next resultSlot s continuation post bounded matched normal returned
+      intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
       obtain ⟨t, execution, property⟩ :=
-        ih layout next resultSlot s continuation post bounded matched normal returned
+        ih layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
       have fits : valueToNat (condition.eval entry) < 2 ^ w := by
         rw [test]
         exact Nat.one_lt_two_pow (Nat.ne_of_gt hw)
@@ -100,9 +181,9 @@ theorem lower (execution : RealizedExec program w depth stmt entry finish contro
       exact ⟨t, .iteTrue (atomExpr_readsBelow layout condition .bool s) conditionTrue execution,
         property⟩
   | @iteFalse Γ result depth condition yes no entry finish control test body ih =>
-      intro layout next resultSlot s continuation post bounded matched normal returned
+      intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
       obtain ⟨t, execution, property⟩ :=
-        ih layout next resultSlot s continuation post bounded matched normal returned
+        ih layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
       have fits : valueToNat (condition.eval entry) < 2 ^ w := by
         rw [test]
         exact Nat.two_pow_pos w
@@ -112,17 +193,25 @@ theorem lower (execution : RealizedExec program w depth stmt entry finish contro
         simpa only [test, valueToNat] using decoded
       exact ⟨t, .iteFalse (atomExpr_readsBelow layout condition .bool s) conditionFalse execution,
         property⟩
-  | ret value entry fits =>
-      intro layout next resultSlot s continuation post bounded matched normal returned
-      refine ⟨_, lowerReturn_safe layout resultSlot value entry s hw matched
-        (fun _ => fits), ?_⟩
-      exact returned _ rfl _ (resultExprs_setRegs_eval _ resultSlot (value.eval entry) s)
+  | @ret Γ result depth value entry fits =>
+      intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
+      let received := s.setRegs (valueRegs result resultSlot) (valueWords w (value.eval entry))
+      have writeResult := lowerReturn_safe (program := lowerProgram program)
+        (heapLimit := heapLimit) (depth := depth) layout resultSlot value entry s hw matched
+        (fun _ => fits)
+      have raiseFlag : Source.SafeExec (lowerProgram program) heapLimit depth
+          (.assign flag (.const 1)) received (received.setReg flag 1) := .assign trivial
+      refine ⟨received.setReg flag 1, .seq writeResult raiseFlag, ?_⟩
+      refine ⟨?_, Source.State.setReg_same received flag 1⟩
+      rw [resultExprs_setReg_eval result resultSlot flag 1 received
+        (flag_not_mem_valueRegs result resultSlot flag resultFlag)]
+      exact resultExprs_setRegs_eval result resultSlot (value.eval entry) s
   | @callReturn Γ result depth fn args body entry calleeFinish value finish control
       arguments callee execution ihCallee ihBody =>
-      intro layout next resultSlot s continuation post bounded matched normal returned
+      intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
       have encoded := argsExprs_eval layout args entry s hw matched arguments
       obtain ⟨calleeTarget, calleeRun, calleeResult⟩ :=
-        ihCallee (parameterMap signatures[fn].params)
+        lower_of_core hw ihCallee (parameterMap signatures[fn].params)
           (contextSize signatures[fn].params + fieldCount signatures[fn].result)
           (contextSize signatures[fn].params) (s.enter (envWords w (args.eval entry)))
           .skip (fun t => (lowerFunc program fn).results.map t.eval = valueWords w value)
@@ -146,12 +235,36 @@ theorem lower (execution : RealizedExec program w depth stmt entry finish contro
           ((s.restore calleeTarget).setRegs (valueRegs signatures[fn].result next)
             (valueWords w value)).regs :=
         restored.setRegs bounded value (fun _ => callee.returned_fits)
+      have flagPreserved :
+          ((s.restore calleeTarget).setRegs (valueRegs signatures[fn].result next)
+            (valueWords w value)).regs flag = 0 :=
+        (valueRegs_setRegs_other (s.restore calleeTarget) signatures[fn].result next flag
+          (valueWords w value) (Nat.ne_of_gt fresh)).trans flagZero
       obtain ⟨t, rest, property⟩ := ihBody
         (RegisterMap.extend layout signatures[fn].result next)
-        (next + fieldCount signatures[fn].result) resultSlot _ continuation post
+        (next + fieldCount signatures[fn].result) resultSlot flag _
         (RegisterMap.extend_bounded bounded) matching
-        (fun h t ht => normal h t ht.tail) returned
-      exact ⟨t, .seq callRun rest, property⟩
+        (RegisterMap.Avoids.extend avoids (Nat.ne_of_gt fresh))
+        (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag flagPreserved
+      exact ⟨t, .seq callRun rest, ControlMatches.tail property⟩
+
+/-- Generic continuation simulation. Register preservation is needed only when
+normal source completion reaches the continuation; a return supplies the actual
+result fields instead. The target postcondition can therefore be chosen by a
+caller without exposing a per-program register invariant. -/
+theorem lower (execution : RealizedExec program w depth stmt entry finish control)
+    (hw : 0 < w) :
+    ∀ (layout : RegisterMap Γ) (next resultSlot : Reg) (s : Source.State w)
+      (continuation : Ram.Stmt) (post : Source.State w → Prop),
+      layout.Bounded next → layout.Matches entry s.regs →
+      (control = .normal → ∀ t, layout.Matches finish t.regs →
+        Source.Verification.TotalWP (lowerProgram program) heapLimit depth
+          continuation post t) →
+      (∀ value, control = .returned value → ∀ t,
+        (resultExprs result resultSlot).map t.eval = valueWords w value → post t) →
+      Source.Verification.TotalWP (lowerProgram program) heapLimit depth
+        (lowerStmt layout next resultSlot stmt continuation) post s :=
+  lower_of_core hw (execution.lowerCore hw)
 
 /-- A returned source execution lowers to an invocation of the actual generated
 function. Argument fields initialize its compact frame, and its declared result
