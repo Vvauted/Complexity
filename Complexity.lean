@@ -3,20 +3,221 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Ram
+import Complexity.Analysis.Amortized
+import Complexity.Analysis.Asymptotics.Logarithm
+import Complexity.Analysis.Asymptotics.Polynomial
+import Complexity.Analysis.Asymptotics.Sum
+import Complexity.Analysis.Asymptotics.Traversal
+import Complexity.Computability.Ram.Array.Basic
+import Complexity.Computability.Ram.Array.BinaryInsertion
+import Complexity.Computability.Ram.Array.Contents
+import Complexity.Computability.Ram.Array.Contracts
+import Complexity.Computability.Ram.Array.Finset
+import Complexity.Computability.Ram.Array.Footprint
+import Complexity.Computability.Ram.Array.Frame
+import Complexity.Computability.Ram.Array.Indexed
+import Complexity.Computability.Ram.Array.Insertion.Basic
+import Complexity.Computability.Ram.Array.Merge.Basic
+import Complexity.Computability.Ram.Array.Merge.Complexity
+import Complexity.Computability.Ram.Array.Merge.Ordering
+import Complexity.Computability.Ram.Array.MergeSort.Basic
+import Complexity.Computability.Ram.Array.MergeSort.Bounds
+import Complexity.Computability.Ram.Array.MergeSort.Combine
+import Complexity.Computability.Ram.Array.MergeSort.Ordering
+import Complexity.Computability.Ram.Array.MergeSort.Recursion
+import Complexity.Computability.Ram.Array.MergeSort.StateM
+import Complexity.Computability.Ram.Array.MergeSort.Time
+import Complexity.Computability.Ram.Array.MergeSort.Total
+import Complexity.Computability.Ram.Array.MergeSort.Vector
+import Complexity.Computability.Ram.Array.Model
+import Complexity.Computability.Ram.Array.Multiset
+import Complexity.Computability.Ram.Array.Observation
+import Complexity.Computability.Ram.Array.Ordering
+import Complexity.Computability.Ram.Array.Range
+import Complexity.Computability.Ram.Array.Refinement
+import Complexity.Computability.Ram.Array.Search
+import Complexity.Computability.Ram.Array.Slice
+import Complexity.Computability.Ram.Array.Sort.Basic
+import Complexity.Computability.Ram.Array.Sort.Complexity
+import Complexity.Computability.Ram.Array.Traversal
+import Complexity.Computability.Ram.Array.TwoBuffer
+import Complexity.Computability.Ram.Basic
+import Complexity.Computability.Ram.Compiler.ABI.Arguments.Basic
+import Complexity.Computability.Ram.Compiler.ABI.Arguments.Memory
+import Complexity.Computability.Ram.Compiler.ABI.Basic
+import Complexity.Computability.Ram.Compiler.ABI.CallReturn
+import Complexity.Computability.Ram.Compiler.ABI.CallSetup
+import Complexity.Computability.Ram.Compiler.ABI.CodeLength
+import Complexity.Computability.Ram.Compiler.ABI.Frame.Basic
+import Complexity.Computability.Ram.Compiler.ABI.Frame.Lifetime
+import Complexity.Computability.Ram.Compiler.ABI.Frame.Memory
+import Complexity.Computability.Ram.Compiler.ABI.Frame.Prefix
+import Complexity.Computability.Ram.Compiler.ABI.Frame.Stack
+import Complexity.Computability.Ram.Compiler.ABI.Frame.StackBasic
+import Complexity.Computability.Ram.Compiler.ABI.Frame.StackLifetime
+import Complexity.Computability.Ram.Compiler.Atomic
+import Complexity.Computability.Ram.Compiler.Basic
+import Complexity.Computability.Ram.Compiler.Call
+import Complexity.Computability.Ram.Compiler.Control
+import Complexity.Computability.Ram.Compiler.Effects
+import Complexity.Computability.Ram.Compiler.Exact
+import Complexity.Computability.Ram.Compiler.Expr.Basic
+import Complexity.Computability.Ram.Compiler.Expr.Memory
+import Complexity.Computability.Ram.Compiler.Local.ABI.Basic
+import Complexity.Computability.Ram.Compiler.Local.ABI.Lifetime
+import Complexity.Computability.Ram.Compiler.Local.ABI.Memory
+import Complexity.Computability.Ram.Compiler.Local.ABI.Slots
+import Complexity.Computability.Ram.Compiler.Local.ABI.Stack
+import Complexity.Computability.Ram.Compiler.Local.Atomic.Basic
+import Complexity.Computability.Ram.Compiler.Local.Atomic.Memory
+import Complexity.Computability.Ram.Compiler.Local.Basic
+import Complexity.Computability.Ram.Compiler.Local.Call.Basic
+import Complexity.Computability.Ram.Compiler.Local.Call.Memory
+import Complexity.Computability.Ram.Compiler.Local.Call.Return
+import Complexity.Computability.Ram.Compiler.Local.Call.Setup
+import Complexity.Computability.Ram.Compiler.Local.Call.Writes
+import Complexity.Computability.Ram.Compiler.Local.Effects
+import Complexity.Computability.Ram.Compiler.Local.Exact.Basic
+import Complexity.Computability.Ram.Compiler.Local.Exact.Frame
+import Complexity.Computability.Ram.Compiler.Local.Exact.Memory
+import Complexity.Computability.Ram.Compiler.Local.Exact.MemoryBasic
+import Complexity.Computability.Ram.Compiler.Local.Exact.Stack
+import Complexity.Computability.Ram.Compiler.Local.Exact.Writes
+import Complexity.Computability.Ram.Compiler.Local.Exact.WritesBasic
+import Complexity.Computability.Ram.Compiler.Local.Measured.Basic
+import Complexity.Computability.Ram.Compiler.Local.Measured.Deterministic
+import Complexity.Computability.Ram.Compiler.Local.Measured.Memory
+import Complexity.Computability.Ram.Compiler.Local.Measured.Writes
+import Complexity.Computability.Ram.Compiler.Local.Program.Basic
+import Complexity.Computability.Ram.Compiler.Local.Program.Memory
+import Complexity.Computability.Ram.Compiler.Measured
+import Complexity.Computability.Ram.Compiler.Program
+import Complexity.Computability.Ram.Compiler.Simulation
+import Complexity.Computability.Ram.Component
+import Complexity.Computability.Ram.Component.Asymptotics
+import Complexity.Computability.Ram.Component.Basic
+import Complexity.Computability.Ram.Component.Composition
+import Complexity.Computability.Ram.Component.Contract
+import Complexity.Computability.Ram.Component.Memory
+import Complexity.Computability.Ram.Component.Realization
+import Complexity.Computability.Ram.Component.ResourceBound
+import Complexity.Computability.Ram.Component.TimeBound
+import Complexity.Computability.Ram.Executable
+import Complexity.Computability.Ram.Execution.Basic
+import Complexity.Computability.Ram.Execution.Block.Basic
+import Complexity.Computability.Ram.Execution.Block.Prefix
+import Complexity.Computability.Ram.Execution.Fast
+import Complexity.Computability.Ram.Execution.Memory
+import Complexity.Computability.Ram.Execution.MemoryBounds
+import Complexity.Computability.Ram.Execution.Resource
+import Complexity.Computability.Ram.Execution.Runner
+import Complexity.Computability.Ram.Matrix.Copy
+import Complexity.Computability.Ram.Matrix.Frame
+import Complexity.Computability.Ram.Matrix.Memory
+import Complexity.Computability.Ram.Matrix.MergeSort
+import Complexity.Computability.Ram.Matrix.StateM
+import Complexity.Computability.Ram.Matrix.Writeback
+import Complexity.Computability.Ram.Memory.Basic
+import Complexity.Computability.Ram.Memory.Contracts
+import Complexity.Computability.Ram.Memory.Finmap.Basic
+import Complexity.Computability.Ram.Memory.Finmap.Contracts
+import Complexity.Computability.Ram.Memory.Finmap.Frame
+import Complexity.Computability.Ram.Memory.Finmap.Lookup
+import Complexity.Computability.Ram.Memory.Finmap.StateM
+import Complexity.Computability.Ram.Memory.Frame
+import Complexity.Computability.Ram.Memory.Indexed.Basic
+import Complexity.Computability.Ram.Memory.Indexed.Writeback
+import Complexity.Computability.Ram.Memory.StateM
+import Complexity.Computability.Ram.Problem.Asymptotics
+import Complexity.Computability.Ram.Problem.Basic
+import Complexity.Computability.Ram.Problem.Encoding
+import Complexity.Computability.Ram.Reduction
+import Complexity.Computability.Ram.Source.Basic
+import Complexity.Computability.Ram.Source.Expr
+import Complexity.Computability.Ram.Source.Linking
+import Complexity.Computability.Ram.Source.Named.Basic
+import Complexity.Computability.Ram.Source.Named.Declaration
+import Complexity.Computability.Ram.Source.Safe
+import Complexity.Computability.Ram.Source.State
+import Complexity.Computability.Ram.Source.Syntax
+import Complexity.Computability.Ram.Time.Basic
+import Complexity.Computability.Ram.Time.Logarithm
+import Complexity.Computability.Ram.Time.Multivariate
+import Complexity.Computability.Ram.Time.Reparam
+import Complexity.Computability.Ram.Time.Traversal
+import Complexity.Computability.Ram.Verification.Amortized.Basic
+import Complexity.Computability.Ram.Verification.Amortized.Compilation
+import Complexity.Computability.Ram.Verification.Amortized.Potential
+import Complexity.Computability.Ram.Verification.Amortized.Traversal
+import Complexity.Computability.Ram.Verification.Amortized.WP
+import Complexity.Computability.Ram.Verification.Amortized.Worklist
+import Complexity.Computability.Ram.Verification.Basic
+import Complexity.Computability.Ram.Verification.Call
+import Complexity.Computability.Ram.Verification.Composition
+import Complexity.Computability.Ram.Verification.Contract
+import Complexity.Computability.Ram.Verification.Control
+import Complexity.Computability.Ram.Verification.Execution
+import Complexity.Computability.Ram.Verification.Frame
+import Complexity.Computability.Ram.Verification.Logic
+import Complexity.Computability.Ram.Verification.Loop.Basic
+import Complexity.Computability.Ram.Verification.Loop.Logarithmic
+import Complexity.Computability.Ram.Verification.Loop.Sum
+import Complexity.Computability.Ram.Verification.Loop.Traversal
+import Complexity.Computability.Ram.Verification.Model
+import Complexity.Computability.Ram.Verification.Observation
+import Complexity.Computability.Ram.Verification.Recursion.Basic
+import Complexity.Computability.Ram.Verification.Recursion.Time
+import Complexity.Computability.Ram.Verification.Recursion.Total
+import Complexity.Computability.Ram.Verification.Refinement
+import Complexity.Computability.Ram.Verification.Specification
+import Complexity.Computability.Ram.Verification.StateM.Basic
+import Complexity.Computability.Ram.Verification.StateM.Call
+import Complexity.Computability.Ram.Verification.StateM.Composition
+import Complexity.Computability.Ram.Verification.StateM.Frame
+import Complexity.Computability.Ram.Verification.StateM.Model
+import Complexity.Computability.Ram.Verification.StateM.Subtype
+import Complexity.Computability.Ram.Verification.StateM.Traversal
+import Complexity.Computability.Ram.Verification.Time.Basic
+import Complexity.Computability.Ram.Verification.Time.Capacity
+import Complexity.Computability.Ram.Verification.Time.Composition
+import Complexity.Computability.Ram.Verification.Total
+import Complexity.Computability.Ram.Word
+import Complexity.Computability.Recurrence.AkraBazzi
+import Complexity.Computability.Recurrence.Balanced
+import Complexity.Computability.Recurrence.Basic
+import Complexity.Computability.Recurrence.Finite
+import Complexity.Computability.Recurrence.Growth
+import Complexity.Computability.Recurrence.Majorant
+import Complexity.Computability.Recurrence.Rounding
+import Complexity.Computability.Recurrence.Supercritical
+import Complexity.Data.List.InsertIdx
+import Complexity.Data.Nat.Log
+import Complexity.LinearAlgebra.Matrix.Update
+import Complexity.Tactic.Ram.Basic
+import Complexity.Tactic.Ram.Budget
+import Complexity.Tactic.Ram.Contract
+import Complexity.Tactic.Ram.Model
+import Complexity.Tactic.Ram.Total
+import Complexity.Tactic.Ram.Word
 
 /-!
 # Complexity
 
-Verified programming and complexity proofs in Lean.
+Verified programming and complexity proofs in Lean. This umbrella imports the
+reusable library, but not the examples or manual.
 
-This is the public entry point of the Complexity package. The current verified
-implementation and its proof interfaces live in `Ram`; these names identify the
-word-RAM backend and remain available to existing clients. A project-level entry
-point does not by itself make those interfaces independent of a machine model.
+## Organization
 
-The user guide is in `Complexity.Doc`. It distinguishes available programming,
-verification and resource interfaces from the high-level frontend described in
-the [roadmap](https://github.com/Vvauted/Complexity/blob/main/docs/ROADMAP.md).
-Examples can be imported separately through `Ram.Examples`.
+- `Complexity.Analysis`: arithmetic and asymptotic tools, independent of a machine model.
+- `Complexity.Computability.Recurrence`: comparison and solution bounds for recurrences.
+- `Complexity.Computability.Ram`: the word-RAM, source language, compiler and proof interfaces.
+- `Complexity.Data` and `Complexity.LinearAlgebra`: lemmas on ordinary Lean/mathlib objects.
+- `Complexity.Tactic.Ram`: proof automation for the implemented RAM interfaces.
+
+Module paths identify subjects within this library; declaration namespaces identify
+mathematical objects. For example, the RAM declarations live in `Ram`, matrix lemmas
+in `Matrix`, and asymptotic lemmas in `Asymptotics`. There is no separate RAM package.
+
+See [the manual](##docs) for usage and [the examples](##Examples) for checked proof consumers.
+Import a specific topic module to avoid loading the full library.
 -/

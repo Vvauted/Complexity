@@ -15,11 +15,11 @@ layouts and calling conventions belong in reusable implementation proofs, not
 in every algorithm proof. The current word-RAM is an execution backend, not
 the intended limit of the programming interface.
 
-[User guide](https://vvauted.github.io/Complexity/Complexity/Doc.html) ·
+[User guide](https://vvauted.github.io/Complexity/ComplexityDocs.html) ·
 [API reference](https://vvauted.github.io/Complexity/) ·
 [Roadmap](docs/ROADMAP.md)
 
-The guide is maintained in [LeanDoc modules](Complexity/Doc.lean). The website
+The guide is maintained in [LeanDoc modules](docs/ComplexityDocs.lean). The website
 links above are the configured deployment URLs; hosting requires Pages to be enabled.
 
 ## Research direction

@@ -2,8 +2,9 @@
 
 Read `README.md` for the project scope and `docs/ROADMAP.md` for priorities.
 The goal is one high-level program with correctness and complexity proofs that
-compose above the execution model. The current `Ram` library is a verified
-backend and a collection of proof interfaces, not the finished frontend.
+compose above the execution model. `Complexity` is the only main library;
+`Complexity/Computability/Ram/` contains the current verified backend and its
+proof interfaces, not the finished frontend.
 
 - Reuse Lean, Std and mathlib before introducing parallel definitions.
 - Keep correctness and termination independent of a proposed time budget.
@@ -13,7 +14,9 @@ backend and a collection of proof interfaces, not the finished frontend.
   simplifying proofs. No `sorry`, custom axioms or unsafe proof shortcuts in
   completed results. State incomplete interfaces and model limitations honestly.
 - Follow `CONTRIBUTING.md` and mathlib naming and documentation conventions.
-  Usage documentation belongs in `Complexity/Doc/`; keep README project-focused.
+  Usage documentation belongs in `docs/ComplexityDocs/*.lean`; keep README project-focused.
+  Organize reusable modules by subject under `Complexity/`, with examples under
+  `Examples/`. Keep machine-independent mathematics free of RAM imports.
 - Keep reusable results separate from examples. Prefer improving abstraction
   and automation over adding algorithms that repeat low-level bookkeeping.
 - Preserve unrelated work and coordinate file ownership with other contributors.

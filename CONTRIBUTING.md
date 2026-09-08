@@ -2,7 +2,7 @@
 
 Complexity is a research library for verified programming and complexity proofs.
 The [roadmap](docs/ROADMAP.md) describes the intended abstraction boundaries;
-the [LeanDocs guide](https://vvauted.github.io/Complexity/Complexity/Doc.html)
+the [LeanDocs guide](https://vvauted.github.io/Complexity/ComplexityDocs.html)
 describes the currently supported interfaces and development commands.
 
 ## Mathematical and semantic scope
@@ -27,10 +27,22 @@ where compatible with the pinned toolchain. Use descriptive module names, small
 imports, module documentation, docstrings for public definitions, and ordinary
 Lean/mathlib automation. New source files carry the Apache-2.0 license header.
 
-Keep examples separate from reusable interfaces. Documentation belongs in
-`Complexity/Doc/` and declaration comments, not in an expanding README tutorial.
-The current `Ram` namespace identifies the word-RAM implementation; new generic
-infrastructure should not acquire a machine dependency without a reason.
+`Complexity/` is the single reusable library root. Follow the subject hierarchy:
+`Analysis/Asymptotics`, `Computability/Recurrence`, `Computability/Ram`, `Data`,
+`LinearAlgebra` and `Tactic`. Use `Basic.lean` for the basic layer of a topic and
+descriptive names for extensions. Imports should point to the smallest required
+topic, never back to the `Complexity` umbrella from a reusable module.
+
+Module paths and declaration namespaces serve different purposes. RAM-specific
+declarations remain in `Ram`; generic lemmas extend namespaces such as `Nat`,
+`Finset`, `Matrix` and `Asymptotics`. Do not prefix a general mathematical fact
+with `Ram`, or move a machine-dependent theorem into the generic layer.
+
+Keep examples under `Examples/`, separate from reusable interfaces. Put a module
+summary after the imports and document public definitions and important results
+where they are declared. Cross-module explanations belong in `docs/ComplexityDocs/*.lean`;
+doc-gen4 renders both the API and this manual. The README describes the project,
+not its installation commands. The library does not import examples or the manual.
 
 ## Checking a change
 

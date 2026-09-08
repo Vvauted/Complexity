@@ -176,7 +176,7 @@ definitions, reusable lemmas before applications, and explicit dependency
 boundaries. Prefer upstream concepts to parallel local foundations.
 
 The README explains the project, research scope and AI-generated content.
-The [Lean documentation](https://vvauted.github.io/Complexity/Complexity/Doc.html)
+The [Lean documentation](https://vvauted.github.io/Complexity/ComplexityDocs.html)
 contains the user guide; the [API reference](https://vvauted.github.io/Complexity/)
 documents public interfaces. Both should state supported programming
 constructs, proof interfaces and model limitations. Architectural notes should

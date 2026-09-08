@@ -12,13 +12,18 @@ git = "https://github.com/leanprover-community/mathlib4"
 rev = "5352afccd6866369be9de43f5b7ec47203555f44"
 
 [[lean_lib]]
-name = "Ram"
-globs = ["Ram.*"]
-
-[[lean_lib]]
 name = "Complexity"
 globs = ["Complexity.*"]
 
+[[lean_lib]]
+name = "Examples"
+globs = ["Examples.*"]
+
+[[lean_lib]]
+name = "ComplexityDocs"
+srcDir = "docs"
+globs = ["ComplexityDocs.*"]
+
 [[lean_exe]]
 name = "ram-demo"
-root = "Demo"
+root = "Examples.Main"
