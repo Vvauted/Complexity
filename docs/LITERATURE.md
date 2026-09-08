@@ -162,6 +162,15 @@ compose results and costs without unpacking execution trees. Separate theorem
 files alone do not establish CALF's full phase discipline or noninterference
 metatheorem; those claims are not made here.
 
+Section 6's sorting results use a comparison-cost model, not total RAM
+transitions. Our recursive sorting consumer gives a concrete instance of the
+distinction: its correctness may identify the result with mathlib's canonical
+`List.insertionSort`, while its cost theorem must concern the actual merge-sort
+declaration, including descriptor setup, calls and copy-back. Neither a slow
+reference function in a mathematical specification nor equality of sorted
+results changes the implementation's complexity. No parallel-span claim is
+inherited from CALF's separate parallel cost model.
+
 ## 7. Preserve effects when composing cost arguments
 
 Harrison Grodin, Yue Niu, Jonathan Sterling and Robert Harper,

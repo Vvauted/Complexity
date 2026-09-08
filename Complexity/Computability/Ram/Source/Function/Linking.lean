@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Source.Function.Time
+import Complexity.Computability.Ram.Verification.Function.Typed
 
 /-!
 # Callable functions under linking
@@ -64,6 +65,20 @@ theorem FunctionContract.renameCalls {heapLimit depth : Nat} {source target : Pr
     FunctionContract target heapLimit depth (f.renameCalls ρ) P Q := by
   intro args entry hp
   obtain ⟨value, finish, execution, result⟩ := h args entry hp
+  exact ⟨value, finish, execution.renameCalls embedding, result⟩
+
+/-- Linking retains typed arguments, the actual returned value and shared effects.
+Only the implementation's function indices change; no representation is decoded
+again and no new termination or time premise is introduced. -/
+theorem TypedFunctionContract.renameCalls {α : Type*} {heapLimit depth : Nat}
+    {source target : Program} {ρ : Nat → Nat} {f : Func} {kind : DSL.ValueKind}
+    {encodeArgs : α → List (Word w)} {P : α → State w → Prop}
+    {Q : α → State w → kind.Value w → State w → Prop}
+    (h : TypedFunctionContract source heapLimit depth f kind encodeArgs P Q)
+    (embedding : Program.Embeds ρ source target) :
+    TypedFunctionContract target heapLimit depth (f.renameCalls ρ) kind encodeArgs P Q := by
+  intro arg entry pre
+  obtain ⟨value, finish, execution, result⟩ := h arg entry pre
   exact ⟨value, finish, execution.renameCalls embedding, result⟩
 
 /-- Move a separate body-time bound to a different reserved-register boundary. -/

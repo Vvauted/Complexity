@@ -34,8 +34,11 @@ import Complexity.Computability.Ram.Array.Merge.Time
 import Complexity.Computability.Ram.Array.MergeSort.Basic
 import Complexity.Computability.Ram.Array.MergeSort.Bounds
 import Complexity.Computability.Ram.Array.MergeSort.Combine
+import Complexity.Computability.Ram.Array.MergeSort.Function
+import Complexity.Computability.Ram.Array.MergeSort.FunctionTime
 import Complexity.Computability.Ram.Array.MergeSort.Ordering
 import Complexity.Computability.Ram.Array.MergeSort.Recursion
+import Complexity.Computability.Ram.Array.MergeSort.Stages
 import Complexity.Computability.Ram.Array.MergeSort.StateM
 import Complexity.Computability.Ram.Array.MergeSort.Time
 import Complexity.Computability.Ram.Array.MergeSort.Total

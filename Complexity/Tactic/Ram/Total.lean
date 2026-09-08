@@ -84,7 +84,7 @@ macro_rules
 elab_rules : tactic
   | `(tactic| ram_total_vc $xs:ident $s:ident $hs:rcasesPat [$args,*]) =>
       Lean.Elab.Tactic.withMainContext do
-        let target ← Lean.Elab.Tactic.getMainTarget
+        let target ← Lean.Meta.whnfR (← Lean.Elab.Tactic.getMainTarget)
         let rule := Lean.mkCIdent <| if target.isAppOf ``Ram.Source.TypedFunctionContract then
           ``Ram.Source.TypedFunctionContract.of_wp else ``Ram.Source.FunctionContract.of_wp
         Lean.Elab.Tactic.evalTactic (← `(tactic|

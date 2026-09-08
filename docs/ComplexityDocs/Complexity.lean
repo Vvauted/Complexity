@@ -355,6 +355,25 @@ Odd sizes and both base cases are included; `T` need not be monotone.
 The [balanced recurrence module](##Complexity.Computability.Recurrence.Balanced) also exports
 a mathlib Big-O theorem. The existing merge-sort development uses this analysis.
 
+The [typed recursive merge-sort bound](##Complexity.Computability.Ram.Array.MergeSort.FunctionTime)
+is proved separately from the same declaration's budget-free correctness.
+The implementation has two array parameters, genuine `Unit` returns, and actual
+recursive, merge and copy calls. Its nonrecursive taken-branch work is bounded
+by `53 * n + 348`, including descriptor arithmetic and all internal calling
+overhead. `bodyBudget n = Recurrence.balancedBudget 4 227 n` covers this work and
+both unequal children. The induction proves the bound at every sufficient call
+depth rather than assuming a conditional bound is monotone in depth.
+
+In the [actual runtime client](##Examples.Ram.MergeSort),
+`Function.runTotal_steps_le` counts the outer invocation and halt as well:
+`steps ≤ bodyBudget xs.length + 81`. `Function.budget_isBigO` applies the existing
+balanced-budget theorem to that natural-number reserve. Individual fixed-width
+runs still require represented arrays and sufficient code/stack capacity;
+this is not an unrestricted asymptotic theorem for one finite address space.
+The ordinary list sort used in the correctness equation is a specification,
+not the program whose costs are counted. Loading and allocation are outside
+this already-represented-input interface.
+
 Other entry points are [successor and dividing recurrences](##Complexity.Computability.Recurrence.Basic)
 and [finite branching](##Complexity.Computability.Recurrence.Finite).
 For unequal branching, the [Akra–Bazzi bridge](##Complexity.Computability.Recurrence.AkraBazzi)

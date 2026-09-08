@@ -458,8 +458,21 @@ The source arrays may overlap each other, but the destination must be disjoint
 from each and its view must have exactly their combined length. This is existing
 storage, not an allocation. The separate full-run bound is
 `34 * (xs.length + ys.length) + 122`, including the wrapper's actual core call,
-its own calling convention and halt. This callable operation is a foundation
-for the typed recursive-sort migration, not a claim that migration is complete.
+its own calling convention and halt.
+
+The [recursive-sort sample](##Examples.Ram.MergeSort) now also provides
+`Function.sort array scratch heapLimit entry safe hstack`. Its declaration takes
+two array references and returns `Unit`, recursively calls itself on slices,
+then actually calls merge and copy. The returned shared state contains the
+sorted input: `Function.sort_sorted` states the ordinary sorted-permutation
+property, and `Function.sort_stateM` identifies the same contents with the
+existing list-state model. The source and scratch views must be disjoint and
+equally sized. This is a proved function over pre-existing storage, not an
+unimplemented `List → List` loader or an invocation of the host-side sort.
+Its separate `Function.runTotal_steps_le` bounds that actual invocation by
+`Recurrence.balancedBudget 4 227 xs.length + 81`, an `n log n` reserve including
+recursive calls, merge, copy and the outer halt. Correctness and normal
+termination are established without supplying this bound to the program.
 
 Factorial, sum and the [slice sample](##Examples.Ram.ArraySlice) use
 `ram_run_apply theorem [facts]` to connect their function proofs to these executable values.

@@ -66,7 +66,7 @@ macro_rules
             Ram.Tactic.compile_const_length, Ram.Tactic.compile_var_length,
             Ram.Tactic.compile_bin_length, Ram.Tactic.compile_load_length,
             List.map_nil, List.map_cons, List.sum_nil, List.sum_cons,
-            List.length_nil, List.length_cons,
+            List.length_nil, List.length_cons, ite_true, ite_false,
             Finset.sum_add_distrib, Finset.sum_const, Finset.card_range,
             Finset.range_zero, Finset.sum_empty, Nat.nsmul_eq_mul, $args,*] $[$loc]?
          <;> try norm_num only [] $[$loc]?

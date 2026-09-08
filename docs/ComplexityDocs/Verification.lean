@@ -193,6 +193,22 @@ using the operation's actual two-buffer frame. These
 both recursive merge-sort stages without fixing registers, return values or
 equal buffer sizes in the rules. Slice containment, disjointness and the changed
 half's length remain explicit premises.
+The [typed recursive declaration](##Complexity.Computability.Ram.Array.MergeSort.Function)
+uses these rules through its [representation stages](##Complexity.Computability.Ram.Array.MergeSort.Stages).
+Its correctness proof is ordinary induction on list length, generalizing over
+the source and scratch references so that both actual recursive calls reuse
+the same hypothesis. `TypedFunctionContract.renameCalls` transports imported
+operations through the existing embedding; `mono_depth` increases a genuine
+call-depth capacity without introducing a time budget.
+The [executable client](##Examples.Ram.MergeSort) then states sortedness,
+permutation and a contents-level `StateM` equality using existing list theorems.
+Scratch may change and remains represented; those effects are not erased by
+the mathematical contents projection. The three typed correctness calls use
+`TypedFunctionContract.wp_call_restored`: their continuation sees the actual
+shared effects with caller bindings already restored, so subsequent calls need
+no accumulated register-restoration equalities. Ordinary result assignment still
+occurs. The existing independent time-call rule still exposes those equalities;
+the proof experience is not yet uniform across both layers.
 The raw `applyState_eq_of_execution` identifies `(values, finish)`.
 Its `returnState` projection keeps entry registers, takes actual target memory below
 `heapLimit` and entry memory outside it, and retains actual input/output effects.

@@ -21,7 +21,8 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. Uniform and actual element/prefix-dependent cost rules are available, exercised by an adapter around the existing factorial. | The caller still supplies the mathematical update, element domain and accumulator invariant. Mutable or richer-accumulator traversals are not covered by this read-only scalar rule. |
 | [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Its time continuation receives that reference directly and bounds summation using its actual length. | The author still selects the typed input, transports representation facts and justifies the mathematical continuation bound. |
 | [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. | The implementation adapter still proves local-slot separation, initialization and shared-state restoration; the short client theorem does not remove that work. |
-| [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost. Recursive merge sort still needs source-facing two-buffer representation transport, not another wrapper around its old dummy return. |
+| [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost; clients still prove their genuine extent and aliasing conditions. |
+| [Merge sort](../Examples/Ram/MergeSort.lean) | A real two-array `Unit` declaration recursively calls itself, merge and copy. Ordinary length induction composes shared slice/reassembly rules; actual output has a sorted-permutation and `StateM` specification, with a separate full-run `n log n` reserve. A shared typed call rule restores caller bindings without accumulating equalities. | The independent time proof shares representation stages, but repeats their composition and chooses numeric continuation reserves. Its existing call rule still exposes binding-restoration facts. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls, with independently reusable correctness and time proofs. | Clients transport contracts through imports, rebuild representations, unpack register preservation, and choose numeric continuation reserves. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
 
@@ -272,12 +273,12 @@ compose named parameters, results and array representations without restating
 call ASTs or assembling register states. Subsequent list/graph properties use
 upstream mathematics.
 
-Use merge sort's existing `sortState` as the next native-function consumer.
-Typed contract consequence and `Std.Do.Triple` already provide the logical
-ingredients; the existing actual `applyState` bridge provides the runtime one.
-Adding an unused wrapper would not yet shorten its multi-buffer binding proof.
-Copy already has a direct `Unit`/shared-state specification, so do not invent a
-duplicate stateful copy model just to demonstrate another interface.
+Merge sort now connects its existing `sortState` to the actual new function's
+contents using the checked `applyState` bridge. This is a contents-level
+refinement: the RAM function also changes scratch storage, whose final contents
+need not be part of the ordinary list model. Adding another wrapper around this
+equation would not shorten its multi-buffer binding proof. Copy likewise already
+has a direct `Unit`/shared-state specification; no duplicate stateful model is needed.
 
 **Checked merge step:** the named core shares the existing merge loop, and the
 typed `merge(left : array, right : array, destination : array) : Unit` makes a
@@ -298,15 +299,41 @@ fields, permit unequal source/scratch lengths, and retain empty endpoint cases.
 The old recursive adapters still bind their actual operands; this extraction
 does not claim those adapters are already source-facing.
 
-**Next migration, not yet checked:** reuse those rules in a genuine two-array,
-`Unit`-returning recursive declaration, with ordinary length induction whose
-callable hypothesis covers all input-reference pairs. Recursive slices, merge
-and copy must compose their changed representations through actual calls.
-Its `StateM` sorting property and separate recurrence should then reuse that
-same declaration. Derive capacities and constants anew: the typed merge calls
-its core, so the new call chain is deeper than the old inline combine block.
-Do not build another recursion framework or call the old three-parameter sort
-a typed implementation.
+**Checked typed recursive correctness:** the new two-array, `Unit`-returning
+declaration uses ordinary length induction whose callable hypothesis covers all
+input-reference pairs. Public `Stages` rules split the arrays, preserve the
+unchanged half across each actual recursive call, refresh scratch contents, and
+prepare merge. Typed contract relocation reuses the existing import embedding;
+larger call-depth capacities preserve the same budget-free correctness.
+`Function.sort_contents`, `sort_sorted` and `sort_stateM` observe this new
+compiled declaration, not the old three-parameter sort or a host sorting call.
+Empty arrays, odd sizes and duplicates remain in the domain.
+
+**Checked independent cost:** the same declaration has body bound
+`Recurrence.balancedBudget 4 227 n`; its taken branch charges a nonrecursive
+`53 * n + 348`, including descriptor assignments, recursive call blocks, merge
+and copy. `Function.runTotal_steps_le` adds the actual outer invocation and halt,
+giving `bodyBudget n + 81`. The existing balanced recurrence and mathlib `IsBigO`
+prove the reserve's `n log n` growth. This is a bound, not an exact count or a
+comparison-only model. The separate time induction handles every sufficient
+call depth directly; it does not assume conditional time bounds are monotone
+in that capacity. Each fixed-width execution still has real code/stack and
+representation premises, and no allocation or loading cost is claimed.
+
+**Checked call-composition improvement:** `TypedFunctionContract.wp_call_restored`
+passes the actual shared effects with caller bindings already restored. The
+three typed sort calls use it and no longer accumulate register equalities.
+It reuses the existing call rule, retains ordered return-field assignment, and
+does not change the tactic's global rule selection or gather all local facts.
+Mathematical names such as the midpoint stay opaque in continuations; expanding
+them into word-arithmetic expressions everywhere makes list reasoning needlessly
+difficult. The migrated proof avoids that global unfolding.
+
+**Next proof-experience work:** carry this binding improvement into the independent
+typed time continuation when it shortens the same sample, preserving costs and
+effects. Then assess repeated stage composition and numeric continuation reserves
+before adding any broader abstraction. Do not add another recursion framework
+or whole-sample AST recognizer.
 
 **Checked lower-bound step:** search is now a named callable function, with
 ordinary endpoint initialization and a loop-scoped midpoint. Its shared interval

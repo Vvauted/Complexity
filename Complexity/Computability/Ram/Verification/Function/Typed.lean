@@ -131,6 +131,16 @@ theorem consequence
   obtain ⟨value, finish, execution, result⟩ := h arg entry (pre arg entry hp)
   exact ⟨value, finish, execution, post arg entry value finish hp result⟩
 
+/-- More permitted call nesting preserves typed total correctness and the same
+result and effects. This changes a safety capacity, not an execution budget. -/
+theorem mono_depth {depth' : Nat}
+    (h : TypedFunctionContract program heapLimit depth f kind encodeArgs P Q)
+    (hd : depth ≤ depth') :
+    TypedFunctionContract program heapLimit depth' f kind encodeArgs P Q := by
+  intro arg entry pre
+  obtain ⟨value, finish, execution, post⟩ := h arg entry pre
+  exact ⟨value, finish, execution.mono_depth hd, post⟩
+
 /-- Every actual invocation at the same represented input satisfies the typed
 postcondition, independently of its safety capacities. -/
 theorem post {heapLimit' depth' : Nat} {arg : α} {entry finish : State w}
@@ -162,6 +172,27 @@ theorem wp_call {fn callDepth : Nat} {arg : α} {dsts : List Reg} {exprs : List 
     simpa only [argumentValues] using execution
   exact ⟨_, (invocation.call lookup resultCount arguments).mono nesting,
     continuation value finish result execution.regs_eq⟩
+
+/-- Continue a typed call with restored caller bindings visible in the state.
+The continuation retains the actual shared effects and ordered result updates,
+without carrying a separate register-restoration equality into later calls. -/
+theorem wp_call_restored {fn callDepth : Nat} {arg : α} {dsts : List Reg} {exprs : List Expr}
+    {entry : State w} {post : State w → Prop}
+    (h : TypedFunctionContract program heapLimit depth f kind encodeArgs P Q)
+    (lookup : program[fn]? = some f) (resultCount : dsts.length = f.results.length)
+    (arguments : ∀ expr ∈ exprs, expr.ReadsBelow heapLimit entry.regs entry.mem)
+    (argumentValues : exprs.map entry.eval = encodeArgs arg)
+    (pre : P arg entry) (nesting : depth + 1 ≤ callDepth)
+    (continuation : ∀ value shared, Q arg entry value (entry.restore shared) →
+      post ((entry.restore shared).setRegs dsts (kind.encode value))) :
+    Verification.TotalWP program heapLimit callDepth (.call dsts fn exprs) post entry := by
+  apply h.wp_call lookup resultCount arguments argumentValues pre nesting
+  intro value finish result registers
+  have restored : entry.restore finish = finish := by
+    unfold State.restore
+    rw [← registers]
+  simpa only [restored] using
+    continuation value finish (by simpa only [restored] using result)
 
 /-- Typed semantic equations inherit both termination and the mathematical
 postcondition from the same implementation contract. -/

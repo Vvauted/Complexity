@@ -5,8 +5,12 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.MergeSort.StateM
 import Complexity.Computability.Ram.Array.MergeSort.Time
+import Complexity.Computability.Ram.Array.MergeSort.FunctionTime
+import Complexity.Computability.Ram.Array.Model
 import Complexity.Computability.Ram.Array.Observation
+import Complexity.Computability.Ram.Compiler.Local.Function.Typed
 import Complexity.Computability.Ram.Source.Named.Basic
+import Complexity.Tactic.Ram.Run
 
 /-!
 # Recursive merge sort on the actual RAM machine
@@ -16,6 +20,11 @@ array and an equally sized disjoint scratch allocation. It includes the
 initial call and final halt, but does not include an unimplemented loader or
 allocator. Both recursive calls, merging, copying and stack frame work are
 counted by the compiler-backed contracts.
+
+The `Function` namespace below exposes the source-facing two-array declaration,
+its actual executable shared-state result, ordinary list/StateM specifications,
+and a separate full-invocation bound. It does not wrap the older three-argument
+main block above it.
 -/
 
 namespace Ram.Examples.MergeSort
@@ -188,5 +197,122 @@ theorem budget_isBigO :
     Asymptotics.IsBigO Filter.atTop (fun n => ((budget n + 82 : Nat) : ℝ))
       (fun n => (((n + 1) * Nat.clog 2 (n + 1) : Nat) : ℝ)) :=
   Bounds.block_budget_isBigO
+
+namespace Function
+
+open Source.Array Source.Array.MergeSort.Function
+
+/-- Existing disjoint arrays of equal extent. The lists are erased witnesses
+of the preloaded heap, not runtime arguments or an assumed execution. -/
+def Safe (array scratch : ArrayRef 32) (heapLimit : Nat) (entry : Source.State 32) : Prop :=
+  ∃ xs workspace, workspace.length = xs.length ∧
+    array.Rep heapLimit xs entry ∧ scratch.Rep heapLimit workspace entry ∧
+    ArraysDisjoint array.base xs.length scratch.base xs.length
+
+variable {array scratch : ArrayRef 32} {heapLimit : Nat} {entry : Source.State 32}
+
+/-- Budget-free recursive correctness supplies termination of the actual call.
+Capacity includes the nested merge helper and the outer function frame. -/
+theorem halts (safe : Safe array scratch heapLimit entry)
+    (hstack : heapLimit + (Nat.clog 2 array.length.toNat + 2) *
+      ABI.frameSize sortFunctions.registers < 2 ^ 32) :
+    LocalCompiler.Function.Halts sortFunctions.registers sortFunctions.program
+      sortFunctions.functionIndex.sort sortFunctions.function.sort.params heapLimit
+      (sortFunctions.arguments.sort array scratch) entry := by
+  obtain ⟨xs, workspace, length, sourceArray, scratchArray, disjoint⟩ := safe
+  ram_run_apply (LocalCompiler.Function.halts_of_typedContract
+    (arg := (array, scratch))
+    (contract := function_contract (by decide : 2 ≤ 32) length disjoint)
+    (pre := ⟨rfl, sourceArray, scratchArray⟩)) [sortFunctions.function_lookup.sort]
+  simpa only [sourceArray.1, Nat.add_assoc] using hstack
+
+/-- Run the recursive two-array function and return its actual shared state.
+No time bound, mathematical answer, loader or host-side recursive sort is used. -/
+def sort (array scratch : ArrayRef 32) (heapLimit : Nat) (entry : Source.State 32)
+    (safe : Safe array scratch heapLimit entry)
+    (hstack : heapLimit + (Nat.clog 2 array.length.toNat + 2) *
+      ABI.frameSize sortFunctions.registers < 2 ^ 32) : Source.State 32 :=
+  (sortFunctions.applyState.sort array scratch heapLimit entry (halts safe hstack)).2
+
+variable (safe : Safe array scratch heapLimit entry)
+variable (hstack : heapLimit + (Nat.clog 2 array.length.toNat + 2) *
+  ABI.frameSize sortFunctions.registers < 2 ^ 32)
+variable {xs workspace : List (Word 32)} (length : workspace.length = xs.length)
+variable (sourceArray : array.Rep heapLimit xs entry)
+variable (scratchArray : scratch.Rep heapLimit workspace entry)
+variable (disjoint : ArraysDisjoint array.base xs.length scratch.base xs.length)
+
+include length sourceArray scratchArray disjoint
+
+/-- The mathematical sorted result, scratch extent and frame describe the
+same state returned by ordinary application of the compiled function. -/
+theorem sort_spec :
+    let finish := sort array scratch heapLimit entry safe hstack
+    array.Rep heapLimit (sorted xs) finish ∧
+      (∃ now, scratch.Rep heapLimit now finish) ∧
+      TwoBufferFrame array.base xs.length scratch.base xs.length entry.mem finish.mem ∧
+      finish.input = entry.input ∧ finish.outputRev = entry.outputRev := by
+  have post := by
+    ram_run_apply (LocalCompiler.Function.applyStateTyped_spec
+      (arg := (array, scratch)) sortFunctions.results_length.sort (halts safe hstack)
+      (contract := function_contract (by decide : 2 ≤ 32) length disjoint)
+      (pre := ⟨rfl, sourceArray, scratchArray⟩)) [sortFunctions.function_lookup.sort]
+    simpa only [sourceArray.1, Nat.add_assoc] using hstack
+  simpa only [sort, sortFunctions.applyState.sort,
+    max_eq_right (by decide : 1 ≤ sortFunctions.registers)] using post
+
+/-- Actual source-array contents equal the ordinary canonical list sort. -/
+theorem sort_contents :
+    arrayContents (sort array scratch heapLimit entry safe hstack).mem
+      array.base array.length.toNat = sorted xs := by
+  have represented := (sort_spec safe hstack length sourceArray scratchArray disjoint).1
+  rw [represented.1]
+  exact represented.2.1.contents_eq
+
+/-- The executable result is a sorted permutation by the existing list theorem,
+without reopening recursion, word bindings or the RAM calling convention. -/
+theorem sort_sorted :
+    SortedPerm xs (arrayContents (sort array scratch heapLimit entry safe hstack).mem
+      array.base array.length.toNat) := by
+  rw [sort_contents safe hstack length sourceArray scratchArray disjoint]
+  exact sorted_spec xs
+
+/-- The same observed contents implement the existing ordinary `StateM` model.
+The model is a specification; it is never called by the RAM implementation. -/
+theorem sort_stateM :
+    arrayContents (sort array scratch heapLimit entry safe hstack).mem
+      array.base array.length.toNat = ((sortState (w := 32)).run xs).2 :=
+  sort_contents safe hstack length sourceArray scratchArray disjoint
+
+/-- The same actual invocation counts recursive calls, descriptor arithmetic,
+merge, copy, the outer frame and halt. Storage is already represented. -/
+theorem runTotal_steps_le :
+    (sortFunctions.runTotal.sort array scratch heapLimit entry
+      (halts safe hstack)).steps ≤ bodyBudget xs.length + 81 := by
+  obtain ⟨value, finish, execution, _⟩ := function_contract
+    (by decide : 2 ≤ 32) length disjoint (array, scratch) entry
+      ⟨rfl, sourceArray, scratchArray⟩
+  ram_run_bound (LocalCompiler.Function.runTotal_steps_le_of_timeBound
+    (halts safe hstack) (execution := execution)
+    (time := function_timeBound (by decide : 2 ≤ 32) length disjoint)
+    (pre := ⟨rfl, sourceArray, scratchArray⟩))
+    [sortFunctions.function_lookup.sort, sortFunctions.result_eq.sort]
+  simpa only [sourceArray.1, Nat.add_assoc] using hstack
+
+omit length sourceArray scratchArray disjoint in
+/-- An asymptotic theorem for the natural-number reserve. Each fixed-width run
+still requires its represented input and genuine code/stack capacity. -/
+theorem budget_isBigO :
+    Asymptotics.IsBigO Filter.atTop (fun n => ((bodyBudget n + 81 : Nat) : ℝ))
+      (fun n => (((n + 1) * Nat.clog 2 (n + 1) : Nat) : ℝ)) := by
+  refine (Asymptotics.IsBigO.of_norm_le (g := fun n =>
+    (Recurrence.balancedBudget 85 227 n : ℝ)) ?_).trans
+      (Recurrence.balancedBudget_isBigO 85 227)
+  intro n
+  simpa only [Real.norm_natCast] using
+    (Nat.cast_le.mpr (Recurrence.balancedBudget_add_const_le 4 227 81 n) :
+      ((bodyBudget n + 81 : Nat) : ℝ) ≤ (Recurrence.balancedBudget 85 227 n : ℝ))
+
+end Function
 
 end Ram.Examples.MergeSort
