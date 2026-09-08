@@ -25,14 +25,8 @@ theorem retreatLocals_resultReg (control locals : Nat) (s : State w) (i : Nat) :
     (execBlock (retreatLocals control locals) s).regs (resultReg control i) =
       s.regs (resultReg control i) := by
   apply retreatLocals_regs
-  · exact Nat.ne_of_gt (lt_resultReg control i)
-  · cases i with
-    | zero =>
-        change control + 1 ≠ control + 4
-        omega
-    | succ i =>
-        change control + 5 + i ≠ control + 4
-        omega
+  · exact resultReg_ne_of_lt control i (sp control) (by simp [sp]) (by simp [sp, rv])
+  · exact resultReg_ne_of_lt control i (tmp control) (by simp [tmp]) (by simp [tmp, rv])
 
 /-- Restoring the caller's locals leaves the return-field bank unchanged. -/
 theorem restoreLocals_resultReg {control locals : Nat} (s : State w)
@@ -85,47 +79,16 @@ theorem returnPrefixResultsLocals_correct {control locals heapLimit : Nat}
     hb.preserved (sp control) (by simp [sp]) (by simp [sp, rv])
   have hrSP : retreated.regs (sp control) = baseWord :=
     retreatLocals_sp control locals buffered baseWord (by rw [hbSP]; exact hsp) hfit
-  have hrValues : ∀ (i : Nat) (hi : i < results.length),
-      retreated.regs (resultReg control i) = sourceCallee.eval results[i] := by
-    intro i hi
-    exact (retreatLocals_resultReg control locals buffered i).trans
-      (hb.source_values hmatch hbounded hreads i hi)
-  have hrMem : retreated.mem = start.mem := hb.memory
   have haSP : addressed.regs (sp control) = baseWord := by
     have hne : sp control ≠ ra control := by simp [sp, ra]
     simpa only [addressed, execInstr, State.next_regs, State.setReg_ne _ _ _ _ hne] using hrSP
-  have haValues : ∀ (i : Nat) (hi : i < results.length),
-      addressed.regs (resultReg control i) = sourceCallee.eval results[i] := by
-    intro i hi
-    have hne : resultReg control i ≠ ra control := by
-      cases i with
-      | zero =>
-          change control + 1 ≠ control + 2
-          omega
-      | succ i =>
-          change control + 5 + i ≠ control + 2
-          omega
-    simpa only [addressed, execInstr, State.next_regs, State.setReg_ne _ _ _ _ hne] using
-      hrValues i hi
   have haReturn : addressed.regs (ra control) = returnWord := by
     simp only [addressed, execInstr, State.next_regs, State.setReg_same]
-    rw [hrSP, hrMem]
-    exact hreturn
-  have haMem : addressed.mem = start.mem := hb.memory
-  have haInput : addressed.input = start.input := hb.input
-  have haOutput : addressed.outputRev = start.outputRev := hb.output
-  have haStatus : addressed.status = start.status := hb.status
-  have haAbove : RegsPreservedAbove control locals start addressed := by
-    intro r _ hhi
-    have hrSP : r ≠ sp control := by unfold sp; omega
-    have hrTmp : r ≠ tmp control := by unfold tmp; omega
-    have hrRA : r ≠ ra control := by unfold ra; omega
-    have hr : retreated.regs r = start.regs r :=
-      (retreatLocals_regs control locals buffered r hrSP hrTmp).trans (hb.locals r hhi)
-    simpa only [addressed, execInstr, State.next_regs, State.setReg_ne _ _ _ _ hrRA] using hr
+    rw [hrSP]
+    exact (congrFun hb.memory baseWord).trans hreturn
   have haFrame : FrameSaved locals (addressed.regs (sp control)) savedRegs addressed.mem := by
-    rw [haSP, haMem]
-    exact hframe
+    rw [haSP]
+    exact hframe.congr (fun _ _ => congrFun hb.memory _)
   have hfinish : execBlock (returnPrefixResultsLocals control locals results) start =
       execBlock (restoreLocals control locals) addressed := by
     simp only [returnPrefixResultsLocals, execBlock_append, execBlock_cons, execBlock_nil]
@@ -139,22 +102,28 @@ theorem returnPrefixResultsLocals_correct {control locals heapLimit : Nat}
   · intro r hlo hhi
     rw [hfinish]
     have hrAddr : r ≠ addr control := by unfold addr; omega
+    have hrSP : r ≠ sp control := by unfold sp; omega
     have hrTmp : r ≠ tmp control := by unfold tmp; omega
-    exact (restoreLocals_regs control locals addressed r hlo hrAddr hrTmp).trans
-      (haAbove r hlo hhi)
+    have hrRA : r ≠ ra control := by unfold ra; omega
+    apply (restoreLocals_regs control locals addressed r hlo hrAddr hrTmp).trans
+    simpa only [addressed, execInstr, State.next_regs, State.setReg_ne _ _ _ _ hrRA] using
+      (retreatLocals_regs control locals buffered r hrSP hrTmp).trans (hb.locals r hhi)
   · intro i hi
-    rw [hfinish]
-    exact (restoreLocals_resultReg addressed hlocals i).trans (haValues i hi)
+    rw [hfinish, restoreLocals_resultReg addressed hlocals i]
+    have hne := resultReg_ne_of_lt control i (ra control) (by simp [ra]) (by simp [ra, rv])
+    simpa only [addressed, execInstr, State.next_regs, State.setReg_ne _ _ _ _ hne] using
+      (retreatLocals_resultReg control locals buffered i).trans
+        (hb.source_values hmatch hbounded hreads i hi)
   · rw [hfinish]
     exact (restoreLocals_ra addressed hlocals).trans haReturn
   · rw [hfinish]
-    exact (restoreLocals_mem control locals addressed).trans haMem
+    exact (restoreLocals_mem control locals addressed).trans hb.memory
   · rw [hfinish]
-    exact (restoreLocals_input control locals addressed).trans haInput
+    exact (restoreLocals_input control locals addressed).trans hb.input
   · rw [hfinish]
-    exact (restoreLocals_output control locals addressed).trans haOutput
+    exact (restoreLocals_output control locals addressed).trans hb.output
   · rw [hfinish]
-    exact (restoreLocals_status control locals addressed).trans haStatus
+    exact (restoreLocals_status control locals addressed).trans hb.status
 
 /-- The restored address controls the same indirect-jump instruction for any
 return arity, including an empty result list. -/

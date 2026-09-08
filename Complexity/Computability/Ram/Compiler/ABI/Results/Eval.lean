@@ -18,6 +18,15 @@ compiler; the exact execution count is the emitted instruction-list length.
 
 namespace Ram.ABI
 
+/-- A buffered field cannot alias a local or control register below the
+argument bank, except for the designated scalar return register. -/
+theorem resultReg_ne_of_lt (n i : Nat) (r : Reg) (below : r < n + 5)
+    (notReturn : r ≠ rv n) : resultReg n i ≠ r := by
+  cases i with
+  | zero => exact notReturn.symm
+  | succ i =>
+    exact Nat.ne_of_gt (Nat.lt_of_lt_of_le below (Nat.le_add_right (n + 5) i))
+
 /-- Return values buffered outside the source frame, with its local and shared
 state preserved. The scalar return register is deliberately excluded from the
 preserved control registers. -/
