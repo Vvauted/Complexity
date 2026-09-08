@@ -13,6 +13,7 @@ import Examples.Ram.FunctionCompositionTime
 import Examples.Ram.ArraySum
 import Examples.Ram.ArrayCount
 import Examples.Ram.ArrayFold
+import Examples.Ram.ArrayMap
 import Examples.Ram.ArraySlice
 import Examples.Ram.ArraySliceProperties
 import Examples.Ram.BinarySearch

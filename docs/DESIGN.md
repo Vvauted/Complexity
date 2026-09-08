@@ -248,8 +248,19 @@ totality. It reuses the existing linear-loop rule and includes the load, both
 cursor updates, guards and setup. The general rules take three register roles,
 not a dummy scalar accumulator. They do not yet provide a declaration-level
 mathematical adapter for arbitrary mutable bodies or an early-exit construct.
-Array contents are read live; an in-place map proof must justify the unread
-elements it relies on. A scalar fold consumer does not establish that interface.
+The in-place map operation uses that rule with an updated-prefix/unread-suffix
+invariant. Its real helper call and indexed store produce `List.map` contents,
+preserving outside-array memory and I/O. Only the original elements need the
+helper's budget-free contract; the separate uniform bound covers completed
+one-word helper invocations. No snapshot, runtime callback or heap loader is
+introduced. The named square-map instance is definitionally the same operation
+with its helper index resolved by the existing static import.
+
+That focused operation is not a general named-invariant elaborator. The source
+template still fixes its private local layout internally, and arbitrary mutable
+loop proofs remain source-state proofs. An effectful helper that changes other
+data requires a stronger ordered representation relation; pure `List.map` does
+not justify discarding those effects or transferring a cost between loop orders.
 
 Local binding adapters can use `State.LocalFrame` to transport a collection of
 unchanged parameters through those actual state updates. Its register relation

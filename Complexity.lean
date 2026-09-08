@@ -26,6 +26,10 @@ import Complexity.Computability.Ram.Array.ForIn.Function
 import Complexity.Computability.Ram.Array.Sum
 import Complexity.Computability.Ram.Array.Indexed
 import Complexity.Computability.Ram.Array.Insertion.Basic
+import Complexity.Computability.Ram.Array.Map.Basic
+import Complexity.Computability.Ram.Array.Map.Correctness
+import Complexity.Computability.Ram.Array.Map.Function
+import Complexity.Computability.Ram.Array.Map.Time
 import Complexity.Computability.Ram.Array.Merge.Basic
 import Complexity.Computability.Ram.Array.Merge.Complexity
 import Complexity.Computability.Ram.Array.Merge.Function

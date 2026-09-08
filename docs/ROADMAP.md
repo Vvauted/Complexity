@@ -19,6 +19,7 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | --- | --- | --- |
 | [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves correctness and a single exact-cost recurrence. The upper bound and measured endpoint reuse these proofs; executable values rewrite to mathlib factorial. | Publishing the runtime equation still assembles source observations and justified word/stack conditions; general state-dependent exact composition needs more rules. |
 | [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. Uniform and actual element/prefix-dependent cost rules are available, exercised by an adapter around the existing factorial. | The caller still supplies the mathematical update, element domain and accumulator invariant. Mutable or richer-accumulator traversals are not covered by this read-only scalar rule. |
+| [ArrayMap](../Examples/Ram/ArrayMap.lean) | A named mutable traversal calls the existing square helper and writes back its results. The reusable map contract yields ordinary `List.map` contents and an outside-array frame; independent costs cover the same compiled invocation. | The operation hides its fixed private local layout, but arbitrary mutable loop proofs still use explicit source-state invariants. This is not general named-invariant automation or runtime higher-order application. |
 | [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Its time continuation receives that reference directly and bounds summation using its actual length. | The author still selects the typed input, transports representation facts and justifies the mathematical continuation bound. |
 | [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. Shared-state restoration uses a common rule. | The implementation adapter still proves local-slot separation and initialization; the short client theorem does not remove that work. |
 | [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost; clients still prove their genuine extent and aliasing conditions. |
@@ -233,14 +234,25 @@ existing while rules and the actual load/setup/cursor instructions. The helper-c
 traversal uses the common cost rule instead of maintaining its own execution
 decomposition; its original domain and bounds are unchanged.
 
-This is not yet the final named-variable proof interface. Scalar sum/count
-clients keep their simpler existing rules. They do not demonstrate heap mutation
-or several accumulators. The next general-body consumer should be an actual
-reusable operation, such as in-place array mapping, with ordinary `List.map`
-correctness and independent compiled cost. Reuse `ArrayAt.setMem`, array frames
-and upstream list identities; prove preservation of the unread part rather than
-pretending that live reads observe an entry snapshot. Do not rewrite the existing
-copy implementation merely to force it into a different loop form.
+**Mutable operation:** in-place map now uses the general loop rule with a
+transformed-prefix/original-suffix invariant. It reuses `ArrayAt.setMem`, array
+frames and upstream list identities through the existing copy-prefix bridge.
+The actual named square-map client imports the existing helper and publishes
+`List.map` contents from its compiled `applyState`. The independent body bound
+is `46 * n + 8`, and the full invocation adds its real outer overhead to give
+`46 * n + 71`. Correctness needs the helper only on original input elements;
+the separate uniform conditional cost premise covers one-word helper inputs.
+Empty arrays and an unused pointer wrapping at the allocation endpoint remain
+admitted. No changed-heap snapshot or uncharged host callback is assumed.
+
+This is still not the final named-variable proof interface. Map is a verified
+operation with a fixed internal layout, connected to its named instance by
+definitional equality. Its reusable proof does not recognize arbitrary loop
+programs. Scalar sum/count clients keep their simpler rules; the existing copy
+program is not rewritten into foreach merely for uniformity. The next proof
+experience step should remove local-layout work for genuinely different bodies,
+not grow a catalog of exact sample-body adapters. Runtime higher-order functions
+and input-dependent mutable traversal costs are not established by this map.
 
 **Remaining work:**
 

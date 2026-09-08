@@ -227,6 +227,14 @@ also propagate the changed representation in execution order. Standard `List`
 identities can simplify the mathematical result, but cannot alone justify
 reordering calls or transporting their costs.
 
+Rechecking Example 3.4 for in-place map gives a concrete boundary: its concise
+linear bound assumes a pure behavioral helper with a uniform cost bound; the
+uninstrumented map itself carries no traversal charge in that example. Our
+application is a forward, statically linked traversal whose real loads, stores,
+index updates and calls are charged. Its correctness contract preserves helper
+shared state and proves the unread suffix remains valid. We do not inherit the
+paper's higher-order language or identify its instrumented cost with RAM steps.
+
 ## Reading discipline
 
 Use the roadmap's current sample bottleneck to select a small part of a primary

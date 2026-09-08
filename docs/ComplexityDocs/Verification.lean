@@ -391,6 +391,45 @@ needed for this conditional result. The existing helper-call traversal reuses
 this rule; its separate prefix-dependent bounds remain available.
 See [general foreach costs](##Complexity.Computability.Ram.Verification.Time.ForIn).
 
+The [in-place map operation](##Complexity.Computability.Ram.Array.Map.Function)
+is a mutable consumer of these rules. Its typed contract takes a borrowed array,
+returns `Unit`, and produces a representation of `xs.map transform` together
+with the outside-array frame and preserved I/O. The helper is a statically linked
+source function, proved to implement `transform` on the original list elements.
+The mathematical function is only its specification, not a runtime callback.
+
+The [map client](##Examples.Ram.ArrayMap) uses the existing DSL:
+
+```text
+fn mapSquares(xs : array) : Unit {
+  let mut i := 0;
+  for x in xs {
+    let y ← call Scalar.square(x);
+    xs[i] := y;
+    i += 1;
+  }
+  return;
+}
+```
+
+Its correctness proof reuses the imported square contract and the common map
+theorem. The operation proof maintains the ordinary updated-prefix/unread-suffix
+list, reuses the existing array store/frame rules, and reads each original element
+before replacing it. Empty arrays are admitted; an unused final pointer may wrap
+at the address-space endpoint. The actual descriptor length remains word-sized.
+
+The independent map bound is `(C + 23) * length + 8`, where `C` is the helper's
+proved body bound plus its actual compiled calling overhead. It requires a
+uniform conditional helper bound on one-word inputs, not helper totality.
+For this imported square, the full compiled invocation has bound
+`46 * xs.length + 71`; `applyState_contents` observes `List.map` from the same run.
+The map changes memory, so a returned `Unit` alone is not its mathematical output.
+No host list loading or allocation is included.
+
+This is a reusable operation, not a general named-invariant elaborator or runtime
+higher-order function. Arbitrary mutable bodies still use the explicit invariant
+rule; input-dependent helper costs need a corresponding ordered cost proof.
+
 For local binding adapters, `Ram.Source.State.LocalFrame writes before after`
 packages unchanged memory and I/O with mathlib's
 `Set.EqOn after.regs before.regs writesᶜ`. Its assignment and composition rules
