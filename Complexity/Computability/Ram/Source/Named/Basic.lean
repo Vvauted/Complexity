@@ -268,6 +268,7 @@ private structure LoweredFunctions where
   declarations : Array (Lean.TSyntax `term)
   parsed : Array FunctionDeclaration
   scopes : Array LocalScope
+  proofSites : Array (Array ProofSite)
   registers : Nat
   resolveFunction : FunctionResolver
   signatures : Array FunctionSignature
@@ -298,6 +299,7 @@ private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl))
     | none => Lean.Macro.throwErrorAt name "unknown RAM function name"
   let mut declarations : Array (Lean.TSyntax `term) := #[]
   let mut scopes := #[]
+  let mut proofSites := #[]
   let mut registers := 0
   for decl in parsed do
     let f ← lowerFunctionWithScope Bool.true resolveFunction decl.params decl.locals
@@ -305,8 +307,9 @@ private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl))
     let label := Lean.Syntax.mkStrLit decl.name.getId.toString
     declarations := declarations.push (← `(($label:str, $(f.term))))
     scopes := scopes.push f.scope
+    proofSites := proofSites.push f.proofSites
     registers := max registers f.registers
-  return ⟨declarations, parsed, scopes, registers, resolveFunction, signatures⟩
+  return ⟨declarations, parsed, scopes, proofSites, registers, resolveFunction, signatures⟩
 
 /-- One named lowering, retaining the bindings needed by `ram_def`. -/
 structure LoweredNamed where
@@ -315,7 +318,9 @@ structure LoweredNamed where
   parsed : Array FunctionDeclaration
   functions : Array (Lean.TSyntax `term)
   functionScopes : Array LocalScope
+  functionProofSites : Array (Array ProofSite)
   mainScope : LocalScope
+  mainProofSites : Array ProofSite
   imports : Array FunctionImport
   prefixes : Array (Lean.TSyntax `term)
   signatures : Array FunctionSignature
@@ -357,7 +362,9 @@ def lowerNamed (source : Lean.TSyntax `term) (imports : Array FunctionImport := 
     parsed := functions.parsed
     functions := declarations
     functionScopes := functions.scopes
+    functionProofSites := functions.proofSites
     mainScope := #[]
+    mainProofSites := #[]
     imports := imports
     prefixes := prefixes
     signatures := functions.signatures
@@ -376,7 +383,11 @@ def lowerNamed (source : Lean.TSyntax `term) (imports : Array FunctionImport := 
           `(Ram.Named.Bundle.mk $registerCount [$declarations,*] $(main.term))
         else `(($collection).withMain $registerCount $(main.term))
       let type ← `(Ram.Named.Bundle)
-      return { base with type := type, term := term, mainScope := main.scope }
+      return { base with
+        type := type
+        term := term
+        mainScope := main.scope
+        mainProofSites := main.proofSites }
 
 macro_rules
   | `(ram_functions% { $imports:ramInclude* $decls:ramDecl* }) => do

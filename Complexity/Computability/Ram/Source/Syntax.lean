@@ -409,13 +409,45 @@ partial def lowerBlock (scope : LocalScope) (strict : Bool) (function : Function
   return result
 end
 
+/-- An internal lexical location within one lowered function or main block. -/
+abbrev ProofPath := List Nat
+
+/-- A lexical position recorded by the same traversal that emits the executable code.
+
+A source statement has `source = some stmt`. A block anchor has `source = none`
+and `synthetic = false`; a compiler-generated fragment has `source = none` and
+`synthetic = true`. Block anchors retain even an empty body's lexical scope.
+`emitted` contains the actual terms already produced by lowering, not code
+reconstructed from source names. `children` names immediate nested positions.
+Parent and child fragments overlap: this is a source map, not an execution
+trace to concatenate or a traversal whose entries can all be charged once.
+
+The root block has path `[]`. Its source statements append their zero-based
+position. A control statement's bodies append `0` (and `1` for an else body).
+An indexed foreach additionally uses child `1` for its generated initialization.
+A generated block tail follows the last source statement. Paths are internal
+source locations, not register numbers or a stable user-facing naming scheme. -/
+structure ProofSite where
+  path : ProofPath
+  source : Option (Lean.TSyntax `ramStmt) := none
+  beforeScope : LocalScope
+  afterScope : LocalScope
+  beforeImmutable : Array Lean.Name
+  afterImmutable : Array Lean.Name
+  emitted : Array (Lean.TSyntax `term)
+  children : Array ProofPath := #[]
+  synthetic : Bool := false
+  deriving Inhabited
+
 /-- A lowered lexical block and the bindings visible after it. Branch-local
-bindings are discarded on exit, but their allocated slots remain in the frame. -/
+bindings are discarded on exit, but their allocated slots remain in the frame.
+The flat `proofSites` array retains their lexical positions separately from code. -/
 structure LoweredBlock where
   term : Lean.TSyntax `term
   scope : LocalScope
   immutable : Array Lean.Name
   nextRegister : Nat
+  proofSites : Array ProofSite
   deriving Inhabited
 
 private def checkMutable (scope : LocalScope) (immutable : Array Lean.Name)
@@ -436,12 +468,24 @@ tail joins the same right-associated statement fold without resolving names agai
 partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
     (nextRegister : Nat) (strict : Bool) (function : FunctionResolver)
     (body : Array (Lean.TSyntax `ramStmt))
-    (tail : Option (Lean.TSyntax `term) := none) : Lean.MacroM LoweredBlock := do
+    (tail : Option (Lean.TSyntax `term) := none)
+    (path : ProofPath := []) : Lean.MacroM LoweredBlock := do
+  let initialScope := scope
+  let initialImmutable := immutable
   let mut scope := scope
   let mut immutable := immutable
   let mut nextRegister := nextRegister
   let mut statements : Array (Lean.TSyntax `term) := #[]
-  for stmt in body do
+  let mut proofSites : Array ProofSite := #[]
+  let mut children : Array ProofPath := #[]
+  for index in [:body.size] do
+    let stmt := body[index]!
+    let sitePath := path ++ [index]
+    let beforeScope := scope
+    let beforeImmutable := immutable
+    let emittedStart := statements.size
+    let mut nestedSites : Array ProofSite := #[]
+    let mut nestedPaths : Array ProofPath := #[]
     let lowerCall (fn : Lean.TSyntax `ident) (args : Array (Lean.TSyntax `ramExpr)) := do
       let (fn, args, kind) ← function scope strict fn args
       let destinations ← (List.range kind.width).toArray.mapM fun i =>
@@ -507,16 +551,30 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
               nextRegister := nextRegister + kind.width
               pure invocation
           | `(ramStmt| if $condition:ramExpr { $yes:ramStmt* }) => do
+              let yesPath := sitePath ++ [0]
               let yes ← lowerScopedBlock scope immutable nextRegister strict function yes
+                (path := yesPath)
+              nestedPaths := nestedPaths.push yesPath
+              nestedSites := nestedSites ++ yes.proofSites
               nextRegister := yes.nextRegister
               `(Ram.Stmt.ite $(← lowerExpr scope strict condition) $(yes.term) Ram.Stmt.skip)
           | `(ramStmt| if $condition:ramExpr { $yes:ramStmt* } else { $no:ramStmt* }) => do
+              let yesPath := sitePath ++ [0]
+              let noPath := sitePath ++ [1]
               let yes ← lowerScopedBlock scope immutable nextRegister strict function yes
+                (path := yesPath)
               let no ← lowerScopedBlock scope immutable yes.nextRegister strict function no
+                (path := noPath)
+              nestedPaths := nestedPaths ++ #[yesPath, noPath]
+              nestedSites := nestedSites ++ yes.proofSites ++ no.proofSites
               nextRegister := no.nextRegister
               `(Ram.Stmt.ite $(← lowerExpr scope strict condition) $(yes.term) $(no.term))
           | `(ramStmt| while $condition:ramExpr { $loop:ramStmt* }) => do
+              let loopPath := sitePath ++ [0]
               let loop ← lowerScopedBlock scope immutable nextRegister strict function loop
+                (path := loopPath)
+              nestedPaths := nestedPaths.push loopPath
+              nestedSites := nestedSites ++ loop.proofSites
               nextRegister := loop.nextRegister
               `(Ram.Stmt.while $(← lowerExpr scope strict condition) $(loop.term))
           | `(ramStmt| for $first:ident $[, $second:ident]? in $array:ident {
@@ -538,7 +596,18 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
                 if (arrayField? scope index.getId).isSome then
                   Lean.Macro.throwErrorAt index "a loop variable cannot shadow an array field"
                 let indexTerm ← registerTerm nextRegister
-                statements := statements.push (← `(Ram.Stmt.assign $indexTerm (Ram.Expr.const 0)))
+                let initialization ← `(Ram.Stmt.assign $indexTerm (Ram.Expr.const 0))
+                statements := statements.push initialization
+                let initializationPath := sitePath ++ [1]
+                nestedPaths := nestedPaths.push initializationPath
+                nestedSites := nestedSites.push {
+                  path := initializationPath
+                  beforeScope := scope
+                  afterScope := scope
+                  beforeImmutable := immutable
+                  afterImmutable := immutable
+                  emitted := #[initialization]
+                  synthetic := true }
                 loopScope := (loopScope.filter (fun entry => entry.name != index.getId)).push
                   ⟨index.getId, nextRegister, .word⟩
                 loopImmutable := (loopImmutable.filter (· != index.getId)).push index.getId
@@ -552,8 +621,11 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
               loopScope := (loopScope.filter (fun entry => entry.name != element.getId)).push
                 ⟨element.getId, elementRegister, .word⟩
               loopImmutable := (loopImmutable.filter (· != element.getId)).push element.getId
+              let loopPath := sitePath ++ [0]
               let loop ← lowerScopedBlock loopScope loopImmutable (nextRegister + 3)
-                strict function loop increment
+                strict function loop increment (path := loopPath)
+              nestedPaths := nestedPaths.push loopPath
+              nestedSites := nestedSites ++ loop.proofSites
               nextRegister := loop.nextRegister
               `(Ram.Stmt.forIn $pointer $remaining $elementTerm
                 (Ram.Expr.var $(← registerTerm arrayBinding.register))
@@ -570,19 +642,50 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
               | _ => pure ()
               lowerStmt scope strict function stmt
         statements := statements.push statement
-  if let some tail := tail then statements := statements.push tail
+    children := children.push sitePath
+    proofSites := proofSites.push {
+      path := sitePath
+      source := some stmt
+      beforeScope := beforeScope
+      afterScope := scope
+      beforeImmutable := beforeImmutable
+      afterImmutable := immutable
+      emitted := statements.extract emittedStart statements.size
+      children := nestedPaths }
+    proofSites := proofSites ++ nestedSites
+  if let some tail := tail then
+    statements := statements.push tail
+    let tailPath := path ++ [body.size]
+    children := children.push tailPath
+    proofSites := proofSites.push {
+      path := tailPath
+      beforeScope := scope
+      afterScope := scope
+      beforeImmutable := immutable
+      afterImmutable := immutable
+      emitted := #[tail]
+      synthetic := true }
   let term ← if statements.isEmpty then `(Ram.Stmt.skip) else do
     let mut term := statements[statements.size - 1]!
     for offset in [:statements.size - 1] do
       term ← `(Ram.Stmt.seq $(statements[statements.size - 2 - offset]!) $term)
     pure term
-  return ⟨term, scope, immutable, nextRegister⟩
+  let blockSite : ProofSite := {
+    path := path
+    beforeScope := initialScope
+    afterScope := scope
+    beforeImmutable := initialImmutable
+    afterImmutable := immutable
+    emitted := #[term]
+    children := children }
+  return ⟨term, scope, immutable, nextRegister, #[blockSite] ++ proofSites⟩
 
 /-- The function term and source bindings produced by one lowering. -/
 structure LoweredFunction where
   term : Lean.TSyntax `term
   scope : LocalScope
   registers : Nat
+  proofSites : Array ProofSite
 
 /-- Lower a function and retain its lexical bindings for generated proof names. -/
 def lowerFunctionWithScope (strict : Bool) (function : FunctionResolver)
@@ -601,7 +704,7 @@ def lowerFunctionWithScope (strict : Bool) (function : FunctionResolver)
         if resultKind == .unit then pure #[]
         else Lean.Macro.throwError "a word or array function requires a return value"
   let term ← `(Ram.Func.mk $paramCount $localCount $(body.term) [$results,*])
-  return ⟨term, body.scope, max body.nextRegister resultKind.width⟩
+  return ⟨term, body.scope, max body.nextRegister resultKind.width, body.proofSites⟩
 
 def lowerFunction (strict : Bool) (function : FunctionResolver)
     (params localNames : Array (Lean.TSyntax `ident))

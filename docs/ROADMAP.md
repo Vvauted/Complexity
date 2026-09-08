@@ -129,19 +129,33 @@ map function, so the existing mathematical result and compiled costs are retaine
 This improves programming without inventing another local-reader record; the
 operation's internal payload still uses a fixed register layout.
 
+**In progress: source-directed verification conditions.** The same lowering now
+retains intermediate lexical scopes and actual emitted fragments as proof-site
+metadata. Previously only bindings visible at the function return survived.
+This is necessary to distinguish a midpoint before/after its declaration and
+inner shadowing, but metadata alone does not improve a correctness proof.
+There is not yet a source-proof driver consuming these sites.
+
 **Next work:**
 
-- Use this division to improve the remaining binding view for an actual mutable
-  implementation. Keep mathematical contents and user-visible values readable;
-  do not reintroduce private cursors into each payload or add one recognizer per
-  sample. Frame-stable payloads no longer expand `advanceState`, but still use
-  `State` and explicit local bindings. This is not the finished named-invariant
-  interface; merely renaming register projections with generated readers would
-  not remove the remaining implementation work.
-- Let proof-local bindings follow lexical scope. Search's midpoint already uses
-  `ram_total_bind`; its declaration supplies the real remaining loop directly.
-  Improve its register-role initialization only where it obstructs the proof.
-  Do not export a loop-local name at function scope or add dummy parameters.
+- Connect these sites to existing WP decomposition, beginning with Map's actual
+  named helper-call/store body. A proof cursor must accompany code continuations,
+  not ordinary lookup, read-safety, representation or depth goals. Enter loop
+  scopes only at their actual loaded/body entry; restore outer bindings on exit.
+  Consume generated initialization and tail instructions rather than skipping
+  them because they lack a source statement. Array-local initialization completes
+  both real assignments before exposing the new descriptor.
+- Use the actual goal's statement and returned values. Do not find a source site
+  by scanning for an equal AST or re-elaborate an embedded `const(t)` in a new
+  Lean scope. Introduce ordinary word/reference values from current bindings;
+  after calls, transport heap representations only using their actual contracts.
+  Restored caller registers do not imply an unchanged heap.
+- The first concrete body should expose a helper postcondition followed by
+  `List.set` and its frame, using the existing call and array-store rules. It
+  should not reproduce `.var` slots, receiver updates or expression evaluation.
+  Mathematical index ranges, Word/Nat correspondence, aliasing and the payload
+  implication remain ordinary Lean obligations. A generated reader, a new
+  whole-Map AST adapter or another `Refines`/`StateM` wrapper is not this milestone.
 - Retain the concise scalar-fold and whole-operation contracts where they suffice.
   Rewriting all clients into a more general invariant is not itself an improvement.
   Multiple live mutable arrays and richer accumulators need a representation

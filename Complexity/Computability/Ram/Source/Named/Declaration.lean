@@ -122,6 +122,19 @@ initialize functionSignatures :
         (fun state entry => state.insert entry.1 entry.2) state) {}
     addEntryFn := fun state entry => state.insert entry.1 entry.2 }
 
+/-- Lexical proof locations for locally declared function bodies. These are
+metadata from the original lowering, not a second executable representation.
+Keys are the generated function declaration names. Imported bodies keep their
+original declaration's sites; their linked copies are not lowered again. -/
+initialize functionProofSites :
+    Lean.SimplePersistentEnvExtension (Lean.Name × Array ProofSite)
+      (Lean.NameMap (Array ProofSite)) ←
+  Lean.registerSimplePersistentEnvExtension {
+    addImportedFn := fun modules => modules.foldl
+      (fun state entries => entries.foldl
+        (fun state entry => state.insert entry.1 entry.2) state) {}
+    addEntryFn := fun state entry => state.insert entry.1 entry.2 }
+
 private def localRegisterDeclarations (scopeName : Lean.Name)
     (scope : LocalScope) : Lean.MacroM (Array Lean.Syntax) := do
   let declare (name : Lean.Name) (index : Nat) := do
@@ -439,5 +452,8 @@ elab_rules : command
       Lean.Elab.Command.elabCommand declarations
       let resolved ← Lean.resolveGlobalConstNoOverload name
       Lean.modifyEnv (functionSignatures.addEntry · (resolved, lowered.signatures))
+      for (decl, sites) in lowered.parsed.zip lowered.functionProofSites do
+        let functionName := resolved ++ `function ++ decl.name.getId
+        Lean.modifyEnv (functionProofSites.addEntry · (functionName, sites))
 
 end Ram.DSL

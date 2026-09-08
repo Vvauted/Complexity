@@ -295,6 +295,27 @@ loop proofs remain source-state proofs. An effectful helper that changes other
 data requires a stronger ordered representation relation; pure `List.map` does
 not justify discarding those effects or transferring a cost between loop orders.
 
+The named lowering retains intermediate proof sites separately from the
+executable definitions. Each site records its lexical scopes, original source
+location, actual emitted fragments and child locations; block anchors also
+retain empty scopes. Generated index setup and tails are distinguished from
+user statements, not deleted. An inner shadowed name therefore cannot redirect
+the captured index update. Source immutability is not a proof that a loop-local
+value remains constant across iterations.
+Parent and child fragments overlap; the flat site array is not an execution
+trace. A driver descends through the hierarchy instead of concatenating or
+charging every recorded fragment.
+
+These sites are an unfinished input to source-directed proof elaboration, not
+new correctness certificates. A future driver must follow the actual WP
+decomposition and give a lexical cursor only to code continuations. Expressions
+and effects come from that proof goal, not from reinterpreting stored source
+syntax. In particular, source locations do not justify transporting a heap
+representation across a call. Imported bodies are proved at their original
+declaration and transported through the existing semantic embedding.
+The persistent lookup currently registers local function bodies, not `main`
+or relocated imported aliases. Missing metadata must not mean an empty body.
+
 Local binding adapters can use `State.LocalFrame` to transport a collection of
 unchanged parameters through those actual state updates. Its register relation
 is mathlib's `Set.EqOn`; composition takes the union of allowed endpoint changes.

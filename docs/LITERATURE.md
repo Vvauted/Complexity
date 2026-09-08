@@ -256,6 +256,27 @@ index updates and calls are charged. Its correctness contract preserves helper
 shared state and proves the unread suffix remains valid. We do not inherit the
 paper's higher-order language or identify its instrumented cost with RAM steps.
 
+## 8. Preserve source structure in verification conditions
+
+Arthur Charguéraud, **Characteristic Formulae for the Verification of
+Imperative Programs**, ICFP 2011.
+[Author-hosted paper](https://www.chargueraud.org/research/2011/cfml/main.pdf).
+
+Section 2.2's let rule passes the actual result and an intermediate memory
+postcondition into the continuation. Its proof notation retains the source
+structure even for subterms; the user can discharge leaf obligations with the
+host prover's ordinary tactics. This is a stronger usability target than
+publishing register aliases after lowering.
+
+For our named language, this motivates retaining lexical proof locations during
+lowering and synchronizing them with existing WP steps. A helper call's return
+binds its actual receiver; the subsequent store consumes the current array
+representation and produces `List.set` facts. Source metadata is only navigation
+and binding information, not a proof of those effects. We are not implementing
+CFML's characteristic-formula generator or adopting its ML heap semantics, and
+the paper does not establish costs for our RAM compiler. The source-proof driver
+remains unfinished; retaining scopes is its prerequisite, not its completion.
+
 ## Reading discipline
 
 Use the roadmap's current sample bottleneck to select a small part of a primary
