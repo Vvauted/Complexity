@@ -39,6 +39,19 @@ theorem assign {dst : Reg} {value : Expr} :
   cases hx
   exact Nat.le_refl _
 
+/-- A uniformly bounded continuation needs no intermediate invariant or
+termination proof. The bounds compose on the actual completed executions. -/
+theorem seq_const {a b : Stmt} {firstBound : State w → Nat} {secondBound : Nat}
+    (first : TimeBound control program heapLimit depth a P firstBound)
+    (second : TimeBound (w := w) control program heapLimit depth b
+      (fun _ => True) (fun _ => secondBound)) :
+    TimeBound control program heapLimit depth (.seq a b) P
+      (fun s => firstBound s + secondBound) := by
+  intro s hs steps t execution
+  cases execution with
+  | seq firstRun secondRun =>
+    exact Nat.add_le_add (first s hs _ _ firstRun) (second _ trivial _ _ secondRun)
+
 /-- Reassociation preserves both the executed sequence and its total count. -/
 theorem seq_assoc_iff {a b c : Stmt} {bound : State w → Nat} :
     TimeBound control program heapLimit depth (.seq (.seq a b) c) P bound ↔

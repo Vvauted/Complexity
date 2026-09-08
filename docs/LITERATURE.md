@@ -230,6 +230,9 @@ Generalizing the fold-cost rule should similarly retain the prefix accumulator
 and represented heap, rather than require every helper to have constant cost.
 Any future program-level cost refinement needs its own proof against this
 repository's execution, not merely a new preorder bearing Decalf's name.
+In particular, Section 1.5's ordering includes agreement of behavior. Our
+conditional `TimeBound` alone neither identifies a result nor proves termination,
+so it is not that ordering; a uniform sequencing rule does not change this.
 
 Section 3.3's `map` example sharpens this point: unknown order-dependent effects
 prevent replacing a traversal by just a pure result and a length-based price.

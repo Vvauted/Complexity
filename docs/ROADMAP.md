@@ -117,6 +117,12 @@ those state updates or proves their arithmetic. The body still reads the current
 heap and may change shared state. Semantic cursor preservation permits
 write-then-restore; static destination exclusion handles the simpler case.
 
+The map body composes the existing function-call WP, array-store contract and
+assignment rule directly into its next mathematical invariant. It no longer
+reconstructs a whole-body execution endpoint before proving the array result.
+The underlying list identities remain upstream `take`, `drop`, `set` and `map`
+reasoning; the operation still owns its fixed local layout.
+
 The actual source now uses `for i, x in xs`, with both binders immutable and
 body-local. Its generated index initialization/increments give exactly the same
 map function, so the existing mathematical result and compiled costs are retained.
@@ -164,6 +170,12 @@ continuation bound depending on the actual returned value, as slice does.
 execution. Factorial's upper bound and measured endpoint reuse its one cost
 induction. `ram_run_eq` and `ram_run_bound` account for real outer-call overhead.
 Search's logarithmic proof reuses `while_div` and a budget-free halving relation.
+
+Uniformly bounded continuations compose with `TimeBound.seq_const` without a
+functional or termination premise. Map's separate time proof now composes call,
+straight-line and traversal bounds without destructing measured executions.
+This does not supply the intermediate behavioral facts needed for a bound that
+depends on changed data.
 
 **Next work:**
 

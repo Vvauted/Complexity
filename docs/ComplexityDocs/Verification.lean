@@ -435,8 +435,11 @@ theorem. Index initialization and increment are real generated assignments;
 both loop bindings stay within the body. The operation proof uses the indexed
 rule to maintain the ordinary
 updated-prefix/unread-suffix list without its own private cursor/count invariant.
-It reuses the existing array store/frame rules and reads each original element
-before replacing it. Empty arrays are admitted; an unused final pointer may wrap
+The body directly composes a function-call WP, `Ram.Source.Array.store_contract`
+with its count forgotten, and an assignment WP. The continuation receives the
+updated `List.set` representation and frame instead of rebuilding an execution
+endpoint. It reads each original element before replacing it.
+Empty arrays are admitted; an unused final pointer may wrap
 at the address-space endpoint. The actual descriptor length remains word-sized.
 
 The independent map bound is `(C + 23) * length + 8`, where `C` is the helper's
@@ -642,6 +645,12 @@ See [budget-free components](##Complexity.Computability.Ram.Component.Total).
 one exists. Combine it with the correctness proof using
 `Ram.Source.TotalContract.with_timeBound` or `Ram.Source.Refines.with_timeBound`.
 The resulting contract bounds the same safe terminating execution.
+
+If a continuation has a uniform bound at every intermediate state,
+`Ram.Source.TimeBound.seq_const` adds its bound to the first command's bound
+without requesting a functional contract. Map uses this for its actual
+store/assignment tail. State-dependent continuation bounds still need the
+relevant intermediate facts; the uniform rule does not establish them.
 
 For a reusable program, establish a scalar, input-size-based time envelope through
 `Ram.TotalComponent.TimeBoundOn`, then use `Ram.TotalComponent.withTimeBound` to obtain

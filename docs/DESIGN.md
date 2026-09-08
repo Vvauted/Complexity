@@ -281,8 +281,12 @@ The in-place map operation uses that rule with an updated-prefix/unread-suffix
 invariant. Its real helper call and indexed store produce `List.map` contents,
 preserving outside-array memory and I/O. Only the original elements need the
 helper's budget-free contract; the separate uniform bound covers completed
-one-word helper invocations. No snapshot, runtime callback or heap loader is
-introduced. The named square-map instance is definitionally the same operation
+one-word helper invocations. The body proof sequences the existing call WP,
+array-store contract and assignment WP directly into the next list invariant;
+it does not first construct an explicit whole-body state. The time proof
+composes the call with its uniformly bounded store/assignment tail using
+`TimeBound.seq_const`, which requires no totality premise. No snapshot, runtime
+callback or heap loader is introduced. The named square-map instance is definitionally the same operation
 with its helper index resolved by the existing static import.
 
 That focused operation is not a general named-invariant elaborator. The source

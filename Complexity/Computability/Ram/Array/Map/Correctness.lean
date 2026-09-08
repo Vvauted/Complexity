@@ -92,35 +92,50 @@ private theorem Invariant.of_localFrame {heapLimit : Nat} {base : Word w}
   · simpa only [ArrayAt, frame.mem] using h.array
   · simpa only [frame.mem] using h.frame
 
-private theorem Invariant.body {heapLimit : Nat} {base : Word w}
+private theorem Invariant.body {program : Program} {helper : Func}
+    {fn heapLimit depth : Nat} {base : Word w}
     {xs : List (Word w)} {transform : Word w → Word w} {entry s : State w} {i : Nat}
     (h : Invariant heapLimit base xs transform entry i s)
-    (hi : i < xs.length) :
-    Invariant heapLimit base xs transform entry (i + 1)
-      (bodyState transform (s.setReg 5 (s.mem (arrayAddr base i)))) := by
-  let next := bodyState transform (s.setReg 5 (s.mem (arrayAddr base i)))
-  let stored := s.setMem (arrayAddr base i) (transform xs[i])
+    (hi : i < xs.length) (lookup : program[fn]? = some helper)
+    (correct : FunctionContract program heapLimit depth helper
+      (fun args _ => args = [xs[i]])
+      (fun _ entry value finish => value = [transform xs[i]] ∧ finish = entry)) :
+    Verification.TotalWP program heapLimit (depth + 1) (body fn)
+      (Invariant heapLimit base xs transform entry (i + 1))
+      (s.setReg 5 (s.mem (arrayAddr base i))) := by
   have loaded : s.mem (base + BitVec.ofNat w i) = xs[i] := h.read_next hi
   have indexFits : i < (contents transform xs i).length := by
     rw [contents_length transform xs hi.le]
     exact hi
-  have memory : next.mem = stored.mem := by
-    simp [next, bodyState, State.setReg, State.setMem,
-      stored, h.base_eq, h.index, loaded, arrayAddr]
-  have updated : ArrayAt heapLimit base (contents transform xs (i + 1)) next := by
-    have represented := h.array.setMem indexFits (transform xs[i])
-    rw [contents_set_next transform xs hi] at represented
-    change ArrayRep next.mem base _ ∧ _
-    rw [memory]
-    exact represented
-  have frame : ArrayFrame base xs.length s.mem next.mem := by
-    rw [memory]
-    simpa only [contents_length transform xs hi.le] using
-      ArrayFrame.store h.array.1 indexFits (transform xs[i])
-  refine ⟨?_, ?_, updated, h.frame.trans frame, h.input, h.output⟩
-  · simp [bodyState, State.setReg, State.setMem, h.base_eq]
-  · simp [bodyState, State.setReg, State.setMem,
-      h.index, BitVec.ofNat_add]
+  have resultCount : [6].length = helper.results.length := by
+    obtain ⟨_, _, execution, rfl, _⟩ := correct [xs[i]] s rfl
+    exact execution.length_eq
+  rw [Map.body, Verification.TotalWP.seq_iff]
+  apply correct.wp_call lookup resultCount
+  · simp [Expr.ReadsBelow]
+  · simp [State.eval, Expr.eval, State.setReg, arrayAddr, loaded]
+  · exact Nat.le_refl _
+  · rintro value finish ⟨rfl, rfl⟩ _
+    rw [Verification.TotalWP.seq_iff]
+    apply Verification.TotalWP.of_relContract
+      (Array.store_contract (control := 0) indexFits
+        (.bin .add (.var 0) (.var 2)) (.var 6) (transform xs[i])).total
+    · refine ⟨?_, ?_, trivial, ?_, ?_⟩
+      · exact (h.array.setReg _ _).setReg _ _
+      · trivial
+      · ram_simp [h.base_eq, h.index, arrayAddr]
+      · ram_simp
+    · rintro stored ⟨rfl, represented, frame⟩
+      rw [Verification.TotalWP.assign_iff]
+      refine ⟨⟨trivial, trivial⟩, ?_⟩
+      refine ⟨?_, ?_, ?_, ?_, h.input, h.output⟩
+      · ram_simp [h.base_eq]
+      · ram_simp [h.index, BitVec.ofNat_add]
+      · rw [contents_set_next transform xs hi] at represented
+        exact represented.setReg _ _
+      · exact h.frame.trans (by
+          simpa only [contents_length transform xs hi.le, State.setRegs_cons,
+            State.setRegs_nil, State.setReg_mem] using frame)
 
 /-- The actual map loop safely transforms its represented array in place and
 preserves memory outside that array and both streams. The helper is required
@@ -155,16 +170,7 @@ theorem code_total_contract {program : Program} {helper : Func} {fn heapLimit de
     exact ⟨execution.regs_eq_of_not_mem_writtenRegs (by simp [body, Stmt.writtenRegs]),
       body_remaining execution⟩
   · intro i current hi h
-    let loadedState := current.setReg 5 (current.mem (arrayAddr base i))
-    have loaded : loadedState.regs 5 = xs[i] := by
-      simpa only [loadedState, State.setReg_same] using h.read_next hi
-    have address :
-        (loadedState.regs 0 + loadedState.regs 2).toNat < heapLimit := by
-      simpa [loadedState, State.setReg, h.base_eq, h.index, arrayAddr] using h.address_lt hi
-    have helperCorrect := correct xs[i] (List.getElem_mem hi)
-    have execution := body_safe_at lookup loadedState
-      (by simpa only [loaded] using helperCorrect) address
-    exact ⟨bodyState transform loadedState, execution, h.body hi⟩
+    exact h.body hi lookup (correct xs[i] (List.getElem_mem hi))
   · trivial
   · trivial
   · simpa [State.eval, Expr.eval, State.setReg] using base_eq
