@@ -87,7 +87,9 @@ refinement has been supplied; it does not derive that refinement automatically.
   executable function application are distinct interfaces, now connected for both
   bounded and unbounded runners. State fields for input and output do not imply
   stream operations: the factorial function contract holds at every caller state
-  and proves it unchanged. Its `read`/`write` driver is a separate optional program.
+  and proves it unchanged. Its optional `read`/`write` driver lives in a separate
+  module importing the function; function definitions and proofs do not depend on
+  that adapter.
 - The two-argument squared-norm sample composes helper calls with lexical value bindings.
   `ram_total_vc args entry hp` starts its function contract directly; supplied
   call contracts and simplification facts handle the calls without a separate

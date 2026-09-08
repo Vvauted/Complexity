@@ -289,6 +289,10 @@ the functions. A driver may read inputs and write results; ordinary function cal
 and their correctness proofs do not require it. `ram_program%` remains available
 when a complete program is the natural starting point.
 
+The [factorial stream example](##Examples.Ram.FactorialStream) imports the independently
+proved function and adds `read`, a call and `write`. The function implementation,
+its mathematical value view and its direct runner do not import this driver.
+
 `Ram.Named.Bundle.executable` checks and prepares a named program, returning an
 `Option Ram.Executable`. `Ram.Executable.run` takes a transition limit and input words.
 Its result distinguishes normal halt, fault, invalid program counter and exhausted fuel.
@@ -323,9 +327,10 @@ in [the factorial implementation](##Examples.Ram.Factorial). Read those in this 
    mathlib's factorial when the result fits in a word.
 4. `Ram.Examples.Factorial.function_timeBound` separately bounds the same body's execution.
 
-The same file also contains a separate `read`/`write` driver. Its `runs` theorem
-includes that adapter and all machine overhead; it is not a prerequisite for the
-function interface above. The no-stream compiled application is illustrated in
+The separate [stream-driver module](##Examples.Ram.FactorialStream) imports that
+function and its proofs. Its `runs` theorem includes the `read`/`write` adapter and
+all machine overhead; it is not a prerequisite for the function interface above.
+The no-stream compiled application is illustrated in
 [the function runner](##Examples.Ram.FunctionRun).
 
 The general result is factorial modulo the word range, not unbounded arithmetic.
@@ -345,6 +350,7 @@ Continue with [proving correctness](##ComplexityDocs.Verification).
 | Recursive mathematical specifications | [Factorial](##Examples.Ram.Factorial) |
 | Function-value equations and separate cost observations | [Factorial function](##Examples.Ram.FactorialFunction) |
 | Executing a function with no input/output main | [Function runner](##Examples.Ram.FunctionRun) |
+| Adding stream I/O around a proved function | [Factorial stream driver](##Examples.Ram.FactorialStream) |
 | Typed array calls on explicitly preloaded data | [Array arguments](##Examples.Ram.ArrayArguments) |
 | Composing calls with lexical value bindings | [Local bindings](##Examples.Ram.LocalBindings) |
 | Reusing a list operation for a mathlib graph property | [Graph degree](##Examples.Ram.GraphDegree) |
