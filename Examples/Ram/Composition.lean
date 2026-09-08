@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Component.Composition
+import Complexity.Computability.Ram.Component.Contract
 import Complexity.Computability.Ram.Verification.Basic
 
 /-!
@@ -23,6 +24,8 @@ The size convention is explicitly the numeric magnitude `size x = x`.
 These are fixed-word RAM transition bounds, not claims about bit complexity.
 Polynomial certificates and their composition come from the public component
 API; the complete program additionally has the concrete bound of 55 steps.
+The four `Ram.TotalComponent` packages and their composition are defined from safe
+total contracts first. Separate time proofs then attach bounds to the same code.
 -/
 
 namespace Ram.Examples.Composition
@@ -62,6 +65,109 @@ def doubleFunction : Func where
 /-- Each module has this same local main block; its function zero is resolved
 against that module's own declarations until `Component.comp` links them. -/
 def invoke : Stmt := .call 0 0 [.var 0]
+
+/-- Reading establishes the shared representation without a time budget. -/
+theorem read_total {w H depth x : Nat} (hx : legal w x) :
+    TotalContract [] H depth (.read 0) (inputInterface.represents w x)
+      (registerInterface.represents w x) := by
+  have hfit : x < 2 ^ w := by unfold legal at hx; omega
+  apply Source.Verification.verify_total
+  intro s hs
+  obtain ⟨hin, hout⟩ := hs
+  simp [Source.Verification.TotalWP.read_iff, hin, registerInterface,
+    Source.State.setReg, hfit, hout]
+
+/-- Writing preserves the mathematical value without a time budget. -/
+theorem write_total {w H depth x : Nat} :
+    TotalContract [] H depth (.write (.var 0)) (registerInterface.represents w x)
+      (outputInterface.represents w x) := by
+  apply Source.Verification.verify_total
+  intro s hs
+  obtain ⟨hfit, hreg, hin, hout⟩ := hs
+  simp [Source.Verification.TotalWP.write_iff, outputInterface, Expr.ReadsBelow,
+    Source.State.eval, Expr.eval, Source.State.output, hfit, hreg, hin, hout]
+
+/-- The arithmetic result uses safe call and assignment rules, not a fuel calculation. -/
+theorem increment_total {w H depth x : Nat}
+    (hx : incrementDomain w x) (hd : 1 ≤ depth) :
+    TotalContract [incrementFunction] H depth invoke (registerInterface.represents w x)
+      (registerInterface.represents w (x + 1)) := by
+  intro s hs
+  have body := SafeExec.assign (program := [incrementFunction]) (heapLimit := H)
+    (d := 0) (s := s.enter ([Expr.var 0].map s.eval)) (dst := 0)
+    (value := Expr.bin .add (.var 0) (.const 1)) (by simp [Expr.ReadsBelow])
+  have execution := SafeExec.call (f := incrementFunction) (dst := 0) (fn := 0)
+    (args := [Expr.var 0]) rfl rfl (by decide)
+    (by simp [Expr.ReadsBelow]) body (by simp [incrementFunction, Expr.ReadsBelow])
+  refine ⟨_, execution.mono hd, ?_⟩
+  obtain ⟨_, hreg, hin, hout⟩ := hs
+  simp [registerInterface, incrementFunction, Source.State.leave, Source.State.enter,
+    Source.State.setReg, Source.State.eval, Expr.eval, BinOp.eval, hreg, hin, hout,
+    BitVec.ofNat_add, incrementDomain] at hx ⊢
+  exact hx
+
+/-- Doubling has its own independent safe total proof over its local function table. -/
+theorem double_total {w H depth x : Nat}
+    (hx : doubleDomain w x) (hd : 1 ≤ depth) :
+    TotalContract [doubleFunction] H depth invoke (registerInterface.represents w x)
+      (registerInterface.represents w (2 * x)) := by
+  intro s hs
+  have body := SafeExec.assign (program := [doubleFunction]) (heapLimit := H)
+    (d := 0) (s := s.enter ([Expr.var 0].map s.eval)) (dst := 0)
+    (value := Expr.bin .mul (.const 2) (.var 0)) (by simp [Expr.ReadsBelow])
+  have execution := SafeExec.call (f := doubleFunction) (dst := 0) (fn := 0)
+    (args := [Expr.var 0]) rfl rfl (by decide)
+    (by simp [Expr.ReadsBelow]) body (by simp [doubleFunction, Expr.ReadsBelow])
+  refine ⟨_, execution.mono hd, ?_⟩
+  obtain ⟨_, hreg, hin, hout⟩ := hs
+  simp [registerInterface, doubleFunction, Source.State.leave, Source.State.enter,
+    Source.State.setReg, Source.State.eval, Expr.eval, BinOp.eval, hreg, hin, hout,
+    BitVec.ofNat_mul, doubleDomain] at hx ⊢
+  exact hx
+
+/-- The input adapter is packaged before its time analysis. -/
+def readerTotal : TotalComponent inputInterface registerInterface (fun x => x) legal :=
+  .ofNamed ⟨1, [], .read 0⟩ (fun _ => 0) (fun _ => 0) (fun n => n)
+    (by simp [Named.Bundle.program, LocalCompiler.Valid, Compiler.Valid,
+      Stmt.WellFormed, Compiler.CallsValid])
+    (fun _ _ _ => le_rfl) (fun _ _ hx => read_total hx)
+
+/-- The increment module has safe total correctness and output size, but no time field. -/
+def incrementTotal : TotalComponent registerInterface registerInterface
+    (fun x => x + 1) incrementDomain :=
+  .ofNamed ⟨1, [("increment", incrementFunction)], invoke⟩
+    (fun _ => 0) (fun _ => 1) (fun n => n + 1)
+    (by simp [Named.Bundle.program, LocalCompiler.Valid, Compiler.Valid, invoke,
+      incrementFunction, Func.WellFormed, Stmt.WellFormed, Expr.Bounded, Compiler.CallsValid])
+    (fun _ _ _ => le_rfl) (fun _ _ hx => increment_total hx le_rfl)
+
+/-- Doubling is packaged independently with the same shared representation. -/
+def doubleTotal : TotalComponent registerInterface registerInterface
+    (fun x => 2 * x) doubleDomain :=
+  .ofNamed ⟨1, [("double", doubleFunction)], invoke⟩
+    (fun _ => 0) (fun _ => 1) (fun n => 2 * n)
+    (by simp [Named.Bundle.program, LocalCompiler.Valid, Compiler.Valid, invoke,
+      doubleFunction, Func.WellFormed, Stmt.WellFormed, Expr.Bounded, Compiler.CallsValid])
+    (fun _ _ _ => le_rfl) (fun _ _ hx => double_total hx le_rfl)
+
+/-- The output adapter also needs no time bound to expose its functional contract. -/
+def writerTotal : TotalComponent registerInterface outputInterface (fun x => x)
+    (fun _ _ => True) :=
+  .ofNamed ⟨1, [], .write (.var 0)⟩ (fun _ => 0) (fun _ => 0) (fun n => n)
+    (by simp [Named.Bundle.program, LocalCompiler.Valid, Compiler.Valid,
+      Stmt.WellFormed, Expr.Bounded, Compiler.CallsValid])
+    (fun _ _ _ => le_rfl) (fun _ _ _ => write_total)
+
+theorem incrementDomain_of_legal {w x : Nat} (hx : legal w x) : incrementDomain w x := by
+  unfold legal at hx
+  unfold incrementDomain
+  omega
+
+/-- Link the whole safe, terminating pipeline before choosing any instruction budget. -/
+def totalPipeline := writerTotal.comp
+  ((doubleTotal.comp
+    (incrementTotal.restrict (fun _ _ hx => incrementDomain_of_legal hx))
+    (fun _ _ hx => hx)).comp readerTotal (fun _ _ hx => hx)) (fun _ _ _ => trivial)
 
 theorem read_contract {w H depth x : Nat} (hx : legal w x) :
     Contract 1 [] H depth (.read 0) (inputInterface.represents w x)
@@ -153,66 +259,35 @@ theorem double_contract {w H depth x : Nat}
     doubleFunction, Expr.compile] using hcall.mono_depth hd
 
 def reader : PolyTimeComponent inputInterface registerInterface (fun x => x) legal where
-  locals := 1
-  functions := []
-  body := .read 0
-  valid := by simp [LocalCompiler.Valid, Compiler.Valid, Stmt.WellFormed, Compiler.CallsValid]
-  timeBound := fun _ => 1
-  heapBound := fun _ => 0
-  depthBound := fun _ => 0
-  sizeBound := fun x => x
-  size_le _ _ _ := Nat.le_refl _
-  correct x hx s hs H depth _ _ := read_contract hx s hs
+  toComponent := readerTotal.withTimeBound (fun _ => 1)
+    (TotalComponent.TimeBoundOn.of_bound (p := readerTotal)
+      (fun _ _ hx => (read_contract hx).timeBound))
   time_polynomial := Asymptotics.IsPolynomiallyBounded.const 1
   size_polynomial := Asymptotics.IsPolynomiallyBounded.id
 
 def incrementModule : PolyTimeComponent registerInterface registerInterface
     (fun x => x + 1) incrementDomain where
-  locals := 1
-  functions := [incrementFunction]
-  body := invoke
-  valid := by
-    simp [LocalCompiler.Valid, Compiler.Valid, invoke, incrementFunction, Func.WellFormed,
-      Stmt.WellFormed, Expr.Bounded, Compiler.CallsValid]
-  timeBound := fun _ => 25
-  heapBound := fun _ => 0
-  depthBound := fun _ => 1
-  sizeBound := fun x => x + 1
-  size_le _ _ _ := Nat.le_refl _
-  correct x hx s hs H depth _ hd := increment_contract hx hd s hs
+  toComponent := incrementTotal.withTimeBound (fun _ => 25)
+    (TotalComponent.TimeBoundOn.of_bound (p := incrementTotal)
+      (fun _ _ hx => (increment_contract hx le_rfl).timeBound))
   time_polynomial := Asymptotics.IsPolynomiallyBounded.const 25
-  size_polynomial := Asymptotics.IsPolynomiallyBounded.id.add (Asymptotics.IsPolynomiallyBounded.const 1)
+  size_polynomial :=
+    Asymptotics.IsPolynomiallyBounded.id.add (Asymptotics.IsPolynomiallyBounded.const 1)
 
 def doubleModule : PolyTimeComponent registerInterface registerInterface
     (fun x => 2 * x) doubleDomain where
-  locals := 1
-  functions := [doubleFunction]
-  body := invoke
-  valid := by
-    simp [LocalCompiler.Valid, Compiler.Valid, invoke, doubleFunction, Func.WellFormed,
-      Stmt.WellFormed, Expr.Bounded, Compiler.CallsValid]
-  timeBound := fun _ => 25
-  heapBound := fun _ => 0
-  depthBound := fun _ => 1
-  sizeBound := fun x => 2 * x
-  size_le _ _ _ := Nat.le_refl _
-  correct x hx s hs H depth _ hd := double_contract hx hd s hs
+  toComponent := doubleTotal.withTimeBound (fun _ => 25)
+    (TotalComponent.TimeBoundOn.of_bound (p := doubleTotal)
+      (fun _ _ hx => (double_contract hx le_rfl).timeBound))
   time_polynomial := Asymptotics.IsPolynomiallyBounded.const 25
-  size_polynomial := (Asymptotics.IsPolynomiallyBounded.const 2).mul Asymptotics.IsPolynomiallyBounded.id
+  size_polynomial :=
+    (Asymptotics.IsPolynomiallyBounded.const 2).mul Asymptotics.IsPolynomiallyBounded.id
 
 def writer : PolyTimeComponent registerInterface outputInterface (fun x => x)
     (fun _ _ => True) where
-  locals := 1
-  functions := []
-  body := .write (.var 0)
-  valid := by
-    simp [LocalCompiler.Valid, Compiler.Valid, Stmt.WellFormed, Expr.Bounded, Compiler.CallsValid]
-  timeBound := fun _ => 2
-  heapBound := fun _ => 0
-  depthBound := fun _ => 0
-  sizeBound := fun x => x
-  size_le _ _ _ := Nat.le_refl _
-  correct x _ s hs H depth _ _ := write_contract s hs
+  toComponent := writerTotal.withTimeBound (fun _ => 2)
+    (TotalComponent.TimeBoundOn.of_bound (p := writerTotal)
+      (fun _ _ _ => write_contract.timeBound))
   time_polynomial := Asymptotics.IsPolynomiallyBounded.const 2
   size_polynomial := Asymptotics.IsPolynomiallyBounded.id
 
@@ -234,6 +309,46 @@ def arithmetic := doubleModule.comp incrementStage (fun _ _ hx => hx)
 Only the complete executable receives the prologue and final halt. -/
 def pipeline := writer.comp (arithmetic.comp reader (fun _ _ hx => hx)) (fun _ _ _ => trivial)
 
+/-- The resource-aware pipeline retains the independently composed functional
+program, its domain, all representations and every non-time guarantee. -/
+theorem pipeline_toTotalComponent : pipeline.toComponent.toTotalComponent = totalPipeline := rfl
+
+/-- Analyze the linked functional pipeline by adding actual module costs.
+This proof is separate from the safe total composition above. -/
+theorem totalPipeline_timeBound : totalPipeline.TimeBoundOn (fun _ _ => 53) := by
+  have readTime : readerTotal.TimeBoundOn (fun _ _ => 1) :=
+    TotalComponent.TimeBoundOn.of_bound (p := readerTotal)
+      (fun _ _ hx => (read_contract hx).timeBound)
+  have incrementTime : incrementTotal.TimeBoundOn (fun _ _ => 25) :=
+    TotalComponent.TimeBoundOn.of_bound (p := incrementTotal)
+      (fun _ _ hx => (increment_contract hx le_rfl).timeBound)
+  have doubleTime : doubleTotal.TimeBoundOn (fun _ _ => 25) :=
+    TotalComponent.TimeBoundOn.of_bound (p := doubleTotal)
+      (fun _ _ hx => (double_contract hx le_rfl).timeBound)
+  have writeTime : writerTotal.TimeBoundOn (fun _ _ => 2) :=
+    TotalComponent.TimeBoundOn.of_bound (p := writerTotal)
+      (fun _ _ _ => write_contract.timeBound)
+  let incrementStage := incrementTotal.restrict (fun _ _ hx => incrementDomain_of_legal hx)
+  have stageTime : incrementStage.TimeBoundOn (fun _ _ => 25) :=
+    TotalComponent.TimeBoundOn.restrict (p := incrementTotal) incrementTime
+      (fun _ _ hx => incrementDomain_of_legal hx)
+  let arithmetic := doubleTotal.comp incrementStage (fun _ _ hx => hx)
+  have arithmeticTime : arithmetic.TimeBoundOn (fun _ _ => 50) :=
+    TotalComponent.TimeBoundOn.comp (p := incrementStage) (q := doubleTotal)
+      doubleTime stageTime (fun _ _ hx => hx)
+  let readArithmetic := arithmetic.comp readerTotal (fun _ _ hx => hx)
+  have readArithmeticTime : readArithmetic.TimeBoundOn (fun _ _ => 51) :=
+    TotalComponent.TimeBoundOn.comp (p := readerTotal) (q := arithmetic)
+      arithmeticTime readTime (fun _ _ hx => hx)
+  intro w x hx H depth hH hd
+  exact TotalComponent.TimeBoundOn.comp (p := readArithmetic) (q := writerTotal)
+    writeTime readArithmeticTime (fun _ _ _ => trivial) (w := w) x hx H depth hH hd
+
+/-- Attaching the pipeline bound recovers the existing costed executable. -/
+theorem totalPipeline_withTimeBound_code :
+    (totalPipeline.withTimeBound (fun _ => 53) totalPipeline_timeBound).code =
+      pipeline.toComponent.code := rfl
+
 /-- The independently numbered functions are both present once. -/
 theorem pipeline_functions : pipeline.functions = [incrementFunction, doubleFunction] := rfl
 
@@ -245,16 +360,21 @@ theorem pipeline_body : pipeline.body =
 
 theorem pipeline_time (n : Nat) : pipeline.toComponent.totalTime n = 55 := by
   simp [pipeline, arithmetic, incrementStage, incrementModule, doubleModule, reader, writer,
-    PolyTimeComponent.comp, Component.comp, Component.restrict, Component.totalTime]
+    PolyTimeComponent.comp, Component.comp, Component.restrict, Component.totalTime,
+    TotalComponent.withTimeBound, readerTotal, incrementTotal, doubleTotal, writerTotal,
+    TotalComponent.ofNamed]
 
 theorem pipeline_heap (n : Nat) : pipeline.heapBound n = 0 := by
   simp [pipeline, arithmetic, incrementStage, incrementModule, doubleModule, reader, writer,
-    PolyTimeComponent.comp, Component.comp, Component.restrict]
+    PolyTimeComponent.comp, Component.comp, Component.restrict,
+    TotalComponent.withTimeBound, readerTotal, incrementTotal, doubleTotal, writerTotal,
+    TotalComponent.ofNamed]
 
 theorem pipeline_capacity (n : Nat) : pipeline.toComponent.capacity n = 2 := by
   simp [pipeline, arithmetic, incrementStage, incrementModule, doubleModule, reader, writer,
     PolyTimeComponent.comp, Component.comp, Component.restrict, Component.capacity,
-    ABI.frameSize]
+    ABI.frameSize, TotalComponent.withTimeBound, readerTotal, incrementTotal, doubleTotal,
+    writerTotal, TotalComponent.ofNamed]
 
 theorem pipeline_code_length : pipeline.toComponent.code.length = 55 := rfl
 

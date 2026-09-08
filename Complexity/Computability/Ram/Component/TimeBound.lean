@@ -42,6 +42,17 @@ def TimeBoundOn (p : Component A B f D) (time : Nat → α → Nat) : Prop :=
 theorem timeBoundOn (p : Component A B f D) :
     p.TimeBoundOn (fun _ x => p.timeBound (A.size x)) := p.correct
 
+/-- Erasing the pre-existing time envelope gives exactly the independent
+conditional bound on the same program, not a different execution notion. -/
+theorem timeBoundOn_iff_toTotalComponent (p : Component A B f D) (time : Nat → α → Nat) :
+    p.TimeBoundOn time ↔ p.toTotalComponent.TimeBoundOn time := by
+  constructor
+  · intro h w x hx H d hH hd s hs steps t execution
+    obtain ⟨count, finish, measured, _, bound⟩ := h x hx s hs H d hH hd
+    exact (measured.deterministic execution).1 ▸ bound
+  · intro h w x hx s hs H d hH hd
+    exact h.contract x hx hH hd s hs
+
 namespace TimeBoundOn
 
 variable {p : Component A B f D} {time time' : Nat → α → Nat}

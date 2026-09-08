@@ -4,16 +4,18 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Analysis.Asymptotics.Polynomial
-import Complexity.Computability.Ram.Component.Basic
+import Complexity.Computability.Ram.Component.Total
 import Complexity.Computability.Ram.Source.Linking
 
 /-!
 # Composition of verified algorithms
 
-`Component.comp q p` first executes `p`, then `q`, using their common data
+`Ram.TotalComponent.comp` first executes `p`, then `q`, using their common data
 interface. It links their independent function tables, relocating every call
-in the second module, including recursive calls. Both existing execution
-proofs are transported without changing their instruction counts.
+in the second module, including recursive calls. Safe total correctness
+composes without a time budget. A separate `Ram.TotalComponent.TimeBoundOn.comp`
+adds proved execution costs at the actual intermediate value. `Ram.Component.comp`
+retains the resource-aware interface for components already supplied with bounds.
 
 The intermediate-size guarantee substitutes into the second resource bound.
 Prefix maxima make that substitution valid even for nonmonotone bounds.
@@ -21,11 +23,12 @@ These maxima are proof budgets, not extra instructions in the RAM program.
 
 ## Main results
 
-- `Component.comp`: executable composition with correctness and resource bounds.
-- `Component.comp_time_polynomial`: polynomial time is preserved when the first
+- `Ram.TotalComponent.comp`: safe total composition without an instruction budget.
+- `Ram.Component.comp`: executable composition with correctness and resource bounds.
+- `Ram.Component.comp_time_polynomial`: polynomial time is preserved when the first
   output has polynomial size.
-- `PolyTimeComponent.comp`: reusable polynomial-time and output-size certificates.
-- `PolyTimeComponent.runs_polynomial`: the resulting bound on a halted RAM run.
+- `Ram.PolyTimeComponent.comp`: reusable polynomial-time and output-size certificates.
+- `Ram.PolyTimeComponent.runs_polynomial`: the resulting bound on a halted RAM run.
 
 There is no free conversion between different encodings, no restart with a
 fresh host-created state, and no concatenation of already halted binaries.
@@ -35,6 +38,86 @@ An encoding adapter is an ordinary verified component with its own cost.
 namespace Ram
 
 universe u v z
+
+namespace TotalComponent
+
+variable {α : Type u} {β : Type v} {γ : Type z}
+variable {A : Interface α} {B : Interface β} {C : Interface γ}
+variable {f : α → β} {g : β → γ}
+variable {D : Nat → α → Prop} {E : Nat → β → Prop}
+
+/-- Link independently total components on their actual shared representation.
+The second component is the first argument, as in `Function.comp`. -/
+def comp (q : TotalComponent B C g E) (p : TotalComponent A B f D)
+    (hdom : ∀ w x, D w x → E w (f x)) : TotalComponent A C (g ∘ f) D where
+  locals := max p.locals q.locals
+  functions := Program.link p.functions q.functions
+  body := .seq p.body (q.body.renameCalls (fun i => p.functions.length + i))
+  valid := Compiler.Valid.link p.valid q.valid
+  heapBound n := max (p.heapBound n) (Asymptotics.monotoneHull q.heapBound (p.sizeBound n))
+  depthBound n := max (p.depthBound n) (Asymptotics.monotoneHull q.depthBound (p.sizeBound n))
+  sizeBound n := Asymptotics.monotoneHull q.sizeBound (p.sizeBound n)
+  size_le w x hx := (q.size_le w (f x) (hdom w x hx)).trans
+    ((Asymptotics.le_monotoneHull q.sizeBound _).trans
+      (Asymptotics.hull_monotone _ (p.size_le w x hx)))
+  correct x hx s hs H d hH hd := by
+    obtain ⟨middle, hp, hm⟩ := p.correct x hx s hs H d
+      ((Nat.le_max_left _ _).trans hH) ((Nat.le_max_left _ _).trans hd)
+    have hsize := p.size_le _ x hx
+    have hhq : q.heapBound (B.size (f x)) ≤ H :=
+      (Asymptotics.le_monotoneHull _ _).trans ((Asymptotics.hull_monotone _ hsize).trans
+        ((Nat.le_max_right _ _).trans hH))
+    have hdq : q.depthBound (B.size (f x)) ≤ d :=
+      (Asymptotics.le_monotoneHull _ _).trans ((Asymptotics.hull_monotone _ hsize).trans
+        ((Nat.le_max_right _ _).trans hd))
+    obtain ⟨t, hq, ht⟩ := q.correct (f x) (hdom _ x hx) middle hm H d hhq hdq
+    have hp' := hp.renameCalls (Program.embeds_link_left p.functions q.functions)
+    have hq' := hq.renameCalls (Program.embeds_link_right p.functions q.functions)
+    rw [Stmt.renameCalls_id] at hp'
+    exact ⟨t, .seq hp' hq', ht⟩
+
+@[simp] theorem comp_heapBound (q : TotalComponent B C g E) (p : TotalComponent A B f D)
+    (hdom : ∀ w x, D w x → E w (f x)) (n : Nat) :
+    (q.comp p hdom).heapBound n =
+      max (p.heapBound n) (Asymptotics.monotoneHull q.heapBound (p.sizeBound n)) := rfl
+
+@[simp] theorem comp_depthBound (q : TotalComponent B C g E) (p : TotalComponent A B f D)
+    (hdom : ∀ w x, D w x → E w (f x)) (n : Nat) :
+    (q.comp p hdom).depthBound n =
+      max (p.depthBound n) (Asymptotics.monotoneHull q.depthBound (p.sizeBound n)) := rfl
+
+@[simp] theorem comp_sizeBound (q : TotalComponent B C g E) (p : TotalComponent A B f D)
+    (hdom : ∀ w x, D w x → E w (f x)) (n : Nat) :
+    (q.comp p hdom).sizeBound n = Asymptotics.monotoneHull q.sizeBound (p.sizeBound n) := rfl
+
+/-- Time analysis of the independently composed program adds the costs at
+the actual intermediate value. Determinism identifies the measured executions
+with the linked total runs; no inverse linking or second evaluator is required. -/
+theorem TimeBoundOn.comp {q : TotalComponent B C g E} {p : TotalComponent A B f D}
+    {firstTime : Nat → α → Nat} {secondTime : Nat → β → Nat}
+    (second : q.TimeBoundOn secondTime) (first : p.TimeBoundOn firstTime)
+    (hdom : ∀ w x, D w x → E w (f x)) :
+    (q.comp p hdom).TimeBoundOn (fun w x => firstTime w x + secondTime w (f x)) := by
+  intro w x hx H d hH hd s hs steps finish execution
+  obtain ⟨np, middle, hp, hm, hnp⟩ := first.contract x hx
+    ((Nat.le_max_left _ _).trans hH) ((Nat.le_max_left _ _).trans hd) s hs
+  have hsize := p.size_le w x hx
+  have hhq : q.heapBound (B.size (f x)) ≤ H :=
+    (Asymptotics.le_monotoneHull _ _).trans ((Asymptotics.hull_monotone _ hsize).trans
+      ((Nat.le_max_right _ _).trans hH))
+  have hdq : q.depthBound (B.size (f x)) ≤ d :=
+    (Asymptotics.le_monotoneHull _ _).trans ((Asymptotics.hull_monotone _ hsize).trans
+      ((Nat.le_max_right _ _).trans hd))
+  obtain ⟨nq, t, hq, _, hnq⟩ := second.contract (f x) (hdom w x hx) hhq hdq middle hm
+  have hp' := hp.renameCalls_rebase (Program.embeds_link_left p.functions q.functions)
+    (max p.locals q.locals)
+  have hq' := hq.renameCalls_rebase (Program.embeds_link_right p.functions q.functions)
+    (max p.locals q.locals)
+  rw [Stmt.renameCalls_id] at hp'
+  have linked := Source.LocalMeasuredExec.seq hp' hq'
+  exact (linked.deterministic execution).1 ▸ Nat.add_le_add hnp hnq
+
+end TotalComponent
 
 namespace Component
 
@@ -82,6 +165,11 @@ def comp (q : Component B C g E) (p : Component A B f D)
     (hdom : ∀ w x, D w x → E w (f x)) (n : Nat) :
     (q.comp p hdom).timeBound n =
       p.timeBound n + Asymptotics.monotoneHull q.timeBound (p.sizeBound n) := rfl
+
+/-- Forgetting time commutes with actual module linking. -/
+@[simp] theorem comp_toTotalComponent (q : Component B C g E) (p : Component A B f D)
+    (hdom : ∀ w x, D w x → E w (f x)) :
+    (q.comp p hdom).toTotalComponent = q.toTotalComponent.comp p.toTotalComponent hdom := rfl
 
 @[simp] theorem comp_sizeBound (q : Component B C g E) (p : Component A B f D)
     (hdom : ∀ w x, D w x → E w (f x)) (n : Nat) :

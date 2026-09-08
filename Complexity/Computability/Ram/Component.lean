@@ -8,5 +8,6 @@ import Complexity.Computability.Ram.Component.Composition
 import Complexity.Computability.Ram.Component.Contract
 import Complexity.Computability.Ram.Component.Realization
 import Complexity.Computability.Ram.Component.TimeBound
+import Complexity.Computability.Ram.Component.Total
 
 /-! # Verified components, composition, and fixed-problem realization -/

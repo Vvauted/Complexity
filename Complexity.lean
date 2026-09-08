@@ -102,6 +102,7 @@ import Complexity.Computability.Ram.Component.Memory
 import Complexity.Computability.Ram.Component.Realization
 import Complexity.Computability.Ram.Component.ResourceBound
 import Complexity.Computability.Ram.Component.TimeBound
+import Complexity.Computability.Ram.Component.Total
 import Complexity.Computability.Ram.Executable
 import Complexity.Computability.Ram.Execution.Basic
 import Complexity.Computability.Ram.Execution.Block.Basic
