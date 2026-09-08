@@ -22,19 +22,20 @@ open Source Source.Array
 and pointers may differ: this equates only returned counts, not shared states
 or the work of constructing or permuting either array. -/
 theorem eval_eq_of_perm {w heapLimit : Nat} {program : Program}
-    {base₁ base₂ target : Word w} {xs ys : List (Word w)}
+    {left right : ArrayRef w} {target : Word w} {xs ys : List (Word w)}
     {entry₁ entry₂ : Source.State w} (hw : 0 < w) (permutation : xs.Perm ys)
-    (fit₁ : base₁.toNat + xs.length < 2 ^ w)
-    (fit₂ : base₂.toNat + ys.length < 2 ^ w)
-    (array₁ : ArrayAt heapLimit base₁ xs entry₁)
-    (array₂ : ArrayAt heapLimit base₂ ys entry₂) :
+    (fit₁ : left.base.toNat + xs.length < 2 ^ w)
+    (fit₂ : right.base.toNat + ys.length < 2 ^ w)
+    (array₁ : left.Rep heapLimit xs entry₁)
+    (array₂ : right.Rep heapLimit ys entry₂) :
     (countFunctions.function.count.eval program heapLimit
-      (countFunctions.arguments.count base₁ (BitVec.ofNat w xs.length) target) entry₁).map
+      (countFunctions.arguments.count left target) entry₁).map
         (fun result => result.1.toNat) =
     (countFunctions.function.count.eval program heapLimit
-      (countFunctions.arguments.count base₂ (BitVec.ofNat w ys.length) target) entry₂).map
+      (countFunctions.arguments.count right target) entry₂).map
         (fun result => result.1.toNat) := by
-  rw [count_function_eval_toNat hw fit₁ array₁, count_function_eval_toNat hw fit₂ array₂,
+  rw [count_function_eval_toNat_of_ref hw fit₁ array₁,
+    count_function_eval_toNat_of_ref hw fit₂ array₂,
     permutation.count_eq target]
 
 end Ram.Examples.ArrayCount

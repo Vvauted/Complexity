@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.Fold
+import Complexity.Computability.Ram.Array.Ref
 import Complexity.Computability.Ram.Source.Function.Eval
 import Complexity.Computability.Ram.Source.Named.Declaration
 import Mathlib.Data.List.Count
@@ -11,7 +12,7 @@ import Mathlib.Data.List.Count
 /-!
 # Counting occurrences in a represented array
 
-`countFunctions` declares one executable function over a pointer, a length and
+`countFunctions` declares one executable function over an array reference and
 a target word. The mathematical result is Lean's `List.count`, not a second
 counting implementation. The reusable array-fold rule handles traversal,
 termination and framing; the function-specific invariant only remembers the
@@ -28,12 +29,12 @@ namespace Ram.Source.Array
 /-- Count equal words in an existing array, with a fixed program independent
 of the array contents and length. -/
 ram_def countFunctions := ram_functions% {
-  fn count(pointer, remaining, target) {
+  fn count(xs : array, target) {
     let mut accumulator := 0;
-    while remaining {
-      accumulator += (load[pointer] == target);
-      pointer += 1;
-      remaining -= 1;
+    while xs.length {
+      accumulator += (load[xs.base] == target);
+      xs.base += 1;
+      xs.length -= 1;
     }
     return accumulator;
   }
@@ -69,7 +70,7 @@ def value : Expr :=
 /-- The named locals used by the generic traversal. Pairwise separation is a
 fact about this declaration, rather than a premise for each caller. -/
 def registers : Fold.Registers :=
-  ⟨countFunctions.localReg.count.pointer, countFunctions.localReg.count.remaining,
+  ⟨countFunctions.localReg.count.xs.base, countFunctions.localReg.count.xs.length,
     countFunctions.localReg.count.accumulator, by decide, by decide, by decide⟩
 
 /-- The generic fold loop is the body already present in the named function,
@@ -159,23 +160,23 @@ theorem count_function_contract {w heapLimit depth : Nat} {program : Program}
     (hfit : base.toNat + xs.length < 2 ^ w) :
     FunctionContract program heapLimit depth countFunctions.function.count
       (fun args entry =>
-        args = countFunctions.arguments.count base (BitVec.ofNat w xs.length) target ∧
+        args = countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target ∧
         ArrayAt heapLimit base xs entry)
       (fun _ entry value finish => value = BitVec.ofNat w (xs.count target) ∧ finish = entry) := by
   rintro args entry ⟨rfl, represented⟩
   have hlength : xs.length < 2 ^ w := by omega
   have count :
-      ((entry.enter (countFunctions.arguments.count base (BitVec.ofNat w xs.length) target)).regs
+      ((entry.enter (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target)).regs
         Count.registers.remaining).toNat = xs.length := Word.ofNat_toNat_of_lt hlength
   obtain ⟨callee, execution, returned, memory, input, output⟩ :=
     Count.body_safe (program := program) (depth := depth) hw
-      (entry.enter (countFunctions.arguments.count base (BitVec.ofNat w xs.length) target))
+      (entry.enter (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target))
       base target xs represented.1 rfl count rfl represented.2 hfit
   have restored : entry.restore callee = entry := by
     simp only [State.restore, memory, input, output, State.enter]
   refine ⟨BitVec.ofNat w (xs.count target), entry, ?_, rfl, rfl⟩
   have invocation := FunctionExec.of_body (f := countFunctions.function.count)
-    (countFunctions.arguments_length.count base (BitVec.ofNat w xs.length) target)
+    (countFunctions.arguments_length.count ⟨base, BitVec.ofNat w xs.length⟩ target)
     (by decide) execution (by trivial)
   change callee.eval countFunctions.function.count.result =
     BitVec.ofNat w (xs.count target) at returned
@@ -187,11 +188,11 @@ theorem count_function_runs {w heapLimit depth : Nat} {program : Program}
     (hfit : base.toNat + xs.length < 2 ^ w)
     (entry : State w) (represented : ArrayAt heapLimit base xs entry) :
     FunctionExec program heapLimit depth countFunctions.function.count
-      (countFunctions.arguments.count base (BitVec.ofNat w xs.length) target)
+      (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target)
       entry (BitVec.ofNat w (xs.count target)) entry := by
   obtain ⟨value, finish, execution, rfl, rfl⟩ :=
     count_function_contract (program := program) (depth := depth) hw hfit
-      (countFunctions.arguments.count base (BitVec.ofNat w xs.length) target)
+      (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target)
       entry ⟨rfl, represented⟩
   exact execution
 
@@ -203,7 +204,7 @@ theorem count_function_eval_toNat {w heapLimit : Nat} {program : Program}
     (hfit : base.toNat + xs.length < 2 ^ w)
     (represented : ArrayAt heapLimit base xs entry) :
     (countFunctions.function.count.eval program heapLimit
-      (countFunctions.arguments.count base (BitVec.ofNat w xs.length) target) entry).map
+      (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target) entry).map
         (fun result => result.1.toNat) = Part.some (xs.count target) := by
   rw [(count_function_runs (program := program) (depth := 0)
     hw hfit entry represented).eval_eq_some]
@@ -218,13 +219,13 @@ theorem count_function_timeBound {w control heapLimit depth : Nat} {program : Pr
     (hfit : base.toNat + xs.length < 2 ^ w) :
     FunctionTimeBound control program heapLimit depth countFunctions.function.count
       (fun args entry =>
-        args = countFunctions.arguments.count base (BitVec.ofNat w xs.length) target ∧
+        args = countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target ∧
         ArrayAt heapLimit base xs entry)
       (fun _ _ => 18 * xs.length + 4) := by
   rintro args entry ⟨rfl, _⟩ steps value finish ⟨_, _, callee, execution, _, _, _⟩
   have hlength : xs.length < 2 ^ w := by omega
   have count :
-      ((entry.enter (countFunctions.arguments.count base (BitVec.ofNat w xs.length) target)).regs
+      ((entry.enter (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target)).regs
         Count.registers.remaining).toNat = xs.length := Word.ofNat_toNat_of_lt hlength
   have measured := Count.body_localMeasured (control := control) hw execution.erase
   have same := (execution.deterministic measured).1
@@ -237,14 +238,59 @@ theorem count_function_runs_with_timeBound {w control heapLimit depth : Nat} {pr
     (entry : State w) (represented : ArrayAt heapLimit base xs entry) :
     ∃ bodySteps,
       FunctionMeasuredExec control program heapLimit depth countFunctions.function.count
-        (countFunctions.arguments.count base (BitVec.ofNat w xs.length) target)
+        (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target)
         bodySteps entry (BitVec.ofNat w (xs.count target)) entry ∧
       bodySteps ≤ 18 * xs.length + 4 := by
   obtain ⟨bodySteps, value, finish, execution, ⟨rfl, rfl⟩, bound⟩ :=
     (count_function_contract (program := program) (depth := depth) hw hfit).with_timeBound
       (count_function_timeBound (control := control) hw hfit)
-      (countFunctions.arguments.count base (BitVec.ofNat w xs.length) target)
+      (countFunctions.arguments.count ⟨base, BitVec.ofNat w xs.length⟩ target)
       entry ⟨rfl, represented⟩
   exact ⟨bodySteps, execution, bound⟩
+
+/-- Pass one typed array reference and one scalar target to the same count
+function. The reference assertion supplies the exact represented length. -/
+theorem count_function_contract_of_ref {w heapLimit depth : Nat} {program : Program}
+    {array : ArrayRef w} {target : Word w} {xs : List (Word w)} (hw : 0 < w)
+    (hfit : array.base.toNat + xs.length < 2 ^ w) :
+    FunctionContract program heapLimit depth countFunctions.function.count
+      (fun args entry => args = countFunctions.arguments.count array target ∧
+        array.Rep heapLimit xs entry)
+      (fun _ entry value finish => value = BitVec.ofNat w (xs.count target) ∧ finish = entry) := by
+  apply (count_function_contract (program := program) (depth := depth)
+    (base := array.base) (target := target) (xs := xs) hw hfit).consequence
+  · rintro args entry ⟨rfl, represented⟩
+    refine ⟨?_, represented.2⟩
+    simp only [countFunctions.arguments.count, represented.length_eq]
+  · intro args entry value finish _ result
+    exact result
+
+/-- Observe a standard list count through a typed reference, without exposing
+the descriptor's two-word argument encoding to the caller's proof. -/
+theorem count_function_eval_toNat_of_ref {w heapLimit : Nat} {program : Program}
+    {array : ArrayRef w} {target : Word w} {xs : List (Word w)} {entry : State w}
+    (hw : 0 < w) (hfit : array.base.toNat + xs.length < 2 ^ w)
+    (represented : array.Rep heapLimit xs entry) :
+    (countFunctions.function.count.eval program heapLimit
+      (countFunctions.arguments.count array target) entry).map
+        (fun result => result.1.toNat) = Part.some (xs.count target) := by
+  simpa only [countFunctions.arguments.count, represented.length_eq] using
+    (count_function_eval_toNat (program := program) (target := target) hw hfit represented.2)
+
+/-- Typed argument packaging preserves the same compiler-derived body bound;
+it neither allocates a descriptor nor adds a representation-conversion step. -/
+theorem count_function_timeBound_of_ref {w control heapLimit depth : Nat} {program : Program}
+    {array : ArrayRef w} {target : Word w} {xs : List (Word w)} (hw : 0 < w)
+    (hfit : array.base.toNat + xs.length < 2 ^ w) :
+    FunctionTimeBound control program heapLimit depth countFunctions.function.count
+      (fun args entry => args = countFunctions.arguments.count array target ∧
+        array.Rep heapLimit xs entry)
+      (fun _ _ => 18 * xs.length + 4) := by
+  rintro args entry ⟨rfl, represented⟩ steps value finish execution
+  apply count_function_timeBound (control := control) (program := program) (depth := depth)
+    (base := array.base) (target := target) (xs := xs) hw hfit
+    (countFunctions.arguments.count array target) entry ?_ steps value finish execution
+  refine ⟨?_, represented.2⟩
+  simp only [countFunctions.arguments.count, represented.length_eq]
 
 end Ram.Source.Array

@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Source.Named.Basic
+import Complexity.Computability.Ram.Array.Ref
 
 /-!
 # Source declarations in ordinary correctness proofs
@@ -17,10 +18,14 @@ Lean declarations for its functions and source names:
 * `p.functionIndex.f` is the function-table index of `f`;
 * `p.function_lookup.f` proves that this entry is `p.function.f`;
 * `p.body_eq.f` and `p.result_eq.f` expose the lowered body and return expression;
-* `p.arguments.f` takes the declared parameters as words and constructs their argument list;
+* `p.arguments.f` takes word or `Ram.ArrayRef` parameters and constructs their word argument list;
 * `p.arguments_length.f` proves that this list has the function's declared arity;
 * `p.localReg.f.x` is the binding of `x` visible at the return of function `f`;
 * `p.mainReg.x` is a binding visible at the end of `main`, when present.
+
+An array parameter `xs` exports `p.localReg.f.xs.base` and
+`p.localReg.f.xs.length`. The typed argument builder passes those same two
+words; it does not allocate or load an in-memory descriptor.
 
 Thus contracts can use `s.regs p.localReg.f.x` and `s.setReg p.mainReg.x value`
 without reproducing register numbers. The register abbreviations use the
@@ -44,30 +49,54 @@ open Lean.Parser.Term
 
 private def localRegisterDeclarations (scopeName : Lean.Name)
     (scope : LocalScope) : Lean.MacroM (Array Lean.Syntax) := do
-  scope.mapM fun (name, index) => do
+  let declare (name : Lean.Name) (index : Nat) := do
     let register := Lean.Syntax.mkNumLit (toString index)
     let alias := Lean.mkIdent (scopeName ++ name)
     let declaration ← `(command| abbrev $alias:ident : Ram.Reg := $register:num)
-    return declaration.raw
+    pure declaration.raw
+  let mut declarations := #[]
+  for binding in scope do
+    match binding.kind with
+    | .word => declarations := declarations.push (← declare binding.name binding.register)
+    | .array =>
+        declarations := declarations.push (← declare (binding.name ++ `base) binding.register)
+        declarations := declarations.push
+          (← declare (binding.name ++ `length) (binding.register + 1))
+  return declarations
 
 private def argumentDeclarations (name fn : Lean.TSyntax `ident)
-    (params : Array (Lean.TSyntax `ident)) (functionName : Lean.TSyntax `ident) :
+    (params : Array Parameter) (functionName : Lean.TSyntax `ident) :
     Lean.MacroM (Array Lean.Syntax) := do
   let argumentsName := Lean.mkIdentFrom fn (name.getId ++ `arguments ++ fn.getId)
   let lengthName := Lean.mkIdentFrom fn (name.getId ++ `arguments_length ++ fn.getId)
   let width := Lean.mkIdent (← Lean.Macro.addMacroScope `w)
-  let mut value ← `(([$params:ident,*] : List (Ram.Word $width:ident)))
+  let parameterType (kind : ParameterKind) := match kind with
+    | .word => `(Ram.Word $width:ident)
+    | .array => `(Ram.ArrayRef $width:ident)
+  let mut words : Array (Lean.TSyntax `term) := #[]
+  for param in params do
+    let name := param.name
+    match param.kind with
+    | .word => words := words.push (← `($name:ident))
+    | .array =>
+        words := words.push (← `(($name:ident).base))
+        words := words.push (← `(($name:ident).length))
+  let mut value ← `(([$words,*] : List (Ram.Word $width:ident)))
   for param in params.reverse do
-    value ← `(fun ($param:ident : Ram.Word $width:ident) => $value)
+    let name := param.name
+    value ← `(fun ($name:ident : $(← parameterType param.kind)) => $value)
   let arguments ← `(command| abbrev $argumentsName:ident {$width:ident : Nat} := $value)
   let mut application ← `(@$argumentsName:ident $width:ident)
   for param in params do
-    application ← `($application $param:ident)
+    let name := param.name
+    application ← `($application $name:ident)
   let mut arity ← `(($application).length = ($functionName:ident).params)
   let mut proof ← `(Eq.refl ($application).length)
   for param in params.reverse do
-    arity ← `(∀ ($param:ident : Ram.Word $width:ident), $arity)
-    proof ← `(fun ($param:ident : Ram.Word $width:ident) => $proof)
+    let name := param.name
+    let type ← parameterType param.kind
+    arity ← `(∀ ($name:ident : $type), $arity)
+    proof ← `(fun ($name:ident : $type) => $proof)
   let length ← `(command| theorem $lengthName:ident {$width:ident : Nat} : $arity := $proof)
   return #[arguments.raw, length.raw]
 

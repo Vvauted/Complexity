@@ -31,8 +31,17 @@ The register names and program counter are naturals in the semantics; a fixed fi
 uses finitely many registers, while stored values and memory addresses are words.
 
 The [bounded runner](##Complexity.Computability.Ram.Execution.Runner) agrees with this
-semantics. `Ram.Fast.map_run` relates the optimized executable representation to the reference
+semantics. The [unbounded runner](##Complexity.Computability.Ram.Execution.Unbounded)
+uses the same transition without a supplied limit. `Ram.runUntil_halted_iff` identifies
+its returned halted results with finite `Exec` derivations and the exact same count.
+`Ram.Fast.map_run` relates the optimized bounded executable representation to the reference
 one. Their host runtimes can differ; neither runtime defines the formal transition cost.
+
+`Ram.runUntil` uses executable `partial_fixpoint` recursion. Halt, fault and invalid PC
+return `some` with the appropriate stopping reason; it cannot return `outOfFuel`.
+Divergence is the logical bottom value `none`, not a runtime detection algorithm: a
+divergent program keeps executing. The bounded runner remains useful for exploratory
+execution which must stop after a chosen number of transitions.
 
 ## From source proof to halted execution
 
@@ -60,6 +69,35 @@ its bound does not silently include unspecified input preparation.
 Start with [execution export](##Complexity.Computability.Ram.Verification.Execution) for client
 theorems or [whole-program compilation](##Complexity.Computability.Ram.Compiler.Local.Program.Basic)
 for the underlying simulation.
+
+## Call a function without stream I/O
+
+`Ram.LocalCompiler.Function.runUntil` executes a checked fixed call-and-halt trampoline.
+Runtime argument words are preloaded in parameter registers; the initial program counter
+is 1 and the stack pointer is the explicit heap boundary. This entry skips the linker's
+header-read instruction. It neither consumes an input word to pass a function argument
+nor writes an output word to return a result. The function body may still contain its own
+I/O operations, and those effects are retained.
+
+`Ram.Source.FunctionExec` observes the function's returned word separately from shared
+state. The source state's `input` and `outputRev` fields model possible stream effects;
+they are not implicit operations. For example, factorial proves the same result for
+arbitrary caller streams and preserves them. Its optional stream main actually executes
+`read` and `write`, and its whole-program theorem includes those instructions.
+
+The function trampoline is fixed before receiving argument values; it passes variables,
+not input-specialized constants. Its count is the actual enclosing call count plus one
+halt. In [the runnable factorial example](##Examples.Ram.FunctionRun), argument 5 returns
+120 in 218 transitions without a step limit. A typed array argument is still two ordinary
+words at this boundary, not an implicit allocated object or a free memory copy.
+
+`Ram.LocalCompiler.Function.runUntil_of_execution` derives the result from the function proof
+under code-fit and stack-fit premises, without a time estimate.
+`Ram.LocalCompiler.Function.run` additionally offers an operational limit.
+Host-side argument and heap preparation is explicit
+preloading, not a charged RAM loader; a complete input-loading program needs its own
+implementation and count. See the
+[function compilation interface](##Complexity.Computability.Ram.Compiler.Local.Function).
 
 ## What observations survive compilation?
 
@@ -102,6 +140,12 @@ compiled argument lengths + measured body steps + compiled result length
 The result expression is evaluated before restoring the caller, and the count includes the
 call and return control transfers. Increasing an unrelated function's local bound does not
 increase this call's frame work. `Ram.Compiler` retains the global-bound reference compiler.
+
+`Ram.Func.bodyTime` excludes the enclosing call's argument evaluation, frame setup and
+return sequence, including evaluation of that function's own return expression. Nested
+calls inside its body include their complete generated call code. For example,
+[squaredNorm](##Examples.Ram.LocalBindings) has body time 46 from two 23-step calls;
+its final addition is in its own return expression and is not part of those 46 steps.
 
 Most users need the proved function contract, not the physical register assignment.
 Backend contributors can follow the

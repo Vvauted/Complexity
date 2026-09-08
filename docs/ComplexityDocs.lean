@@ -20,8 +20,8 @@ to browse a topic.
 
 ## Start here
 
-1. [Getting started](##ComplexityDocs.GettingStarted): install the library, run a program
-   and follow a complete checked example.
+1. [Getting started](##ComplexityDocs.GettingStarted): define and run a function,
+   then prove a mathematical property of its result.
 2. [Proving correctness](##ComplexityDocs.Verification): specifications, total correctness,
    calls, loops and reuse of ordinary Lean proofs.
 3. [Working with data](##ComplexityDocs.Models): arrays, mathematical views and memory frames.
@@ -44,6 +44,12 @@ returned value and shared effects. Start with the
 [function contracts](##Complexity.Computability.Ram.Verification.Function);
 [function costs](##Complexity.Computability.Ram.Source.Function.Time) observe the same
 implementation separately from a proposed bound.
+
+The [function runner](##Examples.Ram.FunctionRun) executes a compiled call without
+an I/O driver or a supplied instruction limit. The
+[array-argument sample](##Examples.Ram.ArrayArguments) composes two typed array calls
+and describes the result with ordinary lists. Array references describe preloaded
+data; they do not implicitly convert or allocate Lean lists in the machine heap.
 
 Reusable programs can be packaged and linked without a time budget using
 [total components](##Complexity.Computability.Ram.Component.Total), then receive separate

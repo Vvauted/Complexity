@@ -103,7 +103,50 @@ ram_def functions := ram_functions% {
 `let mut` permits later assignment. Branch and loop locals stay inside their block,
 and shadowing allocates a fresh slot without overwriting the old binding.
 The frame size is inferred from the declarations. Array sum and count use `let mut`
-for their accumulators. These remain first-order word functions, not arbitrary Lean callbacks.
+for their accumulators. These remain first-order functions, not arbitrary Lean callbacks.
+The sample separately proves a body count of 46: two real calls to `square`, each costing
+23 transitions. The final `sx + sy` return expression and the enclosing call/return are
+outside this body count and are charged when `squaredNorm` is called.
+
+## Pass an existing array
+
+An array parameter groups its base address and length. The
+[array-sum implementation](##Complexity.Computability.Ram.Array.Sum) declares:
+
+```lean
+ram_def sumFunctions := ram_functions% {
+  fn sum(xs : array) {
+    let mut accumulator := 0;
+    while xs.length {
+      accumulator := accumulator + load[xs.base];
+      xs.base := xs.base + 1;
+      xs.length := xs.length - 1;
+    }
+    return accumulator;
+  }
+  fn sumPair(left : array, right : array) {
+    let leftSum ← call sum(left);
+    let rightSum ← call sum(right);
+    return leftSum + rightSum;
+  }
+}
+```
+
+`sumFunctions.arguments.sum` takes one `Ram.ArrayRef w`; the `sumPair` argument builder
+takes two. Each reference contains two words, `base` and `length`, passed through the
+existing function ABI. The mathematical list of contents appears only in the contract.
+Passing a reference does not allocate a descriptor, load a Lean list or copy array cells.
+The calls above pass existing references and perform the actual array reads in `sum`.
+Array and scalar parameters can be mixed: the
+[counter](##Complexity.Computability.Ram.Array.Count) declares `fn count(xs : array, target)`.
+Its generated argument builder takes an `ArrayRef` and one word, and its mathematical
+contract identifies the decoded result with the ordinary `xs.count target`.
+
+`Ram.ArrayRef.Rep` connects a reference to the represented list and the heap boundary.
+The sum contract proves the modular list sum and unchanged shared state. The pair contract
+reuses it twice, without reopening the loop proof. Range and overflow premises still
+belong to the operation contract. See [data models](##ComplexityDocs.Models) for the
+representation boundary and current limits on array-valued source expressions.
 
 ## State properties of a function value
 
@@ -126,29 +169,43 @@ It does not mean arbitrary ordinary Lean definitions can already be compiled by 
 The underlying [function observations](##Complexity.Computability.Ram.Source.Function.Eval)
 are defined from execution, independently of the mathematical factorial or its proposed cost.
 
+Function arguments and return values are not stream input/output. The generic source state
+also has `input` and `outputRev` fields so that functions which really use I/O can be modeled.
+Their presence does not execute a `read` or `write`. Factorial's `function_runs` theorem
+allows any initial input stream and existing output history, and proves the final shared
+state is unchanged. `eval_eq_of_execution` shows that hiding this state in `eval n` did
+not change the result at any actual caller. The optional driver below is a separate program.
+
 ## Execute a function without a driver
 
 The [function runner sample](##Examples.Ram.FunctionRun) calls the same factorial
 implementation directly:
 
 ```lean
-#eval runFactorial (BitVec.ofNat 32 5) 300
+#eval runFactorialUntil (BitVec.ofNat 32 5)
 -- some (120, 218, Ram.StopReason.halted)
 ```
 
-Its adapter is `Ram.LocalCompiler.Function.run`. It compiles a fixed call-and-halt
+Its adapter is `Ram.LocalCompiler.Function.runUntil`. It compiles a fixed call-and-halt
 sequence, places runtime arguments in parameter registers, and returns the result
 without reading or writing an input/output stream. The 218 transitions include the
 enclosing call, return and halt, unlike the separate function-body observation.
-The limit of 300 makes this execution interruptible; it is not a premise of the
-function's correctness or termination proof. An unbounded executable application
-interface is still future work.
+No time budget is supplied. The sample's `runFactorialUntil_eq` proves its returned
+value and exact count under the stack-capacity premise. For bounded exploration,
+`runFactorial n limit` uses `Ram.LocalCompiler.Function.run` on the same code and
+reports `outOfFuel` if its operational limit is reached.
+
+The unbounded runner is executable, unlike the proof-only `Part` view. It uses Lean's
+`partial_fixpoint` over the existing machine transition. A divergent program keeps running;
+`Option` is not a runtime nontermination detector. Static compilation or arity failure can
+return `none` from the function adapter, while a run that stops retains its stopping reason.
 
 The [compiler bridge](##Complexity.Computability.Ram.Compiler.Local.Function)
 relates the runtime value, visible shared state and step count to the function
 proofs. Code and stack must fit the word address space. Heap contents are preloaded
-explicitly, and host-side preparation is not counted as a RAM loader. This low-level
-adapter does not yet turn arbitrary Lean lists into executable function arguments.
+explicitly, and host-side preparation is not counted as a RAM loader. Array references use
+the generated word argument lists, but this adapter does not automatically turn arbitrary
+Lean lists into loaded array data.
 
 ## Add an executable driver when needed
 

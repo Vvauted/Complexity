@@ -67,7 +67,7 @@ theorem function_contract {program : Program} {heapLimit depth : Nat} {base : Wo
     (hw : 0 < w) (hfit : base.toNat + n < 2 ^ w) :
     FunctionContract program heapLimit depth sumFunctions.function.sum
       (fun args entry =>
-        args = sumFunctions.arguments.sum base (BitVec.ofNat w n) ∧
+        args = sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩ ∧
         ArrayAt heapLimit base (adjacencyRow G v w) entry)
       (fun _ entry value finish => value.toNat = G.degree v ∧ finish = entry) := by
   apply (sum_function_contract (program := program) (depth := depth)
@@ -84,11 +84,11 @@ theorem function_runs {program : Program} {heapLimit depth : Nat} {base : Word w
     (represented : ArrayAt heapLimit base (adjacencyRow G v w) entry) :
     ∃ value,
       FunctionExec program heapLimit depth sumFunctions.function.sum
-        (sumFunctions.arguments.sum base (BitVec.ofNat w n)) entry value entry ∧
+        (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) entry value entry ∧
       value.toNat = G.degree v := by
   obtain ⟨value, finish, execution, correct, rfl⟩ :=
     function_contract G v (program := program) (depth := depth) hw hfit
-      (sumFunctions.arguments.sum base (BitVec.ofNat w n)) entry ⟨rfl, represented⟩
+      (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) entry ⟨rfl, represented⟩
   exact ⟨value, execution, correct⟩
 
 /-- The unchanged implementation has a linear body-step bound in the number
@@ -98,7 +98,7 @@ theorem function_timeBound {program : Program} {control heapLimit depth : Nat}
     {base : Word w} (hw : 0 < w) (hfit : base.toNat + n < 2 ^ w) :
     FunctionTimeBound control program heapLimit depth sumFunctions.function.sum
       (fun args entry =>
-        args = sumFunctions.arguments.sum base (BitVec.ofNat w n) ∧
+        args = sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩ ∧
         ArrayAt heapLimit base (adjacencyRow G v w) entry)
       (fun _ _ => 16 * n + 4) := by
   simpa only [length_adjacencyRow] using
@@ -112,12 +112,12 @@ theorem function_runs_with_timeBound {program : Program} {control heapLimit dept
     (represented : ArrayAt heapLimit base (adjacencyRow G v w) entry) :
     ∃ bodySteps value,
       FunctionMeasuredExec control program heapLimit depth sumFunctions.function.sum
-        (sumFunctions.arguments.sum base (BitVec.ofNat w n)) bodySteps entry value entry ∧
+        (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) bodySteps entry value entry ∧
       value.toNat = G.degree v ∧ bodySteps ≤ 16 * n + 4 := by
   obtain ⟨bodySteps, value, finish, execution, ⟨correct, rfl⟩, bound⟩ :=
     (function_contract G v (program := program) (depth := depth) hw hfit).with_timeBound
       (function_timeBound G v (control := control) hw hfit)
-      (sumFunctions.arguments.sum base (BitVec.ofNat w n)) entry ⟨rfl, represented⟩
+      (sumFunctions.arguments.sum ⟨base, BitVec.ofNat w n⟩) entry ⟨rfl, represented⟩
   exact ⟨bodySteps, value, execution, correct, bound⟩
 
 end Ram.Examples.GraphDegree

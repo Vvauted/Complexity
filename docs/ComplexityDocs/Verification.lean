@@ -18,7 +18,18 @@ For an intermediate function, start with `Ram.Source.FunctionContract`. Its prec
 describes arguments and caller state; its postcondition describes the actual returned
 word and shared-state effects. It requires neither a `main` nor stream input/output.
 `Ram.Source.FunctionExec` defines those observations through the function's real body and
-return expression. It does not take a proposed mathematical result as a parameter.
+return expression: the returned word must equal that expression's value after the body
+executes. A mathematical specification is a property to prove about that execution,
+not a replacement implementation.
+
+The `input` and `outputRev` fields in `Ram.Source.State` are shared stream state, not the
+function's arguments and return value. Only actual source `read` and `write` operations
+consume or append stream words. Function contracts quantify over entry states satisfying
+their precondition; they do not automatically assume empty streams or unchanged effects.
+In the factorial contract, the precondition only restricts the argument list and the
+postcondition says `finish = entry`. Thus `function_runs` proves termination and the
+factorial result for arbitrary initial stream contents, while preserving those contents.
+The optional `read`/call/`write` main is verified separately.
 
 The [factorial example](##Examples.Ram.Factorial) returns a word and preserves caller state.
 The [array-copy function](##Complexity.Computability.Ram.Array.Function) instead changes
@@ -34,6 +45,9 @@ postcondition applied to the actual return value and shared state. The sample
 needs no separately specified intermediate state relation. `of_body` remains
 useful when a body refinement or invariant is already available. Automatic
 discovery of invariants and reusable operation contracts is not supplied.
+The sample's independent `squaredNorm_bodyTime` theorem identifies the same body's count
+as 46. It includes both calls to `square`, not `squaredNorm`'s own final return expression
+or its enclosing calling convention.
 
 For function-value equations, use `Ram.Func.eval`. It observes an actual safe invocation
 through mathlib's `Part`; `eval = Part.some result` includes termination. The
@@ -49,6 +63,15 @@ the postcondition can be a mathematical relation, not necessarily a reference al
 `Ram.Source.FunctionContract.eval_with_timeBound` adds a separate bound to the same
 invocation's `Ram.Func.bodyTime`. Neither observation is defined using the proposed
 result property or time bound.
+
+To execute the proved function, use `Ram.LocalCompiler.Function.runUntil` rather than the
+noncomputable `Part` observation. Its `runUntil_of_execution` bridge derives a returned
+machine result and its actual count from `FunctionExec`, with no proposed time budget.
+Code and stack still have to fit the selected word width. The
+[runnable factorial sample](##Examples.Ram.FunctionRun) applies this bridge and proves
+the result of the same application used by `#eval`. General divergent programs do not
+return a nontermination flag; use the bounded `run` interface when an operational limit
+is desired.
 
 Use `Ram.Source.TotalContract` when the precondition and postcondition directly describe
 the source state. `Ram.Source.TotalRelContract` also lets the postcondition refer to the
@@ -103,6 +126,15 @@ The graph proof only identifies the represented row's list sum with mathlib's
 the traversal, register updates or unchanged-memory facts. The row is explicitly
 preloaded; converting an abstract graph to that layout would need its own implementation.
 
+The array-sum source accepts `xs : array`, and `sumPair(left : array, right : array)`
+calls it as `call sum(left)` and `call sum(right)`. The generated argument builders take
+`Ram.ArrayRef` values; `array.Rep heapLimit xs entry` supplies the mathematical contents,
+exact length and existing memory representation. `sum_function_contract_of_ref` and
+`sumPair_function_contract` expose the returned list sums and unchanged shared state.
+The two read-only references may overlap: this client does not need a disjointness premise.
+Mutating operations still need their own aliasing and frame conditions. Passing a reference
+does not prove its representation or execute a list loader.
+
 For a read-only scalar accumulation, [the shared fold](##Complexity.Computability.Ram.Array.Fold)
 provides cursor progress, termination and framing. A client proves that its actual
 source expression implements the mathematical fold step, that its reads are safe,
@@ -110,8 +142,11 @@ and that any extra read-only parameter remains unchanged. Sum and count both use
 this rule. The separate measured rule derives iteration costs from the expression's
 compiled instructions; a host-language callback is not accepted as a free operation.
 The [count client](##Examples.Ram.ArrayCount) then derives permutation invariance
-directly from `List.Perm.count_eq`. Mutating, short-circuiting and call-based folds
-still require further interfaces.
+directly from `List.Perm.count_eq`. It uses the typed reference contract for
+`count(xs : array, target)`, with independently represented arrays that may live in
+different heaps. The theorem equates returned counts, not the states or the work needed
+to construct those arrays. Mutating, short-circuiting and call-based folds still require
+further interfaces.
 
 These rules operate on fixed source statements. They do not turn an arbitrary mathematical
 function into executable code. See [data models](##ComplexityDocs.Models) for array, matrix,

@@ -16,6 +16,12 @@ recurse, or participate in mutual recursion.
 Functions and local variables have separate name tables. Embedded `const(t)`
 terms retain the enclosing Lean scope and never refer to runtime registers.
 
+A bare parameter is a word; `xs : array` declares a base-and-length handle.
+Its fields are word locals, and `xs[i]` performs the existing word load.
+At `call f(xs)`, the declared signature determines whether one word or the
+two array fields are passed. Handles currently originate from function
+parameters, not allocation or a general array-valued local-binding syntax.
+
 The functions lower to the ordinary `Program`, with names kept as metadata.
 `Ram.Named.Functions.withMain` explicitly supplies an entry point when one is
 needed. `Ram.Named.Bundle.compile` is the existing checked compiler: arity and
@@ -102,10 +108,14 @@ end Ram.Named
 namespace Ram.DSL
 
 declare_syntax_cat ramDecl (behavior := symbol)
+declare_syntax_cat ramParam
 
-syntax &"fn " ident "(" ident,* ")" ident "(" ident,* ")" "{"
+syntax ident : ramParam
+syntax ident " : " &"array" : ramParam
+
+syntax &"fn " ident "(" ramParam,* ")" ident "(" ident,* ")" "{"
   ramStmt* "return " ramExpr ";" "}" : ramDecl
-syntax &"fn " ident "(" ident,* ")" "{"
+syntax &"fn " ident "(" ramParam,* ")" "{"
   ramStmt* "return " ramExpr ";" "}" : ramDecl
 
 /-- A collection of callable functions, without a required main statement.
@@ -123,20 +133,27 @@ syntax:max "ram_program% " "{" ramDecl*
 /-- A parsed function, shared by term quotations and proof-facing declarations. -/
 structure FunctionDeclaration where
   name : Lean.TSyntax `ident
-  params : Array (Lean.TSyntax `ident)
+  params : Array Parameter
   locals : Array (Lean.TSyntax `ident)
   body : Array (Lean.TSyntax `ramStmt)
   result : Lean.TSyntax `ramExpr
+  deriving Inhabited
+
+private def parseParameter (param : Lean.TSyntax `ramParam) : Lean.MacroM Parameter := do
+  match param with
+  | `(ramParam| $name:ident) => return ⟨name, .word⟩
+  | `(ramParam| $name:ident : array) => return ⟨name, .array⟩
+  | _ => Lean.Macro.throwErrorAt param "expected a word name or 'name : array'"
 
 private def parseFunction (decl : Lean.TSyntax `ramDecl) : Lean.MacroM FunctionDeclaration := do
   match decl with
-  | `(ramDecl| fn $name:ident($params:ident,*) $keyword:ident($locals:ident,*) {
+  | `(ramDecl| fn $name:ident($params:ramParam,*) $keyword:ident($locals:ident,*) {
       $body:ramStmt* return $result:ramExpr; }) =>
       if keyword.getId != `locals then
         Lean.Macro.throwErrorAt keyword "expected 'locals' followed by local register names"
-      return ⟨name, params.getElems, locals.getElems, body, result⟩
-  | `(ramDecl| fn $name:ident($params:ident,*) { $body:ramStmt* return $result:ramExpr; }) =>
-      return ⟨name, params.getElems, #[], body, result⟩
+      return ⟨name, ← params.getElems.mapM parseParameter, locals.getElems, body, result⟩
+  | `(ramDecl| fn $name:ident($params:ramParam,*) { $body:ramStmt* return $result:ramExpr; }) =>
+      return ⟨name, ← params.getElems.mapM parseParameter, #[], body, result⟩
   | _ => Lean.Macro.throwErrorAt decl "expected a RAM function declaration"
 
 private structure LoweredFunctions where
@@ -146,8 +163,8 @@ private structure LoweredFunctions where
   registers : Nat
   resolveFunction : FunctionResolver
 
-/-- Both entry-point forms use the same two-pass function-name resolution and
-the existing expression, statement and function lowering. -/
+/-- Both entry-point forms collect function signatures before lowering bodies.
+Array parameters are flattened only at declared array argument positions. -/
 private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl)) :
     Lean.MacroM LoweredFunctions := do
   let parsed ← decls.mapM parseFunction
@@ -156,11 +173,19 @@ private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl)) :
     if functionNames.any (fun entry => entry.1 == decl.name.getId) then
       Lean.Macro.throwErrorAt decl.name "duplicate RAM function name"
     functionNames := functionNames.push (decl.name.getId, functionNames.size)
-  let resolveFunction : FunctionResolver := fun name => do
+  let resolveFunction : FunctionResolver := fun scope strict name args => do
     match functionNames.find? (fun entry => entry.1 == name.getId) with
     | some (_, index) =>
-        let index := Lean.Syntax.mkNumLit (toString index)
-        `($index:num)
+        let params := parsed[index]!.params
+        if args.size != params.size then
+          Lean.Macro.throwErrorAt name "wrong number of RAM function arguments"
+        let mut lowered := #[]
+        for (param, arg) in params.zip args do
+          match param.kind with
+          | .word => lowered := lowered.push (← lowerExpr scope strict arg)
+          | .array => lowered := lowered ++ (← arrayArgument scope arg)
+        let literal := Lean.Syntax.mkNumLit (toString index)
+        return (← `($literal:num), lowered)
     | none => Lean.Macro.throwErrorAt name "unknown RAM function name"
   let mut declarations : Array (Lean.TSyntax `term) := #[]
   let mut scopes := #[]
@@ -207,7 +232,8 @@ def lowerNamed (source : Lean.TSyntax `term) : Lean.MacroM LoweredNamed := do
       return ⟨← `(Ram.Named.Functions), term, functions.parsed, declarations, functions.scopes, #[]⟩
   | some (names, body) =>
       let scope ← makeLocalScope names
-      let main ← lowerScopedBlock scope #[] scope.size Bool.true functions.resolveFunction body
+      let main ← lowerScopedBlock scope #[] (localRegisterCount scope)
+        Bool.true functions.resolveFunction body
       let registerCount := Lean.Syntax.mkNumLit
         (toString (max main.nextRegister functions.registers))
       let term ← `(Ram.Named.Bundle.mk $registerCount [$declarations,*] $(main.term))

@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Source.Function.Eval
 import Complexity.Computability.Ram.Verification.Execution
 import Complexity.Computability.Ram.Execution.Runner
+import Complexity.Computability.Ram.Execution.Unbounded
 
 /-!
 # Executable function calls without a stream driver
@@ -23,8 +24,10 @@ it does not count host-side preparation as a RAM loader. General function bodies
 may still have their own input/output effects.
 
 `runs` obtains an actual terminating machine execution from function correctness
-without a time budget. `run_eq_of_measured` connects that execution to a chosen
-operational runner limit. Code and stack representability remain explicit.
+without a time budget. `runUntil` executes that call without an operational limit;
+`run` remains available for interruptible exploration. The corresponding result
+theorems connect both interfaces to the same execution. Code and stack
+representability remain explicit.
 Shared memory is observed only below the heap boundary: private target stack
 words are not identified with the source function's memory.
 -/
@@ -63,6 +66,17 @@ def run (control : Nat) (program : Program) (fn arity heapLimit budget : Nat)
   if args.length = arity then
     (compile control program fn arity).map fun code =>
       Ram.run code budget (start control heapLimit args entry)
+  else none
+
+/-- Execute the fixed function call without choosing a transition limit.
+Static rejection returns `none`. For accepted code the least-fixed-point runner
+returns a normal stopping result when reached, and a diverging computation does
+not return. Use `run` to explore a function with an operational limit. -/
+def runUntil (control : Nat) (program : Program) (fn arity heapLimit : Nat)
+    (args : List (Word w)) (entry : Source.State w) : Option (RunResult (Ram.State w)) :=
+  if args.length = arity then
+    (compile control program fn arity).bind fun code =>
+      Ram.runUntil code (start control heapLimit args entry)
   else none
 
 /-- The enclosing call count comes from its actual generated instruction blocks. -/
@@ -179,5 +193,42 @@ theorem run_eq_of_measured {control heapLimit depth bodySteps fn budget : Nat}
   refine ⟨target, ?_, returned, observed⟩
   simp only [run, execution.1, ↓reduceIte, hcompile, Option.map_some,
     Ram.run_of_exec executed halted hbudget]
+
+/-- A measured invocation determines the unbounded executable call's complete
+result and exact count. No proposed runtime limit occurs in this statement. -/
+theorem runUntil_eq_of_measured {control heapLimit depth bodySteps fn : Nat}
+    {program : Program} {f : Func} {args : List (Word w)}
+    {entry finish : Source.State w} {value : Word w} {code : Code}
+    (hcompile : compile control program fn f.params = some code)
+    (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
+    (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
+    (execution : Source.FunctionMeasuredExec control program heapLimit depth f args bodySteps
+      entry value finish) :
+    ∃ target, runUntil control program fn f.params heapLimit args entry =
+        some ⟨target, callSteps control f bodySteps + 1, .halted⟩ ∧
+      target.regs 0 = value ∧ Source.State.Observes heapLimit 0 finish target := by
+  obtain ⟨target, executed, halted, returned, observed⟩ :=
+    runs_measured hcompile hlookup hcode hstack execution
+  refine ⟨target, ?_, returned, observed⟩
+  simp only [runUntil, execution.1, ↓reduceIte, hcompile, Option.bind_some,
+    Ram.runUntil_of_exec executed halted]
+
+/-- Functional correctness alone ensures an actual returned executable value.
+The observed body count and full call count describe that same invocation;
+neither a cost certificate nor an operational limit is needed to call it. -/
+theorem runUntil_of_execution {control heapLimit depth fn : Nat} {program : Program}
+    {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}
+    {code : Code} (hcompile : compile control program fn f.params = some code)
+    (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
+    (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
+    (execution : Source.FunctionExec program heapLimit depth f args entry value finish) :
+    ∃ bodySteps target, runUntil control program fn f.params heapLimit args entry =
+        some ⟨target, callSteps control f bodySteps + 1, .halted⟩ ∧
+      target.regs 0 = value ∧ Source.State.Observes heapLimit 0 finish target ∧
+      f.bodyTime program heapLimit args entry = Part.some bodySteps := by
+  obtain ⟨bodySteps, measured⟩ := execution.exists_measured control
+  obtain ⟨target, returned, value, observed⟩ :=
+    runUntil_eq_of_measured hcompile hlookup hcode hstack measured
+  exact ⟨bodySteps, target, returned, value, observed, measured.bodyTime_eq_some⟩
 
 end Ram.LocalCompiler.Function

@@ -39,6 +39,28 @@ calls need their own rules: their code length is not their execution length.
 See [time bounds](##Complexity.Computability.Ram.Verification.Time.Basic) and
 [straight-line costs](##Complexity.Computability.Ram.Verification.Time.StraightLine).
 
+## Compose function costs
+
+The [two-array example](##Examples.Ram.ArrayArguments) calls the existing `sum`
+function twice. For represented lists of lengths `n` and `m`, the sum body takes
+`16 * n + 4` steps. Its call site adds 37 steps derived from the actual argument,
+frame and return instruction blocks. Thus the pair body has exact count
+
+```text
+(16 * n + 4 + 37) + (16 * m + 4 + 37) = 16 * (n + m) + 82
+```
+
+`Ram.Source.Array.sumPair_bodyTime_eq` proves that equation about the program's
+own time observation. It reuses the sum proof rather than redoing the loop.
+The independent correctness contract supplies the returned list sum and unchanged
+shared state, with no proposed time bound.
+
+The executable `runSumPair_eq` theorem also counts the outer pair invocation and
+final halt, obtaining `16 * (n + m) + 147` for the same returned value. The runtime
+call takes no instruction limit. The represented input heap and sufficient code
+and stack capacity remain explicit; loading or concatenating the lists is not
+part of this program. Concatenation appears only in its mathematical specification.
+
 ## Choose the argument that matches the loop
 
 Supply the invariant and progress facts from the correctness proof. The available rules

@@ -13,7 +13,7 @@ functions, recursive calls, verified compilation and executable runners.
 Budget-free total correctness, separate time bounds, mathematical refinement
 and bridges to native `StateM` verification are implemented.
 
-Function-only declarations and generated word-parameter lists support independent
+Function-only declarations and generated typed argument lists support independent
 function contracts. Return values, shared effects and body counts are observations
 of the existing execution, with actual call overhead added at call sites. Factorial,
 array-copy and array-sum expose this interface. A graph-degree client reuses the
@@ -30,9 +30,18 @@ properties without carrying source state in each proposition. These are
 noncomputable semantic observations, not yet executable ordinary Lean functions.
 The compiled function-call adapter additionally executes intermediate functions
 without a stream driver, using runtime word arguments and a preloaded shared state.
-Its correctness bridge needs no time budget; its runnable interface currently
-takes an operational step limit. Typed data application and an unbounded executable
-function interface remain unfinished.
+Its correctness bridge needs no time budget. `Function.runUntil` executes the same
+call until it stops, with no supplied instruction limit; `Function.run` retains a
+limit for interruptible exploration. Both are connected to actual machine traces,
+returned values and exact counts, under code and stack representability premises.
+A divergent unbounded call keeps running; the interface does not decide termination.
+
+Named functions accept array parameters as well as words: `fn sum(xs : array)`
+and `call sum(xs)` pass a by-value base address and length through the existing ABI.
+`ArrayRef.Rep` connects that reference to an ordinary mathematical list. Sum and
+count use this interface; `sumPair` composes two sum calls without reconstructing
+their loops or frames. Array-valued locals and returns, allocation and automatic
+loading from Lean data remain unfinished.
 
 `TotalComponent` carries that separation through reusable program packaging and
 linking. A separate time proof recovers the same code through the resource-aware
@@ -64,17 +73,29 @@ refinement has been supplied; it does not derive that refinement automatically.
   short-circuiting or mutable traversals.
 - Function-value equations make later mathematical proofs natural, but do not
   make the implementation proof automatic. Semantic `Part` observations and
-  executable function application are distinct interfaces.
+  executable function application are distinct interfaces, now connected for both
+  bounded and unbounded runners. State fields for input and output do not imply
+  stream operations: the factorial function contract holds at every caller state
+  and proves it unchanged. Its `read`/`write` driver is a separate optional program.
 - The sum-of-squares sample composes two helper calls with lexical value bindings.
   Its direct `FunctionContract.of_wp` proof needs no separate intermediate-state
   specification, register names or stack layouts. Call-contract selection and
   proof obligations are still explicit; richer array and recursive clients must
   reach the same level of convenience.
-- Inline locals remove the separate local-variable list, but source functions
-  still take words and pointer/length pairs. Fold clients manually identify their
-  accumulator and cursor in the declaration and publish entry/return adapters.
-  Typed data views and local-state verification conditions need to carry more of
-  this work before programming and implementation proofs feel like ordinary Lean.
+- Array arguments remove pointer/length assembly at typed call sites. The
+  two-array sample states its result using list concatenation, although the
+  program only adds two returned sums and never allocates a concatenated array.
+  Read-only references may overlap. Mixed array/word arguments also work for count.
+- The pair's separate cost proof reuses sum's exact count and composes its actual
+  call blocks. The unbounded executable application additionally includes the outer
+  call and halt. This is a checked path from mathematical list contents to both
+  the implementation's returned value and its full call count, not a new loader.
+- The convenience boundary is still inside implementation proofs: fold clients
+  identify their accumulator and cursor, and exact call-cost proofs still name
+  source locals. Simplification now carries array representations across parameter
+  and scalar-result binding in the pair's correctness proof. Generated verification
+  conditions should carry more of this bookkeeping; typed parameters alone do not
+  make loops or recursive proofs feel like ordinary Lean.
 
 ## 1. Prove the program that the user writes
 
@@ -87,9 +108,10 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
 - Publish and call intermediate functions without an I/O entry point. Generate
   parameter binding, return observations and semantic equations from the same
   declaration; keep the input/output driver as an optional executable adapter.
-- Connect typed executable function application to the existing compiled call
-  path. Do not confuse proof-level `Part` observations with a runnable frontend,
-  or require a proposed time bound merely to express a terminating function.
+- Build on typed array calls and the executable function adapter: support useful
+  local data bindings and return values through that same compiled call path.
+  Do not confuse proof-level `Part` observations with a runnable frontend, or
+  require a proposed time bound merely to express a terminating function.
 - Derive verification conditions from that declaration using existing total
   correctness rules. Keep relations and mathematical specifications available;
   a loop need not first become a total pure function.

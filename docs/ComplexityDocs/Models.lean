@@ -17,6 +17,43 @@ The same object may live at different addresses, and unrelated cells can contain
 The current implementations store words; a view as naturals or other values additionally
 needs the appropriate encoding and arithmetic facts.
 
+## Pass a typed reference to existing data
+
+The source declaration `fn sum(xs : array)` gives the function one array parameter.
+The parameter's `xs.base` and `xs.length` fields are word locals. A `call sum(xs)`
+passes those two words through the existing calling convention; `xs[i]` denotes
+the existing indexed word load. These are source operations, not calls to Lean's `List`.
+
+The [array-sum implementation](##Complexity.Computability.Ram.Array.Sum) also contains:
+
+```lean
+fn sumPair(left : array, right : array) {
+  let leftSum ← call sum(left);
+  let rightSum ← call sum(right);
+  return leftSum + rightSum;
+}
+```
+
+Its generated Lean argument builder `sumFunctions.arguments.sumPair` accepts two
+`Ram.ArrayRef w` values. A reference contains only `base : Word w` and `length : Word w`.
+It is passed by value, not allocated as a descriptor in the heap. The assertion
+`array.Rep heapLimit xs entry` combines an exact length equation with the existing
+`Ram.Source.ArrayAt` predicate. The list `xs` belongs to the mathematical specification,
+not to the runtime argument payload.
+
+Array and word parameters also compose: the
+[counter](##Complexity.Computability.Ram.Array.Count) declares `fn count(xs : array, target)`.
+Its argument builder takes an `ArrayRef` followed by a word. The
+[permutation client](##Examples.Ram.ArrayCount) uses its represented-array contract and
+`List.Perm.count_eq`, without reopening the counter's loop or parameter registers.
+
+The sum and pair contracts return ordinary modular list sums and preserve shared state.
+Because both operations are read-only, the two references may overlap. Constructing a
+reference does not establish its contents, range or ownership, and it does not load or
+allocate memory. General array-valued local bindings, returned array values and automatic
+loading of Lean lists are not supplied by this parameter syntax. See
+[array references](##Complexity.Computability.Ram.Array.Ref) for the representation rules.
+
 ## Choose what the proof needs to observe
 
 | Mathematical view | Representation or observation | Useful properties |
@@ -69,6 +106,12 @@ Array `take`, `drop` and `slice` views borrow existing cells. After modifying a 
 `Ram.ArrayRep.replace_prefix` reconstructs the new prefix followed by the old suffix.
 Split/reassembly rules retain the original full-allocation bound: two individually valid
 views do not by themselves show that their union avoids wrapping.
+
+For a typed reference, `Ram.ArrayRef.Rep.subslice` reuses these rules to describe
+`(xs.drop offset).take length` at a contained borrowed interval. `ArrayRef.subslice`
+constructs metadata; it does not copy cells or itself implement in-program pointer
+arithmetic. Expressions used by an actual source call are evaluated and charged by the
+call compiler.
 
 For a matrix row, use `Ram.Source.MatrixAt.row_array`, apply an array operation, then use
 `Ram.Source.MatrixAt.replace_row_array` to recover the updated matrix. If the operation also

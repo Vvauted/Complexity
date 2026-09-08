@@ -18,6 +18,11 @@ return values and shared-data effects must be available without a stream-based
 Parameter binding and result observations should be derived from the same source
 declaration, not restated by each caller.
 
+The generic execution state retains input and output fields because functions
+may have effects. Merely carrying those fields does not execute stream operations.
+A pure function's contract must establish independence from their initial contents
+and preservation on return; selecting an empty stream alone would not prove this.
+
 A functional specification may be a relation, an ordinary Lean function or a
 native `StateM` computation. These are proof views. A sorting specification need
 not implement another sorting algorithm, and a loop need not be translated into
@@ -54,9 +59,18 @@ It places runtime arguments in parameter registers, launches a fixed call-and-ha
 sequence and returns the value separately from stream output. Preloading shared
 state is explicit; no loader or host-side data conversion is silently included.
 The measured call includes argument evaluation, frame handling, the body, return
-and halt. An operational runner limit is distinct from the budget-free theorem
-that a function terminates. Source shared memory is related only to visible
+and halt. `Function.runUntil` has no operational limit and uses the existing
+machine step until a stopping state; `Function.run` retains a limit for exploration.
+Both relate to the same finite traces. The unbounded runner's logical bottom is
+not an executable divergence test. Source shared memory is related only to visible
 target heap cells, not to the private stack left behind by the call.
+
+An `array` parameter is a typed by-value pair of words, not a newly allocated
+descriptor. Its base and length are passed by the same call compiler as scalar
+arguments. `ArrayRef.Rep` relates existing heap contents to a list; changing this
+mathematical view or forming host-side subarray metadata performs no RAM copy.
+Array construction inside a program must eventually have its own implementation
+and cost, not be smuggled into that representation predicate.
 
 Heap and call-depth capacities are safety premises, not instruction budgets.
 Output-size guarantees support subsequent operations. Time analysis may reuse
