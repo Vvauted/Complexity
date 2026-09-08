@@ -115,21 +115,53 @@ Yue Niu, Jonathan Sterling, Harrison Grodin and Robert Harper,
 [Author-deposited paper](https://arxiv.org/abs/2107.04663) and
 [official Agda implementation](https://github.com/calfproject/agda-calf).
 
-CALF distinguishes extensional behavior from intensional cost within a
-dependent type theory. Its internal noninterference property prevents a
-program's input/output behavior from depending on cost. The framework supports
-ordinary mathematical libraries, recurrence reasoning and potential-based
-amortized analysis. Its cost operations are an abstract cost semantics, not
-by themselves a simulation theorem for our particular RAM instruction set.
+Sections 2.1–2.7 distinguish values from computations, behavioral equality from
+cost-sensitive reasoning, and establish internal noninterference: behavior
+cannot inspect cost. Section 1.6 discusses both accessibility predicates and
+cost clocks for recursion. Its abstract cost semantics is not a simulation of
+our word-RAM.
 
-Our interface adopts the separation principle: `TotalWP` and `TotalSpec`
-establish safe terminating behavior without time fuel, and `TimeBound`
-separately bounds compiler-derived execution counts. Their combination proves
-the existing total costed contract. `Refines` connects the behavior to ordinary
-Lean functions and mathlib properties through representation relations.
-This is not an implementation of CALF's modal type theory, nor a claim to have
-formalized its internal noninterference metatheorem. No CALF dependency or
-abstract tick primitive is added; target adequacy remains our compiler proof.
+Our design takes the separation and compositionality seriously without porting
+the modal type theory. `TotalWP` supplies budget-free termination and behavior;
+the measured semantics must erase to the same execution, and the source must
+not inspect its count. Typed arguments, returned values and effects should drive
+both proof views. Behavioral equality alone must never transport a cost bound.
+For recursion we retain independent termination proofs rather than requiring a
+cost clock to publish correctness. Target adequacy remains the compiler's job.
+
+The sample review identifies the next concrete use: factorial should expose its
+cost recurrence without a second register-level induction, and typed calls should
+compose results and costs without unpacking execution trees. Separate theorem
+files alone do not establish CALF's full phase discipline or noninterference
+metatheorem; those claims are not made here.
+
+## 7. Preserve effects when composing cost arguments
+
+Harrison Grodin, Yue Niu, Jonathan Sterling and Robert Harper,
+**Decalf: A Directed, Effectful Cost-Aware Logical Framework**, POPL 2024.
+[Author-deposited paper, revised version](https://arxiv.org/html/2307.05938v4).
+
+Sections 1.3–1.5 extend the behavioral/cost distinction with directed comparisons
+of effectful programs. A randomized computation need not have a pure recurrence
+that exactly separates its behavior from its cost. Cost inequalities retain the
+behavior of the programs being compared.
+
+Our current RAM is deterministic, so this is not a reason to add probabilistic
+semantics or a new effect framework. It is a useful design check: bounds for a
+continuation must use the actual returned value and updated state. In
+copy-then-sum, the copy postcondition establishes the data on which sum runs.
+Generalizing the fold-cost rule should similarly retain the prefix accumulator
+and represented heap, rather than require every helper to have constant cost.
+Any future program-level cost refinement needs its own proof against this
+repository's execution, not merely a new preorder bearing Decalf's name.
+
+## Reading discipline
+
+Use the roadmap's current sample bottleneck to select a small part of a primary
+paper. Record the useful rule or distinction, its assumptions, and the concrete
+consumer it improves. Check the cited computational model before transferring a
+cost claim. Revisit a decision when a sample contradicts it; do not expand the
+bibliography or recreate a type theory as a substitute for a usable public rule.
 
 ## Consequences for this library
 
