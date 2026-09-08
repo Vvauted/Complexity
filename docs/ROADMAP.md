@@ -86,6 +86,13 @@ source program; they neither allocate storage nor copy elements. Array-valued
 returns, general typed data values, allocation and automatic loading from Lean
 data remain unfinished.
 
+The ABI has return-field evaluation, frame restoration and receipt rules with
+state-preservation and exact instruction-count theorems. Fields are evaluated in
+the original callee state before restoring the caller; an empty result list needs
+no dummy value or result move. Scalar returns specialize this same code with
+unchanged costs. This is a backend foundation, not user-visible array or `Unit`
+returns: source functions and call destinations still have one word result.
+
 Source declarations can include earlier `ram_def` implementations under aliases.
 Stored word/array signatures guide their calls; generated function-table embeddings
 transport contracts after linking and relocation. The copy-then-sum source client
@@ -255,9 +262,12 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
   and recursive consumers to this source-facing interface, without making clients
   extract expressions or assemble register roles.
 - Build on typed local array handles, typed calls and the executable function
-  adapter: support structured return values through that same compiled call path.
-  Descriptor aliases and borrowed slices now bind locally; general eager array
-  expressions, richer typed data and function-returned handles still need work.
+  adapter: connect the multi-field ABI to source return semantics, checked call
+  arities and typed array/`Unit` signatures through that same compiled call path.
+  A function-returned borrowed slice should then compose with an imported array
+  operation using its existing contract and actual call costs. Descriptor aliases
+  and borrowed slices already bind locally; general eager array expressions and
+  richer typed data still need work.
   Extend the ordinary application interface to those data operations while
   retaining their effects and safety premises. Do not confuse proof-level `Part`
   observations with executable application, or require a proposed time bound merely

@@ -72,7 +72,7 @@ structure ReturnRestored (n : Nat) (result : Expr) (sourceCallee : Source.State 
 theorem returnPrefix_linear (n : Nat) (result : Expr) :
     ∀ i ∈ returnPrefix n result, i.Linear := by
   intro i hi
-  simp only [returnPrefix, List.mem_append, List.mem_singleton] at hi
+  simp only [returnPrefix, evalResults_singleton, List.mem_append, List.mem_singleton] at hi
   rcases hi with (((he | rfl) | ht) | rfl) | hl
   · exact result.compile_linear (scratch n) i he
   · trivial
@@ -132,7 +132,7 @@ theorem returnPrefix_correct {n heapLimit : Nat} {result : Expr}
     exact hframe
   have hfinish : execBlock (returnPrefix n result) start =
       execBlock (restoreLocals n n) addressed := by
-    simp only [returnPrefix, execBlock_append, execBlock_cons, execBlock_nil]
+    simp only [returnPrefix, evalResults_singleton, execBlock_append, execBlock_cons, execBlock_nil]
     rfl
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
     execBlock_pc _ start (returnPrefix_linear n result)⟩

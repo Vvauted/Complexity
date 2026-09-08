@@ -20,6 +20,24 @@ except its explicit result destination, including through nested larger callees.
 
 namespace Ram.LocalCompiler
 
+/-- Split a concrete call into setup, jump and receiver. The receiver may be
+empty; the call's continuation does not require a dummy result instruction. -/
+theorem callCodeResults_layout {code : Code} {control locals entry base : Nat}
+    {dsts : List Reg} {args : List Expr}
+    (h : CodeAt code base (ABI.callCodeResultsLocals control locals entry dsts args base)) :
+    CodeAt code base (ABI.callPrefixLocals control locals args
+        (base + (ABI.callPrefixLocals control locals args 0).length + 1)) ∧
+      code[base + (ABI.callPrefixLocals control locals args 0).length]? = some (.jump entry) ∧
+      CodeAt code (base + (ABI.callPrefixLocals control locals args 0).length + 1)
+        (ABI.receiveResults control 0 dsts) := by
+  change CodeAt code base
+    (ABI.callPrefixLocals control locals args _ ++
+      .jump entry :: ABI.receiveResults control 0 dsts) at h
+  have ht := h.append_right
+  refine ⟨h.append_left, ?_, ?_⟩
+  · simpa only [ABI.callPrefixLocals_length control locals args _ 0] using ht.head
+  · simpa only [ABI.callPrefixLocals_length control locals args _ 0] using ht.tail
+
 structure CallLayout (code : Code) (control locals entry dst : Nat)
     (args : List Expr) (base : Nat) : Prop where
   setup : CodeAt code base
@@ -34,12 +52,8 @@ theorem callCode_layout {code : Code} {control locals entry dst base : Nat}
     {args : List Expr}
     (h : CodeAt code base (ABI.callCodeLocals control locals entry dst args base)) :
     CallLayout code control locals entry dst args base := by
-  change CodeAt code base
-    (ABI.callPrefixLocals control locals args _ ++ [.jump entry, .move dst (ABI.rv control)]) at h
-  have ht := h.append_right
-  refine ⟨h.append_left, ?_, ?_⟩
-  · simpa only [ABI.callPrefixLocals_length control locals args _ 0] using ht.head
-  · simpa only [ABI.callPrefixLocals_length control locals args _ 0] using ht.tail.head
+  obtain ⟨setup, jump, receive⟩ := callCodeResults_layout h
+  exact ⟨setup, jump, receive.head⟩
 
 /-- The cost is the sum of actual instruction-segment counts. In particular,
 saving and restoring the callee's locals is not a bulk or annotated operation. -/
@@ -143,7 +157,7 @@ theorem simulate_call_exact
   let back := restored.atPC returnPC
   let finish := execInstr (.move dst (ABI.rv control)) back
   have hreturnFit : returnPC < 2 ^ w :=
-    Nat.lt_trans (List.getElem?_eq_some_iff.mp hl.receive).1 hcodefit
+    Nat.lt_of_le_of_lt (Nat.succ_le_of_lt (List.getElem?_eq_some_iff.mp hl.jump).1) hcodefit
   have hreturnExec : Exec code (ABI.returnCodeLocals control f.locals f.result).length q back :=
     ABI.returnCodeLocals_exec hr hreturnAt hcallee.running (Word.ofNat_toNat_of_lt hreturnFit)
   have hreceive : Exec code 1 back finish :=

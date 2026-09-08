@@ -58,6 +58,8 @@ import Complexity.Computability.Ram.Compiler.ABI.Basic
 import Complexity.Computability.Ram.Compiler.ABI.CallReturn
 import Complexity.Computability.Ram.Compiler.ABI.CallSetup
 import Complexity.Computability.Ram.Compiler.ABI.CodeLength
+import Complexity.Computability.Ram.Compiler.ABI.Results.Eval
+import Complexity.Computability.Ram.Compiler.ABI.Results.Receive
 import Complexity.Computability.Ram.Compiler.ABI.Frame.Basic
 import Complexity.Computability.Ram.Compiler.ABI.Frame.Lifetime
 import Complexity.Computability.Ram.Compiler.ABI.Frame.Memory
@@ -83,6 +85,7 @@ import Complexity.Computability.Ram.Compiler.Local.Atomic.Memory
 import Complexity.Computability.Ram.Compiler.Local.Basic
 import Complexity.Computability.Ram.Compiler.Local.Call.Basic
 import Complexity.Computability.Ram.Compiler.Local.Call.Memory
+import Complexity.Computability.Ram.Compiler.Local.Call.Results
 import Complexity.Computability.Ram.Compiler.Local.Call.Return
 import Complexity.Computability.Ram.Compiler.Local.Call.Setup
 import Complexity.Computability.Ram.Compiler.Local.Call.Writes

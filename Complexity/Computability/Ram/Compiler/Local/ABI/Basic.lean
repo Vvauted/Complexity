@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.ABI.CallSetup
 import Complexity.Computability.Ram.Compiler.ABI.CodeLength
+import Complexity.Computability.Ram.Compiler.ABI.Results.Eval
 
 /-!
 # Callee-sized concrete calling-convention code
@@ -46,14 +47,29 @@ def callPrefixLocals (control locals : Nat) (args : List Expr) (returnPC : Nat) 
   evalArgs control 0 args ++ saveReturn control returnPC ++ saveLocals control locals ++
     initLocals control args.length locals ++ advanceLocals control locals
 
-def callCodeLocals (control locals entry dst : Nat) (args : List Expr) (base : Nat) : Code :=
+/-- A call receives each returned field after its entry jump. With no fields,
+the saved return address points directly to the caller's continuation. -/
+def callCodeResultsLocals (control locals entry : Nat) (dsts : List Reg)
+    (args : List Expr) (base : Nat) : Code :=
   let returnPC := base + (callPrefixLocals control locals args 0).length + 1
-  callPrefixLocals control locals args returnPC ++ [.jump entry, .move dst (rv control)]
+  callPrefixLocals control locals args returnPC ++
+    .jump entry :: receiveResults control 0 dsts
 
-def returnPrefixLocals (control locals : Nat) (result : Expr) : Code :=
-  result.compile (scratch control) ++ [.move (rv control) (scratch control)] ++
+/-- Buffer all return expressions before restoring the caller's local frame. -/
+def returnPrefixResultsLocals (control locals : Nat) (results : List Expr) : Code :=
+  evalResults control results ++
     retreatLocals control locals ++ [.load (ra control) (sp control)] ++
     restoreLocals control locals
+
+/-- Return the buffered fields by jumping to the saved caller continuation. -/
+def returnCodeResultsLocals (control locals : Nat) (results : List Expr) : Code :=
+  returnPrefixResultsLocals control locals results ++ [.jumpReg (ra control)]
+
+def callCodeLocals (control locals entry dst : Nat) (args : List Expr) (base : Nat) : Code :=
+  callCodeResultsLocals control locals entry [dst] args base
+
+def returnPrefixLocals (control locals : Nat) (result : Expr) : Code :=
+  returnPrefixResultsLocals control locals [result]
 
 def returnCodeLocals (control locals : Nat) (result : Expr) : Code :=
   returnPrefixLocals control locals result ++ [.jumpReg (ra control)]
@@ -77,16 +93,19 @@ theorem callPrefixLocals_linear (control locals : Nat) (args : List Expr) (retur
   · exact initLocals_linear control args.length locals i hi
   · exact advanceLocals_linear control locals i ha
 
-theorem returnPrefixLocals_linear (control locals : Nat) (result : Expr) :
-    ∀ i ∈ returnPrefixLocals control locals result, i.Linear := by
+theorem returnPrefixResultsLocals_linear (control locals : Nat) (results : List Expr) :
+    ∀ i ∈ returnPrefixResultsLocals control locals results, i.Linear := by
   intro i hi
-  simp only [returnPrefixLocals, List.mem_append, List.mem_singleton] at hi
-  rcases hi with (((he | rfl) | ht) | rfl) | hl
-  · exact result.compile_linear (scratch control) i he
-  · trivial
+  simp only [returnPrefixResultsLocals, List.mem_append, List.mem_singleton] at hi
+  rcases hi with ((he | ht) | rfl) | hl
+  · exact evalResults_linear control results i he
   · exact retreatLocals_linear control locals i ht
   · trivial
   · exact restoreLocals_linear control locals i hl
+
+theorem returnPrefixLocals_linear (control locals : Nat) (result : Expr) :
+    ∀ i ∈ returnPrefixLocals control locals result, i.Linear :=
+  returnPrefixResultsLocals_linear control locals [result]
 
 @[simp] theorem advanceLocals_sp (control locals : Nat) (s : State w) :
     (execBlock (advanceLocals control locals) s).regs (sp control) =
@@ -157,11 +176,17 @@ theorem callPrefixLocals_length (control locals : Nat) (args : List Expr) (a b :
       (callPrefixLocals control locals args b).length := by
   simp [callPrefixLocals, saveReturn]
 
+theorem callCodeResultsLocals_length (control locals entry : Nat) (dsts : List Reg)
+    (args : List Expr) (base : Nat) :
+    (callCodeResultsLocals control locals entry dsts args base).length =
+      (callPrefixLocals control locals args 0).length + (dsts.length + 1) := by
+  simp only [callCodeResultsLocals, List.length_append, List.length_cons, receiveResults_length]
+  rw [callPrefixLocals_length control locals args _ 0]
+
 theorem callCodeLocals_length (control locals entry dst : Nat) (args : List Expr) (base : Nat) :
     (callCodeLocals control locals entry dst args base).length =
-      (callPrefixLocals control locals args 0).length + 2 := by
-  simp only [callCodeLocals, List.length_append, List.length_cons, List.length_nil]
-  rw [callPrefixLocals_length control locals args _ 0]
+      (callPrefixLocals control locals args 0).length + 2 :=
+  callCodeResultsLocals_length control locals entry [dst] args base
 
 theorem callPrefixLocals_length_eq (control locals : Nat) (args : List Expr) (returnPC : Nat) :
     (callPrefixLocals control locals args returnPC).length =
@@ -171,11 +196,29 @@ theorem callPrefixLocals_length_eq (control locals : Nat) (args : List Expr) (re
     List.length_cons, List.length_nil, saveLocals_length, initLocals_length, advanceLocals]
   omega
 
+theorem returnPrefixResultsLocals_length (control locals : Nat) (results : List Expr) :
+    (returnPrefixResultsLocals control locals results).length =
+      (results.map (fun e => (e.compile (scratch control)).length)).sum +
+        results.length + 3 * locals + 3 := by
+  simp only [returnPrefixResultsLocals, List.length_append, List.length_cons, List.length_nil,
+    evalResults_length,
+    retreatLocals, restoreLocals_length]
+  omega
+
+theorem returnCodeResultsLocals_length (control locals : Nat) (results : List Expr) :
+    (returnCodeResultsLocals control locals results).length =
+      (results.map (fun e => (e.compile (scratch control)).length)).sum +
+        results.length + 3 * locals + 4 := by
+  simp only [returnCodeResultsLocals, List.length_append, List.length_singleton,
+    returnPrefixResultsLocals_length]
+
 theorem returnPrefixLocals_length (control locals : Nat) (result : Expr) :
     (returnPrefixLocals control locals result).length =
       (result.compile (scratch control)).length + 3 * locals + 4 := by
-  simp only [returnPrefixLocals, List.length_append, List.length_cons, List.length_nil,
-    retreatLocals, restoreLocals_length]
+  unfold returnPrefixLocals
+  rw [returnPrefixResultsLocals_length]
+  simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
+    Nat.add_zero, List.length_cons, List.length_nil]
   omega
 
 theorem returnCodeLocals_length (control locals : Nat) (result : Expr) :
@@ -196,6 +239,19 @@ theorem callLocals_steps_eq (control locals : Nat) (args : List Expr) (result : 
   rw [callPrefixLocals_length_eq, returnCodeLocals_length]
   omega
 
+/-- A whole call counts argument evaluation, the body, every returned field,
+all frame instructions and both jumps. The outer program's halt is separate. -/
+theorem callResultsLocals_steps_eq (control locals : Nat) (args results : List Expr)
+    (dsts : List Reg) (returnPC bodySteps : Nat) (arity : dsts.length = results.length) :
+    (callPrefixLocals control locals args returnPC).length + 1 + bodySteps +
+        (returnCodeResultsLocals control locals results).length +
+        (receiveResults control 0 dsts).length =
+      (args.map (fun e => (e.compile (scratch control)).length)).sum + bodySteps +
+        (results.map (fun e => (e.compile (scratch control)).length)).sum +
+        7 * locals + args.length + 2 * results.length + 9 := by
+  rw [callPrefixLocals_length_eq, returnCodeResultsLocals_length, receiveResults_length, arity]
+  omega
+
 theorem callPrefixLocals_exec {code : Code} {control locals returnPC : Nat}
     {args : List Expr} {s : State w}
     (hcode : CodeAt code s.pc (callPrefixLocals control locals args returnPC))
@@ -204,11 +260,18 @@ theorem callPrefixLocals_exec {code : Code} {control locals returnPC : Nat}
       (execBlock (callPrefixLocals control locals args returnPC) s) :=
   execBlock_exec hcode (callPrefixLocals_linear control locals args returnPC) hrun
 
+theorem returnPrefixResultsLocals_exec {code : Code} {control locals : Nat} {results : List Expr}
+    {s : State w} (hcode : CodeAt code s.pc (returnPrefixResultsLocals control locals results))
+    (hrun : s.status = .running) :
+    Exec code (returnPrefixResultsLocals control locals results).length s
+      (execBlock (returnPrefixResultsLocals control locals results) s) :=
+  execBlock_exec hcode (returnPrefixResultsLocals_linear control locals results) hrun
+
 theorem returnPrefixLocals_exec {code : Code} {control locals : Nat} {result : Expr}
     {s : State w} (hcode : CodeAt code s.pc (returnPrefixLocals control locals result))
     (hrun : s.status = .running) :
     Exec code (returnPrefixLocals control locals result).length s
       (execBlock (returnPrefixLocals control locals result) s) :=
-  execBlock_exec hcode (returnPrefixLocals_linear control locals result) hrun
+  returnPrefixResultsLocals_exec hcode hrun
 
 end Ram.ABI

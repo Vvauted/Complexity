@@ -35,7 +35,8 @@ theorem callPrefix_length_eq (n : Nat) (args : List Expr) (returnPC : Nat) :
 
 theorem returnPrefix_length (n : Nat) (result : Expr) :
     (returnPrefix n result).length = (result.compile (scratch n)).length + 3 * n + 4 := by
-  simp only [returnPrefix, List.length_append, List.length_cons, List.length_nil,
+  simp only [returnPrefix, evalResults_singleton, List.length_append,
+    List.length_cons, List.length_nil,
     retreat, restoreLocals_length]
   omega
 

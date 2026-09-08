@@ -200,7 +200,8 @@ private theorem returnPrefix_memory {code : Code} {control locals : Nat}
             (fun i => arrayAddr (addressed.regs (sp control)) (i + 1)))) ∧
     heapWrites code (returnPrefixLocals control locals result).length s = ∅ := by
   dsimp only
-  simp only [returnPrefixLocals, List.append_assoc] at atBlock ⊢
+  simp only [returnPrefixLocals, returnPrefixResultsLocals, evalResults_singleton,
+    List.append_assoc] at atBlock ⊢
   obtain ⟨atMove, readyMove, accessExpr, writeExpr⟩ :=
     split_memory atBlock (result.compile_linear (scratch control)) running
   obtain ⟨atRetreat, readyRetreat, accessMove, writeMove⟩ :=
