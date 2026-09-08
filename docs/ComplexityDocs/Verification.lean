@@ -477,10 +477,13 @@ combined table. The [function-linking rule](##Complexity.Computability.Ram.Sourc
 `Ram.Source.FunctionContract.renameCalls` transports the original contract through
 this embedding, retaining its arguments, returned value and shared-state postcondition.
 
-Apply that contract with `ram_total_apply` and the generated
-`functions.function_lookup.Copy.copy` fact, then reuse the sum contract through
-`functions.embeds.Sum`. Copy's postcondition supplies the destination representation
-needed by sum. `Copy.copy` really returns `Unit`, so the standalone
+The public `Ram.Source.Array.copy_function_typed_contract` gives the same copy a
+typed view with a genuine `Unit` result. It retains the original source pointer,
+destination pointer and word length, not a new array encoding. The sample
+relocates this contract and applies its `wp_call_restored` rule with
+`ram_total_apply`; declaration-generated bindings supply the lookup facts.
+Copy's postcondition supplies the destination representation needed by sum,
+whose contract is reused through `functions.embeds.Sum`. The standalone
 `call Copy.copy(...);` has an empty result list and no dummy destination.
 Its postcondition and shared-memory effects still reach the continuation through
 the same call rule. This differs from discarding a word or array result, whose
@@ -498,9 +501,12 @@ interfaces; body equations and local-register names remain with the original dec
 Generated `params_eq` and `locals_eq` equations are also available under imported
 aliases. They expose calling-convention sizes without unfolding the callee body.
 The separate time proof reuses the same functional postcondition: `ram_time_apply`
-passes copy's destination representation to the remaining sum-call bound. Its
-`reserving` argument belongs only to that time proof, not this correctness contract
-or the executable call. See [proving complexity](##ComplexityDocs.Complexity).
+with `on input` passes copy's destination representation through restored caller
+bindings and derives the remaining sum-call reserve from the overall body bound.
+The proof still establishes that the complete copy call fits; neither a register
+equality nor a hand-selected intermediate reserve is needed. The bound belongs
+only to the time proof, not the correctness contract or executable call.
+See [proving complexity](##ComplexityDocs.Complexity).
 
 ## Publish and link a verified implementation
 

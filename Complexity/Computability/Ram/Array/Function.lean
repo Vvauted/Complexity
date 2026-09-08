@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.Traversal
 import Complexity.Computability.Ram.Source.Function.Time
+import Complexity.Computability.Ram.Verification.Function.Typed
 
 /-!
 # Calling the array-copy function
@@ -55,6 +56,28 @@ theorem copy_function_contract {w heapLimit depth : Nat} {program : Program}
   · intro args entry pre callee result
     exact ⟨rfl, result.source_array, result.destination_array, result.frame,
       result.input, result.output⟩
+
+/-- The existing copy implementation returns genuine `Unit`; its typed view
+retains the original array domain and actual shared-memory postcondition. -/
+theorem copy_function_typed_contract {w heapLimit depth : Nat} {program : Program}
+    {source destination : Word w} {xs ys : List (Word w)} (hw : 0 < w)
+    (sameLength : ys.length = xs.length) (fit : xs.length < 2 ^ w)
+    (disjoint : ArraysDisjoint source xs.length destination xs.length) :
+    TypedFunctionContract program heapLimit depth copyFunctions.function.copy .unit
+      (fun input : Word w × Word w × Word w =>
+        copyFunctions.arguments.copy input.1 input.2.1 input.2.2)
+      (fun input entry => input = (source, destination, BitVec.ofNat w xs.length) ∧
+        ArrayAt heapLimit source xs entry ∧ ArrayAt heapLimit destination ys entry)
+      (fun _ entry _ finish =>
+        ArrayAt heapLimit source xs finish ∧ ArrayAt heapLimit destination xs finish ∧
+        ArrayFrame destination xs.length entry.mem finish.mem ∧
+        finish.input = entry.input ∧ finish.outputRev = entry.outputRev) := by
+  apply TypedFunctionContract.of_raw copyFunctions.results_length.copy
+    (copy_function_contract hw sameLength fit disjoint)
+  · rintro _ _ ⟨rfl, sourceArray, destinationArray⟩
+    exact ⟨rfl, sourceArray, destinationArray⟩
+  · intro _ _ _ _ _ result
+    exact result.2
 
 /-- Invoke copy on existing arrays, without an entry point, input stream or
 destination register or dummy return word. The resulting heap contains

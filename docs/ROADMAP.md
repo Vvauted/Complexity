@@ -23,7 +23,7 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. Shared-state restoration uses a common rule. | The implementation adapter still proves local-slot separation and initialization; the short client theorem does not remove that work. |
 | [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost; clients still prove their genuine extent and aliasing conditions. |
 | [Merge sort](../Examples/Ram/MergeSort.lean) | A real two-array `Unit` declaration recursively calls itself, merge and copy. Ordinary length induction composes shared slice/reassembly rules; actual output has a sorted-permutation and `StateM` specification, with a separate full-run `n log n` reserve. Correctness and time calls restore caller bindings; the time rule derives each remaining reserve. | Correctness and time proofs still repeat stage composition. The author supplies the whole-branch reserve, recursive capacity and array facts; these must not be confused with automatically derived call accounting. |
-| [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls, with independently reusable correctness and time proofs. | Clients transport contracts through imports, rebuild representations, unpack register preservation, and choose numeric continuation reserves. |
+| [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls. Copy's public typed contract carries its effects through restored continuations; the time rule derives the remaining reserve. | Clients still transport contracts through imports and combine length and copied-content facts to rebuild the destination representation. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
 
 The diagnosis is not that mathematical statements are impossible. They already
@@ -253,9 +253,9 @@ remaining `Nodup`/register-role adapter and expression meaning are still explici
   changes the execution. Repeated multi-buffer stage composition remains work;
   its genuine mathematical facts stay explicit.
 
-**Evidence of completion:** `LocalBindings`, factorial, `ArrayFold`, and
-copy-then-sum use the common rules. Their algorithmic proofs retain only relevant
-invariants, contracts and mathematical cost arguments; neither exact-count nor
+**Completion target:** `LocalBindings`, factorial, `ArrayFold`, and
+copy-then-sum should use the common rules. Their algorithmic proofs should retain
+only relevant invariants, contracts and mathematical cost arguments; neither exact-count nor
 upper-bound clients reconstruct ABI blocks or measured execution trees.
 The data-dependent factorial fold meets the varying-helper part of that evidence;
 it does not establish arbitrary mutation or richer accumulator support. A
@@ -361,12 +361,19 @@ reserve. Natural-number subtraction cannot justify overspending. Automation
 handles lookup and argument equations; it does not repeatedly search a large
 continuation or unfold mathematical names there while attempting those premises.
 
-**Next proof-experience work:** migrate copy-then-sum's effectful call to the
-existing typed/restored call rules before adding another interface. Its old proof
-still unpacks preserved registers and chooses a continuation reserve by hand.
-Then reassess repeated multi-buffer stage composition. Extract a shared rule only
-when it removes work without hiding representation, mutation or capacity
-obligations; do not add another recursion framework or whole-sample AST recognizer.
+**Checked imported-call consumer:** copy-then-sum now uses the existing restored
+call and remaining-reserve rules. The public `copy_function_typed_contract`
+reuses the original pointer/pointer/length contract with a genuine `Unit` result;
+it is not another implementation or a changed array encoding. Neither its
+correctness nor time continuation unpacks preserved registers. Its original
+`37 * n + 104` body bound and `37 * n + 160` full-run bound are unchanged.
+The copied contents, lengths, range and non-overlap conditions remain explicit.
+
+**Next proof-experience work:** reassess repeated multi-buffer stage composition
+and the limited loop-body interfaces below. A short helper-call proof is not a
+reason to add another wrapper. Extract a shared rule only when it removes work
+without hiding representation, mutation or capacity obligations; do not add
+another recursion framework or whole-sample AST recognizer.
 
 **Checked lower-bound step:** search is now a named callable function, with
 ordinary endpoint initialization and a loop-scoped midpoint. Its shared interval

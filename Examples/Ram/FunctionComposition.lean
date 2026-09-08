@@ -55,21 +55,19 @@ theorem function_contract {w heapLimit : Nat} {source destination : ArrayRef w}
         finish.input = entry.input ∧ finish.outputRev = entry.outputRev) := by
   ram_total_vc args entry ⟨rfl, sourceArray, destinationArray⟩
     [functions.body_eq.copyThenSum, functions.result_eq.copyThenSum]
-  have copyContract := (copy_function_contract
+  have copyContract := (copy_function_typed_contract
     (program := copyFunctions.program) (heapLimit := heapLimit) (depth := 0)
     hw sameLength sourceArray.length_lt disjoint).renameCalls functions.embeds.Copy
-  ram_total_apply copyContract
-    [functions.function_lookup.Copy.copy, sourceArray.length_eq,
-      sourceArray.2, destinationArray.2, copyFunctions.result_eq.copy]
+  ram_total_apply (copyContract.wp_call_restored
+    (arg := (source.base, destination.base, source.length))) [sourceArray.length_eq]
   · exact ⟨sourceArray.2, destinationArray.2⟩
-  · rintro value middle rfl sourceCopied destinationCopied frame input output registers
+  · rintro _ middle sourceCopied destinationCopied frame input output
     have destinationRep : destination.Rep heapLimit xs middle :=
       ⟨destinationArray.1.trans sameLength, destinationCopied⟩
     have sumContract := (sum_function_contract_of_ref
       (program := sumFunctions.program) (heapLimit := heapLimit) (depth := 0)
       (array := destination) (xs := xs) hw fit).renameCalls functions.embeds.Sum
-    ram_total_apply sumContract
-      [functions.function_lookup.Sum.sum, destinationRep, registers]
+    ram_total_apply sumContract [destinationRep]
     all_goals ram_simp [sourceCopied, destinationCopied, frame, input, output]
     exact ⟨sourceCopied, destinationCopied⟩
 
