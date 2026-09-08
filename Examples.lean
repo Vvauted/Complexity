@@ -7,6 +7,7 @@ import Examples.Ram.AmortizedClear
 import Examples.Ram.Arithmetic
 import Examples.Ram.ArrayArguments
 import Examples.Ram.ArrayCopy
+import Examples.Ram.ArrayCopyFunction
 import Examples.Ram.ArraySum
 import Examples.Ram.ArrayCount
 import Examples.Ram.ArrayFold

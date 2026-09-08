@@ -26,6 +26,7 @@ Lean declarations for its functions and source names:
 * `p.run.f` executes its compiled call without a supplied instruction limit;
 * `p.runTotal.f` executes a call proved to halt and retains its complete machine result;
 * `p.apply.f` returns that call's word value as an ordinary executable function;
+* `p.applyState.f` returns its word value together with the resulting source shared state;
 * `p.localReg.f.x` is the binding of `x` visible at the return of function `f`;
 * `p.mainReg.x` is a binding visible at the end of `main`, when present.
 
@@ -41,13 +42,20 @@ memory, input/output, stopping status and count. Its code and stack
 representability premises are those of the existing function runner; generating
 an entry point does not discharge them. A diverging unbounded call does not return.
 
-`runTotal` and `apply` take the same typed parameters, heap capacity and entry
+`runTotal`, `apply` and `applyState` take the same typed parameters, heap capacity and entry
 state, followed by a `Ram.LocalCompiler.Function.Halts` proof. This establishes
 normal halt, not merely the presence of an optional result: faults are not
-successful function returns. The proof is erased at runtime; both entry points
+successful function returns. The proof is erased at runtime; these entry points
 execute the existing runner, rather than extracting a value from a specification.
-Use `runTotal` to retain the actual transition count and shared-state observations;
-`apply` projects only the returned word. Neither requires a time budget.
+Use `runTotal` to retain the actual machine state and transition count;
+`apply` projects only the returned word. None requires a time budget.
+
+`applyState` returns `Word w × Ram.Source.State w`. Its state restores the caller's
+registers, takes the executed heap contents below the heap boundary, and retains
+the entry memory outside it, so private target stack cells do not become source
+heap contents. Actual input/output effects are retained. This is a projection of
+the same execution, not a new executor or an array loader; its cost remains the
+transition count exposed by `runTotal`.
 
 Thus contracts can use `s.regs p.localReg.f.x` and `s.setReg p.mainReg.x value`
 without reproducing register numbers. The register abbreviations use the
@@ -131,6 +139,7 @@ private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
   let runName := Lean.mkIdentFrom fn (name.getId ++ `run ++ fn.getId)
   let runTotalName := Lean.mkIdentFrom fn (name.getId ++ `runTotal ++ fn.getId)
   let applyName := Lean.mkIdentFrom fn (name.getId ++ `apply ++ fn.getId)
+  let applyStateName := Lean.mkIdentFrom fn (name.getId ++ `applyState ++ fn.getId)
   let width := Lean.mkIdent (← Lean.Macro.addMacroScope `w)
   let heapLimit := Lean.mkIdent (← Lean.Macro.addMacroScope `heapLimit)
   let entry := Lean.mkIdent (← Lean.Macro.addMacroScope `entry)
@@ -156,6 +165,11 @@ private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
     Ram.LocalCompiler.Function.apply (max 1 ($name:ident).registers)
       ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
       $arguments $entry:ident)
+  let mut applicationState ← `(fun ($heapLimit:ident : Nat)
+      ($entry:ident : Ram.Source.State $width:ident) =>
+    Ram.LocalCompiler.Function.applyState (max 1 ($name:ident).registers)
+      ($name:ident).program $indexName:ident ($functionName:ident).params $heapLimit:ident
+      $arguments $entry:ident)
   for param in params.reverse do
     let parameter := param.name
     let type ← match param.kind with
@@ -166,6 +180,7 @@ private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
     run ← `(fun ($parameter:ident : $type) => $run)
     runTotal ← `(fun ($parameter:ident : $type) => $runTotal)
     application ← `(fun ($parameter:ident : $type) => $application)
+    applicationState ← `(fun ($parameter:ident : $type) => $applicationState)
   let evalDeclaration ← `(command|
     /-- The declared function's result and shared state, observed through its actual execution. -/
     noncomputable abbrev $evalName:ident {$width:ident : Nat} := $eval)
@@ -181,8 +196,12 @@ private def functionEntryPoints (name fn functionName : Lean.TSyntax `ident)
   let applyDeclaration ← `(command|
     /-- Execute the declared function with a normal-halt proof and return its word value. -/
     abbrev $applyName:ident {$width:ident : Nat} := $application)
+  let applyStateDeclaration ← `(command|
+    /-- Execute the declared function and return its word and source shared state, excluding
+    private stack cells and restoring caller registers while retaining actual stream effects. -/
+    abbrev $applyStateName:ident {$width:ident : Nat} := $applicationState)
   return #[evalDeclaration.raw, timeDeclaration.raw, runDeclaration.raw,
-    runTotalDeclaration.raw, applyDeclaration.raw]
+    runTotalDeclaration.raw, applyDeclaration.raw, applyStateDeclaration.raw]
 
 private def functionEquations (name fn functionName : Lean.TSyntax `ident)
     (lowered : Lean.TSyntax `term) : Lean.MacroM (Array Lean.Syntax) := do

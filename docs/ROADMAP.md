@@ -14,8 +14,8 @@ Budget-free total correctness, separate time bounds, mathematical refinement
 and bridges to native `StateM` verification are implemented.
 
 Function-only declarations generate typed argument lists and `eval`, `bodyTime`,
-`run`, `runTotal` and `apply` entry points. The declared word or array parameters
-come first, followed by heap capacity and caller state; the last two also require
+`run`, `runTotal`, `apply` and `applyState` entry points. Declared word or array
+parameters come first, followed by heap capacity and caller state; the last three require
 a normal-halt proof. No input/output `main` is required. Return values,
 shared effects and body counts are observations of the existing execution, with
 actual call overhead added at call sites. Factorial, array-copy and array-sum
@@ -53,11 +53,12 @@ An exact runner theorem can combine a function's correctness proof with a separa
 equation for its body-time observation. A shared generated-code-length lemma handles
 outer call overhead, rather than repeating frame arithmetic in each runtime client.
 
-Ordinary application now uses `runTotal` and `apply` on this same compiled run.
+Ordinary application uses `runTotal`, `apply` and `applyState` on this same compiled run.
 Their `Halts` proof establishes a returned result with reason `halted`, not merely
 an `isSome` result that could be a fault. `runTotal` extracts the actual `Option`
-output and retains state and steps; `apply` projects its returned word. Proofs
-are erased at runtime: no mathematical answer or time estimate is passed to the
+output and retains state and steps; `apply` projects its returned word, and
+`applyState` also recovers reusable source shared state without private stack cells.
+Proofs are erased at runtime: no mathematical answer or time estimate is passed to the
 implementation. The existing factorial and sum clients expose ordinary `Nat`
 results with separate value and step equations. They execute with `#eval`, not by
 making `Part` computable or compiling arbitrary Lean functions. Their fixed word
@@ -118,13 +119,15 @@ refinement has been supplied; it does not derive that refinement automatically.
   occurs only in an erased representation/range proof; the runtime inputs are its
   reference, heap boundary and existing state. Independent `runTotal` step equations
   retain `37 * n + 33` for factorial and `18 * n + 67` for sum's full invocation.
-- Scalar return values are not enough for effectful functions. Copy returns zero;
-  its useful result is the updated destination array. `runTotal` retains the actual
-  machine state, but its private stack must not be mistaken for source shared memory.
-  A reusable returned-value/shared-state interface should let the existing copy
-  client state its result with `arrayContents` and pass that state to another call.
-  This needs a proved projection of the actual execution, not another array model
-  or an assertion that the entire source and target memories coincide.
+- Effectful applications can return usable shared state through `applyState`.
+  The copy client states its actual destination contents with `arrayContents` and
+  passes that returned state to sum. The shared projection restores caller registers,
+  retains actual heap/I/O effects and keeps entry memory outside the heap; it does
+  not expose the private target stack. `copyThenSum` sequences two real compiled
+  calls in the host language, not one newly compiled RAM program. It has no combined
+  full-run RAM-cost theorem and implements no loader.
+  A separate conditional body bound gives at most `19 * n + 42` steps for the actual
+  single copy invocation, including call and halt, without entering its termination proof.
 - The recursive factorial contract uses ordinary induction, generated parameter
   binding and the recursive call's argument/result contract. Its algorithmic
   proof names no registers or callee frames. A separate one-step bridge retains
@@ -226,11 +229,11 @@ objects. Do not add more data-structure wrappers merely to expand a feature list
 
 - Expose each operation's mathematical effect, safety assumptions and unchanged
   state through a reusable call interface.
-- Extend executable application to return usable source shared state as well as
-  the scalar result. Reuse the existing array-content observations, and prove how
-  visible heap changes and unchanged out-of-heap source memory are recovered from
-  the actual compiled run. Start with the existing copy client and its composition
-  with a read-only operation, retaining genuine effects and capacity premises.
+- Build on `applyState` and the copy-then-sum client to compose more existing
+  effectful operations through their returned state and mathematical postconditions.
+  Move this convenience into single-source compiled compositions, retaining actual
+  linking/call costs, genuine effects and capacity premises. Typed data locals and
+  returned array values remain separate work; a source-state result is not that syntax.
 - Build on the shared expression and verified-call folds for richer existing
   consumers: short-circuiting, multiple accumulators and mutable traversals need
   their actual effects and progress rules. Reuse ordinary `List` folds and their

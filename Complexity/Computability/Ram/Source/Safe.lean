@@ -81,6 +81,28 @@ theorem erase {program : Program} {heapLimit depth : Nat}
   | write _ => exact .write
   | call lookup arity frame _ _ _ body => exact .call lookup arity frame body
 
+/-- Safe source execution preserves every memory word outside its heap boundary. -/
+theorem mem_eq_of_le {program : Program} {heapLimit depth : Nat}
+    {stmt : Stmt} {s t : State w}
+    (h : SafeExec program heapLimit depth stmt s t) (address : Word w)
+    (haddr : heapLimit ≤ address.toNat) : t.mem address = s.mem address := by
+  induction h with
+  | skip => rfl
+  | assign _ => rfl
+  | store _ _ destination =>
+      apply State.setMem_ne
+      intro same
+      rw [← same] at destination
+      omega
+  | seq _ _ first second => exact second.trans first
+  | iteTrue _ _ _ body => exact body
+  | iteFalse _ _ _ body => exact body
+  | whileFalse _ _ => rfl
+  | whileTrue _ _ _ _ body rest => exact rest.trans body
+  | read _ => rfl
+  | write _ => rfl
+  | call _ _ _ _ _ _ body => exact body
+
 /-- Unused call-depth capacity can be added without changing the execution. -/
 theorem depth_add {program : Program} {heapLimit depth : Nat}
     {stmt : Stmt} {s t : State w}

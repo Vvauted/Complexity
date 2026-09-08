@@ -63,7 +63,16 @@ connects this executable value to the modular list sum; the
 [graph client](##Examples.Ram.GraphDegree) uses that equation to prove `sum_eq_degree`
 with ordinary mathlib facts and no loop or frame proof. Neither application loads
 the represented array. The underlying `apply` projects only the returned word;
-use `runTotal` and the operation's contract when final-state effects also matter.
+use `applyState` for reusable source shared state or `runTotal` for machine state and steps.
+
+The [copy application](##Examples.Ram.ArrayCopyFunction) returns `Source.State 32`
+through `applyState`. `copy_contents` states that `arrayContents` of its destination
+equals the source list; `copy_spec` also retains the source array, the destination
+frame and unchanged streams. The lists occur in erased proofs, while actual RAM
+stores produce the destination. Both arrays must already be represented and disjoint.
+`copyThenSum` feeds this returned state to the existing sum application, reusing its
+representation. This host-level sequencing is not a single compiled RAM program;
+returning shared state also does not add array-valued source locals or returns.
 
 ## Fold through an expression or a proved function
 

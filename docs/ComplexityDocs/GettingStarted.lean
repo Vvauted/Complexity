@@ -80,7 +80,7 @@ No `main`, input stream or output stream is required. `functions.function.factor
 is the actual function; `functions.arguments.factorial` constructs its argument list
 from typed word parameters. The same declaration also generates
 `functions.eval.factorial`, `functions.bodyTime.factorial`, `functions.run.factorial`,
-`functions.runTotal.factorial` and `functions.apply.factorial`.
+`functions.runTotal.factorial`, `functions.apply.factorial` and `functions.applyState.factorial`.
 The [declaration interface](##Complexity.Computability.Ram.Source.Named.Declaration)
 also exports lookup facts and source-local names for implementation proofs.
 Generated body and return equations let verification unfold the same declaration.
@@ -115,7 +115,7 @@ outside this body count and are charged when `squaredNorm` is called.
 For a declaration named `p`, the generated entry points take the declared parameters
 in order, followed by `heapLimit : Nat` and `entry : Ram.Source.State w`.
 Word parameters take `Ram.Word w`; array parameters take `Ram.ArrayRef w`.
-`runTotal` and `apply` additionally take a final normal-termination proof `h`.
+`runTotal`, `apply` and `applyState` additionally take a final normal-termination proof `h`.
 For the `squaredNorm` declaration above, the entry points are:
 
 | Entry point | Result and meaning |
@@ -125,14 +125,16 @@ For the `squaredNorm` declaration above, the entry points are:
 | `functions.run.squaredNorm x y heapLimit entry` | `Option (RunResult (Ram.State w))`: the complete compiled run, without an instruction limit |
 | `functions.runTotal.squaredNorm x y heapLimit entry h` | `RunResult (Ram.State w)`: the same run, with normal halt proved |
 | `functions.apply.squaredNorm x y heapLimit entry h` | `Word w`: that actual run's returned word |
+| `functions.applyState.squaredNorm x y heapLimit entry h` | `Word w × Source.State w`: the returned word and reusable source shared state |
 
 `eval` and `bodyTime` are noncomputable semantic observations, not executable Lean
 functions. `run` executes the existing compiled call path. It retains the final machine
 state, step count and stopping reason; it does not merely return a word or discard effects.
 `runTotal` extracts the actual runner result with `Option.get`; `apply` projects its
-returned word. The `Halts` proof is erased at runtime and requires normal halt, not
+returned word, while `applyState` also recovers source shared state without private
+target stack cells. The `Halts` proof is erased at runtime and requires normal halt, not
 merely a nonempty `Option`. It supplies neither a reference answer nor a time budget.
-All five refer to the same declared implementation. The explicit heap boundary and
+All six refer to the same declared implementation. The explicit heap boundary and
 entry state are not a time budget, and generating an entry point does not establish
 code or stack capacity.
 
@@ -334,8 +336,17 @@ mathematical reference function. They work with `#eval`, but the underlying
 partial-fixed-point runner is not an ordinary kernel-reducing recursive definition:
 use the proved value equations, not an expectation that `rfl` computes a result.
 This adds executable application of declared source functions, not compilation of
-arbitrary Lean definitions. Use `runTotal` when final state or actual steps matter;
-projecting a word with `apply` does not prove shared state unchanged.
+arbitrary Lean definitions. Use `applyState` for shared state usable by another call,
+or `runTotal` for the complete machine result and actual steps. Projecting a word
+with `apply` does not prove shared state unchanged.
+
+The [state-returning copy sample](##Examples.Ram.ArrayCopyFunction) defines
+`copy source destination length heapLimit entry safe hstack : Source.State 32`.
+It executes the existing copy function's stores; `copy_contents` identifies the copied
+destination using the existing `arrayContents` observation. Its `copyThenSum` passes
+that returned state to the ordinary sum function. This is host-side sequencing of
+two real compiled calls, not one newly compiled RAM function or a complete combined
+RAM-cost theorem. Representation, disjointness and capacity remain explicit.
 
 ## Add an executable driver when needed
 
@@ -418,6 +429,7 @@ Continue with [proving correctness](##ComplexityDocs.Verification).
 | A logarithmic time bound | [Bit length](##Examples.Ram.BitLength) |
 | Potential-based amortized analysis | [Amortized clearing](##Examples.Ram.AmortizedClear) |
 | Reusing an array contract and its frame | [Array copy](##Examples.Ram.ArrayCopy) |
+| Passing actual updated state to another call | [State-returning copy](##Examples.Ram.ArrayCopyFunction) |
 | Lower bound with duplicates | [Binary search](##Examples.Ram.BinarySearch) |
 | Recursive calls, borrowed arrays and a recurrence | [Merge sort](##Examples.Ram.MergeSort) |
 

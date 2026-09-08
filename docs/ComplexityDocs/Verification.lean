@@ -113,8 +113,9 @@ limit is desired. Unlike body time, the complete run counts the outer call, retu
 and halt. The generated entry point does not prove capacity or construct represented arrays.
 
 For an ordinary executable value, use `p.apply.f ... heapLimit entry h`; use
-`p.runTotal.f ... heapLimit entry h` to retain the complete machine result.
-Both require `Ram.LocalCompiler.Function.Halts` for those exact arguments and
+`p.applyState.f ... heapLimit entry h` for its word and reusable source shared state,
+or `p.runTotal.f ... heapLimit entry h` for the complete machine result.
+All three require `Ram.LocalCompiler.Function.Halts` for those exact arguments and
 entry state: the actual `runUntil` equals `some result` and `result.reason = .halted`.
 An `isSome` proof alone would also admit faults and is not enough for this interface.
 The [total-call bridge](##Complexity.Computability.Ram.Compiler.Local.Function.Total)
@@ -126,6 +127,17 @@ returned word. The proof argument is in `Prop` and erased at runtime, not a supp
 answer extracted from a specification. `apply_eq_of_execution` identifies that word;
 `runTotal_correct_of_execution` also retains the source-visible final-state observation.
 Neither normal halt nor projecting a word asserts that the body has no effects.
+
+`applyState_eq_of_execution` identifies the returned pair with `(value, finish)`.
+Its `returnState` projection keeps entry registers, takes actual target memory below
+`heapLimit` and entry memory outside it, and retains actual input/output effects.
+Safe execution preserves out-of-heap source memory, so this recovers the entire
+source final state without equating it with the target's private stack.
+`applyState_spec` transfers any existing `FunctionContract` postcondition to that
+pair, with the contract's precondition and the compilation/capacity premises.
+The [copy client](##Examples.Ram.ArrayCopyFunction) uses this rule for its destination
+contents, frame and stream-preservation claims, then reuses them to call sum on the
+returned state; it does not reopen the copy loop.
 
 The [factorial application](##Examples.Ram.FunctionRun) proves ordinary equations
 `factorial_eq_mod` and `factorial_eq`, and positivity using mathlib, about its

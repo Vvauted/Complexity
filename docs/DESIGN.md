@@ -17,9 +17,9 @@ return values and shared-data effects must be available without a stream-based
 `main`. Reading and writing external input belong to an optional outer driver.
 Parameter binding and result observations are derived from the same source
 declaration, not restated by each caller. Named declarations generate `eval`,
-`bodyTime`, `run`, `runTotal` and `apply` entries with the declared typed parameters,
-followed by heap capacity and caller state. The last two additionally require a
-normal-halt proof. They reuse the existing semantics and runner; they do not fill
+`bodyTime`, `run`, `runTotal`, `apply` and `applyState` entries with the declared typed
+parameters, followed by heap capacity and caller state. The last three additionally
+require a normal-halt proof. They reuse the existing semantics and runner; they do not fill
 in a reference result, a cost formula or a correctness proof.
 
 The generic execution state retains input and output fields because functions
@@ -84,6 +84,14 @@ kernel reduction of the partial-fixed-point runner is not their correctness
 interface. Value equations come from the execution bridges. Fixed word width,
 sufficient capacity and represented preloaded data remain genuine conditions.
 Projecting the returned word alone does not establish preservation of shared state.
+
+`applyState` returns that word with reusable source shared state from the same run.
+`returnState` keeps caller registers and out-of-heap entry memory, takes actual
+target memory below the heap boundary, and retains actual I/O. Safe execution
+proves this projection equals the source final state; target stack cells are not
+shared data. Existing contract postconditions transfer through `applyState_spec`.
+Passing this state between host-level applications does not itself compile their
+composition into one RAM program or supply a combined RAM-cost theorem.
 
 An `array` parameter is a typed by-value pair of words, not a newly allocated
 descriptor. Its base and length are passed by the same call compiler as scalar

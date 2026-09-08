@@ -43,8 +43,10 @@ See [time bounds](##Complexity.Computability.Ram.Verification.Time.Basic) and
 ## Keep actual steps with ordinary application
 
 The executable `p.apply.f` returns a word from `p.runTotal.f`; the latter retains
-the actual machine result and its `steps`. Their normal-halt proof supplies neither
-a step formula nor an execution limit and is erased at runtime.
+the actual machine result and its `steps`. `p.applyState.f` projects the same run's
+word and source shared state; that pair does not contain the step count.
+Their normal-halt proof supplies neither a step formula nor an execution limit
+and is erased at runtime.
 `Ram.LocalCompiler.Function.runTotal_steps_eq_of_execution` combines the independent
 function execution and body-time equation to identify those same full-run steps.
 The [factorial sample](##Examples.Ram.FunctionRun) uses `factorial_steps` to identify
@@ -53,6 +55,16 @@ to identify `18 * xs.length + 67`. These include the enclosing call, return and 
 The wrappers do not change the RAM trace or price host-side work as RAM instructions;
 they execute that trace and project its result. `Part` body-time observations remain
 noncomputable proof views, separate from this executable application.
+
+The [copy-then-sum client](##Examples.Ram.ArrayCopyFunction) sequences two actual
+compiled calls in Lean, passing the first call's returned state to the second.
+It is not a single compiled RAM program and has no combined full-run cost theorem.
+`Ram.LocalCompiler.Function.runTotal_steps_le_of_timeBound` transports an independent
+conditional body bound to actual full-call steps, including generated call and halt costs.
+The client's `runTotal_steps_le` bounds the single copy invocation by `19 * xs.length + 42`;
+this bound is not used to define the executable copy or prove it terminates.
+State projection and host preloading are not RAM loads or copies; each operation's
+cost theorems still concern its own machine execution.
 
 ## Count an expression-based array fold
 

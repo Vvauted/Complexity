@@ -78,6 +78,13 @@ theorem regs_eq (h : FunctionExec program heapLimit depth f args entry value fin
   obtain ⟨_, _, _, _, _, _, rfl⟩ := h
   rfl
 
+/-- A safe invocation preserves source memory outside its heap boundary. -/
+theorem mem_eq_of_le (h : FunctionExec program heapLimit depth f args entry value finish)
+    (address : Word w) (haddr : heapLimit ≤ address.toNat) :
+    finish.mem address = entry.mem address := by
+  obtain ⟨_, _, callee, body, _, _, rfl⟩ := h
+  exact body.mem_eq_of_le address haddr
+
 /-- Safety capacities do not affect either the returned value or shared effects. -/
 theorem deterministic {heapLimit' depth' : Nat} {value' : Word w} {finish' : State w}
     (h : FunctionExec program heapLimit depth f args entry value finish)
