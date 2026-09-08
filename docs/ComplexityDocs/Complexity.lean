@@ -21,6 +21,10 @@ that count separately from `Ram.Source.FunctionContract`; combine them with
 `Ram.Source.FunctionContract.with_timeBound` when a bounded invocation is needed.
 For a typed specification, `Ram.Source.TypedFunctionContract.raw` reuses the same
 execution and postcondition at the chosen input in these independent time rules.
+For a following source call, `Ram.Source.FunctionTimeBound.call_seq_typed_at`
+instead keeps the actual typed result in the continuation, without unpacking
+returned fields. Its independent time precondition need not be identical to
+the correctness precondition.
 The body count includes nested calls, but excludes the enclosing call site's argument
 evaluation and frame/return sequence. `Ram.Source.FunctionMeasuredExec.call` adds
 those exact generated costs. A body bound alone is not the whole call's time.
@@ -87,6 +91,12 @@ also uses an independently proved functional contract to establish facts about
 the state where the remainder executes. The theorem `call_seq_at` permits the
 remaining bound to depend on the actual returned value and shared state; the
 convenience tactic uses the supplied `N` independently of that returned pair.
+The [typed call adapter](##Complexity.Computability.Ram.Verification.Time.Typed)
+provides the same composition with a typed value. Supply the argument explicitly
+and a `nextBound` function of the result and shared state. The slice sample uses
+`fun window _ => 18 * window.length.toNat + 66`; its slice postcondition then
+justifies the overall bound. No inverse argument encoder, manufactured return
+value or runtime reserve is introduced.
 Assignment prefixes reuse `Ram.Source.TimeBound.assign_seq_at` and the sequence
 rules in [time composition](##Complexity.Computability.Ram.Verification.Time.Composition).
 Their costs come from compiled expression and assignment lengths; a local array
@@ -112,6 +122,10 @@ function execution and body-time equation to identify those same full-run steps.
 The [factorial sample](##Examples.Ram.FunctionRun) uses `factorial_steps` to identify
 `37 * n.toNat + 33` steps; the [sum sample](##Examples.Ram.ArraySum) uses `runTotal_steps`
 to identify `18 * xs.length + 67`. These include the enclosing call, return and halt.
+Both proofs use `ram_run_eq bridge [facts]` to apply the existing runner theorem
+and normalize its proved outer overhead. Like `ram_run_bound` for inequalities,
+it leaves the actual source execution, body-time theorem and stack premises
+explicit; it does not reduce an arbitrary runner or returned tuple.
 The wrappers do not change the RAM trace or price host-side work as RAM instructions;
 they execute that trace and project its result. `Part` body-time observations remain
 noncomputable proof views, separate from this executable application.

@@ -164,6 +164,15 @@ and represented heap, rather than require every helper to have constant cost.
 Any future program-level cost refinement needs its own proof against this
 repository's execution, not merely a new preorder bearing Decalf's name.
 
+Section 3.3's `map` example sharpens this point: unknown order-dependent effects
+prevent replacing a traversal by just a pure result and a length-based price.
+Our current helper-call fold is deliberately read-only, scalar-accumulator and
+statically linked; it is not arbitrary higher-order compilation. Its varying
+cost rule retains the actual prefix accumulator. A future mutable traversal must
+also propagate the changed representation in execution order. Standard `List`
+identities can simplify the mathematical result, but cannot alone justify
+reordering calls or transporting their costs.
+
 ## Reading discipline
 
 Use the roadmap's current sample bottleneck to select a small part of a primary

@@ -19,7 +19,7 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | --- | --- | --- |
 | [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves correctness and a single exact-cost recurrence. The upper bound and measured endpoint reuse these proofs; executable values rewrite to mathlib factorial. | Publishing the runtime equation still assembles source observations and justified word/stack conditions; general state-dependent exact composition needs more rules. |
 | [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. Uniform and actual element/prefix-dependent cost rules are available, exercised by an adapter around the existing factorial. | The caller still supplies the mathematical update, element domain and accumulator invariant. Mutable or richer-accumulator traversals are not covered by this read-only scalar rule. |
-| [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Declaration bindings and outer cost arithmetic are handled by shared automation. | The author still selects the typed input, transports representation facts and separately chooses bounds for the continuation. |
+| [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Its time continuation receives that reference directly and bounds summation using its actual length. | The author still selects the typed input, transports representation facts and justifies the mathematical continuation bound. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls, with independently reusable correctness and time proofs. | Clients transport contracts through imports, rebuild representations, unpack register preservation, and choose numeric continuation reserves. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
 
@@ -184,6 +184,8 @@ over the original measured semantics. Factorial now uses one ordinary cost
 induction; its upper bound and measured body execution are projections, not
 separate execution-tree proofs. `ram_run_bound` composes the actual runtime
 bridge and proved outer-overhead arithmetic for copy, slice and copy-then-sum.
+`ram_run_eq` provides the corresponding exact-count convenience, used by the
+actual factorial and array-sum applications without local call-length rewrites.
 
 The uniform `ForIn.function_timeBound` needs no exact helper count or totality.
 The separate `function_timeBound_of_step` sums work at actual elements and prefix
@@ -200,14 +202,17 @@ there is one small generic prefix-sum identity, not a new cost monad.
   Correctness, exact costs and upper bounds should share source-facing call and
   sequence decomposition even when a returned value determines later work.
   Keep cost equations proved, not annotations accepted by the compiler.
+  Do this when an exact-count consumer needs it: the slice currently needs an
+  upper bound, already covered by the typed continuation rule, not another
+  exact-cost wrapper with no client.
 - Simplify other recursive consumers with these rules before proposing another
   recursion framework. Retain a stronger body invariant only where actually
   needed; do not infer discarded callee locals from restored caller state.
-- Expose state-dependent continuation bounds through the existing call rules.
-  Automate local restoration and routine representation transport; mathematical
-  facts about updated data remain explicit.
-- Consolidate exact runtime equations with the same convenience now available
-  for upper bounds, instead of repeating trampoline or `callSteps` proofs.
+- Extend the checked typed continuation interface to effectful consumers.
+  `call_seq_typed_at` already exposes the actual typed result and shared state,
+  reusing the original call rule without a raw-field decoder or guessed input.
+  Slice uses `window.length` directly. Routine representation transport for
+  changed multi-buffer data remains work; its mathematical facts stay explicit.
 
 **Evidence of completion:** `LocalBindings`, factorial, `ArrayFold`, and
 copy-then-sum use the common rules. Their algorithmic proofs retain only relevant
@@ -262,6 +267,15 @@ mathematical sentinel is not evidence that this algorithm needs `Option` or an
 early return. Use an actual structured-result or early-exit consumer to justify
 those subsequent features. Source lowering, correctness, costs and runtime
 observations must arrive together; parser acceptance alone is not completion.
+
+Take this named lower-bound function before the full typed multi-buffer sort
+migration. Parameterize the existing search proof's register roles, retaining
+its old specialization for binary insertion; do not add dummy parameters or a
+general whole-program renaming framework just for this consumer. Reuse the
+interval-decrease and exit facts for a budget-free loop-variant proof and a
+separate logarithmic time bound. Normal local initialization and the enclosing
+function call have real additional costs. Neither the old block's constant nor
+its result-register observation is already the new function's runtime theorem.
 
 ## Priority 4: publish mathematical statements once per declaration
 

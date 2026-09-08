@@ -34,6 +34,10 @@ There is no new runner, unchecked compilation or automatically selected budget.
 bound with the user's requested bound. It normalizes the proved outer-call and
 halt costs using `ram_bound`, without inspecting the function body. Stack safety
 and any unresolved mathematical comparison remain explicit proof goals.
+
+`ram_run_eq bridge [facts]` does the same for an exact natural-number step
+equation. It composes the selected runner equation with normalization of its
+proved call and halt overhead; it does not simplify returned values or runners.
 -/
 
 namespace Ram.Tactic
@@ -110,6 +114,31 @@ elab_rules : tactic
         goal.apply (mkConst ``Nat.le_trans) { newGoals := .nonDependentOnly }
       let [invocation, comparison] ← getUnsolvedGoals
         | throwError "expected a natural-number invocation bound"
+      setGoals [invocation]
+      evalTactic (← `(tactic| ram_run_apply $bridge $[[$facts,*]]?))
+      let obligations ← getUnsolvedGoals
+      setGoals [comparison]
+      let facts := facts.map (·.getElems) |>.getD #[]
+      evalTactic (← `(tactic|
+        ram_bound [LocalCompiler.Function.callSteps_eq, $facts,*]))
+      setGoals (obligations ++ (← getUnsolvedGoals))
+
+/-- Apply an exact count theorem for the actual invocation and normalize its
+proved outer overhead. Source execution and body-time premises stay explicit. -/
+syntax (name := ramRunEq) "ram_run_eq " term:max (" [" simpArg,* "]")? : tactic
+
+elab_rules : tactic
+  | `(tactic| ram_run_eq $bridge $[[$facts,*]]?) => focus do
+      liftMetaTactic fun goal => goal.withContext do
+        let target ← withReducible goal.getType'
+        let some (type, _, _) := target.eq?
+          | throwError "expected a natural-number invocation count equation"
+        unless ← isDefEq type (mkConst ``Nat) do
+          throwError "expected a natural-number invocation count equation"
+        goal.apply (← mkConstWithFreshMVarLevels ``Eq.trans)
+          { newGoals := .nonDependentOnly }
+      let [invocation, comparison] ← getUnsolvedGoals
+        | throwError "expected two invocation count goals"
       setGoals [invocation]
       evalTactic (← `(tactic| ram_run_apply $bridge $[[$facts,*]]?))
       let obligations ← getUnsolvedGoals

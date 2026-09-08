@@ -62,6 +62,11 @@ The body rule decodes the callee's real results, and the call rule passes the
 typed value and shared effects to its continuation. A fixed-input adapter reuses
 existing raw contracts and independent time rules without assuming that arbitrary
 raw arguments represent valid typed inputs.
+For a subsequent source call, `call_seq_typed_at` combines this contract with an
+independently supplied callee-time theorem and keeps the typed result in the
+time continuation. Its bound can depend on that value and shared state; slice
+uses the returned reference's length. The adapter reuses the original call rule,
+not a second cost semantics or a default-valued raw-field decoder.
 
 Representation predicates relate mathematical values to visible machine state.
 Use mathlib equivalences when information is preserved, and relations when a
@@ -182,8 +187,8 @@ The read-only array fold shares one cursor, termination and framing proof for
 expression updates and fixed function calls. A call-based step uses a contract
 of the actual callee to establish its mathematical `List.foldl` update and
 unchanged shared state. Its separate exact-count rule adds the real call and
-loop instructions to a proved constant callee-body count. This does not make
-ordinary Lean callbacks executable or provide a data-dependent fold-cost rule.
+loop instructions to a proved constant callee-body count. That exact-count rule
+neither compiles arbitrary Lean callbacks nor handles varying helper cost.
 A separate uniform upper-bound rule accepts `FunctionTimeBound` for each actual
 two-argument helper call, without requiring an exact count or helper totality.
 It bounds completed traversals; existence still comes from independent correctness.
@@ -201,6 +206,9 @@ calls; no new execution relation or cost annotation is introduced. A single
 cost induction can supply both an upper bound and the count of a separately
 proved safe execution. Conditional equalities and bounds are not automatically
 monotone in safety capacities: an insufficient capacity can make them vacuous.
+At the executable boundary, `ram_run_eq` and `ram_run_bound` apply existing
+runner bridges and normalize their proved outer-call overhead. They do not
+derive a body-time theorem from functional correctness or discharge stack safety.
 
 Scoped `for x in xs` lowers to the same statements: two fresh cursor locals copy
 the descriptor, and a third local receives each actual element load. The source

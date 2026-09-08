@@ -146,12 +146,11 @@ theorem runTotal_steps {heapLimit : Nat} {array : ArrayRef 32}
     (by decide : 0 < 32) fit entry represented
   have measured := sum_function_measured_of_ref (program := sumFunctions.program)
     (control := sumFunctions.registers) (depth := 0) (by decide : 0 < 32) fit entry represented
-  have count := by
-    ram_run_apply (LocalCompiler.Function.runTotal_steps_eq_of_execution
-      (sum_halts ⟨xs, represented, fit⟩ hstack) (execution := execution)
-      (time := measured.bodyTime_eq_some)) [sumFunctions.function_lookup.sum]
-    simpa using hstack
-  simpa only [sumFunctions.runTotal.sum, sum_callSteps] using count
+  ram_run_eq (LocalCompiler.Function.runTotal_steps_eq_of_execution
+    (sum_halts ⟨xs, represented, fit⟩ hstack) (execution := execution)
+    (time := measured.bodyTime_eq_some))
+    [sumFunctions.function_lookup.sum, sumFunctions.result_eq.sum]
+  simpa using hstack
 
 -- The preloaded array contains 1, 2, 3. Constructing this host-side state is
 -- explicit and is not included in the RAM function's transition count.

@@ -141,13 +141,12 @@ theorem factorial_steps (n : Word 32)
     (hstack : (n.toNat + 1) * ABI.frameSize Factorial.functions.registers < 2 ^ 32) :
     (Factorial.functions.runTotal.factorial n 0 (Source.State.initial [])
       (factorial_halts n hstack)).steps = 37 * n.toNat + 33 := by
-  have counted := by
-    ram_run_apply (LocalCompiler.Function.runTotal_steps_eq_of_execution
-      (factorial_halts n hstack) (execution := factorial_execution n)
-      (time := FactorialFunction.bodyTime_eq n)) [Factorial.functions.function_lookup.factorial]
-    simpa using hstack
-  rw [factorial_call_steps] at counted
-  simpa only [Factorial.functions.runTotal.factorial, Nat.add_assoc] using counted
+  ram_run_eq (LocalCompiler.Function.runTotal_steps_eq_of_execution
+    (factorial_halts n hstack) (execution := factorial_execution n)
+    (time := FactorialFunction.bodyTime_eq n))
+    [Factorial.functions.function_lookup.factorial, Factorial.factorial,
+      Factorial.functions.result_eq.factorial]
+  simpa using hstack
 
 #eval factorial (BitVec.ofNat 32 5) (by decide)
 

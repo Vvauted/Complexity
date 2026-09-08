@@ -211,6 +211,7 @@ import Complexity.Computability.Ram.Verification.Time.Capacity
 import Complexity.Computability.Ram.Verification.Time.Composition
 import Complexity.Computability.Ram.Verification.Time.Exact
 import Complexity.Computability.Ram.Verification.Time.Function
+import Complexity.Computability.Ram.Verification.Time.Typed
 import Complexity.Computability.Ram.Verification.Time.StraightLine
 import Complexity.Computability.Ram.Verification.Total
 import Complexity.Computability.Ram.Word

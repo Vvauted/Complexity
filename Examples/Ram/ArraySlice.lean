@@ -7,6 +7,7 @@ import Complexity.Computability.Ram.Array.Sum
 import Complexity.Computability.Ram.Source.Function.Linking
 import Complexity.Computability.Ram.Verification.Function.Typed
 import Complexity.Computability.Ram.Compiler.Local.Function.Typed
+import Complexity.Computability.Ram.Verification.Time.Typed
 import Complexity.Tactic.Ram.Run
 import Complexity.Tactic.Ram.Time
 
@@ -190,27 +191,22 @@ theorem function_timeBound {w control heapLimit : Nat} {array : ArrayRef w}
       (fun _ _ => 18 * count.toNat + 119) := by
   ram_time_vc args entry ⟨rfl, represented⟩ [functions.body_eq.sumSlice]
   have sliceCorrect := slice_contract (heapLimit := heapLimit) (depth := 0) (xs := xs) span
-  apply FunctionTimeBound.call_seq_at slice_timeBound
-    (sliceCorrect.raw (array, offset, count))
-    (nextBound := fun _ _ => 18 * count.toNat + 66)
-  · exact functions.function_lookup.slice
-  · simp [Expr.ReadsBelow]
-  · refine ⟨?_, rfl, represented.enter _⟩
-    ram_simp [functions.arguments.slice, functions.arguments.sumSlice, Source.State.enter]
-  · rintro fields middle ⟨window, rfl, rfl, sliceRep, rfl⟩ _
+  apply FunctionTimeBound.call_seq_typed_at
+    (slice_timeBound (P := fun _ _ => True)) sliceCorrect (array, offset, count)
+    (nextBound := fun window _ => 18 * window.length.toNat + 66)
+  all_goals try (solve | ram_simp [represented])
+  · rintro window middle ⟨rfl, sliceRep, rfl⟩ _
     have sliceFit := represented.subslice_end_lt offset count span fit
     have sumCorrect := sum_function_contract_of_ref
       (program := sumFunctions.program) (heapLimit := heapLimit) (depth := 0) hw sliceFit
     have sumTime := (sum_function_timeBound_of_ref
       (control := control) (program := sumFunctions.program) (heapLimit := heapLimit) (depth := 0)
       hw sliceFit).renameCalls functions.embeds.Sum sumCorrect
-    ram_time_call sumTime [functions.function_lookup.Sum.sum, ArrayRef.subslice, ArrayRef.args,
-      sliceRep, sliceRep.1.symm, sumFunctions.result_eq.sum,
-      functions.arguments.sumSlice, Source.State.enter, DSL.ValueKind.encode,
-      Source.State.setRegs_cons, Source.State.setRegs_nil]
+    ram_time_call sumTime [ArrayRef.subslice, ArrayRef.args,
+      sliceRep, sliceRep.1.symm, sumFunctions.result_eq.sum, DSL.ValueKind.encode]
     all_goals simpa only [ArrayRef.subslice] using sliceRep
-  · intro fields middle _ _
-    ram_bound [functions.result_eq.slice, functions.locals_eq.slice]
+  · rintro window middle ⟨rfl, _, _⟩ _
+    ram_bound [functions.result_eq.slice, ArrayRef.subslice]
 
 /-- The same compiled invocation additionally charges its outer call, return
 and halt. The slice list and the proposed bound are not runtime arguments. -/
