@@ -60,8 +60,6 @@ same library. The manual and examples are separate consumers, not required impor
 | Link separately verified implementations | `Ram.Component` |
 | Understand the machine/compiler boundary | [Execution backend](##ComplexityDocs.Backend) |
 
-The project is AI-assisted and contains substantial AI-generated code, proofs and prose.
-See the [project overview](https://github.com/Vvauted/Complexity) for its AIGC disclosure.
-Lean checking establishes the formal theorems; it does not replace review of whether their
-statements, representations and machine assumptions express the intended claims.
+For project status and provenance, see the
+[README](https://github.com/Vvauted/Complexity).
 -/

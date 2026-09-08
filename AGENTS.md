@@ -1,33 +1,41 @@
 # Working on Complexity
 
-Read `README.md` for the project scope and `docs/ROADMAP.md` for priorities.
-The goal is one high-level program with correctness and complexity proofs that
-compose above the execution model. `Complexity` is the only main library;
-`Complexity/Computability/Ram/` contains the current verified backend and its
-proof interfaces, not the finished frontend.
+Read [README.md](README.md), [CONTRIBUTING.md](CONTRIBUTING.md) and
+[docs/ROADMAP.md](docs/ROADMAP.md) first. For semantic boundaries and background,
+use [docs/DESIGN.md](docs/DESIGN.md) and [docs/LITERATURE.md](docs/LITERATURE.md).
+These are the shared project notes; keep useful development guidance in the repository.
 
-- Reuse Lean, Std and mathlib before introducing parallel definitions.
-- Keep correctness and termination independent of a proposed time budget.
-  Resource bounds must describe the same computation and be justified by
-  execution. Never replace a cost proof with an unchecked annotation.
-- Preserve theorem statements, safety assumptions and executable semantics when
-  simplifying proofs. No `sorry`, custom axioms or unsafe proof shortcuts in
-  completed results. State incomplete interfaces and model limitations honestly.
-- Follow `CONTRIBUTING.md` and mathlib naming and documentation conventions.
-  Usage documentation belongs in `docs/ComplexityDocs/*.lean`; keep README project-focused.
-  Organize reusable modules by subject under `Complexity/`, with examples under
-  `Examples/`. Keep machine-independent mathematics free of RAM imports.
-- Keep reusable results separate from examples. Prefer improving abstraction
-  and automation over adding algorithms that repeat low-level bookkeeping.
-- Preserve unrelated work and coordinate file ownership with other contributors.
-  Use `apply_patch` for edits; do not reset a dirty worktree.
-- Use the pinned Lean and mathlib versions. Do not change dependencies
-  incidentally or import a second incompatible mathlib.
-- For this development session, the user requires compilation on the designated
-  build server, not the local workstation. The coordinating agent owns builds;
-  allow at most two concurrent Lean processes. Do not add unrelated test
-  frameworks, checksum machinery or audit pipelines.
-- Check changed modules and affected consumers with Lean. A successful build
-  validates the formal statements, not their match to the intended semantics.
-- Disclose substantial AI assistance. Do not claim human review that did not
-  happen or describe a planned abstraction as an implemented one.
+## Direction
+
+The goal is one high-level program with reusable correctness and complexity proofs.
+RAM is the current backend, not the intended user-facing abstraction.
+Follow the roadmap's priorities and use existing consumers to identify missing
+interfaces. Do not substitute more algorithm examples for reusable foundations.
+
+## Code and proofs
+
+- Reuse Lean, Std and mathlib. Keep dependency pins unchanged.
+- Follow mathlib naming, focused imports, proof style and module documentation.
+  `Complexity/` is the only reusable library root; generic mathematics must not import RAM.
+- Preserve theorem meaning and executable semantics. Do not weaken safety,
+  overflow, aliasing, uniformity or termination assumptions to close a proof.
+- Correctness and termination do not require a proposed time budget.
+  Resource bounds must refer to the same computation and justified execution costs.
+- No `sorry`, custom axioms, unsafe proof shortcuts or unchecked cost annotations.
+- Keep comments about the current interface. Put development history in commits.
+  Explain limitations honestly; a checked theorem is not a semantic review.
+
+## Workflow
+
+Develop and commit in the local Complexity checkout. For this session, use the
+designated 0v0 checkout for compilation, retaining its pinned dependency cache.
+The coordinating agent owns builds; allow at most two concurrent Lean processes.
+
+Use `apply_patch`, preserve unrelated changes, and coordinate file ownership.
+Check changed modules and affected consumers before a full build. Use Lean's
+existing checks; do not add checksum machinery or unrelated test frameworks.
+Commit coherent, verified changes and push regularly when authorized.
+
+The manual is in `docs/ComplexityDocs/`; its entry point is
+`docs/ComplexityDocs.lean`. Keep examples and the manual out of the main umbrella.
+Do not upload credentials, local environment files or private conversation logs.
