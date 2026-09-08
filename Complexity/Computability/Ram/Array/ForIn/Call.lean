@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Array.ForIn
 import Complexity.Computability.Ram.Array.Fold.Call
 import Complexity.Computability.Ram.Array.Model
+import Complexity.Computability.Ram.Source.Frame
 import Complexity.Data.List.Fold
 import Complexity.Computability.Ram.Verification.Time.Composition
 import Complexity.Computability.Ram.Verification.Time.ForIn
@@ -112,9 +113,8 @@ theorem body_remaining (registers : Registers) {program : Program}
     {fn heapLimit depth : Nat} {s t : State w}
     (h : SafeExec program heapLimit depth (body registers fn) s t) :
     t.regs registers.remaining = s.regs registers.remaining := by
-  cases h with
-  | call _ _ _ _ _ _ _ =>
-    simp [State.leave, registers.remaining_ne_accumulator]
+  exact h.regs_eq_of_not_mem_writtenRegs
+    (by simp [body, Stmt.writtenRegs, registers.remaining_ne_accumulator])
 
 /-- A proved constant callee-body count determines this call's exact cost,
 including both scalar arguments, the callee-sized frame and its return code. -/

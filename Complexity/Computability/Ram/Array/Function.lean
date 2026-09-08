@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.Traversal
+import Complexity.Computability.Ram.Array.Ref
 import Complexity.Computability.Ram.Source.Function.Time
 import Complexity.Computability.Ram.Verification.Function.Typed
 
@@ -78,6 +79,33 @@ theorem copy_function_typed_contract {w heapLimit depth : Nat} {program : Progra
     exact ⟨rfl, sourceArray, destinationArray⟩
   · intro _ _ _ _ _ result
     exact result.2
+
+/-- Copy between represented references through the existing three-word ABI.
+The destination descriptor's exact extent follows from its input representation
+and the equal-length premise; it is not an additional runtime argument.
+Both references retain their representations, with the copied contents at the
+destination and the same destination-external frame. -/
+theorem copy_function_typed_contract_of_ref {w heapLimit depth : Nat} {program : Program}
+    {source destination : ArrayRef w} {xs ys : List (Word w)} (hw : 0 < w)
+    (sameLength : ys.length = xs.length)
+    (disjoint : ArraysDisjoint source.base xs.length destination.base xs.length) :
+    TypedFunctionContract program heapLimit depth copyFunctions.function.copy .unit
+      (fun input : ArrayRef w × ArrayRef w =>
+        copyFunctions.arguments.copy input.1.base input.2.base input.1.length)
+      (fun input entry => input = (source, destination) ∧
+        source.Rep heapLimit xs entry ∧ destination.Rep heapLimit ys entry)
+      (fun _ entry _ finish =>
+        source.Rep heapLimit xs finish ∧ destination.Rep heapLimit xs finish ∧
+        ArrayFrame destination.base xs.length entry.mem finish.mem ∧
+        finish.input = entry.input ∧ finish.outputRev = entry.outputRev) := by
+  rintro input entry ⟨rfl, sourceArray, destinationArray⟩
+  obtain ⟨value, finish, execution, sourceDone, destinationDone, frame, input, output⟩ :=
+    copy_function_typed_contract (program := program) (heapLimit := heapLimit) (depth := depth)
+      hw sameLength sourceArray.length_lt disjoint
+      (source.base, destination.base, source.length) entry
+      ⟨by rw [sourceArray.length_eq], sourceArray.2, destinationArray.2⟩
+  exact ⟨value, finish, execution, ⟨sourceArray.1, sourceDone⟩,
+    ⟨destinationArray.1.trans sameLength, destinationDone⟩, frame, input, output⟩
 
 /-- Invoke copy on existing arrays, without an entry point, input stream or
 destination register or dummy return word. The resulting heap contains

@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Verification.ForIn
 import Complexity.Computability.Ram.Verification.Function
+import Complexity.Computability.Ram.Source.Frame
 
 /-!
 # In-place mapping through a statically linked function
@@ -65,13 +66,6 @@ the helper's behavior: the actual call restores caller locals before binding its
 theorem body_remaining {program : Program} {fn heapLimit depth : Nat} {s t : State w}
     (execution : SafeExec program heapLimit depth (body fn) s t) :
     t.regs 4 = s.regs 4 := by
-  cases execution with
-  | seq call rest =>
-    cases call
-    cases rest with
-    | seq stored advanced =>
-      cases stored
-      cases advanced
-      simp [State.setReg, State.setMem, State.leave]
+  exact execution.regs_eq_of_not_mem_writtenRegs (by simp [body, Stmt.writtenRegs])
 
 end Ram.Source.Array.Map

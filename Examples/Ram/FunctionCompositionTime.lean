@@ -44,11 +44,12 @@ theorem function_timeBound {w control heapLimit : Nat} {source destination : Arr
   have copyTime := (copy_function_timeBound
     (control := control) (program := copyFunctions.program) (heapLimit := heapLimit) (depth := 0)
     hw sameLength sourceArray.length_lt disjoint).renameCalls functions.embeds.Copy copyCorrect
-  have importedCopy := (copy_function_typed_contract
+  have importedCopy := (copy_function_typed_contract_of_ref
     (program := copyFunctions.program) (heapLimit := heapLimit) (depth := 0)
-    hw sameLength sourceArray.length_lt disjoint).renameCalls functions.embeds.Copy
-  ram_time_apply importedCopy copyTime on (source.base, destination.base, source.length)
-  · exact ⟨by simp only [sourceArray.length_eq], sourceArray.2, destinationArray.2⟩
+    (source := source) (destination := destination)
+    hw sameLength disjoint).renameCalls functions.embeds.Copy
+  ram_time_apply importedCopy copyTime on (source, destination)
+  · exact ⟨rfl, sourceArray, destinationArray⟩
   · exact ⟨by simp only [sourceArray.length_eq], sourceArray.2, destinationArray.2⟩
   · simp only [Func.renameCalls_results, copyFunctions.result_eq.copy]
     ram_bound
@@ -61,8 +62,8 @@ theorem function_timeBound {w control heapLimit : Nat} {source destination : Arr
       (control := control) (program := sumFunctions.program) (heapLimit := heapLimit) (depth := 0)
       (base := destination.base) (xs := xs) hw fit).renameCalls functions.embeds.Sum sumCorrect
     ram_time_call sumTime
-      [destinationArray.length_eq, sameLength, destinationCopied, sumFunctions.result_eq.sum]
-    exact destinationCopied
+      [destinationCopied.length_eq, destinationCopied.2, sumFunctions.result_eq.sum]
+    exact destinationCopied.2
 
 /-- The bound includes every inner and outer call block and the final halt
 of the same compiled invocation. Its termination proof remains budget-free. -/

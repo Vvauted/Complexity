@@ -172,20 +172,18 @@ theorem function_contract {w heapLimit : Nat} {array scratch : ArrayRef w}
           · rintro _ afterMerge _ _ scratchMerged mergeFrame mergeInput mergeOutput
             have sourceBeforeCopy := sourceAfterRight.2.frame mergeFrame
               (by simpa only [List.length_append, mergeLength] using disjoint.symm)
-            have copyCorrect := (copy_function_contract
+            have copyCorrect := (copy_function_typed_contract_of_ref
               (program := copyFunctions.program) (heapLimit := heapLimit) (depth := 0)
-              (source := scratch.base) (destination := array.base)
+              (source := scratch) (destination := array)
               (xs := sorted xs) (ys := sorted (xs.take k.toNat) ++ sorted (xs.drop k.toNat))
               positive (by simpa only [List.length_append, length_sorted] using mergeLength)
-              (by simpa only [length_sorted] using sourceArray.length_lt)
               (by simpa only [length_sorted] using disjoint.symm)).renameCalls
                 sortFunctions.embeds.Copy
-            ram_total_apply copyCorrect
-              [ArrayRef.subslice, sourceArray.length_eq, length_sorted]
-            · simpa [sourceArray.length_eq] using And.intro scratchMerged.2 sourceBeforeCopy
-            · rintro value finish rfl scratchDone sourceDone copyFrame copyInput copyOutput _
-              refine ⟨⟨by simpa only [length_sorted] using sourceArray.1, sourceDone⟩,
-                ⟨sorted xs, scratchMerged.1, scratchDone⟩,
+            ram_total_apply (copyCorrect.wp_call_restored (arg := (scratch, array)))
+              [ArrayRef.subslice, sourceArray.length_eq, scratchMerged.length_eq, length_sorted]
+            · exact ⟨scratchMerged, sourceAfterRight.1, sourceBeforeCopy⟩
+            · rintro _ finish scratchDone sourceDone copyFrame copyInput copyOutput
+              refine ⟨sourceDone, ⟨sorted xs, scratchDone⟩,
                 frameAfterLeft.trans (frameAfterRight.trans
                   ((TwoBufferFrame.of_right mergeFrame).trans
                     (TwoBufferFrame.of_left copyFrame))),

@@ -165,6 +165,7 @@ import Complexity.Computability.Ram.Reduction
 import Complexity.Computability.Ram.Source.Basic
 import Complexity.Computability.Ram.Source.Expr
 import Complexity.Computability.Ram.Source.ForIn
+import Complexity.Computability.Ram.Source.Frame
 import Complexity.Computability.Ram.Source.Function.Basic
 import Complexity.Computability.Ram.Source.Function.Eval
 import Complexity.Computability.Ram.Source.Function.Time

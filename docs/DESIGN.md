@@ -182,6 +182,12 @@ Array-valued returns use these same two actual fields and may be passed to anoth
 compiled source call. Allocated-array construction and richer value types still
 need implementation and cost interfaces; representation predicates do not supply them.
 
+The reference-level copy contract still encodes only source base, destination
+base and source length. The destination length is constrained by its input
+representation and equal-length premise, not decoded from these three words;
+no encoder injectivity is assumed. Complete represented arrays are returned to
+the proof continuation at the same actual endpoint. The raw API remains available.
+
 Heap and call-depth capacities are safety premises, not instruction budgets.
 Output-size guarantees support subsequent operations. Time analysis may reuse
 these facts and functional invariants, but correctness must not depend on the
@@ -272,6 +278,13 @@ not the original caller. `restore_eq_of_shared` restores caller state from the
 three shared-state equalities without assumptions on discarded callee locals.
 Read safety, mathematical evaluation and compiler-derived costs remain separate
 obligations. Individual unchanged-register reads need not use the collection rule.
+
+For effectful bodies, `Stmt.writtenRegs` conservatively tracks only caller-local
+destinations. The existing execution preserves locals outside that set, while
+memory and streams may change. Calls contribute their result destinations, not
+callee-private assignments. This can discharge traversal count preservation;
+it is not a heap frame or a requirement that all legal bodies satisfy static
+exclusion. Writing and restoring a local still admits a direct semantic proof.
 
 `TotalWP.assign_value` names the evaluated word at one assignment and passes its
 evaluation equality to the continuation. `ram_total_bind` applies this rule to

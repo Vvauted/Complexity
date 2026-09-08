@@ -24,7 +24,7 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. Its declared body directly supplies initialization and the remaining loop; a shared assignment rule names the actual midpoint. | The common loop invariant still uses a register-role representation and a separate initialization lemma. Direct function composition is not general named-invariant inference. |
 | [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost; clients still prove their genuine extent and aliasing conditions. |
 | [Merge sort](../Examples/Ram/MergeSort.lean) | A real two-array `Unit` declaration recursively calls itself, merge and copy. Ordinary length induction composes shared slice/reassembly rules; actual output has a sorted-permutation and `StateM` specification, with a separate full-run `n log n` reserve. Correctness and time calls restore caller bindings; the time rule derives each remaining reserve. | Correctness and time proofs still repeat stage composition. The author supplies the whole-branch reserve, recursive capacity and array facts; these must not be confused with automatically derived call accounting. |
-| [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls. Copy's public typed contract carries its effects through restored continuations; the time rule derives the remaining reserve. | Clients still transport contracts through imports and combine length and copied-content facts to rebuild the destination representation. |
+| [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls. Copy passes the complete destination representation to sum; the time rule derives the remaining reserve. | Clients still transport contracts through imports and establish real equal-length, range and non-overlap conditions. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
 
 The diagnosis is not that mathematical statements are impossible. They already
@@ -254,6 +254,14 @@ existing while rules and the actual load/setup/cursor instructions. The helper-c
 traversal uses the common cost rule instead of maintaining its own execution
 decomposition; its original domain and bounds are unchanged.
 
+`Stmt.writtenRegs` now supplies a sufficient static local-preservation check.
+Its soundness is proved once for `Exec`, then reused through `SafeExec.erase`.
+Map and helper-call traversal use it for their remaining-count local instead
+of destructing executions. It uses ordinary mathlib sets; calls include only
+result destinations, regardless of heap or I/O effects. The general loop rules
+retain their semantic preservation premise: writing and restoring a local is
+still allowed when this conservative static exclusion cannot prove preservation.
+
 **Mutable operation:** in-place map now uses the general loop rule with a
 transformed-prefix/original-suffix invariant. It reuses `ArrayAt.setMem`, array
 frames and upstream list identities through the existing copy-prefix bridge.
@@ -414,13 +422,15 @@ reserve. Natural-number subtraction cannot justify overspending. Automation
 handles lookup and argument equations; it does not repeatedly search a large
 continuation or unfold mathematical names there while attempting those premises.
 
-**Checked imported-call consumer:** copy-then-sum now uses the existing restored
-call and remaining-reserve rules. The public `copy_function_typed_contract`
-reuses the original pointer/pointer/length contract with a genuine `Unit` result;
-it is not another implementation or a changed array encoding. Neither its
-correctness nor time continuation unpacks preserved registers. Its original
-`37 * n + 104` body bound and `37 * n + 160` full-run bound are unchanged.
-The copied contents, lengths, range and non-overlap conditions remain explicit.
+**Checked imported-call consumer:** `copy_function_typed_contract_of_ref` passes
+complete source and destination `ArrayRef.Rep` assertions through the existing
+restored call rules. Copy-then-sum and merge sort no longer rebuild them locally.
+The same three-word implementation executes; the destination descriptor length
+comes from its input representation and equal-length premise, not another runtime
+argument. The former's `37 * n + 104` body and `37 * n + 160` full-run bounds
+are unchanged. Merge sort's terminal time call keeps its simpler raw rule,
+since no following continuation needs the new postcondition. Equal-length,
+range and non-overlap conditions remain explicit; the original raw API remains.
 
 **Next proof-experience work:** reassess repeated multi-buffer stage composition
 and the limited loop-body interfaces below. A short helper-call proof is not a

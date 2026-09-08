@@ -151,6 +151,12 @@ sortedness, containment and aliasing premises remain mathematical obligations.
 This motivates improving our existing call rules, not porting Sepref or treating
 an abstract operation as an uncharged RAM instruction.
 
+Our reference-level copy contract makes this interface lesson concrete: it
+passes complete represented arrays to copy-then-sum and merge sort, instead of
+making each continuation rebuild descriptor-length facts. The same three-word
+call executes. This is a contract view, not an implementation of Sepref's synthesis
+or an adoption of its abstract primitive costs.
+
 The same Section 4.2 distinction guides general loop-body support: a structural
 rule should handle iteration mechanics while concrete operation contracts retain
 their side conditions. Our `forIn` rules therefore separate real loads and cursor

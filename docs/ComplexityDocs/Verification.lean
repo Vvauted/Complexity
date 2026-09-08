@@ -445,6 +445,14 @@ proved memory/input/output equalities to restore the original caller without
 requiring preservation of discarded callee locals. See the
 [local-frame rules](##Complexity.Computability.Ram.Source.State.Frame).
 
+For effectful bodies, `SafeExec.regs_eq_of_not_mem_writtenRegs` instead preserves
+each local outside `Stmt.writtenRegs`, without requiring an unchanged heap.
+The [static local-frame rules](##Complexity.Computability.Ram.Source.Frame) use
+ordinary sets and include only result destinations for calls. Map and helper-call
+traversal discharge their count-preservation condition by simplifying this set,
+not inspecting callee executions. Static exclusion is sufficient, not necessary;
+the original semantic rule still admits writing and restoring a local.
+
 The [named search](##Complexity.Computability.Ram.Array.Search.Function) directly
 opens its generated body, proves initialization, and reuses the shared loop
 contract. Its time proof follows the same source decomposition. The actual
@@ -561,12 +569,13 @@ combined table. The [function-linking rule](##Complexity.Computability.Ram.Sourc
 `Ram.Source.FunctionContract.renameCalls` transports the original contract through
 this embedding, retaining its arguments, returned value and shared-state postcondition.
 
-The public `Ram.Source.Array.copy_function_typed_contract` gives the same copy a
-typed view with a genuine `Unit` result. It retains the original source pointer,
-destination pointer and word length, not a new array encoding. The sample
+The public `Ram.Source.Array.copy_function_typed_contract_of_ref` accepts a proof-level
+pair of array references, encoding the same source pointer, destination pointer
+and source length. Its destination length follows from represented input and
+the equal-length premise, not a fourth runtime argument. The result is `Unit`. The sample
 relocates this contract and applies its `wp_call_restored` rule with
 `ram_total_apply`; declaration-generated bindings supply the lookup facts.
-Copy's postcondition supplies the destination representation needed by sum,
+Copy's postcondition supplies both complete `ArrayRef.Rep` assertions, including the one needed by sum,
 whose contract is reused through `functions.embeds.Sum`. The standalone
 `call Copy.copy(...);` has an empty result list and no dummy destination.
 Its postcondition and shared-memory effects still reach the continuation through
@@ -576,6 +585,8 @@ Relocation does not discharge representation, equal-length or
 disjointness premises. The proof composes the existing contracts without expanding
 either callee loop; the generated `applyState` result belongs to one compiled run,
 unlike the host-level sequencing in `ArrayCopyFunction`.
+Merge sort's final copy uses this same reference contract. The raw and word-triple
+typed contracts remain available; neither source signature nor execution cost changes.
 
 The same sample's `imported_sumPair_eval` transports the existing two-array execution
 through `functions.embeds.Sum` to `functions.eval.Sum.sumPair`. This also exercises
