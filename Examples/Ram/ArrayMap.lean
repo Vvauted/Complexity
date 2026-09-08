@@ -21,7 +21,7 @@ helper contract and its ordinary mathematical transformation.
 
 The executable contents equation uses `List.map`. Its independent full-run bound
 includes the helper calls, real loads and stores, both iteration cursors, the
-explicit source index, and the enclosing call and halt. No list loader or
+generated index, and the enclosing call and halt. No list loader or
 allocation is performed, and machine-word multiplication remains modular.
 -/
 
@@ -33,11 +33,9 @@ open Source Source.Array
 ram_def functions := ram_functions% {
   include LocalBindings.functions as Scalar;
   fn mapSquares(xs : array) : Unit {
-    let mut i := 0;
-    for x in xs {
+    for i, x in xs {
       let y ← call Scalar.square(x);
       xs[i] := y;
-      i += 1;
     }
     return;
   }

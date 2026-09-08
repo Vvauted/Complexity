@@ -232,6 +232,14 @@ code leaves the original descriptor alone; array contents are read at each
 visit, not snapshotted. The generic AST helper retains its actual sequential
 evaluation order, while frontend freshness makes the copied descriptor stable.
 All copies, bindings and enlarged call frames retain their compiler-derived cost.
+The indexed form `for i, x in xs` adds a fresh index initialized to zero and
+incremented after each body. Both names are immutable and confined to that body.
+The array handle is resolved before either name shadows an outer binding;
+the generated increment refers to the originally allocated index slot even if
+the body shadows `i` again. Its real assignment is appended to the same
+right-associated statement sequence. Map's indexed source is definitionally
+the same function as its explicit-counter implementation, with identical costs.
+
 For the single-array scalar-call pattern, a function rule reads the body/result
 equations to infer those slots, reusing the same traversal and callee contract.
 The expression-update rule uses the same generated equations for an array-first
@@ -254,10 +262,15 @@ count inside the shared proof. Its payload is indexed by an ordinary natural
 iteration number; clients need not repeat private-pointer/count arithmetic or
 the exit-index proof. The body starts with the real current-heap load and proves
 the next payload after the actual cursor assignments. Its semantic preservation
-premise allows cursor writes followed by restoration. Map uses this rule while
-retaining its own mathematical contents, source index and store/frame proof.
-This is not payload-stability inference or a declaration-level named-variable
-interface, and it does not strengthen the endpoint address requirement.
+premise allows cursor writes followed by restoration.
+For payloads stable under `State.LocalFrame {pointer, remaining}`,
+`forIn_indexed_of_frame` handles their transport through both setup and advance.
+Map's body now proves its own endpoint payload and supplies this frame stability
+once, retaining mathematical contents, the real index and store/frame reasoning.
+Only the generated cursor assignments are framed as shared-state preserving;
+the body may still mutate memory and I/O. Stability is proved, not inferred,
+and the interface still does not provide declaration-level named invariants or
+strengthen the endpoint address requirement.
 
 The separate uniform `TimeBound.forIn` bounds completed traversals without body
 totality. It reuses the existing linear-loop rule and includes the load, both

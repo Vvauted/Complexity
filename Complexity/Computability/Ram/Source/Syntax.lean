@@ -47,6 +47,8 @@ remain word-valued, but its scoped body can construct local array handles.
 length into fresh cursor locals and loads an immutable `x` for each iteration;
 the generated cursor updates do not modify the array descriptor. Elements are
 read from memory at each iteration, not snapshotted before the loop.
+`for i, x in xs { ... }` additionally binds an immutable zero-based index in
+the loop body, with a real initialization and an increment after each body.
 
 Lexical declarations allocate fresh frame slots, including when shadowing an
 outer name. An initializer sees the previous scope; branch and loop bindings
@@ -140,8 +142,9 @@ syntax "let " "mut " ident " ← " "call " ident "(" ramExpr,* ")" ";" : ramStmt
 syntax "if " ramExpr " {" ramStmt* "}" : ramStmt
 syntax "if " ramExpr " {" ramStmt* "}" " else " "{" ramStmt* "}" : ramStmt
 syntax "while " ramExpr " {" ramStmt* "}" : ramStmt
-/-- Traverse a typed array handle with an immutable block-local element. -/
-syntax "for " ident " in " ident " {" ramStmt* "}" : ramStmt
+/-- Traverse a typed array handle with an immutable block-local element and
+an optional immutable, zero-based index. -/
+syntax "for " ident (", " ident)? " in " ident " {" ramStmt* "}" : ramStmt
 
 /-- Quote a RAM statement block. Braces delimit control-flow bodies; atomic
 statements end in semicolons. Empty blocks are `Stmt.skip`. -/
@@ -386,7 +389,8 @@ partial def lowerStmt (scope : LocalScope) (strict : Bool) (function : FunctionR
       `(Ram.Stmt.ite $(← expr c) $(← block yes) $(← block no))
   | `(ramStmt| while $c:ramExpr { $body:ramStmt* }) =>
       `(Ram.Stmt.while $(← expr c) $(← block body))
-  | `(ramStmt| for $_element:ident in $_array:ident { $_body:ramStmt* }) =>
+  | `(ramStmt| for $_first:ident $[, $_second:ident]? in $_array:ident {
+      $_body:ramStmt* }) =>
       Lean.Macro.throwErrorAt stmt
         "'for' requires a function frame and a typed array handle"
   | `(ramStmt| let $_name:ident : array := $_value:ramExpr;) =>
@@ -427,10 +431,12 @@ private def checkMutable (scope : LocalScope) (immutable : Array Lean.Name)
 
 /-- Lower lexical declarations with the same expression and statement translator.
 Words receive one fresh frame slot, array handles receive two, and Unit receives none; initializers
-refer to the previous scope, leaving shadowed bindings untouched. -/
+refer to the previous scope, leaving shadowed bindings untouched. An already-lowered
+tail joins the same right-associated statement fold without resolving names again. -/
 partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
     (nextRegister : Nat) (strict : Bool) (function : FunctionResolver)
-    (body : Array (Lean.TSyntax `ramStmt)) : Lean.MacroM LoweredBlock := do
+    (body : Array (Lean.TSyntax `ramStmt))
+    (tail : Option (Lean.TSyntax `term) := none) : Lean.MacroM LoweredBlock := do
   let mut scope := scope
   let mut immutable := immutable
   let mut nextRegister := nextRegister
@@ -513,21 +519,41 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
               let loop ← lowerScopedBlock scope immutable nextRegister strict function loop
               nextRegister := loop.nextRegister
               `(Ram.Stmt.while $(← lowerExpr scope strict condition) $(loop.term))
-          | `(ramStmt| for $element:ident in $array:ident { $loop:ramStmt* }) => do
+          | `(ramStmt| for $first:ident $[, $second:ident]? in $array:ident {
+              $loop:ramStmt* }) => do
+              let (index, element) := match second with
+                | some element => (some first, element)
+                | none => (none, first)
               let some arrayBinding := scope.find? (fun entry =>
                   entry.name == array.getId && entry.kind == .array)
                 | Lean.Macro.throwErrorAt array "expected an array handle"
               if (arrayField? scope element.getId).isSome then
                 Lean.Macro.throwErrorAt element "a loop variable cannot shadow an array field"
+              let mut loopScope := scope
+              let mut loopImmutable := immutable
+              let mut increment : Option (Lean.TSyntax `term) := none
+              if let some index := index then
+                if index.getId == element.getId then
+                  Lean.Macro.throwErrorAt element "duplicate RAM loop variable"
+                if (arrayField? scope index.getId).isSome then
+                  Lean.Macro.throwErrorAt index "a loop variable cannot shadow an array field"
+                let indexTerm ← registerTerm nextRegister
+                statements := statements.push (← `(Ram.Stmt.assign $indexTerm (Ram.Expr.const 0)))
+                loopScope := (loopScope.filter (fun entry => entry.name != index.getId)).push
+                  ⟨index.getId, nextRegister, .word⟩
+                loopImmutable := (loopImmutable.filter (· != index.getId)).push index.getId
+                increment := some (← `(Ram.Stmt.assign $indexTerm
+                  (Ram.Expr.bin .add (Ram.Expr.var $indexTerm) (Ram.Expr.const 1))))
+                nextRegister := nextRegister + 1
               let pointer ← registerTerm nextRegister
               let remaining ← registerTerm (nextRegister + 1)
               let elementRegister := nextRegister + 2
               let elementTerm ← registerTerm elementRegister
-              let loopScope := (scope.filter (fun entry => entry.name != element.getId)).push
+              loopScope := (loopScope.filter (fun entry => entry.name != element.getId)).push
                 ⟨element.getId, elementRegister, .word⟩
-              let loopImmutable := (immutable.filter (· != element.getId)).push element.getId
+              loopImmutable := (loopImmutable.filter (· != element.getId)).push element.getId
               let loop ← lowerScopedBlock loopScope loopImmutable (nextRegister + 3)
-                strict function loop
+                strict function loop increment
               nextRegister := loop.nextRegister
               `(Ram.Stmt.forIn $pointer $remaining $elementTerm
                 (Ram.Expr.var $(← registerTerm arrayBinding.register))
@@ -544,6 +570,7 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
               | _ => pure ()
               lowerStmt scope strict function stmt
         statements := statements.push statement
+  if let some tail := tail then statements := statements.push tail
   let term ← if statements.isEmpty then `(Ram.Stmt.skip) else do
     let mut term := statements[statements.size - 1]!
     for offset in [:statements.size - 1] do

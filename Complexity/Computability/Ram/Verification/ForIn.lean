@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Source.ForIn
+import Complexity.Computability.Ram.Source.State.Frame
 import Complexity.Computability.Ram.Verification.Total
 
 /-!
@@ -242,5 +243,46 @@ theorem forIn_indexed (pointer remaining element : Reg) {base length : Expr}
       omega
     subst i
     exact continuation finish payload
+
+/-- Verify an indexed traversal whose mathematical payload ignores the two
+private cursor locals. The body establishes its payload at its own endpoint;
+the shared rule transports it through setup and cursor advance using ordinary
+local frames. Those generated assignments preserve shared state, but no such
+restriction is imposed on the body or on its actual heap and I/O effects. -/
+theorem forIn_indexed_of_frame (pointer remaining element : Reg) {base length : Expr}
+    (origin : Word w) (n : Nat) (hw : 0 < w)
+    (pointer_ne_remaining : pointer ≠ remaining) (element_ne_pointer : element ≠ pointer)
+    (element_ne_remaining : element ≠ remaining)
+    (invariant : Nat → State w → Prop)
+    (stable : ∀ i {current next : State w}, State.LocalFrame {pointer, remaining} current next →
+      invariant i current → invariant i next)
+    (reads : ∀ i current, i < n → invariant i current →
+      (origin + BitVec.ofNat w i).toNat < heapLimit)
+    (preserves : ∀ {entry finish : State w}, SafeExec program heapLimit depth body entry finish →
+      finish.regs pointer = entry.regs pointer ∧ finish.regs remaining = entry.regs remaining)
+    (implementation : ∀ i current, i < n → invariant i current →
+      TotalWP program heapLimit depth body (invariant (i + 1))
+        (current.setReg element (current.mem (origin + BitVec.ofNat w i))))
+    (baseReads : base.ReadsBelow heapLimit s.regs s.mem)
+    (lengthReads : length.ReadsBelow heapLimit
+      (s.setReg pointer (s.eval base)).regs (s.setReg pointer (s.eval base)).mem)
+    (base_eq : s.eval base = origin)
+    (count_eq : ((s.setReg pointer (s.eval base)).eval length).toNat = n)
+    (pre : invariant 0 s)
+    (continuation : ∀ finish, invariant n finish → post finish) :
+    TotalWP program heapLimit depth (Stmt.forIn pointer remaining element base length body)
+      post s := by
+  have updates (current : State w) (address count : Word w) :
+      State.LocalFrame {pointer, remaining} current
+        ((current.setReg pointer address).setReg remaining count) := by
+    exact ((State.LocalFrame.setReg current pointer address).trans
+      (State.LocalFrame.setReg (current.setReg pointer address) remaining count)).mono
+        (by intro r hr; simpa [or_comm] using hr)
+  refine forIn_indexed pointer remaining element origin n hw pointer_ne_remaining
+    element_ne_pointer element_ne_remaining invariant reads preserves ?_
+    baseReads lengthReads base_eq count_eq (stable 0 (updates s _ _) pre) continuation
+  intro i current inside payload
+  exact (implementation i current inside payload).mono_post
+    (fun middle next => stable (i + 1) (updates middle _ _) next)
 
 end Ram.Source.Verification.TotalWP

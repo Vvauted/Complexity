@@ -395,6 +395,14 @@ so writing and restoring a cursor is allowed; static destination exclusion is
 one way to prove it. Memory and I/O may change. The setup equations still use
 sequential expression evaluation, and only executed addresses need be safe.
 
+If the payload is insensitive to the two private cursor locals, use
+`Ram.Source.Verification.TotalWP.forIn_indexed_of_frame`. Prove once that
+`State.LocalFrame {pointer, remaining}` preserves it. Then initialization starts
+from the original state and the body only proves `invariant (i + 1)` at its own
+endpoint; the shared rule transports this through cursor setup and advance.
+Only those generated assignments use the unchanged-shared-state frame, not the
+arbitrary body. Map uses this interface without unfolding `advanceState`.
+
 The independent `Ram.Source.TimeBound.forIn` accepts a uniform conditional body
 bound `B` and preservation of the remaining count on completed body executions.
 It adds the actual setup expression lengths, `(B + 14) * count` and the remaining
@@ -414,18 +422,18 @@ The [map client](##Examples.Ram.ArrayMap) uses the existing DSL:
 
 ```text
 fn mapSquares(xs : array) : Unit {
-  let mut i := 0;
-  for x in xs {
+  for i, x in xs {
     let y ← call Scalar.square(x);
     xs[i] := y;
-    i += 1;
   }
   return;
 }
 ```
 
 Its correctness proof reuses the imported square contract and the common map
-theorem. The operation proof uses the indexed rule to maintain the ordinary
+theorem. Index initialization and increment are real generated assignments;
+both loop bindings stay within the body. The operation proof uses the indexed
+rule to maintain the ordinary
 updated-prefix/unread-suffix list without its own private cursor/count invariant.
 It reuses the existing array store/frame rules and reads each original element
 before replacing it. Empty arrays are admitted; an unused final pointer may wrap

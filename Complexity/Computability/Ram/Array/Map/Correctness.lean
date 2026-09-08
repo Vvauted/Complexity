@@ -14,7 +14,7 @@ suffix. Each iteration loads the next original word, applies the actual helper
 contract and stores its returned word in that position. Existing array-update
 and frame rules retain the rest of the heap.
 
-The shared `TotalWP.forIn_indexed` rule maintains private cursor/count progress
+The shared `TotalWP.forIn_indexed_of_frame` rule maintains private cursor/count progress
 and supplies loop termination independently of any instruction budget. The
 payload retains only the program's own bindings and mathematical heap effects.
 Only original input elements require the helper contract.
@@ -23,8 +23,6 @@ is unused, and no strict endpoint assumption is added.
 -/
 
 namespace Ram.Source.Array.Map
-
-open Ram.Source.ForIn
 
 private def contents (transform : Word w → Word w) (xs : List (Word w))
     (i : Nat) : List (Word w) :=
@@ -83,22 +81,31 @@ private theorem Invariant.read_next {heapLimit : Nat} {base : Word w}
     (by rw [contents_length transform xs hi.le]; exact hi)).trans
       (contents_get_next transform xs hi)
 
-private theorem Invariant.advance {heapLimit : Nat} {base : Word w}
+private theorem Invariant.of_localFrame {heapLimit : Nat} {base : Word w}
+    {xs : List (Word w)} {transform : Word w → Word w} {entry s t : State w} {i : Nat}
+    (h : Invariant heapLimit base xs transform entry i s)
+    (frame : State.LocalFrame {3, 4} s t) :
+    Invariant heapLimit base xs transform entry i t := by
+  refine ⟨(frame.reg_eq (by simp)).trans h.base_eq,
+    (frame.reg_eq (by simp)).trans h.index, ?_, ?_,
+    frame.input.trans h.input, frame.outputRev.trans h.output⟩
+  · simpa only [ArrayAt, frame.mem] using h.array
+  · simpa only [frame.mem] using h.frame
+
+private theorem Invariant.body {heapLimit : Nat} {base : Word w}
     {xs : List (Word w)} {transform : Word w → Word w} {entry s : State w} {i : Nat}
     (h : Invariant heapLimit base xs transform entry i s)
     (hi : i < xs.length) :
     Invariant heapLimit base xs transform entry (i + 1)
-      (advanceState 3 4 (bodyState transform
-        (s.setReg 5 (s.mem (arrayAddr base i))))) := by
-  let next := advanceState 3 4 (bodyState transform
-    (s.setReg 5 (s.mem (arrayAddr base i))))
+      (bodyState transform (s.setReg 5 (s.mem (arrayAddr base i)))) := by
+  let next := bodyState transform (s.setReg 5 (s.mem (arrayAddr base i)))
   let stored := s.setMem (arrayAddr base i) (transform xs[i])
   have loaded : s.mem (base + BitVec.ofNat w i) = xs[i] := h.read_next hi
   have indexFits : i < (contents transform xs i).length := by
     rw [contents_length transform xs hi.le]
     exact hi
   have memory : next.mem = stored.mem := by
-    simp [next, advanceState, bodyState, State.setReg, State.setMem,
+    simp [next, bodyState, State.setReg, State.setMem,
       stored, h.base_eq, h.index, loaded, arrayAddr]
   have updated : ArrayAt heapLimit base (contents transform xs (i + 1)) next := by
     have represented := h.array.setMem indexFits (transform xs[i])
@@ -111,8 +118,8 @@ private theorem Invariant.advance {heapLimit : Nat} {base : Word w}
     simpa only [contents_length transform xs hi.le] using
       ArrayFrame.store h.array.1 indexFits (transform xs[i])
   refine ⟨?_, ?_, updated, h.frame.trans frame, h.input, h.output⟩
-  · simp [advanceState, bodyState, State.setReg, State.setMem, h.base_eq]
-  · simp [advanceState, bodyState, State.setReg, State.setMem,
+  · simp [bodyState, State.setReg, State.setMem, h.base_eq]
+  · simp [bodyState, State.setReg, State.setMem,
       h.index, BitVec.ofNat_add]
 
 /-- The actual map loop safely transforms its represented array in place and
@@ -138,8 +145,10 @@ theorem code_total_contract {program : Program} {helper : Func} {fn heapLimit de
       finish.input = entry.input ∧ finish.outputRev = entry.outputRev) entry
   rw [code, Verification.TotalWP.seq_iff, Verification.TotalWP.assign_iff]
   refine ⟨trivial, ?_⟩
-  apply Verification.TotalWP.forIn_indexed 3 4 5 base xs.length hw
+  apply Verification.TotalWP.forIn_indexed_of_frame 3 4 5 base xs.length hw
     (by decide) (by decide) (by decide) (Invariant heapLimit base xs transform entry)
+  · intro i current next frame h
+    exact h.of_localFrame frame
   · intro i current hi h
     exact h.address_lt hi
   · intro current finish execution
@@ -155,15 +164,15 @@ theorem code_total_contract {program : Program} {helper : Func} {fn heapLimit de
     have helperCorrect := correct xs[i] (List.getElem_mem hi)
     have execution := body_safe_at lookup loadedState
       (by simpa only [loaded] using helperCorrect) address
-    exact ⟨bodyState transform loadedState, execution, h.advance hi⟩
+    exact ⟨bodyState transform loadedState, execution, h.body hi⟩
   · trivial
   · trivial
   · simpa [State.eval, Expr.eval, State.setReg] using base_eq
   · simpa [State.eval, Expr.eval, State.setReg] using length_eq
   · refine ⟨?_, ?_, ?_, ArrayFrame.refl _ _ _, rfl, rfl⟩
-    · simpa [initialState, State.eval, Expr.eval, State.setReg] using base_eq
-    · simp [initialState, State.eval, Expr.eval, State.setReg]
-    · simpa [contents, initialState, State.eval, Expr.eval, State.setReg, ArrayAt]
+    · simpa [State.setReg] using base_eq
+    · simp [State.setReg]
+    · simpa [contents, State.setReg, ArrayAt]
         using represented
   · intro finish h
     exact ⟨by simpa only [contents_finish] using h.array, h.frame, h.input, h.output⟩

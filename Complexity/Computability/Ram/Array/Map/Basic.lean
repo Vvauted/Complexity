@@ -11,10 +11,10 @@ import Complexity.Computability.Ram.Source.Frame
 # In-place mapping through a statically linked function
 
 The source operation takes a borrowed array in its first two parameter slots.
-It keeps an explicit index, uses the ordinary `forIn` load and cursor updates,
+It keeps an index, uses the ordinary `forIn` load and cursor updates,
 and calls the fixed source function `fn` before storing each returned word.
 The remaining slots are private locals, exactly as in the named DSL declaration
-with `let mut i := 0; for x in xs { let y ← call helper(x); xs[i] := y; i += 1; }`.
+with `for i, x in xs { let y ← call helper(x); xs[i] := y; }`.
 
 The mathematical transformation below describes a verified callee; it is not
 an executable Lean callback or a second interpretation of the program.

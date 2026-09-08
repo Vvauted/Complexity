@@ -109,20 +109,29 @@ loop-head state invariants; its independent uniform time rule charges setup,
 loads, cursor updates and control flow. `forIn_indexed` additionally maintains
 the mathematical iteration number and private cursor/count relation internally.
 
-Map now supplies only its payload: represented updated-prefix/unread-suffix
-contents, the program's own base/index bindings, and frame/I/O facts. It no longer
-proves private-pointer advancement, word-count subtraction or exit-index
-arithmetic. The body still starts after a real current-heap load and establishes
-the payload after actual cursor updates. Semantic cursor preservation permits
-write-then-restore; `Stmt.writtenRegs` discharges the static case.
+Map supplies represented updated-prefix/unread-suffix contents, base/index
+bindings and frame/I/O facts. `forIn_indexed_of_frame` lets its body prove only
+the body-endpoint payload; one ordinary local-frame stability proof transports
+it through private cursor setup and advance. The implementation no longer unfolds
+those state updates or proves their arithmetic. The body still reads the current
+heap and may change shared state. Semantic cursor preservation permits
+write-then-restore; static destination exclusion handles the simpler case.
+
+The actual source now uses `for i, x in xs`, with both binders immutable and
+body-local. Its generated index initialization/increments give exactly the same
+map function, so the existing mathematical result and compiled costs are retained.
+This improves programming without inventing another local-reader record; the
+operation's internal payload still uses a fixed register layout.
 
 **Next work:**
 
 - Use this division to improve the remaining binding view for an actual mutable
   implementation. Keep mathematical contents and user-visible values readable;
   do not reintroduce private cursors into each payload or add one recognizer per
-  sample. The current indexed rule still exposes `State` and `advanceState`;
-  it is a shared foundation, not the finished named-invariant interface.
+  sample. Frame-stable payloads no longer expand `advanceState`, but still use
+  `State` and explicit local bindings. This is not the finished named-invariant
+  interface; merely renaming register projections with generated readers would
+  not remove the remaining implementation work.
 - Let proof-local bindings follow lexical scope. Search's midpoint already uses
   `ram_total_bind`; its declaration supplies the real remaining loop directly.
   Improve its register-role initialization only where it obstructs the proof.

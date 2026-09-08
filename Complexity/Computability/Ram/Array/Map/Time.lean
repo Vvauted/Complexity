@@ -13,7 +13,7 @@ import Complexity.Computability.Ram.Verification.Time.Function
 
 The helper's conditional function bound pays for its actual body. The call
 rule adds argument evaluation, frame work, return expressions and receipt of
-the returned word. The map body then executes its indexed store and explicit
+the returned word. The map body then executes its indexed store and generated
 index increment; the shared foreach rule counts loads, cursor writes and guards.
 
 These bounds require neither helper totality nor a mathematical mapping

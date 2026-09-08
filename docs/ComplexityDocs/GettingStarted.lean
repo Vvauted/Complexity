@@ -306,6 +306,13 @@ block-local `x` on each visit. Its generated control code does not advance `xs`
 itself. Array contents are read during the traversal, not copied beforehand.
 The same scoped block syntax supports local declarations, branches and calls.
 
+When the body also needs its position, use `for i, x in xs`. Both `i` and `x`
+are immutable bindings local to the body; the zero-based index is a machine word.
+The [in-place map sample](##Examples.Ram.ArrayMap) uses this form to write
+`xs[i] := y` without declaring or incrementing its own counter. The compiler
+emits the actual index initialization and increments, so they remain charged.
+Shadowing a binder inside the body does not redirect those generated updates.
+
 For this single-array scalar-call pattern,
 `Ram.Source.Array.ForIn.function_contract` takes the generated body and return
 equations, the helper's contract and the mathematical array premises. It infers
