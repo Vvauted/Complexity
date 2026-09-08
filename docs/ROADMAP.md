@@ -1,364 +1,268 @@
 # Roadmap
 
-Write one executable program, state its correctness with ordinary Lean mathematics,
-and derive its complexity without reopening the machine implementation.
-A pleasant DSL, reusable proofs and proof automation are parts of the same goal.
+Write and verify a high-level program. Automatically derive the register-level
+proofs and the guarantees of its compiled execution. RAM is a backend for
+implementation and complexity certification, not the language in which an
+algorithm author should have to prove correctness.
 
-The checked backend and mathematical observations already work. The main gap is
-the experience of proving a new implementation: mutable loops and recursive
-multi-buffer composition still expose too much source-state plumbing.
-A short client theorem does not excuse that burden in an implementation module.
+The [high-level language design](HIGH_LEVEL_LANGUAGE.md) is the architectural
+decision for the next phase. It introduces an independently interpreted typed
+core, source-level verification, and checked lowering to the existing backend.
+This is planned work, not an interface already implemented by `ram_def`.
 
-This is a plan, not a chronological list of completed lemmas.
-[Design](DESIGN.md) records semantic boundaries, the
-[manual](https://vvauted.github.io/Complexity/ComplexityDocs/Verification.html)
-describes proof interfaces, and [literature notes](LITERATURE.md) record what we
-take from primary papers.
+## The correction in direction
 
-## Four questions for every proposed change
+The current named language mainly elaborates into register-based `Stmt/Func`.
+Its generated body equations, mathematical result projections and source-cursor
+tactics are useful, but do not constitute a complete high-level semantics and
+automatic proof transfer.
 
-### 1. Do public rules and automation remove repeated work?
+Therefore, extending a cursor across more RAM WP tactics is no longer the main
+roadmap. It may support compiler implementation or existing users. The main
+deliverable is a source proof whose connection to the register program is
+generated from shared compiler theorems, without an algorithm-specific adapter.
 
-Parameter and return binding, import relocation, scope restoration and routine
-frames belong in shared rules. A proof should follow calls, sequencing, branches,
-loops and recursion in the declared source. Small changes to a loop body should
-not require a new whole-function AST adapter.
+One source program can have independent behavior semantics, cost observations
+and a compiled representation. This is normal language/compiler layering, not
+a second manually maintained algorithm.
 
-The author still supplies mathematical invariants, recursive measures, callee
-contracts, range/aliasing facts, and recurrences or potentials. Automation should
-leave those goals readable, not replace them with blanket execution premises or
-weaken the admitted input domain.
+## Responsibility boundary
 
-### 2. Are we reusing Lean, Std, Batteries and mathlib?
+| Algorithm author supplies | Framework/backend supplies |
+| --- | --- |
+| Ordinary mathematical pre/postconditions | Typed source semantics and sound verification rules |
+| Loop invariant and termination measure | Source binding, scope and loop-state composition |
+| Callee contracts and genuine alias/extent facts | Parameter/result transport and routine data framing |
+| Necessary intermediate range and source resource facts | Word/address realization and concrete capacity translation |
+| Sums, recurrences, potentials and bounds | Proved cost of emitted operations, calls and control flow |
+| A proof about the high-level program | Automatic lowering certificate and compiled execution theorem |
 
-Reuse ordinary lists, arrays, vectors, `Part`, `StateM`, `Std.Do.Triple`, induction,
-`Set.EqOn`, asymptotic relations and mathlib's recurrence machinery.
-Do not create parallel collections, monads or asymptotics libraries.
+Algorithm proofs must not mention numeric registers, `State.setReg`,
+`Stmt` constructors, function-table offsets, ABI code or measured machine
+execution trees. Hiding those obligations in one helper per algorithm does not
+meet the requirement.
 
-The current sum algebra uses upstream list sums through a word-encoding bridge.
-Array mutation reuses list `take`, `drop`, `set` and map identities.
-Local frames and static destination sets use ordinary mathlib sets.
-Memory representation, compiler simulation and actual transition costs are
-project-specific bridges; an upstream list theorem cannot replace them.
+Real array bounds, overlap restrictions, arithmetic ranges and storage needs
+remain meaningful. If automation cannot prove one, the remaining obligation
+must be expressed using source values and mathematical facts.
 
-Search the pinned dependencies before adding generic mathematics. Add a small
-extension only for a concrete missing fact. Keep dependency pins consistent;
-CSLib is not needed for this direction.
+## What already exists
 
-### 3. What should proving an implementation feel like?
+These foundations are retained, not rebuilt:
 
-Write a function with typed parameters, lexical locals, calls and returns.
-Prove its behavior by ordinary mathematical induction, a loop invariant, or
-composition of operation contracts. Prove its cost using the same decomposition,
-leaving sums, inequalities and recurrences.
+| Foundation | Evidence and boundary |
+| --- | --- |
+| Safe source execution and total correctness | `SafeExec`, `TotalWP` and function contracts establish actual termination without a time budget; their source state is still register-based |
+| Verified RAM compilation and execution | Local compiler, `runUntil`, `applyState_spec` and run-step bridges transfer results/effects/costs to the same actual invocation |
+| Typed calls and compositional costs | Actual returned words/references and updated state feed continuations; result-dependent upper bounds already exist |
+| Mathematical data interfaces | Array/indexed representation, slices, frames, lists, ordering and StateM observations are available |
+| Mathematical complexity tools | Existing sums, balanced recurrences, mathlib Akra–Bazzi/`IsBigO`, and potential arguments |
+| Frontend pieces and diagnostics | Named parsing, signatures, lexical proof sites and existing RAM tactics can support the new lowering |
 
-A client proof should not mention numeric register slots, stack instructions,
-generated function-table offsets, raw code layout or measured execution trees.
-Backend authors establish those facts once. Both implementation proofs and
-downstream mathematical uses must be pleasant; hiding boilerplate in a sample
-adapter is not completion.
+Existing consumer evidence must be interpreted accurately:
 
-### 4. Can correctness look like an ordinary Lean proposition?
+- [FunctionRun](../Examples/Ram/FunctionRun.lean) has a real executable factorial
+  equation, not a reference answer supplied by a proof.
+- [ArrayMap](../Examples/Ram/ArrayMap.lean) has real calls/stores and a separate
+  linear bound, but the short client proof matches a fixed whole-function template.
+- [LowerBound](../Examples/Ram/LowerBound.lean) has a `List.findIdx` result and a
+  logarithmic bound; its implementation proof still needs a register-role bridge.
+- [ArraySlice](../Examples/Ram/ArraySlice.lean) and
+  [FunctionComposition](../Examples/Ram/FunctionComposition.lean) pass real data
+  between calls, with representation and capacity conditions.
+- [MergeSort](../Examples/Ram/MergeSort.lean) has sorted-permutation and ordinary
+  contents/StateM observations, plus a bound for the same invocation; its StateM
+  view does not yet provide an independent high-level implementation language.
 
-Yes: executable factorial equations, slice identities, `List.findIdx`, mapped
-contents and sorted-permutation statements already demonstrate this.
-A relational specification need not implement a second reference algorithm.
+The [implementation notes](DESIGN.md) retain the existing backend's semantic
+boundaries. None of these results alone completes the new source-language layer.
 
-The intended proposition shapes are schematic, not new APIs:
+## M0 — Design boundary
 
-```text
-pure:      admissible x → implementedFunction x = mathematicalValue x
-relation:  admissible x → property x (implementedFunction x)
-mutation:  represented input entry →
-             resultProperty result ∧ represented output finish ∧ frame entry finish
-cost:      admissible x → costOfThatSameInvocation x ≤ bound x
-```
+Status: specified in [HIGH_LEVEL_LANGUAGE.md](HIGH_LEVEL_LANGUAGE.md);
+implementation milestones below remain open.
 
-Admissibility retains real representation, overflow and capacity conditions.
-Normal termination must follow from those conditions without choosing a time
-budget. Packaging them must not hide an unproved halt assumption.
+Decisions:
 
-A pure observation may omit heap and streams, but a purity claim requires
-independence and preservation. Mutable programs naturally use result/state
-contracts. A heap reference represented by a list is not an implemented
-`List → List` loader; actual conversion and allocation require charged programs.
+- One typed first-order core with independent behavior, not `eval (lower p)`.
+- Lean-like surface syntax, explicit executable operations, lexical values,
+  ordinary mathematical specifications and a shared abstract heap.
+- Mathematical `Nat/Bool`, explicit modular words, products and typed borrowed
+  views; representation support is implemented in stages, never assumed.
+- Budget-free source correctness/termination and a separate cost observation.
+- Generic checked lowering to existing `Stmt/Func`, then reuse of the verified
+  RAM compiler and runner.
+- A thin proved connection to existing `Part`, `StateT/ExceptT` and
+  `Std.Do` proof infrastructure, not a second collections/monad library.
 
-## Evidence from the existing samples
+Exact binder representation, surface spelling and certificate format are small
+implementation choices. They must not delay or weaken the semantic boundary.
 
-| Consumer | Checked end-to-end capability | Remaining burden |
-| --- | --- | --- |
-| [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves behavior and one independent exact-cost recurrence; executable equations reuse mathlib factorial. | Publishing the runtime result still supplies genuine word and stack conditions. General value-dependent exact-cost continuation support needs a real consumer. |
-| [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Named calls and shared traversal yield `List.foldl`; the factorial helper exercises element/prefix-dependent costs. | The fold interface is read-only with a scalar accumulator, not arbitrary mutation or richer accumulator support. |
-| [ArrayMap](../Examples/Ram/ArrayMap.lean) | Real helper calls and stores produce `List.map`; independent bounds cover the same compiled invocation. The indexed rule owns cursor/count progress. | The payload still relates source state to mathematical contents and a real user index. The operation template retains a fixed internal layout. |
-| [ArraySlice](../Examples/Ram/ArraySlice.lean), [properties](../Examples/Ram/ArraySliceProperties.lean) | A real returned borrowed reference feeds another compiled call; its length controls the time continuation. | Typed-input selection and mathematical containment/representation facts remain explicit. |
-| [LowerBound](../Examples/Ram/LowerBound.lean) | Named source initialization supplies typed values and binding facts to both the shared total loop and its separate logarithmic bound; the executable result is `List.findIdx`. | The loop invariant still uses a register-role bridge. The loop-scoped midpoint is not a function-level binding. |
-| [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function yields `List.merge`, both preserved sources and an independent linear full-call bound. | The wrapper really calls the core and pays that overhead; extent and destination non-overlap remain premises. |
-| [MergeSort](../Examples/Ram/MergeSort.lean) | A two-array declaration recursively calls itself, merge and copy. Its selected source branch exposes the actual `middle`, `left` and `right` values for those calls. Length induction gives sorted-permutation and contents-level `StateM` specifications; the same invocation has an `n log n` bound. | Correctness and time still repeat some stage composition. Recursive capacity, the recurrence and multi-buffer facts remain explicit; ordinary call tactics do not advance the source cursor. |
-| [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [time](../Examples/Ram/FunctionCompositionTime.lean) | Imported copy passes complete array representations to sum; call accounting derives the remaining reserve. | Import transport and genuine equal-length, range and disjointness premises remain. |
-| [GraphDegree](../Examples/Ram/GraphDegree.lean) | An implemented sum transfers to a mathlib graph property. | Represented graph data is assumed; this is not a graph loader. |
+## M1 — Independent source meaning and the first automatic proof transfer
 
-All these claims concern the actual source/compiler/runtime path, not parser
-acceptance or a mathematical replacement implementation. Existing source
-programs, admitted domains and cost bounds must be preserved when simplifying
-their proofs.
+Build one complete scalar path before extending the surface language broadly.
+The first executable subset is Nat/Bool literals, addition/comparison, lexical
+binding, calls, branches and terminal scalar returns. Additional types and
+operations are enabled one construction at a time only when their semantics,
+lowering, proof rule and cost connection are ready. Unsupported nodes are
+rejected explicitly; there is no placeholder code or user-supplied RAM proof.
 
-## Priority 1: make new mutable and scoped proofs source-facing
+1. Define the typed core, lexical values and independent finite execution,
+   distinguishing normal continuation, return and fault. Support scalar
+   operations, binding, sequencing, both branches, first-order calls and
+   terminal returns. Prove source determinism and proof-independent observations.
+   Product encodings and further arithmetic operations follow the first scalar
+   transfer; completing all value types is not an M1 prerequisite.
+2. Prove source total-WP and structural verification rules. Establish the
+   required semantic `Part`/Std.Do adequacy and `pure/bind` laws where used;
+   a thin tactic over the same source rules can precede the full Std adapter.
+   Do not assume `mvcgen` supplies termination or compiler correctness.
+3. Implement lowering and the reusable source-to-IR simulation cases. Generate
+   checked certificates for concrete declarations; infer static layouts and
+   discharge their register/ABI obligations internally.
+4. Connect source arithmetic to the word backend through source-level range
+   conditions. When added, subtraction/division/modulo retain Lean's saturating
+   and zero-divisor semantics through proved, charged implementations; explicit
+   Word programs retain modular behavior. No proof-directed optimization is
+   required for the first lowering.
+5. Derive the first backend cost interpretation and its adequacy from the same
+   lowering. Include actual operand, call/frame, branch and return work.
 
-**Available foundation:** general `TotalWP.forIn` supports arbitrary bodies and
-loop-head state invariants; its independent uniform time rule charges setup,
-loads, cursor updates and control flow. `forIn_indexed` additionally maintains
-the mathematical iteration number and private cursor/count relation internally.
+**Completion evidence:** an actual helper-call/returned-value/branch program is
+proved at source level and receives compiled behavior and time theorems without
+a register proof or a whole-function template equality. General construction
+rules are proved before the consumer is discharged.
 
-Map supplies represented updated-prefix/unread-suffix contents, base/index
-bindings and frame/I/O facts. `forIn_indexed_of_frame` lets its body prove only
-the body-endpoint payload; one ordinary local-frame stability proof transports
-it through private cursor setup and advance. The implementation no longer unfolds
-those state updates or proves their arithmetic. The body still reads the current
-heap and may change shared state. Semantic cursor preservation permits
-write-then-restore; static destination exclusion handles the simpler case.
+A `body_eq := rfl`, successful parser expansion, or a source correctness
+predicate defined through the target evaluator does not complete M1.
 
-The map body composes the existing function-call WP, array-store contract and
-assignment rule directly into its next mathematical invariant. It no longer
-reconstructs a whole-body execution endpoint before proving the array result.
-The underlying list identities remain upstream `take`, `drop`, `set` and `map`
-reasoning; the operation still owns its fixed local layout.
+## M2 — Abstract mutable data and arbitrary traversal bodies
 
-`ram_total_store` now applies the existing array-store contract to the actual
-leading store. Map supplies its mathematical array assertion, index and value;
-it no longer repeats the address/value syntax or wraps the assertion around
-local-register updates. The continuation receives `List.set` and the actual
-outside-array frame. A changed heap still requires a current representation;
-routine simplification does not transport an assertion through arbitrary effects.
-The final index update and invariant implication remain explicit.
+1. Give borrowed objects/views independent heap semantics with actual aliasing.
+   Prove read/write/slice and local-frame rules using ordinary contents.
+2. Relate those objects/views to existing RAM representations. The compiler
+   handles descriptor fields, address arithmetic and receiver updates.
+3. Provide source `for` rules for arbitrary bodies and captured iteration
+   ranges. Each iteration reads the current heap; no implicit input snapshot.
+   Expose iteration index and source locals directly to mathematical invariants.
+4. Compose helper contracts, returned values, branches and writes in the source
+   proof. Lift cost rules over the same arbitrary body and real execution order.
+5. Report unproved bounds, range and actual overlap requirements at the source
+   operation. Routine preservation and representation transport stay automatic.
 
-The actual source now uses `for i, x in xs`, with both binders immutable and
-body-local. Its generated index initialization/increments give exactly the same
-map function, so the existing mathematical result and compiled costs are retained.
-This improves programming without inventing another local-reader record; the
-operation's internal payload still uses a fixed register layout.
+**Completion evidence:** directly express the design's helper-call → branch →
+store loop, with a transformed-prefix/unread-suffix invariant and an independent
+bound for its compiled execution. It must not be reduced to a newly invented
+`MapWithBranch.function` template. Reuse ordinary List/Array identities.
 
-**In progress: source-directed verification conditions.** The same lowering now
-retains intermediate lexical scopes and actual emitted fragments as proof-site
-metadata. Previously only bindings visible at the function return survived.
-This is necessary to distinguish a midpoint before/after its declaration and
-inner shadowing, but metadata alone does not improve a correctness proof.
-Source initialization is the first consumer: `ram_total_init` and
-`ram_time_init` advance the same actual assignment prefix, name its current
-`Word`/`ArrayRef` values and produce the corresponding binding equations. Search
-no longer writes its own initialization state or proves its field updates.
-Its initial invariant uses the shared `Pre.invariant` rule and the source facts.
-The time driver uses its own completed-execution rules, including affordability
-and actual assignment charges; it does not consume a total-correctness proof.
+This completes a useful borrowed-array subset, not allocated-container support.
 
-`ram_total_branch` and `ram_time_branch` now enter a selected `then` or `else`
-branch and consume its leading initializers through the same rules. The
-[recursive sort proof](../Complexity/Computability/Ram/Array/MergeSort/Function.lean)
-uses the resulting `middle`, `left` and `right` values in its actual call arguments.
-An array binding appears only after both real
-field assignments. Its [time proof](../Complexity/Computability/Ram/Array/MergeSort/FunctionTime.lean)
-uses the corresponding branch interface, retaining the actual guard, jumps and
-assignment charges rather than a hand-written guard or branch-entry state.
-It starts from the original whole-body budget; the branch, initializer and call
-rules derive the remaining allowances without another hand-selected branch
-reserve. The recurrence and split-cover inequality remain mathematical work.
+## M3 — While, recursion and reusable high-level implementation proofs
 
-These steps start at the whole named body or follow their own goal-local cursor.
-It records the exact lexical block and next source child, revalidates the actual
-remaining code, and belongs only to the code continuation. Following statements
-survive branch selection through proved sequencing rules; a missing `else` is
-the actual empty branch. No equal-AST search or source re-elaboration locates a
-proof site. Initialization stops at the next conditional, call, loop or other
-effect; branch entry handles the explicitly selected conditional.
+1. Provide well-founded source `while` and recursive-call rules; user invariants
+   and recursive hypotheses concern source values, not backend state.
+2. Complete their generic lowering and cost proofs, including loop exits and
+   nonterminal returns. The return-control design from M1 must compose through
+   nested blocks/loops. Add tagged optional results and `break/continue` with
+   proved encodings/control behavior when their consumers are introduced.
+3. Derive source-level call-nesting/storage obligations separately from time.
+   Translate sufficient bounds through the compiler's inferred frame layout.
+4. Migrate Search as a different loop shape, then recursive MergeSort as a
+   multiple-buffer and recursive-call consumer.
 
-The named Lean values survive ordinary call proofs as snapshots. Restored caller
-registers preserve sort's borrowed descriptors across its `Unit` calls, but heap
-representations still come from the calls' actual postconditions. Ordinary call
-tactics do not maintain this cursor or rebind new source result names. This is
-not a general intermediate-goal cursor or source-facing loop-invariant elaborator:
-Search still reuses its register-role loop proof, and Map still owns its fixed
-internal payload layout.
+**Completion evidence:** Search's algorithm proof uses `lo/hi/mid` and array
+contents without a `Registers` bridge. Recursive sort composes source contracts,
+ordinary split/merge mathematics and a separate recurrence. Register allocation
+changes do not require new algorithmic reasoning.
 
-**Next work:**
+The core semantics/proof modules remain independent of RAM imports. Adding more
+display names to the old `SafeExec` goals is not a substitute.
 
-- Keep removing repeated operation-level work using the existing WP goals before
-  adding a whole-source proof driver. The store step demonstrates that actual
-  operands can be inferred by unification; it does not need a second AST walk or
-  lexical metadata. Scope metadata is needed for source-name visibility, not for
-  every elementary proof operation.
-- Extend the source positions to Map's actual loaded/body scope and helper-call
-  continuation, rather than adding more root-initializer demonstrations. A proof
-  cursor must accompany code continuations, not ordinary lookup, read-safety,
-  representation or depth goals. Enter loop
-  scopes only at their actual loaded/body entry; restore outer bindings on exit.
-  Consume generated initialization and tail instructions rather than skipping
-  them because they lack a source statement. Array-local initialization completes
-  both real assignments before exposing the new descriptor.
-- Bind a source call's result name to its actual returned word or reference and
-  advance to the following source statement. Existing typed call rules already
-  provide that value and ordered receiver updates; connect their continuation to
-  the lexical scope without adding a call semantics or treating old snapshots as
-  newly assigned variables. Keep user-chosen contracts and inputs explicit.
-- Use the actual goal's statement and returned values. Do not find a source site
-  by scanning for an equal AST or re-elaborate an embedded `const(t)` in a new
-  Lean scope. Introduce ordinary word/reference values from current bindings;
-  after calls, transport heap representations only using their actual contracts.
-  Restored caller registers do not imply an unchanged heap.
-- Map's body-level consumer should expose a helper postcondition followed by
-  `List.set` and its frame, using the existing call and array-store rules. It
-  should not reproduce `.var` slots, receiver updates or expression evaluation.
-  Mathematical index ranges, Word/Nat correspondence, aliasing and the payload
-  implication remain ordinary Lean obligations. A generated reader, a new
-  whole-Map AST adapter or another `Refines`/`StateM` wrapper is not this milestone.
-- Retain the concise scalar-fold and whole-operation contracts where they suffice.
-  Rewriting all clients into a more general invariant is not itself an improvement.
-  Multiple live mutable arrays and richer accumulators need a representation
-  interface that preserves their actual ordered effects.
-- The language supports word, borrowed-array and `Unit` results and end-of-function
-  returns. Richer results and early exit remain unfinished. Select a genuine
-  consumer before extending them, then provide lowering, correctness, cost and
-  runtime observations together. Search returning its insertion index, including
-  the endpoint, does not by itself require `Option`.
+## Cost-interface work alongside M1–M3
 
-**Acceptance evidence:** the next genuinely different mutable body should reuse
-the traversal mechanics while its proof contains the algorithm's mathematical
-invariant and operations. Private layout changes should not force a new
-algorithmic correctness argument. No uncharged host callback or array snapshot
-may stand in for the body.
+The goal is separate correctness and cost proofs, not duplicated register
+navigation or a mandatory second proof of all result contents.
 
-## Priority 2: share independent correctness and cost decomposition
+- Establish erasure/instrumentation for the cost observation over the same
+  source program. Source behavior cannot inspect cost or a proposed budget.
+- Derive weights/overheads from the selected lowering and actual frame layout.
+  User-chosen prices are not accepted as RAM costs.
+- Support result/state-dependent continuations using existing typed time rules.
+  Mutable traversal costs follow actual elements, state and evaluation order.
+- For bounds depending only on sizes, use proved shape/length/frame consequences
+  of contracts. First simplify MergeSort's information needs without changing
+  its admitted domain; then prove content-independent lower-operation bounds
+  where possible. Do not simply delete merge/copy/time-import premises.
+- Prove an upper-bound connection in the direction needed for target steps.
+  Forward simulation plus source totality and target determinism supports the
+  initial runner theorem. A target conditional-bound theorem without source
+  totality needs completed-trace reflection or equivalent adequacy.
+- Reuse mathlib recurrence/asymptotic and existing amortized tools. Add varying
+  exact-cost or source-level potential conveniences when a real consumer needs
+  them, not a parallel catalog of wrappers.
 
-**Available foundation:** typed call rules pass actual returned values and shared
-effects with caller locals restored. `ram_total_apply` and `ram_time_apply`
-reuse declaration-generated bindings. The time rule can derive a remaining
-reserve after proving the complete compiled call fits, or accept an explicit
-continuation bound depending on the actual returned value, as slice does.
+**Completion evidence:** users prove mathematical cost inequalities for a source
+program and obtain a theorem about that same compiled invocation. They neither
+price primitives manually nor unfold ABI definitions. Genuine recurrences,
+potentials and data-dependent facts remain visible.
 
-The explicit-input `ram_total_apply contract on input` form follows the same
-selective premise handling as the time interface. Merge sort's recursive,
-merge and copy-back calls preserve their mathematical slice expressions in
-continuations instead of expanding them merely to match argument bindings.
-Generated local binding equations are also used only to close mechanical call
-conditions completely, not to rewrite functional preconditions or continuations.
-This reuses restored-call rules; it is not a new stage semantics or source-call
-cursor advancement.
+## M4 — Constructing and returning data
 
-`TimeExact` supplies exact-count composition over the existing measured
-execution. Factorial's upper bound and measured endpoint reuse its one cost
-induction. `ram_run_eq` and `ram_run_bound` account for real outer-call overhead.
-Search's logarithmic proof reuses `while_div` and a budget-free halving relation.
+A pleasant language must eventually create results, not only borrow preloaded
+arrays. This is scheduled work, not supplied by the abstraction in M2.
 
-Uniformly bounded continuations compose with `TimeBound.seq_const` without a
-functional or termination premise. Map's separate time proof now composes call,
-straight-line and traversal bounds without destructing measured executions.
-This does not supply the intermediate behavioral facts needed for a bound that
-depends on changed data.
+- Implement minimal region/arena allocation, initialization and source freshness,
+  with real target operations, storage bounds and costs.
+- Support returning live allocated objects and composing their representations;
+  do not introduce reclamation without lifetime rules.
+- Complete useful structured results and collection operations through proved
+  encodings. Reuse standard Lean/mathlib types as mathematical views.
+- Provide actual input/output conversion when it belongs to the declared runtime
+  boundary. A host loader outside that boundary must be labeled as such.
 
-**Next work:**
+**Completion evidence:** one source function constructs and returns a container,
+and its behavior, allocation/initialization and total invocation cost are
+connected to the real backend. No host-side constructor silently supplies it.
 
-- Reduce repeated source-stage composition in recursive correctness and time
-  proofs. Merge sort's typed calls already avoid raw call ASTs and restoration
-  equations; its remaining split/reassembly mathematics should not be mistaken
-  for missing calling-convention automation. Target actual repeated bookkeeping,
-  retaining the recurrence, nonrecursive toll and changed-data facts.
-- Extend exact composition to value/state-dependent continuations when an
-  existing exact-count client needs it. Do not add an unused exact wrapper to a
-  client already served by an upper bound.
-- Mutable input-dependent traversal costs must follow actual elements, state and
-  order. The current map uses a uniform helper bound; read-only fold's varying
-  cost rule does not establish arbitrary mutable helper effects.
+## M5 — Complete problem-level claims and further analysis
 
-Correctness and termination stay budget-free. A conditional cost theorem alone
-does not establish that an execution exists, nor is it automatically monotone
-in allowed call depth. Time may use separately proved behavioral facts, but
-behavioral equality between algorithms cannot transfer their runtime costs.
-Natural subtraction alone cannot justify an overspent reserve.
+Use the existing problem/encoding/uniformity interfaces for a real high-level
+implementation. Fix its input encoding, size measure, width policy and runtime
+boundary; quantify one source program over the legal input family.
+Use a fixed compilation scheme and backend/width policy for that family, not
+a different synthesized program for each input, execution witness or proof budget.
 
-**Acceptance evidence:** calls, assignments, loops and recursion decompose the
-same declared computation in both proof views. A real varying-work continuation
-gets its needed value and representation without unpacking measured execution.
-The mathematical reserve/recurrence and actual capacity conditions remain visible.
+A fixed-width demonstration plus an `IsBigO` theorem for a natural-number budget
+does not by itself establish that complete problem-level claim. Preloaded
+memory is an acceptable convention if stated, not a hidden loader theorem.
 
-## Priority 3: finish compositional data and runtime observations
+Later space claims need actual observations of live storage and lifetime.
+Cross-model results need costed simulations. Neither is a prerequisite for
+removing register proofs from algorithm-author work.
 
-**Available foundation:** typed contracts, `Part` observations and executable
-`apply`/`applyState` are views of one declaration. Typed projection rules derive
-ordinary value properties without per-client field decoding.
-Copy returns complete represented arrays to its continuation; its reference view
-still uses the original three runtime words, with destination length justified
-by input representation, not inferred through encoder injectivity.
+## Work not to make the mainline
 
-Shared two-buffer slice/reassembly rules carry unchanged halves across recursive
-calls. Merge sort's `Stages` uses them independently of register and return-field
-layout. Mathematical list and graph properties remain upstream mathematics.
+- More source-cursor extensions as a substitute for the independent language.
+- More short mathematical wrappers around already completed RAM proofs.
+- A new algorithm-specific register adapter for every changed loop.
+- Arbitrary Lean compilation, closure conversion, bignums or a new ownership
+  calculus before the basic source/verification/lowering path works.
+- New machine models, complexity-class catalogs or unused recurrence variants.
 
-**Next work:**
-
-- Improve repeated multi-buffer composition at actual call boundaries. Transport
-  lookup, bindings and routine frames; leave genuine containment, aliasing,
-  representation length and mutation obligations explicit.
-- Derive reusable declaration-level admissibility/observation conveniences where
-  consumers still repeat them. Do not create a third function container, a new
-  runner, or a wrapper around an already short equation.
-- Prefer returned-value/shared-state contracts to reconstructing values from
-  destination registers. A terminal time call with no continuation need not be
-  migrated to a richer result interface merely for uniformity.
-
-**Acceptance evidence:** the implementation-side proofs for slice, copy-then-sum
-and recursive sort compose named operands and represented data. Their published
-mathematical statements and separate cost bounds concern the actual compiled
-invocation without per-client raw-code declarations or extracted result slots.
-Scratch mutation is retained even when a contents-level specification omits it.
-
-## CALF and related work: obligations, not labels
-
-[CALF](https://arxiv.org/abs/2107.04663) guides the distinction between values and
-computations, behavioral equality and cost-sensitive reasoning.
-[Refinement with Time](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ITP.2019.20)
-guides compositional representation transport.
-[Decalf](https://arxiv.org/html/2307.05938v4) warns against discarding effects when
-comparing costs. Their computational models do not establish our RAM bounds.
-
-For this library the concrete obligations are:
-
-- Results, effects and costs observe the same executable declaration.
-- The source cannot inspect proof budgets or its measured transition count.
-  Erasure and determinism connect measured and unmeasured executions.
-- Correctness/termination do not depend on a proposed bound. Behavioral equality
-  supports mathematical reuse, not automatic transport of algorithmic cost.
-- Calls pass actual intermediate values and changed representations in execution
-  order. Pure list identities do not justify reordering effectful helper calls.
-- Primitive and calling costs follow from emitted instructions, not accepted
-  annotations, unchecked ticks or free host computations.
-
-This is not a port of CALF's modal type theory, Decalf's effectful language or
-Sepref's synthesis. Read a small relevant part of a primary paper when a sample
-exposes a design question; record the applicable distinction and its limits in
-the literature notes, then return to the implementation.
-
-## Later work and limits
-
-The cost model is word-RAM transitions, not Lean wall time, comparison count or
-bit complexity. Whole-problem claims fix the encoding, input domain, width policy
-and size measure and quantify one program over legal inputs.
-
-Borrowed descriptors, mathematical views, allocated storage and data conversion
-are distinct. General allocation/loaders need actual implementations and costs;
-preloaded-memory contracts do not claim them.
-
-Space needs observations of live resources on the same execution. Address-space
-capacity is not peak live storage. Establish stack liveness before stack-space
-claims, allocation/reclamation before general live-heap claims.
-Cross-model complexity requires a costed simulation and justified encoding.
-Do not let more machine models, class catalogs or recurrence wrappers displace
-the proof-experience priorities above.
+Keep compatibility with existing programs, proofs and dependency pins. CSLib is
+not required. New compiled code must have its own behavior/cost connection;
+do not inherit old exact constants from result equality.
 
 ## Working discipline
 
-Use real consumers to identify the next obstacle, reuse or improve a shared rule,
-check affected modules on the designated server, and update the evidence here.
-Keep in-progress work distinct from verified interfaces. Reassess the plan when
-a sample exposes a missing premise, unaccounted operation or unusable abstraction;
-existing code is not a reason to preserve a poor interface.
+For each milestone: prove shared semantic/compiler rules, apply them to a real
+consumer, and assess the complete author proof rather than only its final
+statement. Use actual Lean checks on 0v0 for implementation work; no local
+compilation, checksum machinery or unrelated test framework.
 
-Use Lean's checks and the actual samples. No separate audit framework, checksum
-machinery or unrelated test scaffolding is needed.
+Design-only updates do not require a Lean build. Document planned interfaces
+as planned and keep the existing manual honest about current functionality.
+
+A milestone is done when a user can write the source program and its mathematical
+proof without supplying the register-level proof. Backend implementation gaps
+belong to the framework, not in the user's theorem.

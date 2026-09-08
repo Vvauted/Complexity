@@ -1,7 +1,8 @@
 # Literature and architectural choices
 
-This document records the primary sources behind the design in
-[DESIGN.md](DESIGN.md). They motivate the architecture; they do not certify our
+This document records the primary sources behind the
+[high-level language design](HIGH_LEVEL_LANGUAGE.md) and the existing
+[implementation notes](DESIGN.md). They motivate the architecture; they do not certify our
 implementation. The completion obligations remain proofs about this repository's
 source language, compiler, and fixed target machine. Published results about a
 different language or cost model are not substitutes for that connection.
@@ -284,13 +285,43 @@ and binding information, not a proof of those effects. We are not implementing
 CFML's characteristic-formula generator or adopting its ML heap semantics, and
 the paper does not establish costs for our RAM compiler.
 
-The initial-prefix driver is a concrete first consumer: it follows the declared
+The existing initial-prefix driver is a concrete first consumer: it follows the declared
 assignment sites and uses existing proved rules to obtain their current values.
 It neither treats the metadata as a correctness axiom nor claims a whole-language
 characteristic formula. Correctness and conditional cost modes use different
 existing execution rules while sharing the lexical traversal; a convenient
 logical name cannot erase the charged field assignments. General call/loop
 continuation support remains unfinished.
+
+For the new high-level language, the important next step is not more source
+metadata. A typed core has its own execution and source-level verification
+rules; generic lowering proofs connect them to the existing register program.
+The let/call continuation passes source values and the changed abstract heap.
+The paper's Section 2 describes source-structured proof obligations and local
+reasoning, which motivate that interface. Its historical tool's generated
+axioms are not our trust model: source verification and lowering certificates
+must be checked proofs, and its semantics do not supply our RAM cost adequacy.
+
+## 9. Reuse Lean's semantic proof infrastructure
+
+Lean 4, pinned `v4.28.0-rc1`,
+[WP interfaces](https://github.com/leanprover/lean4/blob/v4.28.0-rc1/src/Std/Do/WP/Basic.lean)
+and [WPMonad laws](https://github.com/leanprover/lean4/blob/v4.28.0-rc1/src/Std/Do/WP/Monad.lean).
+The pinned local source was inspected for this design.
+
+`WPMonad` requires a lawful monad and preservation of `pure` and `bind` by the
+weakest-precondition interpretation. StateT and ExceptT already have compositional
+instances. These are useful foundations for a semantic interpretation of the
+new core and its source-level `Std.Do.Triple`/`mvcgen` interface, not evidence
+that an arbitrary typed syntax tree already has those laws.
+
+The new partial source semantics still needs its own total-WP adequacy bridge.
+Existing StateM adapters which consume an already proved RAM refinement do not
+provide that independent source semantics. Nor does a native fixed-list iterator
+specify traversal over mutable storage: a source buffer loop must load from the
+current heap at the actual iteration. Reuse the standard index-range and bind
+infrastructure while proving the heap-operation and termination rules needed by
+this language. No dependency upgrade or CSLib dependency is required.
 
 ## Reading discipline
 

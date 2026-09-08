@@ -9,6 +9,11 @@ These are the shared project notes; keep useful development guidance in the repo
 
 The goal is one high-level program with reusable correctness and complexity proofs.
 RAM is the current backend, not the intended user-facing abstraction.
+The next architecture is specified in `docs/HIGH_LEVEL_LANGUAGE.md`: an
+independent typed source semantics with source-level proofs and automatically
+checked lowering. Algorithm authors must not supply register-level proofs or
+per-algorithm lowering adapters. Source-cursor improvements are backend or
+compatibility work, not a replacement for that language layer.
 Follow the roadmap's priorities and use existing consumers to identify missing
 interfaces. Do not substitute more algorithm examples for reusable foundations.
 

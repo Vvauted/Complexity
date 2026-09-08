@@ -1,16 +1,27 @@
 # Design
 
-The [roadmap](ROADMAP.md) sets development priorities.
-This note records the decisions those changes should preserve.
+The [roadmap](ROADMAP.md) sets development priorities. The
+[high-level language design](HIGH_LEVEL_LANGUAGE.md) specifies the next
+architecture: an independently interpreted typed core, source-level proofs and
+automatically checked lowering to the existing RAM backend. This language is
+planned, not already implemented by the current named syntax.
+
+The sections below document the existing implementation and the semantic
+boundaries that its reuse must preserve. Here, `Source` means the current
+register-based `Stmt/Func` language, not the proposed high-level core.
 The [backend manual](https://vvauted.github.io/Complexity/ComplexityDocs/Backend.html)
 describes the current machine and compiler interfaces.
 
-## One program, several proof views
+## Current implementation: one program, several proof views
 
-The executable source is a fixed first-order program, with structured control
-flow, named functions and recursive calls. The existing compiler lowers it to
-word-RAM instructions. Improving the proof interface should reuse that source
-and compilation chain, not introduce a second independently maintained program.
+The current executable source is a fixed first-order program, with structured
+control flow, named functions and recursive calls. The existing compiler lowers
+it to word-RAM instructions. This compilation chain is reused as the backend
+for the new language. One high-level program with an independent semantics and
+a compiled representation is not two manually maintained algorithms. The
+current named elaborator directly produces `Stmt/Func`; body equations and
+source metadata alone do not prove correspondence with an independent
+high-level semantics.
 
 Intermediate functions are the primary programming interface. Their arguments,
 return values and shared-data effects must be available without a stream-based
