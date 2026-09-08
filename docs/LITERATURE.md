@@ -98,6 +98,13 @@ not a second recursive proof framework. We retain proved RAM primitive and
 calling costs rather than importing its function-call counting convention;
 abstract interfaces must be backed by our existing execution theorems.
 
+More specifically, Section 4.1's `let` rule passes the intermediate value to a
+continuation. Our single-assignment `TotalWP.assign_value` uses that proof shape
+on the existing deterministic source semantics: it retains an evaluation equality
+while the search proof reasons about a named midpoint. This is a small local
+application, not generated characteristic formulae for the whole language or a
+port of the paper's separation logic. The actual assignment remains charged.
+
 The introduction also points out a modularity cost of exposing exact numerical
 constants in client specifications: implementation changes can force client
 proof changes. We should retain concrete transition theorems for executable

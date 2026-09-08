@@ -273,6 +273,15 @@ three shared-state equalities without assumptions on discarded callee locals.
 Read safety, mathematical evaluation and compiler-derived costs remain separate
 obligations. Individual unchanged-register reads need not use the collection rule.
 
+`TotalWP.assign_value` names the evaluated word at one assignment and passes its
+evaluation equality to the continuation. `ram_total_bind` applies this rule to
+an assignment or a sequence beginning with one. It simplifies only explicitly
+supplied definitions first, closes read safety only when proved, and leaves the
+continuation unsimplified. Search uses the name for its actual midpoint rather
+than repeatedly expanding word arithmetic. This proof-local name does not export
+a loop-scoped source variable, infer layouts, or bind an array's two fields as
+one value. Naming an assignment does not remove its compiled cost.
+
 ## The current machine model
 
 Words and addresses are finite bit vectors. Arithmetic has the specified modular

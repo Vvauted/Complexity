@@ -28,6 +28,13 @@ of intermediate local-variable states. The precondition may again be a pattern,
 such as `rfl` or `⟨rfl, hbound⟩`. Closed frame bounds are discharged by `decide`;
 unresolved arity, frame and program obligations remain as ordinary goals.
 
+`ram_total_bind mid hmid [definitions, facts]` names the value of one leading
+assignment as `mid`, retaining `hmid : mid = entry.eval value` in its
+continuation. Only the supplied definitions and facts are unfolded before
+applying the assignment rule. Safety is discharged only when `ram_simp`
+closes it; otherwise it remains a separate goal. The continuation is not
+simplified, and subsequent statements are not advanced.
+
 `ram_total_apply contract [definitions, facts]` applies an already proved
 contract or recursive function specification, including an existing measured
 contract after forgetting its time bound. An explicitly instantiated WP rule is
@@ -46,6 +53,26 @@ They introduce no execution semantics, resource annotations or trusted solver.
 -/
 
 open Lean.Parser.Tactic
+
+/-- Name one actual assigned value and its evaluation equality, leaving the
+continuation and any unresolved read safety as ordinary goals. -/
+syntax (name := ramTotalBind) "ram_total_bind" ppSpace ident ppSpace ident
+  (" [" simpArg,* "]")? : tactic
+
+macro_rules
+  | `(tactic| ram_total_bind $mid:ident $hmid:ident) =>
+      `(tactic| ram_total_bind $mid $hmid [])
+  | `(tactic| ram_total_bind $mid:ident $hmid:ident [$args,*]) =>
+      `(tactic|
+        (simp (config := { failIfUnchanged := false }) only [$args,*]
+         first
+         | apply Ram.Source.Verification.TotalWP.assign_value
+         | (rw [Ram.Source.Verification.TotalWP.seq_iff]
+            apply Ram.Source.Verification.TotalWP.assign_value)
+         case' reads =>
+           try (solve | ram_simp [$args,*])
+         case' continuation =>
+           intro $mid:ident $hmid:ident))
 
 /-- Generate functional verification conditions without choosing a time
 budget. Calls and loops are left to their supplied total specifications. -/

@@ -29,23 +29,20 @@ theorem body_total (registers : Registers) {heapLimit depth : Nat} {program : Pr
     (haddress : (s.regs registers.base + midpointWord registers s).toNat < heapLimit) :
     TotalContract program heapLimit depth (body registers) (fun t => t = s)
       (fun t => t = step registers s) := by
-  by_cases hcmp : (s.mem (s.regs registers.base + midpointWord registers s)).toNat <
+  intro t ht
+  subst t
+  change Verification.TotalWP program heapLimit depth (body registers)
+    (fun finish => finish = step registers s) s
+  ram_total_bind mid hmid [body]
+  change mid = midpointWord registers s at hmid
+  have addressSafe : (s.regs registers.base + mid).toNat < heapLimit := by
+    simpa only [hmid] using haddress
+  by_cases hcmp : (s.mem (s.regs registers.base + mid)).toNat <
       (s.regs registers.key).toNat
-  · dsimp only [midpointWord] at hcmp
-    ram_total_vc t ht [body, midpointExpr, comparison, address, step, midpointWord,
-      ht, haddress, hcmp, Word.one_ne_zero hw,
-      registers.base_ne_mid, registers.key_ne_mid]
-    constructor
-    · simpa [midpointWord] using haddress
-    · intro hzero
-      exact False.elim ((Nat.ne_of_gt hw) (hzero hcmp))
-  · dsimp only [midpointWord] at hcmp
-    ram_total_vc t ht [body, midpointExpr, comparison, address, step, midpointWord,
-      ht, haddress, hcmp, registers.base_ne_mid, registers.key_ne_mid]
-    constructor
-    · simpa [midpointWord] using haddress
-    · intro hlt
-      exact False.elim (hcmp hlt)
+  all_goals
+    ram_total_vc [comparison, address, step, ← hmid, hcmp,
+      Word.one_ne_zero hw, Nat.ne_of_gt hw, registers.base_ne_mid, registers.key_ne_mid]
+    exact addressSafe
 
 /-- An active iteration preserves the shared search invariant and halves its
 interval. This is a functional fact about the actual safe successor state. -/

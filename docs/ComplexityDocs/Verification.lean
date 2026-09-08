@@ -522,6 +522,18 @@ static parameter/result/local counts, including imported functions. Authors
 still choose the contract and typed input, but need not repeat caller/callee
 argument-builder definitions. Bodies, return expressions and mathematical
 representation lemmas are not registered in this set.
+
+Use `ram_total_bind mid hmid [definitions, facts]` on a `TotalWP` assignment
+or a sequence beginning with one to name that assignment's actual word value.
+The continuation receives `mid` and `hmid : mid = entry.eval expression` without
+expanding the value or advancing later statements. The optional list unfolds
+only the supplied definitions before applying the rule. Read safety is closed
+only when `ram_simp` proves it; otherwise it remains a separate goal.
+The [search body proof](##Complexity.Computability.Ram.Array.Search.Total) uses
+this to reason about one named midpoint in both branches. The name is local to
+the proof continuation, not an exported loop variable; array-result binding,
+layout inference and invariant inference are not supplied by this tactic.
+
 `ram_model [facts]` simplifies observations, and `ram_word [facts]` normalizes word arithmetic
 with the available range conditions. Remaining obligations are ordinary Lean goals.
 

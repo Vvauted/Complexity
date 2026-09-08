@@ -209,6 +209,13 @@ theorem mono_depth {depth' : Nat} (h : TotalWP program heapLimit depth stmt post
   · rintro ⟨reads, hp⟩
     exact ⟨_, .assign reads, hp⟩
 
+/-- Name the actual assigned value in the continuation without expanding it. -/
+theorem assign_value {dst : Reg} {value : Expr}
+    (reads : value.ReadsBelow heapLimit s.regs s.mem)
+    (continuation : ∀ v : Word w, v = s.eval value → post (s.setReg dst v)) :
+    TotalWP program heapLimit depth (.assign dst value) post s :=
+  assign_iff.mpr ⟨reads, continuation (s.eval value) rfl⟩
+
 @[simp] theorem store_iff {address value : Expr} :
     TotalWP program heapLimit depth (.store address value) post s ↔
       address.ReadsBelow heapLimit s.regs s.mem ∧
