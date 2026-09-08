@@ -211,6 +211,7 @@ import Complexity.Computability.Recurrence.Majorant
 import Complexity.Computability.Recurrence.Rounding
 import Complexity.Computability.Recurrence.Supercritical
 import Complexity.Data.List.InsertIdx
+import Complexity.Data.List.StateM
 import Complexity.Data.Nat.Log
 import Complexity.LinearAlgebra.Matrix.Update
 import Complexity.Tactic.Ram.Basic

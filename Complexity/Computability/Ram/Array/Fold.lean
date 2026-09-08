@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Array.Slice
 import Complexity.Computability.Ram.Verification.StateM.Traversal
 import Complexity.Computability.Ram.Verification.Time.StraightLine
+import Complexity.Data.List.StateM
 
 /-!
 # Read-only scalar array folds
@@ -313,19 +314,6 @@ private theorem step_refines (registers : Registers) {body : Stmt} {program : Pr
   · intro r hp hc ha
     exact (advanceState_other registers _ s hp hc ha).trans (represented.other r hp hc ha)
 
-/-- The native word-accumulator model is the ordinary list fold. Both explicit
-cursor loops and scoped element traversals reuse this same model equation. -/
-theorem forM_modify_run (step : Word w → Word w → Word w)
-    (xs : List (Word w)) (acc : Word w) :
-    ((List.forM xs (fun x => modify (fun a => step a x)) :
-      StateM (Word w) PUnit).run acc).2 = xs.foldl step acc := by
-  induction xs generalizing acc with
-  | nil => rfl
-  | cons x xs ih =>
-      change ((List.forM xs (fun x => modify (fun a => step a x)) :
-        StateM (Word w) PUnit).run (step acc x)).2 = xs.foldl step (step acc x)
-      exact ih _
-
 /-- A fixed, implemented loop body realizes an ordinary list fold. Each step
 must execute the actual body, return its accumulator value and advance the
 cursor. The list model supplies neither free execution nor a time annotation. -/
@@ -368,7 +356,7 @@ theorem loop_safe_of_step (registers : Registers) {body : Stmt} {program : Progr
         by simpa only [pointer] using fit, by rw [pointer]⟩,
       rfl, invariant, rfl, rfl, rfl, by intros; rfl⟩
   obtain ⟨t, execution, result⟩ := traversal (s.regs registers.accumulator) s start
-  refine ⟨t, execution, result.accumulator.trans (forM_modify_run step xs _), ?_, ?_,
+  refine ⟨t, execution, result.accumulator.trans (List.forM_modify_run step xs _), ?_, ?_,
     result.invariant, result.memory, result.input, result.output, result.other⟩
   · simpa [arrayAddr] using result.cursor.endpoint
   · exact (Word.toNat_eq_zero_iff _).mp result.cursor.count

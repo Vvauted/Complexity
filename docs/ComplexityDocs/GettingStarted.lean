@@ -83,7 +83,8 @@ from typed word parameters. The same declaration also generates
 The [declaration interface](##Complexity.Computability.Ram.Source.Named.Declaration)
 also exports lookup facts and source-local names for implementation proofs.
 Generated body and return equations let verification unfold the same declaration.
-These names do not yet hide every register-level obligation inside those proofs.
+These generated interfaces are proof tools, not automatic correctness proofs;
+representation obligations depend on the chosen specification.
 
 Locals may also be introduced where they are used. The
 [function-composition sample](##Examples.Ram.LocalBindings) contains:
@@ -321,7 +322,8 @@ The left-hand side observes the implemented recursive function; it is not define
 to equal the mathematical specification. Its proof uses the function-only theorems
 in [the factorial implementation](##Examples.Ram.Factorial). Read those in this order:
 
-1. `Ram.Examples.Factorial.function_contract` states the returned value and unchanged caller state.
+1. `Ram.Examples.Factorial.function_contract` proves the returned value and unchanged caller state
+   by ordinary natural-number induction, using `ram_total_vc` and `ram_total_apply`.
 2. `Ram.Examples.Factorial.function_runs` gives a safe invocation with an explicit argument.
 3. `Ram.Examples.Factorial.function_result` identifies the returned natural number with
    mathlib's factorial when the result fits in a word.
@@ -334,8 +336,13 @@ The no-stream compiled application is illustrated in
 [the function runner](##Examples.Ram.FunctionRun).
 
 The general result is factorial modulo the word range, not unbounded arithmetic.
-The source-level recursive proof still needs local representation facts; the public
-function contract does not expose those registers to its callers.
+The function's main correctness proof uses the smaller argument's contract directly,
+without a separate recursive specification, local register names or stack-frame equations.
+The induction and range/word-arithmetic facts are still explicit. Clients needing the
+stronger function-body endpoint can use `recursive_total`, which proves local-state facts
+separately; the independent cost proof still accounts for actual compiled calls.
+This example does not supply automatic proofs of arbitrary recursion or a compiler for
+ordinary Lean functions.
 For optional native `StateM` verification, see [the increment example](##Examples.Ram.Verification).
 Continue with [proving correctness](##ComplexityDocs.Verification).
 

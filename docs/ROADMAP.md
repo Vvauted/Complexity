@@ -29,8 +29,10 @@ declaration sites. Scoped `for x in xs` binds each loaded element and manages
 private cursor locals. For the single-array scalar-call fold, a function rule
 infers those locals from generated body and return equations; clients provide
 the helper's mathematical contract and array representation premises.
-The implementations' internal representation proofs still show why the
-source-facing work below is unfinished.
+Factorial's main correctness proof directly inducts on its argument/result
+contract using ordinary natural-number induction and the existing parameter
+verification rules. More general clients and the remaining low-level adapters
+still show why the source-facing work below is unfinished.
 
 `Func.eval` and `Func.bodyTime` expose the same execution through mathlib's `Part`.
 The factorial function-value sample states result equations and mathematical
@@ -90,6 +92,13 @@ refinement has been supplied; it does not derive that refinement automatically.
   and proves it unchanged. Its optional `read`/`write` driver lives in a separate
   module importing the function; function definitions and proofs do not depend on
   that adapter.
+- The recursive factorial contract uses ordinary induction, generated parameter
+  binding and the recursive call's argument/result contract. Its algorithmic
+  proof names no registers or callee frames. A separate one-step bridge retains
+  the stronger body-local endpoint needed by existing time interfaces; that
+  endpoint cannot be recovered from a returned value and restored caller state
+  alone. Input representability and the factorial equations remain mathematical
+  obligations, independent of time bounds.
 - The two-argument squared-norm sample composes helper calls with lexical value bindings.
   `ram_total_vc args entry hp` starts its function contract directly; supplied
   call contracts and simplification facts handle the calls without a separate
@@ -119,7 +128,8 @@ refinement has been supplied; it does not derive that refinement automatically.
 - The source-derived traversal rule currently handles one array parameter, one
   scalar accumulator and a fixed verified two-argument helper. The source syntax
   accepts richer bodies, but their proofs do not yet receive the same convenience.
-  Other fold clients and recursive proofs still identify source locals.
+  Other fold clients, richer recursive implementations and some cost proofs
+  still identify source locals.
   Simplification carries array representations across parameter and scalar-result
   binding in the pair's correctness proof. Generated verification conditions
   should handle more of this bookkeeping without hiding genuine data invariants.
@@ -148,6 +158,9 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
 - Derive verification conditions from that declaration using existing total
   correctness rules. Keep relations and mathematical specifications available;
   a loop need not first become a total pure function.
+- Use ordinary Lean induction directly for recursive argument/result contracts.
+  Keep body-local specifications only where their stronger information is needed,
+  and make richer recursive clients reuse the same parameter and call rules.
 - Make the new source-facing interfaces and existing operation clients use
   budget-free program packaging and linking. Attach time certificates later to
   the same code, without requiring a bound to publish functional correctness.

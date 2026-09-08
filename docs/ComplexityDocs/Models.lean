@@ -95,6 +95,13 @@ are not supplied by this rule. The lower-level
 [call-based fold](##Complexity.Computability.Ram.Array.Fold.Call) remains available
 for explicitly configured cursor loops.
 
+The mathematical traversal uses the ordinary
+[list/state equation](##Complexity.Data.List.StateM) `List.forM_modify_run`:
+repeated accumulator updates have the same final state as `List.foldl`.
+It is generic in both element and state types and imports no RAM model.
+The array proof separately establishes that actual loads and updates implement
+this traversal; the pure equation supplies neither machine execution nor its cost.
+
 ## Choose what the proof needs to observe
 
 | Mathematical view | Representation or observation | Useful properties |

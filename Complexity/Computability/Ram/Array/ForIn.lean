@@ -169,7 +169,7 @@ theorem loop_safe_of_step (registers : Registers) {iteration : Stmt} {program : 
         by simpa only [pointer] using fit, by rw [pointer]⟩,
       rfl, invariant, rfl, rfl, rfl, by intros; rfl⟩
   obtain ⟨t, execution, result⟩ := traversal (s.regs registers.accumulator) s start
-  refine ⟨t, execution, result.accumulator.trans (Fold.forM_modify_run step xs _), ?_, ?_,
+  refine ⟨t, execution, result.accumulator.trans (List.forM_modify_run step xs _), ?_, ?_,
     result.invariant, result.memory, result.input, result.output, result.other⟩
   · simpa [arrayAddr] using result.cursor.endpoint
   · exact (Word.toNat_eq_zero_iff _).mp result.cursor.count

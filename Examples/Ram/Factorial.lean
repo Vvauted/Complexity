@@ -9,7 +9,6 @@ import Complexity.Computability.Ram.Source.Function.Time
 import Complexity.Computability.Ram.Verification.Call
 import Complexity.Computability.Ram.Verification.Function
 import Complexity.Computability.Ram.Verification.Recursion.Basic
-import Complexity.Computability.Ram.Verification.Recursion.Function
 import Complexity.Computability.Ram.Verification.Recursion.Time
 import Complexity.Computability.Ram.Verification.Time.Composition
 import Complexity.Tactic.Ram.Total
@@ -95,6 +94,53 @@ private theorem encoded_pred (w k : Nat) :
   rw [BitVec.ofNat_add]
   exact BitVec.add_sub_cancel _ _
 
+/-- The independently callable function returns factorial and preserves all
+caller state. Ordinary natural-number induction supplies the recursive call's
+argument/result contract; generated parameter binding and return equations
+handle local state. No stream adapter or time bound enters this proof. -/
+theorem function_contract (H k : Nat) (hk : k < 2 ^ w) :
+    Source.FunctionContract program H k factorial
+      (fun args _ => args = functions.arguments.factorial (BitVec.ofNat w k))
+      (fun _ entry result finish => result = value w k ∧ finish = entry) := by
+  revert hk
+  induction k with
+  | zero =>
+      intro _
+      ram_total_vc args entry rfl [factorial, functions.body_eq.factorial,
+        functions.result_eq.factorial, value, factorialNat, Nat.factorial_zero]
+  | succ k ih =>
+      intro hk
+      have hnonzero : BitVec.ofNat w (k + 1) ≠ BitVec.ofNat w 0 := by
+        intro hz
+        have hnat := congrArg BitVec.toNat hz
+        rw [Word.ofNat_toNat_of_lt hk, BitVec.toNat_ofNat, Nat.zero_mod] at hnat
+        omega
+      ram_total_vc args entry rfl [factorial, functions.body_eq.factorial,
+        functions.result_eq.factorial]
+      rw [if_neg hnonzero]
+      ram_total_apply (ih (by omega)) [functions.function_lookup.factorial,
+        encoded_pred, value_succ]
+      rfl
+
+/-- Apply factorial directly to a word argument, without a `main` or I/O. -/
+theorem function_runs (H k : Nat) (hk : k < 2 ^ w) (entry : Source.State w) :
+    Source.FunctionExec program H k factorial
+      (functions.arguments.factorial (BitVec.ofNat w k)) entry (value w k) entry := by
+  obtain ⟨result, finish, execution, rfl, rfl⟩ :=
+    function_contract H k hk _ entry rfl
+  exact execution
+
+/-- Any completed invocation has the mathematical factorial as its returned
+natural number when that result fits. This is a property of the implementation,
+not the definition of its return value. -/
+theorem function_result {H depth k : Nat} {entry finish : Source.State w} {result : Word w}
+    (hk : k < 2 ^ w) (hresult : Nat.factorial k < 2 ^ w)
+    (execution : Source.FunctionExec program H depth factorial
+      (functions.arguments.factorial (BitVec.ofNat w k)) entry result finish) :
+    result.toNat = Nat.factorial k ∧ finish = entry := by
+  obtain ⟨rfl, rfl⟩ := execution.deterministic (function_runs H k hk entry)
+  exact ⟨Word.ofNat_toNat_of_lt hresult, rfl⟩
+
 /-- Length calculation on the actual generated setup and return instruction
 lists. This includes all individual saves, restores, and jumps. -/
 theorem recursive_call_steps (bodySteps : Nat) :
@@ -142,33 +188,16 @@ private theorem predecessor_pre (k : Nat) (s : Source.State w)
     rw [hs.2, encoded_pred]
   exact ⟨by have hk := hs.1; omega, by simp [Source.State.enter_regs, hpred]⟩
 
-/-- Translate the body specification to arguments and the actual returned
-value once, for both recursive hypotheses and external callers. -/
-private theorem function_contract_of_body {H k : Nat}
-    (correct : (totalSpec w).Correct program H k) :
-    Source.FunctionContract program H k factorial
-      (fun args _ => k < 2 ^ w ∧ args = functions.arguments.factorial (BitVec.ofNat w k))
-      (fun _ entry result finish => result = value w k ∧ finish = entry) := by
-  apply Source.FunctionContract.of_body correct
-  · rintro args entry ⟨_, rfl⟩
-    exact functions.arguments_length.factorial _
-  · decide
-  · rintro args entry ⟨hk, rfl⟩
-    exact ⟨hk, rfl⟩
-  · rintro args entry ⟨_, rfl⟩ callee result
-    change callee = (entry.enter _).setReg functions.localReg.factorial.answer (value w k)
-      at result
-    subst callee
-    exact ⟨rfl, rfl⟩
-
-/-- Prove factorial using ordinary well-founded recursion and mathlib's
-factorial equation. Recursive hypotheses describe function arguments and
-returned values, not callee frames. No time bound enters this proof. -/
+/-- Recover the full body-state specification for clients that inspect local
+effects. This unfolds one body step and reuses the callable factorial theorem;
+the stronger local endpoint is proved explicitly, not inferred from return-state
+restoration or from a time bound. -/
 theorem recursive_total (H : Nat) :
     ∀ k, (totalSpec w).Correct program H k := by
-  apply (totalSpec w).verify_wellFounded_function Nat.lt_wfRel.wf
-    (fun _ => function_contract_of_body)
-  intro k ih s hs
+  intro k s hs
+  change Source.Verification.TotalWP program H k factorial.body
+    (fun finish => factorial.result.ReadsBelow H finish.regs finish.mem ∧
+      (totalSpec w).post k s finish) s
   obtain ⟨hk, hn⟩ := hs
   cases k with
   | zero =>
@@ -187,45 +216,15 @@ theorem recursive_total (H : Nat) :
       rw [functions.body_eq.factorial, Source.Verification.TotalWP.ite_iff]
       refine ⟨trivial, ?_⟩
       rw [if_neg hnonzero, Source.Verification.TotalWP.seq_iff]
-      ram_total_apply (ih k (Nat.lt_succ_self k))
+      ram_total_apply (function_contract H k (by omega))
       · exact functions.function_lookup.factorial
       · simp [Expr.ReadsBelow]
-      · refine ⟨by omega, ?_⟩
-        simp [functions.arguments.factorial, Source.State.eval, Expr.eval, hn, encoded_pred]
+      · simp [functions.arguments.factorial, Source.State.eval, Expr.eval, hn, encoded_pred]
       · exact Nat.le_refl _
       · rintro result finish ⟨rfl, rfl⟩ _
         ram_total_vc [totalSpec, factorial, functions.result_eq.factorial, hn, value_succ]
         funext r
         by_cases hr : r = functions.localReg.factorial.answer <;> simp [hr]
-
-/-- The independently callable function returns factorial and preserves all
-caller state. Arguments and the result are explicit; no stream adapter or
-destination register occurs in this specification. -/
-theorem function_contract (H k : Nat) (hk : k < 2 ^ w) :
-    Source.FunctionContract program H k factorial
-      (fun args _ => args = functions.arguments.factorial (BitVec.ofNat w k))
-      (fun _ entry result finish => result = value w k ∧ finish = entry) := by
-  exact (function_contract_of_body (recursive_total H k)).consequence
-    (fun _ _ args => ⟨hk, args⟩) (fun _ _ _ _ _ result => result)
-
-/-- Apply factorial directly to a word argument, without a `main` or I/O. -/
-theorem function_runs (H k : Nat) (hk : k < 2 ^ w) (entry : Source.State w) :
-    Source.FunctionExec program H k factorial
-      (functions.arguments.factorial (BitVec.ofNat w k)) entry (value w k) entry := by
-  obtain ⟨result, finish, execution, rfl, rfl⟩ :=
-    function_contract H k hk _ entry rfl
-  exact execution
-
-/-- Any completed invocation has the mathematical factorial as its returned
-natural number when that result fits. This is a property of the implementation,
-not the definition of its return value. -/
-theorem function_result {H depth k : Nat} {entry finish : Source.State w} {result : Word w}
-    (hk : k < 2 ^ w) (hresult : Nat.factorial k < 2 ^ w)
-    (execution : Source.FunctionExec program H depth factorial
-      (functions.arguments.factorial (BitVec.ofNat w k)) entry result finish) :
-    result.toNat = Nat.factorial k ∧ finish = entry := by
-  obtain ⟨rfl, rfl⟩ := execution.deterministic (function_runs H k hk entry)
-  exact ⟨Word.ofNat_toNat_of_lt hresult, rfl⟩
 
 /-- The independent time proof composes generated call/assignment lengths.
 The mathematical recurrence is `T (k + 1) = T k + 37`; functional recursion
