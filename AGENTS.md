@@ -12,8 +12,11 @@ RAM is the current backend, not the intended user-facing abstraction.
 The next architecture is specified in `docs/HIGH_LEVEL_LANGUAGE.md`: an
 independent typed source semantics with source-level proofs and automatically
 checked lowering. Algorithm authors must not supply register-level proofs or
-per-algorithm lowering adapters. Source-cursor improvements are backend or
-compatibility work, not a replacement for that language layer.
+per-algorithm lowering adapters. Compiler maintainers are also first-class users:
+advance reusable register/IR proofs and automation alongside the high-level
+language. Source-cursor improvements support that proof workflow, not just
+compatibility, but do not replace independent source semantics or lowering
+theorems. Keep low-level proof APIs usable without frontend metadata.
 Follow the roadmap's priorities and use existing consumers to identify missing
 interfaces. Do not substitute more algorithm examples for reusable foundations.
 

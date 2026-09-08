@@ -17,10 +17,16 @@ Its generated body equations, mathematical result projections and source-cursor
 tactics are useful, but do not constitute a complete high-level semantics and
 automatic proof transfer.
 
-Therefore, extending a cursor across more RAM WP tactics is no longer the main
-roadmap. It may support compiler implementation or existing users. The main
-deliverable is a source proof whose connection to the register program is
-generated from shared compiler theorems, without an algorithm-specific adapter.
+There are two coordinated development tracks: high-level programming/proofs and
+backend proof engineering. The first delivers a source proof whose connection
+to the register program is generated from shared compiler theorems, without an
+algorithm-specific adapter. The second makes those compiler theorems practical
+to develop and maintain. Register-level proof support is active library work,
+not merely compatibility maintenance, and does not wait for the language to finish.
+
+Source-cursor extensions belong to the backend proof track. They are worth
+building where they improve actual proofs, but cannot substitute for the first
+track's independent semantics and automatic proof transfer.
 
 One source program can have independent behavior semantics, cost observations
 and a compiled representation. This is normal language/compiler layering, not
@@ -45,6 +51,12 @@ meet the requirement.
 Real array bounds, overlap restrictions, arithmetic ranges and storage needs
 remain meaningful. If automation cannot prove one, the remaining obligation
 must be expressed using source values and mathematical facts.
+
+Compiler maintainers and authors of low-level primitives intentionally work
+below that boundary. They need documented, compositional register/IR and machine
+proof interfaces, with automation for routine mechanics and direct access to
+semantic lemmas when extending the compiler. Automatic transfer for algorithm
+authors depends on this work; it does not eliminate it.
 
 ## What already exists
 
@@ -97,6 +109,57 @@ Decisions:
 
 Exact binder representation, surface spelling and certificate format are small
 implementation choices. They must not delay or weaken the semantic boundary.
+
+## Backend proof track — alongside M1–M3
+
+Status: substantial rules already exist; the following interface and automation
+work remains open. Extend those rules for real lowering cases rather than
+introducing another backend or a parallel verification framework.
+
+1. **Register states and frames, starting with M1.** Reuse state-update lemmas,
+   `State.LocalFrame`, `Stmt.writtenRegs` and the compiler's matching relations.
+   Factor repeated read-after-write, fresh-slot, unchanged-local and saved-frame
+   transport into shared lemmas and focused simplification. Support symbolic
+   register roles and layouts instead of copying numeric-register arguments.
+   Local-register preservation must not be mistaken for heap/I/O preservation.
+2. **Calls, results and representation, across M1–M2.** Reuse typed contracts,
+   argument/result encodings, caller restoration, shared effects and existing
+   ABI proofs. Make lowering cases compose these interfaces without rebuilding
+   whole intermediate states. Extend source-cursor navigation across actual
+   call continuations, exposing returned bindings from the proved post-state,
+   not refreshing old snapshots by assumption. Direct IR and machine proofs
+   must remain usable when named-source metadata is absent.
+3. **Control flow, simulation and costs, across M1–M3.** Compose existing
+   sequence, branch, loop, relocation and measured-execution rules. Extend
+   focused simplification for program-counter offsets, `CodeAt`, emitted lengths
+   and frame transport rather than rebuilding the simulation framework. Extend
+   loop-body/exit navigation where it helps maintainers; retain user-supplied
+   invariants and actual effects. Keep budget-free correctness distinct from
+   cost composition, while sharing routine structural bookkeeping. Costs of
+   emitted code, frames and jumps remain proved, not entered by the tactic user.
+4. **Arithmetic fragments, starting with M1.** Package supported addition and
+   comparison lowering with mathematical results, intermediate range conditions,
+   frame preservation and actual instruction bounds, reusing word arithmetic
+   and atomic simulation. Add saturating subtraction and zero-divisor branches
+   when their source operations are implemented, not as an unused catalog.
+
+Immediate existing consumers are the real return-stage proof in
+`Compiler/Local/Call/Results.lean` and Map's call → store → loop continuation.
+Use them to reduce repeated state/frame transport and manual navigation now;
+they need not wait for high-level migration. The new consumers are M1's scalar
+call/branch lowering proof, then M2's read/write and loop cases.
+
+**Completion evidence for each extension:** a maintainer proves a real emitted
+fragment or lowering case by composing public rules, and its execution/frame/
+cost consequences integrate through the shared simulation. Routine register and
+ABI obligations close without duplicating a whole execution-tree proof. A local
+backend change does not force new algorithmic correctness arguments; changed
+code costs still require updated bounds when applicable.
+
+Document the entry points and remaining obligations alongside the real proof.
+Tactics remain conveniences over checked theorems, usable separately by compiler
+certificates and by humans. Neither tactic count nor a new test harness is a
+completion criterion.
 
 ## M1 — Independent source meaning and the first automatic proof transfer
 
@@ -242,7 +305,8 @@ removing register proofs from algorithm-author work.
 
 ## Work not to make the mainline
 
-- More source-cursor extensions as a substitute for the independent language.
+- Treating source-cursor extensions as completion of the independent language,
+  or treating the high-level language as a reason to stop backend proof work.
 - More short mathematical wrappers around already completed RAM proofs.
 - A new algorithm-specific register adapter for every changed loop.
 - Arbitrary Lean compilation, closure conversion, bignums or a new ownership
@@ -263,6 +327,8 @@ compilation, checksum machinery or unrelated test framework.
 Design-only updates do not require a Lean build. Document planned interfaces
 as planned and keep the existing manual honest about current functionality.
 
-A milestone is done when a user can write the source program and its mathematical
-proof without supplying the register-level proof. Backend implementation gaps
-belong to the framework, not in the user's theorem.
+A high-level milestone is done when an algorithm author can write the source
+program and its mathematical proof without supplying the register-level proof.
+The backend track separately requires usable, reusable proof interfaces for the
+people establishing that transfer. Backend implementation gaps belong to the
+framework, not in the algorithm author's theorem.

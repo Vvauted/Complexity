@@ -24,6 +24,14 @@ proofs. They must not become user obligations when a new loop body is written.
 Unsatisfied arithmetic or representation conditions are reported at the source
 operation, not as an unexplained RAM state equality.
 
+Backend authors are first-class library users too. Removing register proofs
+from algorithm-author work means developing reusable compiler proofs, not
+stopping low-level proof development. Maintain register/IR and machine-level
+lemmas, composition rules and automation alongside this language, with direct
+proof interfaces for new lowering cases and low-level primitives. Source-cursor
+navigation can improve that workflow; its metadata is neither a semantic proof
+nor a prerequisite for using the low-level rules.
+
 ## 2. Decision: a typed core with independent semantics
 
 Use a typed, first-order core language with a Lean-like programming surface.
@@ -423,7 +431,7 @@ Reuse rather than replace:
 | Local compiler, typed/raw call and runner bridges | Actual code, safe execution and cost transfer |
 | Array/indexed representation, slice and frame lemmas | Physical realization of abstract source objects |
 | Recurrences, `IsBigO`, potentials | Mathematical analysis after source obligations are obtained |
-| Named parser, source metadata and RAM tactics | Reusable frontend pieces, backend certificate support and compatibility |
+| Named parser, source metadata and RAM tactics | Reusable frontend pieces, active backend proof tooling, certificate support and compatibility |
 
 The existing `ram_def` interface remains supported while high-level declarations
 are introduced separately. Do not silently change old word semantics, input
@@ -436,8 +444,10 @@ Behavioral correspondence does not preserve old exact constants automatically.
 
 ## 9. Acceptance and unresolved implementation choices
 
-The [roadmap](ROADMAP.md) sequences implementation. Its primary criterion is
-algorithm-author experience, not the number of exported tactics.
+The [roadmap](ROADMAP.md) sequences implementation and the parallel backend proof
+track. This language's criterion is algorithm-author experience; the backend
+track additionally evaluates how maintainers prove and change lowering cases
+using reusable interfaces. Neither is measured by the number of exported tactics.
 
 A genuinely different mutable loop must be proved using source variables,
 ordinary contents and a mathematical invariant. Its helper return, branch and

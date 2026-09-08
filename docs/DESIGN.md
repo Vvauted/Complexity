@@ -12,6 +12,13 @@ register-based `Stmt/Func` language, not the proposed high-level core.
 The [backend manual](https://vvauted.github.io/Complexity/ComplexityDocs/Backend.html)
 describes the current machine and compiler interfaces.
 
+These interfaces remain an active development surface for compiler maintainers
+and low-level primitive authors. The high-level language removes register-proof
+obligations from algorithm clients, not from the library's research agenda.
+Reusable state/frame, call/return, control-flow and cost proofs, including their
+automation and source-directed navigation, advance alongside the new language.
+The roadmap gives both tracks explicit consumers and completion criteria.
+
 ## Current implementation: one program, several proof views
 
 The current executable source is a fixed first-order program, with structured
