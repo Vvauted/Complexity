@@ -98,40 +98,6 @@ private theorem functionStart_invariant {lo hi mid heapLimit : Nat}
   · intro r _ _ _
     rfl
 
--- Generated body and result equations infer the private local slots before
--- this layout obligation is solved. The loop syntax is shared with the core.
-private theorem function_contract_of_body {w heapLimit depth : Nat} {program : Program}
-    {f : Func} {lo hi mid : Reg} {array : ArrayRef w} {key : Word w}
-    {xs : List (Word w)}
-    (bodyShape : f.body = .seq (.assign lo (.const 0))
-      (.seq (.assign hi (.var 1)) (loopCode 0 2 lo hi mid)))
-    (resultShape : f.results = [.var lo]) (params : f.params = 3)
-    (layout : [0, 1, 2, lo, hi, mid].Nodup ∧ f.params ≤ f.locals)
-    (hw : 2 ≤ w) (sorted : xs.Pairwise (fun a b => a.toNat ≤ b.toNat)) :
-    TypedFunctionContract program heapLimit depth f .word
-      (fun input : ArrayRef w × Word w => input.1.args ++ [input.2])
-      (fun input entry => input = (array, key) ∧ array.Rep heapLimit xs entry)
-      (fun _ entry value finish => LowerBoundSpec xs key value.toNat ∧ finish = entry) := by
-  let registers := functionRegisters layout.1
-  have lengthLo : (1 : Reg) ≠ lo := by
-    have distinct := layout.1
-    simp only [List.nodup_cons, List.mem_cons, List.not_mem_nil, List.nodup_nil,
-      not_or, not_false_eq_true, and_true] at distinct
-    exact distinct.2.1.2.1
-  apply TypedFunctionContract.of_wp (by simp [resultShape, DSL.ValueKind.width])
-  · rintro _ entry ⟨rfl, _⟩
-    simp [params, ArrayRef.args]
-  · exact layout.2
-  · rintro _ entry ⟨rfl, represented⟩
-    have search := loop_total registers (program := program) (depth := depth) hw sorted
-      (functionStart lo hi array key entry) (functionStart_invariant layout.1 represented)
-    ram_total_vc [bodyShape, resultShape, ArrayRef.args, lengthLo]
-    apply Verification.TotalWP.mono_post search
-    intro finish post
-    have shared : entry.restore finish = entry :=
-      State.restore_eq_of_shared post.mem post.input post.output
-    exact ⟨post.result, shared⟩
-
 /-- The named function returns the ordinary lower-bound position and preserves
 the entire caller state. Sortedness and represented data suffice; there is no
 instruction budget or extra strict array-endpoint condition. -/
@@ -141,37 +107,20 @@ theorem function_contract {w heapLimit depth : Nat} {program : Program}
     TypedFunctionContract program heapLimit depth functions.function.lowerBound .word
       (fun input : ArrayRef w × Word w => functions.arguments.lowerBound input.1 input.2)
       (fun input entry => input = (array, key) ∧ array.Rep heapLimit xs entry)
-      (fun _ entry value finish => LowerBoundSpec xs key value.toNat ∧ finish = entry) :=
-  function_contract_of_body functions.body_eq.lowerBound functions.result_eq.lowerBound
-    rfl (by decide) hw sorted
-
-private theorem function_timeBound_of_body {w control heapLimit depth : Nat}
-    {program : Program} {f : Func} {lo hi mid : Reg}
-    {array : ArrayRef w} {key : Word w} {xs : List (Word w)}
-    (bodyShape : f.body = .seq (.assign lo (.const 0))
-      (.seq (.assign hi (.var 1)) (loopCode 0 2 lo hi mid)))
-    (distinct : [0, 1, 2, lo, hi, mid].Nodup)
-    (hw : 2 ≤ w) (sorted : xs.Pairwise (fun a b => a.toNat ≤ b.toNat)) :
-    FunctionTimeBound control program heapLimit depth f
-      (fun args entry => args = array.args ++ [key] ∧ array.Rep heapLimit xs entry)
-      (fun _ _ => 25 * Nat.clog 2 (xs.length + 1) + 8) := by
-  let registers := functionRegisters distinct
-  have lengthLo : (1 : Reg) ≠ lo := by
-    simp only [List.nodup_cons, List.mem_cons, List.not_mem_nil, List.nodup_nil,
-      not_or, not_false_eq_true, and_true] at distinct
-    exact distinct.2.1.2.1
-  have separate : lo ≠ hi := registers.lo_ne_hi
-  ram_time_vc args entry ⟨rfl, represented⟩ [bodyShape, ArrayRef.args, lengthLo]
-  apply (loop_timeBound registers (program := program) (depth := depth) hw sorted
-    (functionStart lo hi array key entry)).consequence
-  · rintro s rfl
-    exact functionStart_invariant distinct represented
-  · rintro s rfl
-    change Nat.clog 2
-      (((functionStart lo hi array key entry).regs hi).toNat -
-        ((functionStart lo hi array key entry).regs lo).toNat + 1) * 25 + 4 ≤ _
-    simp [functionStart, State.setReg, separate, represented.1,
-      Nat.mul_comm]
+      (fun _ entry value finish => LowerBoundSpec xs key value.toNat ∧ finish = entry) := by
+  ram_total_vc input entry ⟨rfl, represented⟩
+    [functions.body_eq.lowerBound, functions.result_eq.lowerBound]
+  refine Verification.TotalWP.mono_post
+    (loop_total (functionRegisters ?layout) (base := array.base) (key := key)
+      (original := functionStart functions.localReg.lowerBound.lo
+        functions.localReg.lowerBound.hi array key entry) hw sorted _ ?initial) ?post
+  case layout => decide
+  case initial => exact functionStart_invariant (by decide) represented
+  case post =>
+    intro finish post
+    have shared : entry.restore finish = entry :=
+      State.restore_eq_of_shared post.mem post.input post.output
+    exact ⟨post.result, shared⟩
 
 /-- The same callable body has a logarithmic compiled time bound. This theorem
 is independent of its budget-free correctness proof; the enclosing call, return
@@ -182,8 +131,19 @@ theorem function_timeBound {w control heapLimit depth : Nat} {program : Program}
     FunctionTimeBound control program heapLimit depth functions.function.lowerBound
       (fun args entry => args = functions.arguments.lowerBound array key ∧
         array.Rep heapLimit xs entry)
-      (fun _ _ => 25 * Nat.clog 2 (xs.length + 1) + 8) :=
-  function_timeBound_of_body functions.body_eq.lowerBound (by decide) hw sorted
+      (fun _ _ => 25 * Nat.clog 2 (xs.length + 1) + 8) := by
+  ram_time_vc args entry ⟨rfl, represented⟩ [functions.body_eq.lowerBound]
+  refine (loop_timeBound (functionRegisters ?layout) (base := array.base) (key := key)
+    hw sorted (functionStart functions.localReg.lowerBound.lo
+      functions.localReg.lowerBound.hi array key entry)).consequence ?initial ?reserve
+  case layout => decide
+  case initial =>
+    rintro s rfl
+    exact functionStart_invariant (by decide) represented
+  case reserve =>
+    rintro s rfl
+    change Nat.clog 2 (array.length.toNat + 1) * 25 + 4 ≤ _
+    simp [represented.1, Nat.mul_comm]
 
 /-- The semantic observation returns the standard list insertion index, with
 no independently implemented reference algorithm. Its shared state is unchanged. -/

@@ -445,6 +445,14 @@ proved memory/input/output equalities to restore the original caller without
 requiring preservation of discarded callee locals. See the
 [local-frame rules](##Complexity.Computability.Ram.Source.State.Frame).
 
+The [named search](##Complexity.Computability.Ram.Array.Search.Function) directly
+opens its generated body, proves initialization, and reuses the shared loop
+contract. Its time proof follows the same source decomposition. The actual
+remaining `while` determines the private local slots before their separation
+is checked; no extra function-body recognizer or exported loop-scoped midpoint
+is needed. The shared mathematical invariant and its initialization proof remain
+explicit, so this is not general automatic invariant discovery.
+
 For a callable recursive function, ordinary mathematical induction can prove
 `Ram.Source.FunctionContract` directly. The [factorial example](##Examples.Ram.Factorial)
 uses natural-number induction in `function_contract`: `ram_total_vc args entry rfl`

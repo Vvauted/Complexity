@@ -21,7 +21,7 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. Uniform and actual element/prefix-dependent cost rules are available, exercised by an adapter around the existing factorial. | The caller still supplies the mathematical update, element domain and accumulator invariant. Mutable or richer-accumulator traversals are not covered by this read-only scalar rule. |
 | [ArrayMap](../Examples/Ram/ArrayMap.lean) | A named mutable traversal calls the existing square helper and writes back its results. The reusable map contract yields ordinary `List.map` contents and an outside-array frame; independent costs cover the same compiled invocation. | The operation hides its fixed private local layout, but arbitrary mutable loop proofs still use explicit source-state invariants. This is not general named-invariant automation or runtime higher-order application. |
 | [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Its time continuation receives that reference directly and bounds summation using its actual length. | The author still selects the typed input, transports representation facts and justifies the mathematical continuation bound. |
-| [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. A shared assignment rule names its actual midpoint; the body cost composes independently of its correctness contract. | The implementation adapter still proves local-slot separation and initialization; naming one intermediate value does not remove that work. |
+| [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. Its declared body directly supplies initialization and the remaining loop; a shared assignment rule names the actual midpoint. | The common loop invariant still uses a register-role representation and a separate initialization lemma. Direct function composition is not general named-invariant inference. |
 | [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost; clients still prove their genuine extent and aliasing conditions. |
 | [Merge sort](../Examples/Ram/MergeSort.lean) | A real two-array `Unit` declaration recursively calls itself, merge and copy. Ordinary length induction composes shared slice/reassembly rules; actual output has a sorted-permutation and `StateM` specification, with a separate full-run `n log n` reserve. Correctness and time calls restore caller bindings; the time rule derives each remaining reserve. | Correctness and time proofs still repeat stage composition. The author supplies the whole-branch reserve, recursive capacity and array facts; these must not be confused with automatically derived call accounting. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls. Copy's public typed contract carries its effects through restored continuations; the time rule derives the remaining reserve. | Clients still transport contracts through imports and combine length and copied-content facts to rebuild the destination representation. |
@@ -238,6 +238,14 @@ proof-local word value, not an exported source variable or inferred loop
 invariant. Unresolved read safety remains a goal. The rule reuses `assign_iff`
 and sequencing; it introduces neither another program nor scope metadata.
 
+Search's function proofs now use the declaration's own body equations and apply
+the existing loop rules to the actual remaining `while`. Unification infers the
+private loop slots before their separation is checked. Visible endpoint names
+describe initialization; the loop-scoped midpoint is not exported. This removes
+both whole-function body-shape adapters without introducing a replacement rule.
+The existing register-role constructor and mathematical initialization lemma
+remain useful bridges; arbitrary named loop invariants are still not inferred.
+
 **General loop-body foundation:** `TotalWP.forIn` accepts arbitrary source bodies
 and loop-head invariants, without imposing one accumulator or unchanged shared
 state. The independent uniform `TimeBound.forIn` needs only a conditional body
@@ -275,10 +283,12 @@ and input-dependent mutable traversal costs are not established by this map.
   and existing statement rules. Build on the checked parameter-preservation
   bridge when a real local-block proof still repeats this work;
   do not replace the loop framework or accumulate whole-sample AST recognizers.
-  The single-assignment binder removes expression expansion in search, but
-  its entry layout and whole-body adapter remain explicit. Extend binding to
-  richer values or calls only when a real continuation benefits; a parallel
-  cost binder is unnecessary for this constant-cost body.
+  Search now demonstrates direct function-to-loop composition without a
+  whole-body adapter. Its underlying invariant and initialization still use
+  the register-role bridge. Improve those remaining implementation-side views
+  when they obstruct an actual proof, not by restoring a wrapper around the
+  short function proof. Extend value binding to richer values or calls only
+  when a real continuation benefits; this constant-cost body needs no cost binder.
 - Extend the exact-cost interface beyond state-independent continuations.
   Correctness, exact costs and upper bounds should share source-facing call and
   sequence decomposition even when a returned value determines later work.
@@ -429,10 +439,11 @@ The admitted data includes empty arrays and duplicates without an extra strict
 array-endpoint condition. Normal execution still needs its genuine stack capacity.
 
 This completes one source-to-runtime consumer, not the full high-level interface.
-Its private binding adapter is a temporary localized cost to proof authors, not
-a new public verification framework. Shared restoration is now factored out;
-source-local layout and multi-buffer representation still need attention. Do not add dummy
-parameters or whole-program renaming merely to preserve old numeric slots.
+The named correctness and time proofs now directly reuse the shared loop without
+whole-function adapters. Its register-parametric invariant and initialization
+are still implementation-side work; multi-buffer representation needs attention
+too. Do not add dummy parameters or whole-program renaming merely to preserve
+old numeric slots.
 
 The language itself is also unfinished. Word, borrowed-array and `Unit` results,
 with only end-of-function returns, are not a complete high-level programming
