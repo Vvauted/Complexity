@@ -418,6 +418,13 @@ below `2 ^ 32`. `sum_eq` gives the modular list sum; `sum_eq_of_sum_lt`
 recovers the exact natural sum when it fits. The
 [graph-degree client](##Examples.Ram.GraphDegree) reuses this ordinary value equation
 to prove `sum_eq_degree`, without reopening the implementation's loop or call frame.
+Factorial, sum and the [slice sample](##Examples.Ram.ArraySlice) use
+`ram_run_apply theorem [facts]` to connect their function proofs to these executable values.
+This use-site tactic applies an existing runtime theorem and checks the standard
+compiled call's static obligations;
+the clients need no separate raw-code definition or compilation/code-fit lemmas.
+`halts_of_contract` reuses a budget-free function contract, while `hstack`, represented
+data and arithmetic premises remain explicit. See [the proof interface](##ComplexityDocs.Verification).
 
 These functions execute the existing compiled RAM call, not `Part.get` or a
 mathematical reference function. They work with `#eval`, but the underlying

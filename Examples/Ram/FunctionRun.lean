@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Local.Function.Total
+import Complexity.Tactic.Ram.Run
 import Examples.Ram.Factorial
 import Examples.Ram.FactorialFunction
 
@@ -22,6 +22,8 @@ normal termination. It computes by executing that same compiled call, not by
 evaluating mathlib's specification. Its stack-capacity proof is erased at runtime;
 no time estimate is needed to define or call it. The separate full-run count is
 still obtained from the implementation's body-time theorem.
+`ram_run_apply` handles static compilation and lookup premises for these bridges;
+stack capacity and the function's correctness and time proofs remain explicit.
 -/
 
 namespace Ram.Examples.FunctionRun
@@ -43,18 +45,6 @@ def runFactorialUntil (n : Word 32) : Option (Nat × Nat × StopReason) :=
   (Factorial.functions.run.factorial n 0 (Source.State.initial [])).map fun result =>
       ((result.state.regs 0).toNat, result.steps, result.reason)
 
-private def factorialCode : Code :=
-  LocalCompiler.rawLink Factorial.functions.registers Factorial.functions.program
-    (LocalCompiler.Function.trampoline Factorial.functions.functionIndex.factorial
-      Factorial.factorial.params)
-
-private theorem factorial_compiled : LocalCompiler.Function.compile
-    Factorial.functions.registers Factorial.functions.program
-    Factorial.functions.functionIndex.factorial Factorial.factorial.params =
-      some factorialCode := by decide
-
-private theorem factorial_code_fits : factorialCode.length < 2 ^ 32 := by decide
-
 private theorem factorial_execution (n : Word 32) :
     Source.FunctionExec Factorial.functions.program 0 n.toNat Factorial.factorial
       (Factorial.functions.arguments.factorial n) (Source.State.initial [])
@@ -75,10 +65,14 @@ theorem runFactorialUntil_eq (n : Word 32)
     (hstack : (n.toNat + 1) * ABI.frameSize Factorial.functions.registers < 2 ^ 32) :
     runFactorialUntil n =
       some (Nat.factorial n.toNat % 2 ^ 32, 37 * n.toNat + 33, .halted) := by
-  obtain ⟨target, returned, value, _⟩ :=
-    LocalCompiler.Function.runUntil_eq_of_execution factorial_compiled
-      Factorial.functions.function_lookup.factorial factorial_code_fits
-      (by simpa using hstack) (factorial_execution n) (FactorialFunction.bodyTime_eq n)
+  have run := by
+    ram_run_apply (LocalCompiler.Function.runUntil_eq_of_execution
+      (control := Factorial.functions.registers)
+      (fn := Factorial.functions.functionIndex.factorial)
+      (execution := factorial_execution n) (time := FactorialFunction.bodyTime_eq n))
+      [Factorial.functions.function_lookup.factorial]
+    simpa using hstack
+  obtain ⟨target, returned, value, _⟩ := run
   have steps : LocalCompiler.Function.callSteps Factorial.functions.registers
       Factorial.factorial (37 * n.toNat + 4) + 1 = 37 * n.toNat + 33 := by
     rw [factorial_call_steps]
@@ -95,10 +89,10 @@ theorem factorial_halts (n : Word 32)
     (hstack : (n.toNat + 1) * ABI.frameSize Factorial.functions.registers < 2 ^ 32) :
     LocalCompiler.Function.Halts Factorial.functions.registers Factorial.functions.program
       Factorial.functions.functionIndex.factorial Factorial.factorial.params 0
-      (Factorial.functions.arguments.factorial n) (Source.State.initial []) :=
-  LocalCompiler.Function.halts_of_execution factorial_compiled
-    Factorial.functions.function_lookup.factorial factorial_code_fits
-    (by simpa using hstack) (factorial_execution n)
+      (Factorial.functions.arguments.factorial n) (Source.State.initial []) := by
+  ram_run_apply (LocalCompiler.Function.halts_of_execution
+    (execution := factorial_execution n)) [Factorial.functions.function_lookup.factorial]
+  simpa using hstack
 
 /-- An ordinary executable function returning a decoded word. Its only runtime
 argument is `n`; the erased proof ensures sufficient stack capacity. The value
@@ -112,9 +106,10 @@ def factorial (n : Word 32)
 theorem factorial_eq_mod (n : Word 32)
     (hstack : (n.toNat + 1) * ABI.frameSize Factorial.functions.registers < 2 ^ 32) :
     factorial n hstack = Nat.factorial n.toNat % 2 ^ 32 := by
-  have returned := LocalCompiler.Function.apply_eq_of_execution (factorial_halts n hstack)
-    factorial_compiled Factorial.functions.function_lookup.factorial factorial_code_fits
-    (by simpa using hstack) (factorial_execution n)
+  have returned := by
+    ram_run_apply (LocalCompiler.Function.apply_eq_of_execution (factorial_halts n hstack)
+      (execution := factorial_execution n)) [Factorial.functions.function_lookup.factorial]
+    simpa using hstack
   exact congrArg BitVec.toNat returned
 
 /-- When the mathematical result fits, the ordinary executable value is exactly
@@ -139,10 +134,11 @@ theorem factorial_steps (n : Word 32)
     (hstack : (n.toNat + 1) * ABI.frameSize Factorial.functions.registers < 2 ^ 32) :
     (Factorial.functions.runTotal.factorial n 0 (Source.State.initial [])
       (factorial_halts n hstack)).steps = 37 * n.toNat + 33 := by
-  have counted := LocalCompiler.Function.runTotal_steps_eq_of_execution
-    (factorial_halts n hstack) factorial_compiled Factorial.functions.function_lookup.factorial
-    factorial_code_fits (by simpa using hstack) (factorial_execution n)
-    (FactorialFunction.bodyTime_eq n)
+  have counted := by
+    ram_run_apply (LocalCompiler.Function.runTotal_steps_eq_of_execution
+      (factorial_halts n hstack) (execution := factorial_execution n)
+      (time := FactorialFunction.bodyTime_eq n)) [Factorial.functions.function_lookup.factorial]
+    simpa using hstack
   rw [factorial_call_steps] at counted
   simpa only [Factorial.functions.runTotal.factorial, Nat.add_assoc] using counted
 

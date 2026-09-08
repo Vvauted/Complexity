@@ -5,7 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.Sum
 import Complexity.Computability.Ram.Source.Function.Linking
-import Complexity.Computability.Ram.Compiler.Local.Function.Total
+import Complexity.Tactic.Ram.Run
 import Complexity.Tactic.Ram.Time
 
 /-!
@@ -68,19 +68,6 @@ theorem eval_eq {w heapLimit : Nat} {array : ArrayRef w}
     function_contract hw fit span _ entry ⟨rfl, represented⟩
   exact execution.eval_eq_some
 
-private def code : Code :=
-  LocalCompiler.rawLink functions.registers functions.program
-    (LocalCompiler.Function.trampoline functions.functionIndex.sumSlice
-      functions.function.sumSlice.params)
-
-private theorem compile_sumSlice : LocalCompiler.Function.compile
-    functions.registers functions.program functions.functionIndex.sumSlice
-      functions.function.sumSlice.params = some code := by
-  set_option maxRecDepth 4096 in decide
-
-private theorem code_length_lt : code.length < 2 ^ 32 := by
-  set_option maxRecDepth 4096 in decide
-
 /-- The compiled invocation halts from represented data and sufficient stack
 space. The argument uses only the budget-free function contract. -/
 theorem sumSlice_halts {array : ArrayRef 32} {offset count : Word 32}
@@ -92,10 +79,10 @@ theorem sumSlice_halts {array : ArrayRef 32} {offset count : Word 32}
       functions.functionIndex.sumSlice functions.function.sumSlice.params heapLimit
       (functions.arguments.sumSlice array offset count) entry := by
   obtain ⟨xs, represented, fit⟩ := safe
-  obtain ⟨value, finish, execution, _⟩ :=
-    function_contract (by decide : 0 < 32) fit span _ entry ⟨rfl, represented⟩
-  exact LocalCompiler.Function.halts_of_execution compile_sumSlice
-    functions.function_lookup.sumSlice code_length_lt hstack execution
+  ram_run_apply (LocalCompiler.Function.halts_of_contract
+    (contract := function_contract (by decide : 0 < 32) fit span)
+    (pre := ⟨rfl, represented⟩)) [functions.function_lookup.sumSlice]
+  exact hstack
 
 /-- An ordinary executable value from the compiled slice-and-sum function.
 All proofs are erased; the runtime inputs are the reference, slice bounds,
@@ -120,9 +107,11 @@ theorem sumSlice_eq {heapLimit : Nat} {array : ArrayRef 32}
       (((xs.drop offset.toNat).take count.toNat).map BitVec.toNat).sum % 2 ^ 32 := by
   obtain ⟨value, finish, execution, rfl, rfl⟩ :=
     function_contract (by decide : 0 < 32) fit span _ entry ⟨rfl, represented⟩
-  have returned := LocalCompiler.Function.apply_eq_of_execution
-    (sumSlice_halts ⟨xs, represented, fit⟩ span hstack) compile_sumSlice
-    functions.function_lookup.sumSlice code_length_lt hstack execution
+  have returned := by
+    ram_run_apply (LocalCompiler.Function.apply_eq_of_execution
+      (sumSlice_halts ⟨xs, represented, fit⟩ span hstack) (execution := execution))
+      [functions.function_lookup.sumSlice]
+    exact hstack
   simpa only [sumSlice, functions.apply.sumSlice, wordSum_toNat] using
     congrArg BitVec.toNat returned
 
@@ -160,10 +149,12 @@ theorem runTotal_steps_le {array : ArrayRef 32} {offset count : Word 32}
       (sumSlice_halts ⟨xs, represented, fit⟩ span hstack)).steps ≤ 18 * count.toNat + 142 := by
   obtain ⟨value, finish, execution, _⟩ :=
     function_contract (by decide : 0 < 32) fit span _ entry ⟨rfl, represented⟩
-  have bounded := LocalCompiler.Function.runTotal_steps_le_of_timeBound
-    (sumSlice_halts ⟨xs, represented, fit⟩ span hstack) compile_sumSlice
-    functions.function_lookup.sumSlice code_length_lt hstack execution
-    (function_timeBound (by decide : 0 < 32) fit span) ⟨rfl, represented⟩
+  have bounded := by
+    ram_run_apply (LocalCompiler.Function.runTotal_steps_le_of_timeBound
+      (sumSlice_halts ⟨xs, represented, fit⟩ span hstack) (execution := execution)
+      (time := function_timeBound (by decide : 0 < 32) fit span) (pre := ⟨rfl, represented⟩))
+      [functions.function_lookup.sumSlice]
+    exact hstack
   have callCount : LocalCompiler.Function.callSteps functions.registers
       functions.function.sumSlice (18 * count.toNat + 72) + 1 = 18 * count.toNat + 142 := by
     ram_simp [LocalCompiler.Function.callSteps_eq, functions.result_eq.sumSlice]

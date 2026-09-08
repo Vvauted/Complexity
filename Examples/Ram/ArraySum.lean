@@ -4,7 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.Sum
-import Complexity.Computability.Ram.Compiler.Local.Function.Total
+import Complexity.Tactic.Ram.Run
 
 /-!
 # Calling the reusable array-sum function
@@ -26,19 +26,6 @@ nor a proposed result or time budget is passed to the executable function.
 namespace Ram.Examples.ArraySum
 
 open Source Source.Array
-
-private def sumCode : Code :=
-  LocalCompiler.rawLink sumFunctions.registers sumFunctions.program
-    (LocalCompiler.Function.trampoline sumFunctions.functionIndex.sum
-      sumFunctions.function.sum.params)
-
-private theorem compile_sum :
-    LocalCompiler.Function.compile sumFunctions.registers sumFunctions.program
-      sumFunctions.functionIndex.sum sumFunctions.function.sum.params = some sumCode := by
-  set_option maxRecDepth 4096 in decide
-
-private theorem sumCode_length_lt : sumCode.length < 2 ^ 32 := by
-  set_option maxRecDepth 4096 in decide
 
 private theorem sum_callSteps (length : Nat) :
     LocalCompiler.Function.callSteps sumFunctions.registers
@@ -66,10 +53,11 @@ theorem sum_halts {array : ArrayRef 32} {heapLimit : Nat} {entry : Source.State 
       sumFunctions.functionIndex.sum sumFunctions.function.sum.params heapLimit
       (sumFunctions.arguments.sum array) entry := by
   obtain ⟨xs, represented, fit⟩ := safe
-  exact LocalCompiler.Function.halts_of_execution compile_sum sumFunctions.function_lookup.sum
-    sumCode_length_lt (by simpa using hstack)
-    (sum_function_runs_of_ref (program := sumFunctions.program) (depth := 0)
-      (by decide : 0 < 32) fit entry represented)
+  ram_run_apply (LocalCompiler.Function.halts_of_contract
+    (contract := sum_function_contract_of_ref (program := sumFunctions.program) (depth := 0)
+      (by decide : 0 < 32) fit) (pre := ⟨rfl, represented⟩))
+    [sumFunctions.function_lookup.sum]
+  simpa using hstack
 
 /-- Execute the compiled array-sum function and return its decoded word.
 The logical safety proof is erased; the only data inputs are the reference,
@@ -91,9 +79,11 @@ theorem sum_eq {heapLimit : Nat} {array : ArrayRef 32}
       (xs.map BitVec.toNat).sum % 2 ^ 32 := by
   have execution := sum_function_runs_of_ref (program := sumFunctions.program) (depth := 0)
     (by decide : 0 < 32) fit entry represented
-  have result := LocalCompiler.Function.apply_eq_of_execution
-    (sum_halts ⟨xs, represented, fit⟩ hstack) compile_sum sumFunctions.function_lookup.sum
-    sumCode_length_lt (by simpa using hstack) execution
+  have result := by
+    ram_run_apply (LocalCompiler.Function.apply_eq_of_execution
+      (sum_halts ⟨xs, represented, fit⟩ hstack) (execution := execution))
+      [sumFunctions.function_lookup.sum]
+    simpa using hstack
   simpa only [sum, sumFunctions.apply.sum, wordSum_toNat] using congrArg BitVec.toNat result
 
 /-- If the mathematical sum fits, the executable function returns that natural
@@ -127,9 +117,12 @@ theorem runSum_eq {heapLimit : Nat} {array : ArrayRef 32}
       some ((xs.map BitVec.toNat).sum % 2 ^ 32, 18 * xs.length + 67, .halted) := by
   have execution := sum_function_measured_of_ref (program := sumFunctions.program)
     (control := sumFunctions.registers) (depth := 0) (by decide : 0 < 32) fit entry represented
-  obtain ⟨target, returned, value, _⟩ :=
-    LocalCompiler.Function.runUntil_eq_of_measured compile_sum sumFunctions.function_lookup.sum
-      sumCode_length_lt (by simpa using hstack) execution
+  have run := by
+    ram_run_apply (LocalCompiler.Function.runUntil_eq_of_measured
+      (fn := sumFunctions.functionIndex.sum) (execution := execution))
+      [sumFunctions.function_lookup.sum]
+    simpa using hstack
+  obtain ⟨target, returned, value, _⟩ := run
   simp only [runSum, sumFunctions.run.sum,
     max_eq_right (by decide : 1 ≤ sumFunctions.registers), returned, Option.map_some, value,
     wordSum_toNat, sum_callSteps]
@@ -147,9 +140,11 @@ theorem runTotal_steps {heapLimit : Nat} {array : ArrayRef 32}
     (by decide : 0 < 32) fit entry represented
   have measured := sum_function_measured_of_ref (program := sumFunctions.program)
     (control := sumFunctions.registers) (depth := 0) (by decide : 0 < 32) fit entry represented
-  have count := LocalCompiler.Function.runTotal_steps_eq_of_execution
-    (sum_halts ⟨xs, represented, fit⟩ hstack) compile_sum sumFunctions.function_lookup.sum
-    sumCode_length_lt (by simpa using hstack) execution measured.bodyTime_eq_some
+  have count := by
+    ram_run_apply (LocalCompiler.Function.runTotal_steps_eq_of_execution
+      (sum_halts ⟨xs, represented, fit⟩ hstack) (execution := execution)
+      (time := measured.bodyTime_eq_some)) [sumFunctions.function_lookup.sum]
+    simpa using hstack
   simpa only [sumFunctions.runTotal.sum, sum_callSteps] using count
 
 -- The preloaded array contains 1, 2, 3. Constructing this host-side state is

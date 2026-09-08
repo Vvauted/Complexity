@@ -144,6 +144,20 @@ theorem halts_of_exists_execution {control heapLimit depth fn : Nat} {program : 
   obtain ⟨value, finish, execution⟩ := execution
   exact halts_of_execution hcompile hlookup hcode hstack execution
 
+/-- A reusable function contract establishes normal termination of the actual
+compiled call. Its postcondition and any separate time bound are not runtime inputs. -/
+theorem halts_of_contract {control heapLimit depth fn : Nat} {program : Program}
+    {f : Func} {args : List (Word w)} {entry : Source.State w} {code : Code}
+    {P : List (Word w) → Source.State w → Prop}
+    {Q : List (Word w) → Source.State w → Word w → Source.State w → Prop}
+    (hcompile : compile control program fn f.params = some code)
+    (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
+    (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
+    (contract : Source.FunctionContract program heapLimit depth f P Q) (pre : P args entry) :
+    Halts control program fn f.params heapLimit args entry := by
+  obtain ⟨value, finish, execution, _⟩ := contract args entry pre
+  exact halts_of_execution hcompile hlookup hcode hstack execution
+
 /-- The actual total run returns the source value and observes its shared final state. -/
 theorem runTotal_correct_of_execution {control heapLimit depth fn : Nat} {program : Program}
     {f : Func} {args : List (Word w)} {entry finish : Source.State w} {value : Word w}

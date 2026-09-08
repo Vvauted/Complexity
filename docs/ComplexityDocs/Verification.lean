@@ -121,6 +121,20 @@ An `isSome` proof alone would also admit faults and is not enough for this inter
 The [total-call bridge](##Complexity.Computability.Ram.Compiler.Local.Function.Total)
 `halts_of_execution` derives this fact from budget-free `FunctionExec` with the
 compiled-code and stack premises. It does not require a cost theorem.
+`halts_of_contract` instead takes an existing `FunctionContract` and its precondition,
+without making the client first extract a returned value and execution witness.
+
+For these runtime bridges, use `ram_run_apply theorem [facts]` from
+[runner proof automation](##Complexity.Tactic.Ram.Run). It applies the supplied theorem,
+selects the same standard compiled call-and-halt code used by the runner, and checks
+static compilation, lookup and code-fit obligations at that use site. Supplied facts
+are used only for those static goals; unresolved goals remain explicit.
+The [factorial](##Examples.Ram.FunctionRun), [sum](##Examples.Ram.ArraySum) and
+[slice](##Examples.Ram.ArraySlice) clients use it for halt, value and separate step proofs
+without maintaining private `rawLink`, compilation and code-length declarations.
+Stack capacity, representation, overflow and the supplied correctness or time theorem
+remain explicit proof obligations. This is proof automation, not another runtime wrapper
+or a guarantee that every `ram_def` compiles and fits every word width.
 
 `runTotal` performs `Option.get` on the actual runner output; `apply` reads its
 returned word. The proof argument is in `Prop` and erased at runtime, not a supplied

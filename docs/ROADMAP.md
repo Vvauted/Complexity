@@ -68,6 +68,12 @@ results with separate value and step equations. They execute with `#eval`, not b
 making `Part` computable or compiling arbitrary Lean functions. Their fixed word
 width, stack-capacity and preloaded-data premises remain explicit; proofs use the
 execution equations rather than expecting kernel computation by `rfl`.
+The factorial, sum and slice clients use `ram_run_apply` for those runtime bridges without
+repeating private raw-code, compilation and code-fit declarations. It selects the
+runner's same compiled call and checks static obligations at the proof use site;
+`halts_of_contract` reuses existing correctness directly. Stack, mathematical and
+separate time premises remain explicit. No new runtime or certified-function wrapper
+is introduced, and a source declaration alone does not guarantee successful compilation.
 
 Named functions accept array parameters as well as words: `fn sum(xs : array)`
 and `call sum(xs)` pass a by-value base address and length through the existing ABI.
