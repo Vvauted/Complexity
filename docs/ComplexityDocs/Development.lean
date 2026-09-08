@@ -64,6 +64,10 @@ The manual explains workflows across modules rather than repeating every theorem
 Use fully qualified declaration names in backticks for API links. Module links use doc-gen4's
 `##Module.Name` syntax. Refer readers to checked examples when illustrating a complete proof;
 a Markdown code fence is explanatory text, not a checked theorem.
+Import the modules referenced by `##Module.Name` links in that manual page.
+For example, pages linking to program examples import `Examples`; this dependency
+belongs to the manual, not to the reusable library. An unimported module can otherwise
+fall back to a declaration search instead of linking to its module page.
 
 The manual entry point is `docs/ComplexityDocs.lean`. Its modules have a distinct name because
 mathlib already owns `docs.*`; they use the same module-comment format and generator.
