@@ -83,6 +83,27 @@ also exports lookup facts and source-local names for implementation proofs.
 Generated body and return equations let verification unfold the same declaration.
 These names do not yet hide every register-level obligation inside those proofs.
 
+## State properties of a function value
+
+[The function-value factorial sample](##Examples.Ram.FactorialFunction) exposes
+the actual return value as `eval n` and its actual body count as `bodyTime n`.
+Its correctness theorem has the following mathematical shape:
+
+```lean
+theorem eval_eq_factorial (n : Word w) (hfit : Nat.factorial n.toNat < 2 ^ w) :
+    eval n = Part.some (Nat.factorial n.toNat)
+```
+
+The equation includes termination. With this theorem, the sample proves positivity
+using mathlib's `Nat.factorial_pos`, without carrying a source state in the proposition.
+It separately proves `bodyTime n = Part.some (37 * n.toNat + 4)`, and connects both
+observations to invocations at arbitrary caller states.
+
+This uses mathlib's `Part` as a noncomputable semantic view, not a new interpreter.
+It does not mean arbitrary ordinary Lean definitions can already be compiled by the library.
+The underlying [function observations](##Complexity.Computability.Ram.Source.Function.Eval)
+are defined from execution, independently of the mathematical factorial or its proposed cost.
+
 ## Add an executable driver when needed
 
 `Ram.Named.Functions.withMain` supplies an explicit entry statement without changing
@@ -135,6 +156,8 @@ Continue with [proving correctness](##ComplexityDocs.Verification).
 | Linking independently verified programs | [Composition](##Examples.Ram.Composition) |
 | Array traversal and an ordinary list model | [Array sum](##Examples.Ram.ArraySum) |
 | Recursive mathematical specifications | [Factorial](##Examples.Ram.Factorial) |
+| Function-value equations and separate cost observations | [Factorial function](##Examples.Ram.FactorialFunction) |
+| Reusing a list operation for a mathlib graph property | [Graph degree](##Examples.Ram.GraphDegree) |
 | A logarithmic time bound | [Bit length](##Examples.Ram.BitLength) |
 | Potential-based amortized analysis | [Amortized clearing](##Examples.Ram.AmortizedClear) |
 | Reusing an array contract and its frame | [Array copy](##Examples.Ram.ArrayCopy) |

@@ -40,6 +40,15 @@ describe those observations. An ordinary functional view must therefore come
 with its connection to that implementation; declaring a mathematical reference
 function alone does not make it the executable program.
 
+`Func.eval` and `Func.bodyTime` provide proof-level observations using mathlib's
+`Part`. Their domains come from safe executions, and determinism proves that
+the observed result and count belong to the same invocation. Classical choice
+selects only that uniquely determined observation. It does not install a
+reference algorithm or a proposed cost as the program's meaning. These views
+are noncomputable; executable application remains on the verified runtime path.
+Heap capacity can affect the domain, and shared entry state cannot be hidden
+without proving the relevant result and cost independence.
+
 Heap and call-depth capacities are safety premises, not instruction budgets.
 Output-size guarantees support subsequent operations. Time analysis may reuse
 these facts and functional invariants, but correctness must not depend on the

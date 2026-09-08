@@ -27,6 +27,21 @@ retains genuine address-range, length and non-overlap assumptions.
 `Ram.Source.FunctionContract.wp_call` reuses a contract at another function's call site;
 the continuation receives the returned word, the proved postcondition and preserved caller locals.
 
+For function-value equations, use `Ram.Func.eval`. It observes an actual safe invocation
+through mathlib's `Part`; `eval = Part.some result` includes termination. The
+[factorial function-value sample](##Examples.Ram.FactorialFunction) hides its canonical
+entry state once and proves agreement with every actual caller state. Subsequent
+mathematical propositions mention only its argument and observed value.
+This is a noncomputable proof view, not executable ordinary Lean function syntax.
+General stateful functions still depend on shared entry state, and insufficient heap
+capacity can make an observation undefined.
+
+`Ram.Source.FunctionContract.eval_spec` transports any postcondition to that view;
+the postcondition can be a mathematical relation, not necessarily a reference algorithm.
+`Ram.Source.FunctionContract.eval_with_timeBound` adds a separate bound to the same
+invocation's `Ram.Func.bodyTime`. Neither observation is defined using the proposed
+result property or time bound.
+
 Use `Ram.Source.TotalContract` when the precondition and postcondition directly describe
 the source state. `Ram.Source.TotalRelContract` also lets the postcondition refer to the
 entry state, which is useful for framing unchanged data.
@@ -72,6 +87,13 @@ Reuse an operation's existing contract before unfolding its body. In particular:
 - `Ram.Source.Refines.equiv` changes mathematical coordinates through an equivalence.
 - `Ram.Source.Refines.transfer` handles related, possibly lossy models when the functions
   respect the chosen relations.
+
+The [graph-degree sample](##Examples.Ram.GraphDegree) is a concrete use of this boundary.
+Its implemented operation is the [reusable array sum](##Complexity.Computability.Ram.Array.Sum).
+The graph proof only identifies the represented row's list sum with mathlib's
+`SimpleGraph.degree` and applies the existing function contract. It does not reprove
+the traversal, register updates or unchanged-memory facts. The row is explicitly
+preloaded; converting an abstract graph to that layout would need its own implementation.
 
 These rules operate on fixed source statements. They do not turn an arbitrary mathematical
 function into executable code. See [data models](##ComplexityDocs.Models) for array, matrix,

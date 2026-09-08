@@ -15,9 +15,16 @@ and bridges to native `StateM` verification are implemented.
 
 Function-only declarations and generated word-parameter lists support independent
 function contracts. Return values, shared effects and body counts are observations
-of the existing execution, with actual call overhead added at call sites. Factorial
-and array-copy expose this interface; their internal representation proofs still
-show why the source-facing work below is unfinished.
+of the existing execution, with actual call overhead added at call sites. Factorial,
+array-copy and array-sum expose this interface. A graph-degree client reuses the
+sum contract and mathlib's `SimpleGraph.degree` without register or stack proofs.
+The implementations' internal representation proofs still show why the
+source-facing work below is unfinished.
+
+`Func.eval` and `Func.bodyTime` expose the same execution through mathlib's `Part`.
+The factorial function-value sample states result equations and mathematical
+properties without carrying source state in each proposition. These are
+noncomputable semantic observations, not yet executable ordinary Lean functions.
 
 `TotalComponent` carries that separation through reusable program packaging and
 linking. A separate time proof recovers the same code through the resource-aware
@@ -35,6 +42,23 @@ memory layouts. Some examples maintain a named program alongside a separate
 AST. Native `mvcgen` verifies mathematical models after an implementation
 refinement has been supplied; it does not derive that refinement automatically.
 
+## What the samples tell us
+
+- Mathematical specifications are not restricted to machine objects. The
+  graph-degree sample states a standard mathlib graph property and derives it
+  from a list-sum contract. It assumes a represented adjacency row; it does not
+  implement a graph loader or compile a Lean adjacency predicate.
+- Reuse can avoid machine-level proofs: the graph client never opens the sum
+  loop, register assignments or frame handling. The sum implementation still
+  repeats cursor, remaining-length and unchanged-memory arguments. A reusable
+  read-only array fold is the next missing data-operation foundation.
+- Function-value equations make later mathematical proofs natural, but do not
+  make the implementation proof automatic. Semantic `Part` observations and
+  executable function application are distinct interfaces.
+- Source functions still take words and pointer/length pairs. Typed data views,
+  parameter binding and local-state verification conditions need to carry more
+  of the routine work before programming feels like ordinary functional Lean.
+
 ## 1. Prove the program that the user writes
 
 Build the proof-facing interface around the existing first-order source language
@@ -46,6 +70,9 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
 - Publish and call intermediate functions without an I/O entry point. Generate
   parameter binding, return observations and semantic equations from the same
   declaration; keep the input/output driver as an optional executable adapter.
+- Connect typed executable function application to the existing compiled call
+  path. Do not confuse proof-level `Part` observations with a runnable frontend,
+  or require a proposed time bound merely to express a terminating function.
 - Derive verification conditions from that declaration using existing total
   correctness rules. Keep relations and mathematical specifications available;
   a loop need not first become a total pure function.
@@ -73,6 +100,10 @@ objects. Do not add more data-structure wrappers merely to expand a feature list
 
 - Expose each operation's mathematical effect, safety assumptions and unchanged
   state through a reusable call interface.
+- Factor array cursor and read-only fold reasoning out of the sum implementation.
+  Reuse ordinary `List` folds and their algebraic properties, while requiring a
+  proved source implementation of each fold step. Mathematical callbacks are
+  not executable primitives, and their work must not be silently free.
 - Handle subarrays, two live data objects and caller data that must survive a
   call. Keep genuine range, overflow and non-aliasing obligations visible.
 - Separate changes of mathematical view from actual data conversion.

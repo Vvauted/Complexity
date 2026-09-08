@@ -12,6 +12,8 @@ import Examples.Ram.BitLength
 import Examples.Ram.Composition
 import Examples.Ram.ContractFill
 import Examples.Ram.Factorial
+import Examples.Ram.FactorialFunction
+import Examples.Ram.GraphDegree
 import Examples.Ram.InsertionSort
 import Examples.Ram.LocalCalls
 import Examples.Ram.Merge

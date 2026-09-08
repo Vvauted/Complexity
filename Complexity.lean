@@ -16,6 +16,7 @@ import Complexity.Computability.Ram.Array.Finset
 import Complexity.Computability.Ram.Array.Footprint
 import Complexity.Computability.Ram.Array.Frame
 import Complexity.Computability.Ram.Array.Function
+import Complexity.Computability.Ram.Array.Sum
 import Complexity.Computability.Ram.Array.Indexed
 import Complexity.Computability.Ram.Array.Insertion.Basic
 import Complexity.Computability.Ram.Array.Merge.Basic
@@ -137,6 +138,7 @@ import Complexity.Computability.Ram.Reduction
 import Complexity.Computability.Ram.Source.Basic
 import Complexity.Computability.Ram.Source.Expr
 import Complexity.Computability.Ram.Source.Function.Basic
+import Complexity.Computability.Ram.Source.Function.Eval
 import Complexity.Computability.Ram.Source.Function.Time
 import Complexity.Computability.Ram.Source.Linking
 import Complexity.Computability.Ram.Source.Named.Basic
