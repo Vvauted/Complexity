@@ -64,18 +64,16 @@ theorem lowerBound_eq {heapLimit : Nat} {array : ArrayRef 32} (key : Word 32)
     (hstack : heapLimit + ABI.frameSize functions.registers < 2 ^ 32) :
     lowerBound array key heapLimit entry ⟨xs, represented, sorted⟩ hstack =
       xs.findIdx (fun x => decide (key.toNat ≤ x.toNat)) := by
-  obtain ⟨value, finish, execution, result, unchanged⟩ :=
-    function_contract (program := functions.program) (depth := 0)
-      (by decide : 2 ≤ 32) sorted (array, key) entry ⟨rfl, represented⟩
-  subst finish
-  have returned : functions.apply.lowerBound array key heapLimit entry
-      (lowerBound_halts key ⟨xs, represented, sorted⟩ hstack) = value := by
-    ram_run_apply (LocalCompiler.Function.applyTyped_eq_of_execution
-      (kind := .word) functions.results_length.lowerBound
-      (lowerBound_halts key ⟨xs, represented, sorted⟩ hstack) (execution := execution))
-      [functions.function_lookup.lowerBound]
-    simpa using hstack
-  simpa only [lowerBound, returned] using result.eq_findIdx
+  apply LowerBoundSpec.eq_findIdx
+  ram_run_apply (LocalCompiler.Function.applyTyped_spec
+    (kind := .word) (arg := (array, key))
+    (property := fun value => LowerBoundSpec xs key value.toNat)
+    functions.results_length.lowerBound (lowerBound_halts key ⟨xs, represented, sorted⟩ hstack)
+    (contract := function_contract (program := functions.program) (depth := 0)
+      (by decide : 2 ≤ 32) sorted)
+    (pre := ⟨rfl, represented⟩) (post := fun _ _ post => post.1))
+    [functions.function_lookup.lowerBound]
+  simpa using hstack
 
 /-- The same total call has a logarithmic full transition bound. Its outer
 overhead is normalized from the actual generated call and return code. -/

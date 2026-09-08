@@ -93,4 +93,26 @@ theorem applyStateTyped_spec {α : Type*} {control heapLimit depth fn : Nat}
     (congrArg (fun result : kind.Value w × Source.State w => Q arg entry result.1 result.2) returned)
     post
 
+/-- Project a typed contract to a property of the actual executable return value.
+The shared state is discarded only from the conclusion, not from the execution
+or the contract used to establish it. -/
+theorem applyTyped_spec {α : Type*} {control heapLimit depth fn : Nat}
+    {program : Program} {f : Func} {kind : DSL.ValueKind} {encodeArgs : α → List (Word w)}
+    {arg : α} {entry : Source.State w} {code : Code}
+    {P : α → Source.State w → Prop}
+    {Q : α → Source.State w → kind.Value w → Source.State w → Prop}
+    {property : kind.Value w → Prop}
+    (shape : f.results.length = kind.width)
+    (h : Halts control program fn f.params heapLimit (encodeArgs arg) entry)
+    (hcompile : compile control program fn f.params = some code)
+    (hlookup : program[fn]? = some f) (hcode : code.length < 2 ^ w)
+    (hstack : heapLimit + (depth + 1) * ABI.frameSize control < 2 ^ w)
+    (contract : Source.TypedFunctionContract program heapLimit depth f kind encodeArgs P Q)
+    (pre : P arg entry)
+    (post : ∀ value finish, Q arg entry value finish → property value) :
+    property (kind.decode («apply» control program fn f.params heapLimit (encodeArgs arg) entry h)
+      ((apply_length_of_lookup h hlookup).trans shape)) := by
+  simpa only [applyState_fst] using
+    post _ _ (applyStateTyped_spec shape h hcompile hlookup hcode hstack contract pre)
+
 end Ram.LocalCompiler.Function

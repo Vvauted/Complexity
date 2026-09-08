@@ -48,6 +48,7 @@ theorem bodyBudget_split_cover {n : Nat} (hn : 2 ≤ n) :
   exact (Nat.add_le_add_left (by omega : 53 * n + 348 ≤ 227 * n) _).trans
     (Recurrence.balancedBudget_split_le 4 227 hn)
 
+set_option maxHeartbeats 400000 in
 /-- Every sufficient call-depth capacity admits the same independent body
 bound. The induction hypothesis is used at the actual child depth; only the
 separate functional contracts are lifted to that depth. -/
@@ -134,16 +135,15 @@ theorem function_timeBound_of_depth {w control heapLimit depth : Nat}
         have leftTime := ih (xs.take k.toNat) leftShorter leftLength leftDisjoint leftDepth
         have leftCorrect := (function_contract (heapLimit := heapLimit)
           hw leftLength leftDisjoint).mono_depth leftDepth
-        apply leftTime.call_seq_typed_at leftCorrect
-          (array.subslice 0 k, scratch.subslice 0 k)
-          (nextBound := fun _ _ => bodyBudget (xs.drop k.toNat).length + 53 * xs.length + 243)
-        · ram_simp
-        · ram_simp
-        · ram_simp [ArrayRef.subslice, k]
+        ram_time_apply leftCorrect leftTime on
+          (array.subslice 0 k, scratch.subslice 0 k) [ArrayRef.subslice, k]
         · exact ⟨rfl, leftSource, leftScratch⟩
         · exact ⟨rfl, leftSource, leftScratch⟩
-        · rintro _ afterLeft ⟨leftSorted, _, leftFrame, _, _⟩ leftRegisters
-          ram_time_vc []
+        · ram_bound [sortFunctions.result_eq.sort, List.length_take, List.length_drop,
+            min_eq_left contained]
+        · rintro _ afterLeft ⟨leftSorted, _, leftFrame, _, _⟩
+          ram_time_vc [sortFunctions.result_eq.sort, List.length_take, List.length_drop,
+            min_eq_left contained]
           obtain ⟨sourceAfterLeft, ⟨leftWorkspace, scratchAfterLeft⟩, _⟩ :=
             Stages.after_left sourceArray scratchArray hlen disjoint k contained
               leftSorted leftFrame
@@ -163,16 +163,16 @@ theorem function_timeBound_of_depth {w control heapLimit depth : Nat}
           have rightCorrect :=
             (function_contract (heapLimit := heapLimit)
               hw rightLength rightDisjoint).mono_depth rightDepth
-          apply rightTime.call_seq_typed_at rightCorrect
+          ram_time_apply rightCorrect rightTime on
             (array.subslice k (array.length - k), scratch.subslice k (array.length - k))
-            (nextBound := fun _ _ => 53 * xs.length + 159)
-          · ram_simp
-          · ram_simp
-          · ram_simp [ArrayRef.subslice, k, leftRegisters]
+            [ArrayRef.subslice, k]
           · exact ⟨rfl, rightSource, rightScratch⟩
           · exact ⟨rfl, rightSource, rightScratch⟩
-          · rintro _ afterRight ⟨rightSorted, _, rightFrame, _, _⟩ rightRegisters
-            ram_time_vc []
+          · ram_bound [sortFunctions.result_eq.sort, List.length_take, List.length_drop,
+              min_eq_left contained]
+          · rintro _ afterRight ⟨rightSorted, _, rightFrame, _, _⟩
+            ram_time_vc [sortFunctions.result_eq.sort, List.length_take, List.length_drop,
+              min_eq_left contained]
             obtain ⟨sourceAfterRight, ⟨rightWorkspace, scratchAfterRight⟩, _⟩ :=
               Stages.after_right k contained sourceAfterLeft scratchAfterLeft
                 leftWorkspaceLength disjoint rightSorted rightFrame
@@ -200,16 +200,17 @@ theorem function_timeBound_of_depth {w control heapLimit depth : Nat}
                         exact ⟨rfl, rfl, leftRep, rightRep, scratchRep⟩)
                     (by intro values state fields finish _ post; exact post))
             have mergeCorrect := mergeCorrectSource.renameCalls sortFunctions.embeds.Merge
-            apply mergeTime.call_seq_typed_at mergeCorrect
+            ram_time_apply mergeCorrect mergeTime on
               (array.subslice 0 k, array.subslice k (array.length - k), scratch)
-              (nextBound := fun _ _ => 19 * xs.length + 38)
-            · ram_simp
-            · ram_simp
-            · ram_simp [ArrayRef.subslice, k, rightRegisters, leftRegisters]
+              [ArrayRef.subslice, k]
             · exact ⟨rfl, mergeLeft, mergeRight, scratchAfterRight⟩
             · exact ⟨rfl, mergeLeft, mergeRight, scratchAfterRight⟩
-            · rintro _ afterMerge ⟨_, _, scratchMerged, mergeFrame, _, _⟩ mergeRegisters
-              ram_time_vc []
+            · ram_bound [Func.renameCalls_locals, Func.renameCalls_results,
+                Merge.mergeFunctions.result_eq.merge,
+                sortFunctions.result_eq.sort, List.length_take, List.length_drop,
+                min_eq_left contained, mergeLength]
+            · rintro _ afterMerge ⟨_, _, scratchMerged, mergeFrame, _, _⟩
+              ram_time_vc [Merge.mergeFunctions.result_eq.merge, mergeLength]
               have sourceBeforeCopy := sourceAfterRight.2.frame mergeFrame
                 (by simpa only [List.length_append, mergeLength] using disjoint.symm)
               rw [merge_sorted_split] at scratchMerged
@@ -230,16 +231,12 @@ theorem function_timeBound_of_depth {w control heapLimit depth : Nat}
                 positive copyLength copyFit copyDisjoint).renameCalls
                   sortFunctions.embeds.Copy copyCorrect
               ram_time_call copyTime
-                [ArrayRef.subslice, mergeRegisters, rightRegisters, leftRegisters,
-                  sourceArray.length_eq, length_sorted, copyFunctions.result_eq.copy]
+                [ArrayRef.subslice, sourceArray.length_eq, length_sorted,
+                  Func.renameCalls_locals, Func.renameCalls_results,
+                  copyFunctions.result_eq.copy, Merge.mergeFunctions.result_eq.merge,
+                  sortFunctions.result_eq.sort, List.length_take, List.length_drop,
+                  min_eq_left contained, mergeLength]
               exact ⟨scratchMerged.2, sourceBeforeCopy⟩
-            · intro value finish post registers
-              ram_bound [Func.renameCalls, Merge.mergeFunctions.result_eq.merge, mergeLength]
-          · intro value finish post registers
-            ram_bound [sortFunctions.result_eq.sort, List.length_drop]
-        · intro value finish post registers
-          ram_bound [sortFunctions.result_eq.sort, List.length_take, List.length_drop,
-            min_eq_left contained]
 
 /-- The canonical budget-free correctness depth suffices for the same body bound. -/
 theorem function_timeBound {w control heapLimit : Nat}

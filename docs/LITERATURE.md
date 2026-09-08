@@ -106,6 +106,15 @@ statements. Hiding constants must not hide the input domain, word-width policy
 or an unproved representation cost. This does not require a second asymptotics
 library or weakening the counted execution theorem.
 
+Section 3.3 makes budget splitting concrete: a caller with `m` credits can
+provide `n` to a callee and retain `m - n`, provided `n ≤ m`. It also explicitly
+distinguishes this accounting algebra from its connection to measured execution.
+For our separate time rules, this motivates deriving the continuation reserve
+from the current bound and an already proved compiled-call bound. Affordability
+must remain a proof obligation; natural-number subtraction alone cannot justify
+overspending. This is an application of our existing call theorem, not a new
+heap-credit semantics or a change to budget-free functional correctness.
+
 ## 5. Separate algorithmic reasoning from representation proofs
 
 Maximilian P. L. Haslbeck and Peter Lammich, **Refinement with Time — Refining the

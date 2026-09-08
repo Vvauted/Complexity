@@ -22,7 +22,7 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Its time continuation receives that reference directly and bounds summation using its actual length. | The author still selects the typed input, transports representation facts and justifies the mathematical continuation bound. |
 | [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. | The implementation adapter still proves local-slot separation, initialization and shared-state restoration; the short client theorem does not remove that work. |
 | [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost; clients still prove their genuine extent and aliasing conditions. |
-| [Merge sort](../Examples/Ram/MergeSort.lean) | A real two-array `Unit` declaration recursively calls itself, merge and copy. Ordinary length induction composes shared slice/reassembly rules; actual output has a sorted-permutation and `StateM` specification, with a separate full-run `n log n` reserve. A shared typed call rule restores caller bindings without accumulating equalities. | The independent time proof shares representation stages, but repeats their composition and chooses numeric continuation reserves. Its existing call rule still exposes binding-restoration facts. |
+| [Merge sort](../Examples/Ram/MergeSort.lean) | A real two-array `Unit` declaration recursively calls itself, merge and copy. Ordinary length induction composes shared slice/reassembly rules; actual output has a sorted-permutation and `StateM` specification, with a separate full-run `n log n` reserve. Correctness and time calls restore caller bindings; the time rule derives each remaining reserve. | Correctness and time proofs still repeat stage composition. The author supplies the whole-branch reserve, recursive capacity and array facts; these must not be confused with automatically derived call accounting. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls, with independently reusable correctness and time proofs. | Clients transport contracts through imports, rebuild representations, unpack register preservation, and choose numeric continuation reserves. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
 
@@ -231,11 +231,12 @@ the shared rule does not assign an abstract constant price to the whole loop.
 - Simplify other recursive consumers with these rules before proposing another
   recursion framework. Retain a stronger body invariant only where actually
   needed; do not infer discarded callee locals from restored caller state.
-- Extend the checked typed continuation interface to effectful consumers.
-  `call_seq_typed_at` already exposes the actual typed result and shared state,
-  reusing the original call rule without a raw-field decoder or guessed input.
-  Slice uses `window.length` directly. Routine representation transport for
-  changed multi-buffer data remains work; its mathematical facts stay explicit.
+- Simplify representation transport in effectful typed continuations.
+  The restored call rules now carry actual effects without register equalities;
+  merge sort uses the default remaining reserve and slice retains an explicit
+  bound depending on `window.length`. Neither rule decodes a guessed input or
+  changes the execution. Repeated multi-buffer stage composition remains work;
+  its genuine mathematical facts stay explicit.
 
 **Evidence of completion:** `LocalBindings`, factorial, `ArrayFold`, and
 copy-then-sum use the common rules. Their algorithmic proofs retain only relevant
@@ -329,11 +330,26 @@ Mathematical names such as the midpoint stay opaque in continuations; expanding
 them into word-arithmetic expressions everywhere makes list reasoning needlessly
 difficult. The migrated proof avoids that global unfolding.
 
-**Next proof-experience work:** carry this binding improvement into the independent
-typed time continuation when it shortens the same sample, preserving costs and
-effects. Then assess repeated stage composition and numeric continuation reserves
-before adding any broader abstraction. Do not add another recursion framework
-or whole-sample AST recognizer.
+**Checked time-call improvement:** `call_seq_typed_restored_at` provides the same
+binding behavior for independent time proofs. `call_seq_typed_remaining_at`
+derives the continuation reserve by subtracting the proved complete call bound,
+with an explicit affordability premise. Merge sort's three typed calls use
+`ram_time_apply correct time on input`; they no longer choose intermediate
+numeric reserves or accumulate register equalities. `ram_time_vc` normalizes the
+compiled call-length terms in the reserve without unfolding callee bodies.
+Slice retains an explicit `nextBound` depending on its actual returned length.
+Both consumers retain their original execution and bounds.
+
+This does not infer the algorithm's whole-branch bound or recurrence. The author
+still proves that both children and the actual nonrecursive toll fit the proposed
+reserve. Natural-number subtraction cannot justify overspending. Automation
+handles lookup and argument equations; it does not repeatedly search a large
+continuation or unfold mathematical names there while attempting those premises.
+
+**Next proof-experience work:** assess repeated stage composition and source-local
+bindings in existing consumers. Extract a shared rule only when it removes that
+work without hiding representation, mutation or capacity obligations. Do not add
+another recursion framework or whole-sample AST recognizer.
 
 **Checked lower-bound step:** search is now a named callable function, with
 ordinary endpoint initialization and a loop-scoped midpoint. Its shared interval
@@ -375,6 +391,19 @@ overhead, without feeding the bound to the implementation.
 ordinary equations/relations and independent time bounds without per-client
 raw-code declarations, proof-only reference algorithms, or hand-extracted result
 registers. Their real legal-input and representation assumptions remain visible.
+
+**Checked value-projection step:** `LocalCompiler.Function.applyTyped_spec`
+transfers a typed contract to any proved property of the actual returned value.
+Lower-bound search and slice sum now use it without unpacking `FunctionExec` or
+connecting returned fields by hand. Their remaining mathematical steps use
+`LowerBoundSpec.eq_findIdx` and `wordSum_toNat`. The rule reuses the existing
+`applyStateTyped_spec` and its value projection; it does not create another runner.
+Discarding shared state from this conclusion does not prove that the execution
+has no effects. Mutable clients keep the result/state interface.
+
+The declaration-level application still carries justified input and capacity
+conditions. Derive additional observation conveniences only when they remove
+repeated client work; do not duplicate this bridge with a third function container.
 
 ## Later work and limits
 

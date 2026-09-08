@@ -167,17 +167,17 @@ theorem sumSlice_eq {heapLimit : Nat} {array : ArrayRef 32}
     (represented : array.Rep heapLimit xs entry) :
     sumSlice array offset count heapLimit entry ⟨xs, represented, fit⟩ span hstack =
       (((xs.drop offset.toNat).take count.toNat).map BitVec.toNat).sum % 2 ^ 32 := by
-  obtain ⟨value, finish, execution, rfl, rfl⟩ :=
-    function_contract (by decide : 0 < 32) fit span (array, offset, count) entry
-      ⟨rfl, represented⟩
-  have returned := by
-    ram_run_apply (LocalCompiler.Function.applyTyped_eq_of_execution
-      (kind := .word) (shape := functions.results_length.sumSlice)
-      (sumSlice_halts ⟨xs, represented, fit⟩ span hstack) (execution := execution))
-      [functions.function_lookup.sumSlice]
-    exact hstack
-  simpa only [sumSlice, functions.apply.sumSlice, wordSum_toNat] using
-    congrArg BitVec.toNat returned
+  ram_run_apply (LocalCompiler.Function.applyTyped_spec
+    (kind := .word) (arg := (array, offset, count)) (shape := functions.results_length.sumSlice)
+    (property := fun value : Word 32 => value.toNat =
+      (((xs.drop offset.toNat).take count.toNat).map BitVec.toNat).sum % 2 ^ 32)
+    (sumSlice_halts ⟨xs, represented, fit⟩ span hstack)
+    (contract := function_contract (by decide : 0 < 32) fit span)
+    (pre := ⟨rfl, represented⟩)
+    (post := by
+      rintro value finish ⟨rfl, _⟩
+      exact wordSum_toNat _))
+  exact hstack
 
 /-- The actual slice call precedes the sum call. The slice body costs zero, but
 its argument handling, address calculation and two-field return are all charged. -/
@@ -191,11 +191,12 @@ theorem function_timeBound {w control heapLimit : Nat} {array : ArrayRef w}
       (fun _ _ => 18 * count.toNat + 119) := by
   ram_time_vc args entry ⟨rfl, represented⟩ [functions.body_eq.sumSlice]
   have sliceCorrect := slice_contract (heapLimit := heapLimit) (depth := 0) (xs := xs) span
-  apply FunctionTimeBound.call_seq_typed_at
+  apply FunctionTimeBound.call_seq_typed_restored_at
     (slice_timeBound (P := fun _ _ => True)) sliceCorrect (array, offset, count)
     (nextBound := fun window _ => 18 * window.length.toNat + 66)
   all_goals try (solve | ram_simp [represented])
-  · rintro window middle ⟨rfl, sliceRep, rfl⟩ _
+  · rintro window middle ⟨rfl, sliceRep, unchanged⟩
+    rw [unchanged] at sliceRep ⊢
     have sliceFit := represented.subslice_end_lt offset count span fit
     have sumCorrect := sum_function_contract_of_ref
       (program := sumFunctions.program) (heapLimit := heapLimit) (depth := 0) hw sliceFit
@@ -205,7 +206,7 @@ theorem function_timeBound {w control heapLimit : Nat} {array : ArrayRef w}
     ram_time_call sumTime [ArrayRef.subslice, ArrayRef.args,
       sliceRep, sliceRep.1.symm, sumFunctions.result_eq.sum, DSL.ValueKind.encode]
     all_goals simpa only [ArrayRef.subslice] using sliceRep
-  · rintro window middle ⟨rfl, _, _⟩ _
+  · rintro window middle ⟨rfl, _, _⟩
     ram_bound [functions.result_eq.slice, ArrayRef.subslice]
 
 /-- The same compiled invocation additionally charges its outer call, return

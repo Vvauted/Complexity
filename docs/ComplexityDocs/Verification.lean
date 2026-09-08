@@ -174,9 +174,13 @@ bound is never passed to the runner as fuel.
 its returned fields using the declared result shape. The proof argument is in `Prop`
 and erased at runtime, not a supplied answer extracted from a specification.
 Use `Ram.LocalCompiler.Function.applyTyped_eq_of_execution` for the generated typed value;
-the underlying `apply_eq_of_execution` identifies raw fields.
+the underlying `apply_eq_of_execution` identifies raw fields. When starting with
+a typed contract, prefer `Ram.LocalCompiler.Function.applyTyped_spec`: provide
+its precondition and a mathematical implication from the postcondition to the
+desired value property. The lower-bound and slice-sum equations use this rule
+without unpacking an execution or reconstructing the returned fields.
 `runTotal_correct_of_execution` also retains the source-visible final-state observation.
-Neither normal halt nor projecting a result asserts that the body has no effects.
+Neither normal halt nor projecting a result property asserts that the body has no effects.
 
 `Ram.LocalCompiler.Function.applyStateTyped_eq_of_execution` identifies the typed pair
 with `(value, finish)`, while `applyStateTyped_spec` transfers a typed contract's
@@ -207,8 +211,10 @@ the mathematical contents projection. The three typed correctness calls use
 `TypedFunctionContract.wp_call_restored`: their continuation sees the actual
 shared effects with caller bindings already restored, so subsequent calls need
 no accumulated register-restoration equalities. Ordinary result assignment still
-occurs. The existing independent time-call rule still exposes those equalities;
-the proof experience is not yet uniform across both layers.
+occurs. `FunctionTimeBound.call_seq_typed_restored_at` gives the separate time
+proof the same restored-state interface; the default remaining-reserve variant
+also removes hand-selected intermediate budgets. Mathematical representation and
+whole-algorithm cost arguments remain explicit.
 The raw `applyState_eq_of_execution` identifies `(values, finish)`.
 Its `returnState` projection keeps entry registers, takes actual target memory below
 `heapLimit` and entry memory outside it, and retains actual input/output effects.

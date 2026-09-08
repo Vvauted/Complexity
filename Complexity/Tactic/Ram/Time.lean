@@ -5,6 +5,8 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Verification.Time.Function
 import Complexity.Computability.Ram.Verification.Time.Composition
+import Complexity.Computability.Ram.Verification.Time.Typed
+import Complexity.Computability.Ram.Source.Linking
 import Complexity.Tactic.Ram.Budget
 
 /-!
@@ -18,6 +20,16 @@ a callee's separate bound to a final call. `ram_time_apply correct time reservin
 remaining [facts]` additionally uses its functional contract to continue after
 a leading call. Call arguments and destinations are inferred from the source
 body, including anonymous destinations of discarded calls.
+
+`ram_time_apply correct time on input [facts]` instead selects a typed input and
+subtracts the proved call bound from the current reserve. The continuation sees
+the actual shared effects with caller bindings already restored. The call must
+fit the current reserve. Automation tries only lookup and argument obligations;
+affordability, representation preconditions and the continuation remain explicit.
+Supplied simplification facts are tried only in complete solutions, so an
+unsuccessful attempt does not unfold mathematical names in the continuation.
+Value-dependent continuation bounds remain available through the underlying typed
+call rules.
 
 The remaining bound is a proof obligation, not execution fuel. The continuation
 receives the actual shared-state postcondition and preserved caller registers;
@@ -44,11 +56,29 @@ The supplied reserve must bound the actual remaining execution. -/
 syntax (name := ramTimeApply) "ram_time_apply " term:max ppSpace term:max
   " reserving " term:max (" [" simpArg,* "]")? : tactic
 
+/-- Continue at a chosen typed input using the remaining proof reserve.
+Only completely solved routine goals are discharged; mathematical obligations
+and the actual restored-state continuation retain their original form. -/
+syntax (name := ramTimeApplyTyped) "ram_time_apply " term:max ppSpace term:max
+  " on " term:max (" [" simpArg,* "]")? : tactic
+
 macro_rules
   | `(tactic| ram_time_vc) => `(tactic| ram_time_vc [])
   | `(tactic| ram_time_vc [$args,*]) =>
       `(tactic|
-        (ram_simp [$args,*]
+        (try
+           (change Ram.Source.TimeBound _ _ _ _ _ _ _
+            conv =>
+              arg 7
+              simp (config := { failIfUnchanged := false }) only
+                [ram_bindings, Ram.ABI.callPrefixLocals_length_eq,
+                  Ram.ABI.returnCodeResultsLocals_length,
+                  Ram.Func.renameCalls_locals, Ram.Func.renameCalls_results,
+                  Ram.Tactic.compile_const_length, Ram.Tactic.compile_var_length,
+                  Ram.Tactic.compile_bin_length, Ram.Tactic.compile_load_length,
+                  List.map_nil, List.map_cons, List.sum_nil, List.sum_cons,
+                  List.length_nil, List.length_cons, $args,*])
+         ram_simp [$args,*]
          repeat' first
            | apply Ram.Source.TimeBound.seq_assoc_iff.mpr
            | apply Ram.Source.TimeBound.skip_seq_iff.mpr
@@ -79,3 +109,13 @@ macro_rules
            simp (config := { failIfUnchanged := false }) only
              [Ram.Expr.ReadsBelow, and_true, true_and]
          all_goals try (solve | (intros; ram_bound [$args,*]))))
+  | `(tactic| ram_time_apply $correct $time on $input) =>
+      `(tactic| ram_time_apply $correct $time on $input [])
+  | `(tactic| ram_time_apply $correct $time on $input [$args,*]) => do
+      let solvePremise ← `(tactic|
+        try (solve | (ram_simp [$args,*] <;> assumption)))
+      `(tactic|
+        (apply Ram.Source.FunctionTimeBound.call_seq_typed_remaining_at
+           $time $correct $input
+         case' lookup | arguments | argumentValues =>
+           ($solvePremise:tactic)))

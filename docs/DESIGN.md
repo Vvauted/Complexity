@@ -67,6 +67,11 @@ independently supplied callee-time theorem and keeps the typed result in the
 time continuation. Its bound can depend on that value and shared state; slice
 uses the returned reference's length. The adapter reuses the original call rule,
 not a second cost semantics or a default-valued raw-field decoder.
+The restored variant presents the same shared effects with caller bindings
+already restored. Its default remaining-reserve variant subtracts the complete
+proved call bound only after proving it fits. This removes intermediate reserve
+choices, not the overall recurrence or domain obligations. Explicit bounds
+depending on the returned value and shared state remain available.
 
 Representation predicates relate mathematical values to visible machine state.
 Use mathlib equivalences when information is preserved, and relations when a
@@ -131,6 +136,10 @@ Generated `apply` and `applyState` decode the declared fields without default wo
 target memory below the heap boundary, and retains actual I/O. Safe execution
 proves this projection equals the source final state; target stack cells are not
 shared data. Existing contract postconditions transfer through `applyState_spec`.
+Its typed counterpart is `applyStateTyped_spec`; `applyTyped_spec` additionally
+projects a proved property of the returned value. This hides state only from the
+chosen conclusion, not from execution or its correctness premises. It does not
+assert that an effectful program is pure.
 Passing this state between host-level applications does not itself compile their
 composition into one RAM program or supply a combined RAM-cost theorem.
 Source composition is separate: including copy and sum and calling them inside a

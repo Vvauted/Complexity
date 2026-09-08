@@ -73,6 +73,10 @@ generated body used by the correctness proof:
 - `ram_time_apply correct time reserving N [facts]` handles a leading call and
   continues with a bound of `N` on the remainder. Its functional contract supplies
   the actual returned value, shared-state postcondition and preserved caller locals.
+- `ram_time_apply correct time on input [facts]` selects a typed input and derives
+  the remaining reserve by subtracting the complete proved call bound. Caller
+  bindings are already restored in its continuation. Lookup and argument equations
+  are automated; representation and affordability premises remain explicit.
 
 Call expressions and destinations are inferred from the source body, including
 private destinations of discarded non-`Unit` calls and empty destinations for true
@@ -92,11 +96,16 @@ the state where the remainder executes. The theorem `call_seq_at` permits the
 remaining bound to depend on the actual returned value and shared state; the
 convenience tactic uses the supplied `N` independently of that returned pair.
 The [typed call adapter](##Complexity.Computability.Ram.Verification.Time.Typed)
-provides the same composition with a typed value. Supply the argument explicitly
-and a `nextBound` function of the result and shared state. The slice sample uses
+provides the same composition with a typed value. Its restored variant,
+`call_seq_typed_restored_at`, accepts an explicit argument and a `nextBound`
+function of the result and shared state. The slice sample uses
 `fun window _ => 18 * window.length.toNat + 66`; its slice postcondition then
 justifies the overall bound. No inverse argument encoder, manufactured return
-value or runtime reserve is introduced.
+value or runtime reserve is introduced. The default `on input` form instead uses
+`call_seq_typed_remaining_at`: if the current reserve is `m` and the proved
+complete call bound is `n`, it leaves `m - n` and requires `n ≤ m`. Subtraction
+alone is not a proof that a call is affordable. This form avoids choosing each
+intermediate reserve when an overall bound is already available.
 Assignment prefixes reuse `Ram.Source.TimeBound.assign_seq_at` and the sequence
 rules in [time composition](##Complexity.Computability.Ram.Verification.Time.Composition).
 Their costs come from compiled expression and assignment lengths; a local array
@@ -104,10 +113,11 @@ descriptor's two assignments and base arithmetic are charged, not treated as a
 proof-only change of view. This prefix automation does not prove arbitrary loops
 or infer a callee's time bound.
 
-`N` is a bound to justify in the proof, not an operational budget or an unchecked
-cost annotation. The tactics neither choose it nor prove a callee's cost from
-its functional specification. Correctness and termination still have no time-bound
-premise; these rules compose separately proved costs of the same implementation.
+An explicit `N` is a bound to justify in the proof, not an operational budget or
+an unchecked cost annotation. Automatic subtraction derives only a remaining
+reserve, not the initial algorithm bound or a callee's cost from its functional
+specification. Correctness and termination still have no time-bound premise;
+these rules compose separately proved costs of the same implementation.
 
 ## Keep actual steps with ordinary application
 
@@ -363,6 +373,10 @@ by `53 * n + 348`, including descriptor arithmetic and all internal calling
 overhead. `bodyBudget n = Recurrence.balancedBudget 4 227 n` covers this work and
 both unequal children. The induction proves the bound at every sufficient call
 depth rather than assuming a conditional bound is monotone in depth.
+Its three typed calls use the `on input` form above. The proof no longer hand-picks
+each continuation reserve or threads register-restoration equalities. The shared
+array stages retain the actual mutation and frame facts, and the proof author
+still supplies the whole-branch inequality and recursive capacity arguments.
 
 In the [actual runtime client](##Examples.Ram.MergeSort),
 `Function.runTotal_steps_le` counts the outer invocation and halt as well:
