@@ -268,6 +268,18 @@ theorem assign_value {dst : Reg} {value : Expr}
   · rintro ⟨middle, first, t, second, hp⟩
     exact ⟨t, .seq first second, hp⟩
 
+/-- Reassociate a sequence without changing its continuation. -/
+theorem seq_assoc_iff {first second third : Stmt} :
+    TotalWP program heapLimit depth (.seq (.seq first second) third) post s ↔
+      TotalWP program heapLimit depth (.seq first (.seq second third)) post s := by
+  have continuation :
+      TotalWP program heapLimit depth (.seq second third) post =
+        TotalWP program heapLimit depth second
+          (TotalWP program heapLimit depth third post) := by
+    funext middle
+    exact propext seq_iff
+  simp only [seq_iff, continuation]
+
 @[simp] theorem ite_iff {condition : Expr} {yes no : Stmt} :
     TotalWP program heapLimit depth (.ite condition yes no) post s ↔
       condition.ReadsBelow heapLimit s.regs s.mem ∧
@@ -292,6 +304,29 @@ theorem assign_value {dst : Reg} {value : Expr}
     · rw [if_neg hz] at h
       obtain ⟨t, body, hp⟩ := h
       exact ⟨t, .iteTrue reads hz body, hp⟩
+
+/-- A known zero guard selects the false branch without changing its postcondition. -/
+theorem ite_of_eq_zero {condition : Expr} {yes no : Stmt}
+    (reads : condition.ReadsBelow heapLimit s.regs s.mem)
+    (zero : s.eval condition = 0)
+    (branch : TotalWP program heapLimit depth no post s) :
+    TotalWP program heapLimit depth (.ite condition yes no) post s := by
+  exact ite_iff.mpr ⟨reads, by simpa only [if_pos zero] using branch⟩
+
+/-- A known nonzero guard selects the true branch without changing its postcondition. -/
+theorem ite_of_ne_zero {condition : Expr} {yes no : Stmt}
+    (reads : condition.ReadsBelow heapLimit s.regs s.mem)
+    (nonzero : s.eval condition ≠ 0)
+    (branch : TotalWP program heapLimit depth yes post s) :
+    TotalWP program heapLimit depth (.ite condition yes no) post s := by
+  exact ite_iff.mpr ⟨reads, by simpa only [if_neg nonzero] using branch⟩
+
+/-- A common trailing statement remains part of either selected branch. -/
+theorem ite_seq_iff {condition : Expr} {yes no tail : Stmt} :
+    TotalWP program heapLimit depth (.seq (.ite condition yes no) tail) post s ↔
+      TotalWP program heapLimit depth
+        (.ite condition (.seq yes tail) (.seq no tail)) post s := by
+  simp only [seq_iff, ite_iff]
 
 theorem of_contract {P Q : State w → Prop}
     (contract : TotalContract program heapLimit depth stmt P Q) (pre : P s)

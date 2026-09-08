@@ -306,7 +306,7 @@ Parent and child fragments overlap; the flat site array is not an execution
 trace. A driver descends through the hierarchy instead of concatenating or
 charging every recorded fragment.
 
-The initialization proof driver consumes these sites in root-block order,
+The initialization proof driver consumes these sites in the current lexical block's order,
 advancing only complete assignment/skip source statements. An array descriptor
 is exposed only after both real field assignments. It uses the actual goal's
 elaborated expressions; retained source terms are never elaborated again in a
@@ -316,8 +316,23 @@ conditional time bounds retain affordability and charge emitted instructions.
 Naming the resulting state and its `Word`/`ArrayRef` locals adds proof-only views,
 not executable conversions, a loader or assumptions about arbitrary heap effects.
 
+Known-branch entry uses the same block traversal. A code goal can retain its
+declaration, block path and next source position in Lean expression metadata;
+entry checks the statement at that exact path in the supplied actual function.
+This is neither an AST search nor another stored execution. Proved sequence and
+conditional rules retain parent continuations, guard evaluation and generated
+jumps. A missing `else` consumes its actual skip, without inventing a child scope.
+These are proof rearrangements over counted executions, not edits to the compiled program.
+Completing a child restores the parent scope; array locals still require both
+field assignments before becoming visible.
+
+The generated Lean lets are snapshots of values at that point. Existing typed
+call rules can use their binding equations and pass the lets into continuations.
+They do not maintain the source cursor or refresh mutable bindings. A call's
+actual postcondition, not these snapshots, justifies any changed heap assertion.
+
 General source-directed proof elaboration remains unfinished. The sites are not
-new correctness certificates. A future driver must follow the actual WP
+new correctness certificates. Extending the driver must follow the actual WP
 decomposition and give a lexical cursor only to code continuations. Expressions
 and effects come from that proof goal, not from reinterpreting stored source
 syntax. In particular, source locations do not justify transporting a heap

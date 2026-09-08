@@ -72,6 +72,38 @@ theorem seq_assoc_iff {a b c : Stmt} {bound : State w → Nat} :
         simpa only [Nat.add_assoc] using
           h s hs _ t (.seq first (.seq second third))
 
+/-- Distributing a continuation into both branches preserves the completed
+execution's total count, including the true branch's jump. -/
+theorem ite_seq_iff {condition : Expr} {yes no tail : Stmt} {bound : State w → Nat} :
+    TimeBound control program heapLimit depth (.seq (.ite condition yes no) tail) P bound ↔
+      TimeBound control program heapLimit depth
+        (.ite condition (.seq yes tail) (.seq no tail)) P bound := by
+  constructor
+  · intro h s hs steps t execution
+    cases execution with
+    | iteTrue reads nonzero branch =>
+      cases branch with
+      | seq first second =>
+        have time := h s hs _ t (.seq (.iteTrue reads nonzero first) second)
+        rw [Nat.add_right_comm _ 1] at time
+        simpa only [Nat.add_assoc] using time
+    | iteFalse reads zero branch =>
+      cases branch with
+      | seq first second =>
+        simpa only [Nat.add_assoc] using
+          h s hs _ t (.seq (.iteFalse reads zero first) second)
+  · intro h s hs steps t execution
+    cases execution with
+    | seq choice rest =>
+      cases choice with
+      | iteTrue reads nonzero first =>
+        rw [Nat.add_right_comm _ 1]
+        simpa only [Nat.add_assoc] using
+          h s hs _ t (.iteTrue reads nonzero (.seq first rest))
+      | iteFalse reads zero first =>
+        simpa only [Nat.add_assoc] using
+          h s hs _ t (.iteFalse reads zero (.seq first rest))
+
 /-- A leading skip changes neither the entry state nor the remaining count. -/
 theorem skip_seq_iff {tail : Stmt} {bound : State w → Nat} :
     TimeBound control program heapLimit depth (.seq .skip tail) P bound ↔
@@ -134,6 +166,66 @@ theorem write {value : Expr} :
   intro s _ steps t hx
   cases hx
   exact Nat.le_refl _
+
+/-- A known zero guard charges its evaluation and conditional jump before the
+false branch. The unreachable true branch needs no time bound. -/
+theorem ite_of_eq_zero {condition : Expr} {yes no : Stmt} {bound : State w → Nat}
+    (zero : ∀ s, P s → s.eval condition = 0)
+    (branch : TimeBound control program heapLimit depth no P bound) :
+    TimeBound control program heapLimit depth (.ite condition yes no) P
+      (fun s => (condition.compile (ABI.scratch control)).length + 1 + bound s) := by
+  intro s hs steps finish execution
+  cases execution with
+  | iteTrue _ nonzero _ => exact False.elim (nonzero (zero s hs))
+  | iteFalse _ _ body =>
+    exact Nat.add_le_add_left (branch s hs _ _ body) _
+
+/-- A known nonzero guard also charges the true branch's final jump past the
+false branch. Only the selected branch needs a conditional time bound. -/
+theorem ite_of_ne_zero {condition : Expr} {yes no : Stmt} {bound : State w → Nat}
+    (nonzero : ∀ s, P s → s.eval condition ≠ 0)
+    (branch : TimeBound control program heapLimit depth yes P bound) :
+    TimeBound control program heapLimit depth (.ite condition yes no) P
+      (fun s => (condition.compile (ABI.scratch control)).length + 1 + bound s + 1) := by
+  intro s hs steps finish execution
+  cases execution with
+  | iteTrue _ _ body =>
+    exact Nat.add_le_add_right (Nat.add_le_add_left (branch s hs _ _ body) _) 1
+  | iteFalse _ zero _ => exact False.elim (nonzero s hs zero)
+
+/-- At one actual entry, reserve the false branch's budget after paying for
+the guard. Affordability is explicit, so natural subtraction cannot hide a
+budget smaller than the generated overhead. -/
+theorem ite_of_eq_zero_at {condition : Expr} {yes no : Stmt}
+    {entry : State w} {overall : Nat}
+    (zero : entry.eval condition = 0)
+    (budget : (condition.compile (ABI.scratch control)).length + 1 ≤ overall)
+    (branch : TimeBound control program heapLimit depth no (fun s => s = entry)
+      (fun _ => overall - ((condition.compile (ABI.scratch control)).length + 1))) :
+    TimeBound control program heapLimit depth (.ite condition yes no)
+      (fun s => s = entry) (fun _ => overall) := by
+  apply (ite_of_eq_zero (P := fun s => s = entry)
+    (by rintro s rfl; exact zero) branch).mono_budget
+  intro s hs
+  dsimp only
+  omega
+
+/-- At one actual entry, reserve the true branch's budget after paying for
+the guard and the jump past the false branch. Read safety comes from completed
+executions; this separate bound assumes neither safety nor termination. -/
+theorem ite_of_ne_zero_at {condition : Expr} {yes no : Stmt}
+    {entry : State w} {overall : Nat}
+    (nonzero : entry.eval condition ≠ 0)
+    (budget : (condition.compile (ABI.scratch control)).length + 2 ≤ overall)
+    (branch : TimeBound control program heapLimit depth yes (fun s => s = entry)
+      (fun _ => overall - ((condition.compile (ABI.scratch control)).length + 2))) :
+    TimeBound control program heapLimit depth (.ite condition yes no)
+      (fun s => s = entry) (fun _ => overall) := by
+  apply (ite_of_ne_zero (P := fun s => s = entry)
+    (by rintro s rfl; exact nonzero) branch).mono_budget
+  intro s hs
+  dsimp only
+  omega
 
 /-- Reuse a callee's time bound at its actual argument state. The overhead
 comes from the same callee-sized save/restore blocks as measured execution.

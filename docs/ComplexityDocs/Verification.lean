@@ -207,7 +207,7 @@ call-depth capacity without introducing a time budget.
 The [executable client](##Examples.Ram.MergeSort) then states sortedness,
 permutation and a contents-level `StateM` equality using existing list theorems.
 Scratch may change and remains represented; those effects are not erased by
-the mathematical contents projection. The three typed correctness calls use
+the mathematical contents projection. The typed correctness calls use
 `TypedFunctionContract.wp_call_restored`: their continuation sees the actual
 shared effects with caller bindings already restored, so subsequent calls need
 no accumulated register-restoration equalities. Ordinary result assignment still
@@ -586,14 +586,65 @@ The independent time proof uses `ram_time_start` and `ram_time_init` with the
 same syntax, but applies the existing conditional time rules and charges the
 actual assignments. Both initialization forms accept optional `[facts]`;
 unsolved safety or affordability goals remain explicit. Neither form invents a
-loop invariant or advances through a call. The current entry requires the
-named function's whole body, not an arbitrary already-executed prefix.
-See [source initialization](##Complexity.Tactic.Ram.Source).
+loop invariant or advances through a call.
+
+To enter the next source conditional, select its branch explicitly:
+
+```text
+ram_total_branch f then at current with bindings [facts]
+ram_total_branch f else at current with bindings [facts]
+ram_time_branch f then at current with bindings [facts]
+ram_time_branch f else at current with bindings [facts]
+```
+
+`then` requires the actual guard to be nonzero; `else` requires it to be zero.
+Selecting a branch does not assume that condition: unresolved guard, read-safety
+or time-affordability obligations remain ordinary goals. The step enters that
+branch's lexical scope and advances its leading initializers, stopping before
+another conditional, call, loop or other effect. Statements following the
+conditional are retained; an omitted `else` executes the actual empty branch.
+
+The [recursive sort implementation](##Complexity.Computability.Ram.Array.MergeSort.Function)
+starts its large-input case with `ram_total_start`, followed by
+`ram_total_branch sortFunctions.function.sort then at initial with bindings`.
+Supplied range facts prove the guard. The actual source declarations then produce
+`initial.middle : Word w` and `initial.left`, `initial.right : ArrayRef w`.
+Both descriptor assignments complete before an array local becomes visible.
+These values are passed to the existing recursive and merge contracts; no raw
+slots or separately reconstructed initializer state are needed. Halving,
+slice containment, disjointness and changed-heap reassembly are still proved
+with the existing mathematical lemmas.
+
+The [separate time proof](##Complexity.Computability.Ram.Array.MergeSort.FunctionTime)
+uses `ram_time_start` and the corresponding `ram_time_branch`. Its rules retain
+the actual guard evaluation, branch jumps and field-assignment costs; they bound
+completed executions without using the initialization's total-correctness proof.
+The proof starts from the original whole-body bound, with no hand-selected
+intermediate branch reserve. The recurrence and proof that the complete work
+fits that bound remain explicit, while remaining allowances follow from the
+actual operations.
+
+Without a cursor, these entry points require the named function's whole body.
+An initialization or branch step records its exact lexical block and next child
+only on the remaining code goal, so another such step can continue there.
+The actual code is rechecked at that fixed position: no search for an equal AST
+or re-elaboration of embedded source terms is used. This does not locate an
+arbitrary prefix after unrelated proof tactics have advanced it.
+
+The generated Lean lets are snapshots at the named state, not live readers of
+later registers or heap contents. They remain usable in ordinary call proofs;
+sort's `Unit` calls restore the caller locals containing its descriptors.
+Representations of changed arrays still require the actual callee postcondition.
+Ordinary call tactics do not advance the source cursor or automatically bind a
+new source-local result name. Entering loaded loop-body scopes and elaborating
+source-level invariants remain unfinished. See
+[source-directed initialization and branches](##Complexity.Tactic.Ram.Source).
 
 For a typed function call, `ram_total_apply contract on input [facts]` selects
 the actual mathematical input and passes the returned value and shared effects
 to a continuation with caller locals restored. It only attempts to close the
-lookup, result-count, argument-read and argument-value obligations completely.
+lookup, result-count, argument-read and argument-value obligations completely,
+using declaration equations and locally generated source-binding facts.
 The functional precondition, call-depth condition and continuation retain their
 original form. In particular, supplying a slice definition to match runtime
 arguments does not also expand every represented slice in the continuation.

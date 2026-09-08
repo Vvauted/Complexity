@@ -136,7 +136,8 @@ syntax (name := ramTotalApply) "ram_total_apply " term:max
 
 /-- Select a typed input and continue with restored caller bindings. Only
 completely solved lookup, result-shape and argument goals are discharged;
-mathematical preconditions, call depth and the continuation remain unchanged. -/
+local binding equations are available to these attempts. Mathematical preconditions,
+call depth and the continuation remain unchanged. -/
 syntax (name := ramTotalApplyTyped) "ram_total_apply " term:max
   " on " term:max (" [" simpArg,* "]")? : tactic
 
@@ -156,7 +157,7 @@ elab_rules : tactic
           goal.setTag (← goal.getTag).eraseMacroScopes
         Lean.Elab.Tactic.evalTactic (← `(tactic|
           case' lookup | resultCount | arguments | argumentValues =>
-            try (solve | (ram_simp [$args,*] <;> assumption))))
+            try (solve | (ram_simp [*, $args,*] <;> assumption))))
 
 macro_rules
   | `(tactic| ram_total_apply $contract) => `(tactic| ram_total_apply $contract [])

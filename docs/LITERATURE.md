@@ -122,6 +122,14 @@ must remain a proof obligation; natural-number subtraction alone cannot justify
 overspending. This is an application of our existing call theorem, not a new
 heap-credit semantics or a change to budget-free functional correctness.
 
+Section 3.1 makes sequencing explicit through administrative normal form;
+its conditional inspects an already evaluated value. This is a useful warning
+when borrowing proof syntax: its function-call count cannot price our guard.
+Our known-branch rules separately charge the compiled condition and, on the
+true branch, the extra jump. They retain the parent continuation through proved
+count-preserving sequence rules. A convenient source branch name does not make
+those instructions free or make a conditional time bound prove termination.
+
 ## 5. Separate algorithmic reasoning from representation proofs
 
 Maximilian P. L. Haslbeck and Peter Lammich, **Refinement with Time — Refining the

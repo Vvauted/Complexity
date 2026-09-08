@@ -26,7 +26,7 @@ subtracts the proved call bound from the current reserve. The continuation sees
 the actual shared effects with caller bindings already restored. The call must
 fit the current reserve. Automation tries only lookup and argument obligations;
 affordability, representation preconditions and the continuation remain explicit.
-Supplied simplification facts are tried only in complete solutions, so an
+Local binding equations and supplied facts are tried only in complete solutions, so an
 unsuccessful attempt does not unfold mathematical names in the continuation.
 Value-dependent continuation bounds remain available through the underlying typed
 call rules.
@@ -111,11 +111,15 @@ macro_rules
          all_goals try (solve | (intros; ram_bound [$args,*]))))
   | `(tactic| ram_time_apply $correct $time on $input) =>
       `(tactic| ram_time_apply $correct $time on $input [])
-  | `(tactic| ram_time_apply $correct $time on $input [$args,*]) => do
-      let solvePremise ← `(tactic|
-        try (solve | (ram_simp [$args,*] <;> assumption)))
-      `(tactic|
-        (apply Ram.Source.FunctionTimeBound.call_seq_typed_remaining_at
-           $time $correct $input
-         case' lookup | arguments | argumentValues =>
-           ($solvePremise:tactic)))
+
+elab_rules : tactic
+  | `(tactic| ram_time_apply $correct $time on $input [$args,*]) =>
+      Lean.Elab.Tactic.focus do
+        Lean.Elab.Tactic.evalTactic (← `(tactic|
+          apply Ram.Source.FunctionTimeBound.call_seq_typed_remaining_at
+            $time $correct $input))
+        for goal in ← Lean.Elab.Tactic.getUnsolvedGoals do
+          goal.setTag (← goal.getTag).eraseMacroScopes
+        Lean.Elab.Tactic.evalTactic (← `(tactic|
+          case' lookup | arguments | argumentValues =>
+            try (solve | (ram_simp [*, $args,*] <;> assumption))))

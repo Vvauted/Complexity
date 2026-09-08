@@ -9,16 +9,16 @@ import Complexity.Tactic.Ram.Time
 import Lean.Elab.Tactic.Conv
 
 /-!
-# Source-directed initialization proofs
+# Source-directed initialization and branch proofs
 
 `ram_total_start args entry pre` opens a function contract using its existing
 `of_wp` rule, without advancing the body. `ram_time_start` similarly opens an
 independent function time bound.
 
 `ram_total_init function at current with bindings [facts]` starts at that
-declared function's actual body. It consumes complete leading source statements
+declared function's actual body or a retained source continuation. It consumes leading statements
 containing only assignments and skips, using the lexical positions retained by
-the original lowering. Calls, control flow and other side effects stop it.
+the original lowering. Calls, control flow and other side effects stop initialization.
 In particular, both assignments of an array initializer complete before its
 new binding becomes visible. Read-safety obligations are retained unless the
 supplied facts and ordinary RAM simplification solve them completely.
@@ -32,10 +32,19 @@ not another execution of the source program or function-level loop locals.
 measured rules, retaining every unresolved cost obligation. If the entire body
 is an initialization, its final primitive bound finishes the code proof.
 
-Only the actual goal's statement is inspected. Retained source and emitted
-syntax are never re-elaborated; their fragment counts identify the boundaries
-of the same lowering. This is an initialization driver, not a cursor that
-tracks arbitrary subsequent tactics or enters nested lexical blocks.
+`ram_total_branch function then at current with bindings [facts]` enters the
+next conditional's true branch and initializes its lexical locals; `else` selects
+the false branch. Guard and read-safety obligations remain unless fully solved.
+`ram_time_branch` charges the actual guard and jump, retaining affordability
+instead of assuming safety or termination. Parent continuations remain part of
+the same computation; after a child completes, the parent scope is restored.
+
+Only code continuations retain a declaration, lexical path and next source position.
+The actual statement is checked against that fixed position, not found by an AST
+search. Retained source and emitted syntax are never re-elaborated. The cursor
+connects these initialization and branch tactics, not arbitrary subsequent tactics,
+function-call continuations or loop-invariant proofs. The typed lets remain ordinary
+proof snapshots across calls; they neither update themselves nor preserve heap contents.
 -/
 
 namespace Ram.Tactic.Source
@@ -72,10 +81,109 @@ private def timeEntry (pre : Lean.Expr) : MetaM Lean.Expr := do
       throwError "Expected a time precondition of the form fun s => s = entry"
     return rhs
 
+private structure Cursor where
+  function : Name
+  path : DSL.ProofPath := []
+  nextChild : Nat := 0
+
+private structure BlockFrame where
+  site : DSL.ProofSite
+  code : Lean.Expr
+  nextChild : Nat := 0
+
+private def siteAt (sites : Array DSL.ProofSite) (path : DSL.ProofPath) :
+    MetaM DSL.ProofSite := do
+  let some site := sites.find? (fun site => site.path == path) |
+    throwError "Missing source-proof location {path}"
+  return site
+
+private def blockChildren (frame : BlockFrame) (sites : Array DSL.ProofSite) :
+    MetaM (Array DSL.ProofSite) :=
+  frame.site.children.mapM (siteAt sites)
+
+private def blockRemainder (frame : BlockFrame) (sites : Array DSL.ProofSite) :
+    MetaM (Option Lean.Expr) := do
+  let children ← blockChildren frame sites
+  if children.isEmpty then
+    return if frame.nextChild == 0 then some frame.code else none
+  if frame.nextChild >= children.size then return none
+  let skipped := (children.extract 0 frame.nextChild).foldl
+    (fun n site => n + site.emitted.size) 0
+  let mut rest := frame.code
+  for _ in [:skipped] do
+    let some (_, next) := (← whnf rest).app2? ``Stmt.seq |
+      throwError "The actual statement does not match its source fragment boundaries"
+    rest := next
+  return some rest
+
+private def framesRemainder (frames : List BlockFrame) (sites : Array DSL.ProofSite) :
+    MetaM (Option Lean.Expr) := do
+  let mut rest := none
+  for frame in frames.reverse do
+    if let some code ← blockRemainder frame sites then
+      rest ← match rest with
+        | none => pure (some code)
+        | some tail => do pure (some (← mkAppM ``Stmt.seq #[code, tail]))
+  return rest
+
+/-- Reconstruct only the explicitly recorded lexical path in the actual function. -/
+private partial def cursorFrames (code : Lean.Expr) (sites : Array DSL.ProofSite)
+    (path : DSL.ProofPath) (nextChild : Nat) : MetaM (List BlockFrame) := do
+  let rec descend (code : Lean.Expr) (atPath remaining : DSL.ProofPath)
+      (parents : List BlockFrame) : MetaM (List BlockFrame) := do
+    let site ← siteAt sites atPath
+    match remaining with
+    | [] => return ⟨site, code, nextChild⟩ :: parents
+    | index :: side :: rest =>
+        let frame : BlockFrame := ⟨site, code, index⟩
+        let some childPath := site.children[index]? |
+          throwError "Missing source statement at {atPath}, position {index}"
+        let child ← siteAt sites childPath
+        unless child.emitted.size == 1 do
+          throwError "Expected one conditional source statement"
+        let some suffix ← blockRemainder frame sites |
+          throwError "The source position has no statement"
+        let statement ← if index + 1 < site.children.size then do
+            let some (first, _) := (← whnf suffix).app2? ``Stmt.seq |
+              throwError "Expected the conditional's source continuation"
+            pure first
+          else pure suffix
+        let statement ← whnf statement
+        unless statement.isAppOfArity ``Stmt.ite 3 && side < 2 do
+          throwError "Expected an actual conditional at source position {childPath}"
+        let childCode := statement.getAppArgs[side + 1]!
+        descend childCode (childPath ++ [side]) rest
+          ({ frame with nextChild := index + 1 } :: parents)
+    | _ => throwError "Incomplete lexical block path"
+  descend code [] path []
+
+private def pathName (path : DSL.ProofPath) : Name :=
+  path.foldl Name.num .anonymous
+
+private def namePath : Name → DSL.ProofPath
+  | .anonymous => []
+  | .num parent index => namePath parent ++ [index]
+  | .str _ _ => []
+
+private def cursor? (target : Lean.Expr) : Option Cursor := do
+  let .mdata data _ := target | none
+  let .ofName function ← data.find `ram.source.function | none
+  let .ofName path ← data.find `ram.source.path | none
+  let .ofNat nextChild ← data.find `ram.source.next | none
+  return ⟨function, namePath path, nextChild⟩
+
+private def markCursor (goal : MVarId) (cursor : Cursor) : MetaM MVarId := goal.withContext do
+  let data := KVMap.empty
+    |>.insert `ram.source.function cursor.function
+    |>.insert `ram.source.path (pathName cursor.path)
+    |>.insert `ram.source.next cursor.nextChild
+  goal.change (.mdata data (← goal.getType).consumeMData)
+
 private structure InitializationPrefix where
   fragments : Array Lean.Expr
   scope : DSL.LocalScope
   remaining : Nat
+  nextChild : Nat
 
 /-- Inspect only the current fragment, not another source position with equal code. -/
 private partial def isInitialization (code : Lean.Expr) : MetaM Bool := do
@@ -85,18 +193,21 @@ private partial def isInitialization (code : Lean.Expr) : MetaM Bool := do
     return (← isInitialization first) && (← isInitialization second)
   return false
 
-private def initializationPrefix (code : Lean.Expr) (sites : Array DSL.ProofSite) :
+private def initializationPrefix (code : Lean.Expr) (frame : BlockFrame)
+    (sites : Array DSL.ProofSite) :
     MetaM InitializationPrefix := do
-  let some root := sites.find? (fun site => site.path.isEmpty) |
-    throwError "The function has no root source-proof location"
-  let children ← root.children.mapM fun path => do
-    let some site := sites.find? (fun site => site.path == path) |
-      throwError "Missing source-proof location {path}"
-    pure site
+  let allChildren ← blockChildren frame sites
+  if allChildren.isEmpty then
+    unless (← whnf code).isAppOf ``Stmt.skip do
+      throwError "Expected an empty source block's actual skip"
+    return ⟨#[code], frame.site.beforeScope, 0, 1⟩
+  let children := allChildren.extract frame.nextChild allChildren.size
   let mut remaining := children.foldl (fun n site => n + site.emitted.size) 0
   let mut rest := code
   let mut fragments := #[]
-  let mut scope := root.beforeScope
+  let mut scope := if frame.nextChild == 0 then frame.site.beforeScope
+    else allChildren[frame.nextChild - 1]!.afterScope
+  let mut nextChild := frame.nextChild
   for site in children do
     if site.synthetic || site.source.isNone || !site.children.isEmpty then break
     let mut nextRest := rest
@@ -116,7 +227,8 @@ private def initializationPrefix (code : Lean.Expr) (sites : Array DSL.ProofSite
     scope := site.afterScope
     rest := nextRest
     remaining := nextRemaining
-  return ⟨fragments, scope, remaining⟩
+    nextChild := nextChild + 1
+  return ⟨fragments, scope, remaining, nextChild⟩
 
 private def applyOne (goal : MVarId) (tactic : TSyntax `tactic) : TacticM MVarId := do
   setGoals [goal]
@@ -256,9 +368,8 @@ private def nameState (goal : MVarId) (state : Lean.Expr) (scope : DSL.LocalScop
               (← mkAppM ``Ram.ArrayRef.length #[value]) lengthProof
   return goal
 
-private def initializeSource (function : TSyntax `term) (current bindings : TSyntax `ident)
-    (facts : SimpFacts) (mode : InitMode) : TacticM Unit :=
-  Lean.Elab.Tactic.focus <| withMainContext do
+private def sourceLocation (function : TSyntax `term) (mode : InitMode) :
+    TacticM (Name × Array DSL.ProofSite × List BlockFrame × MVarId) := withMainContext do
     let function ← instantiateMVars (← elabTerm function (some (mkConst ``Ram.Func)))
     let .const name _ := function.getAppFn |
       throwError "Expected a function declared by ram_def"
@@ -267,32 +378,127 @@ private def initializeSource (function : TSyntax `term) (current bindings : TSyn
     let mut goal ← getMainGoal
     let args := (← goalView goal mode).getAppArgs
     let code := args[statementIndex mode]!
-    unless ← isDefEq code (← mkAppM ``Ram.Func.body #[function]) do
-      throwError "Initialization must start at this function's actual body"
-    let initialization ← initializationPrefix code sites
+    let position := (cursor? (← goal.getType)).getD ⟨name, [], 0⟩
+    unless position.function == name do
+      throwError "The source continuation belongs to a different declaration"
+    let frames ← cursorFrames (← mkAppM ``Ram.Func.body #[function]) sites
+      position.path position.nextChild
+    let some expected ← framesRemainder frames sites |
+      throwError "The recorded source block has already completed"
+    unless ← isDefEq code expected do
+      throwError "Expected the actual body or a continuation retained by a source tactic"
+    goal ← goal.change (← goal.getType).consumeMData
+    return (name, sites, frames, goal)
+
+private def reassociate (goal : MVarId) (mode : InitMode) : TacticM MVarId := do
+  if mode == .total then
+    applyOne goal (← `(tactic| apply Ram.Source.Verification.TotalWP.seq_assoc_iff.mpr))
+  else applyOne goal (← `(tactic| apply Ram.Source.TimeBound.seq_assoc_iff.mpr))
+
+/-- Advance within a block, returning to the parent's scope only after its code ends. -/
+private def advancePrefix (name : Name) (sites : Array DSL.ProofSite)
+    (initialFrames : List BlockFrame) (initialGoal : MVarId)
+    (current bindings : TSyntax `ident) (facts : SimpFacts) (mode : InitMode)
+    (pending : List MVarId := []) : TacticM Unit := initialGoal.withContext do
+  let args := (← goalView initialGoal mode).getAppArgs
+  let mut goal := initialGoal
+  let mut frames := initialFrames
+  let entryState ← if mode == .total then pure args[6]! else timeEntry args[6]!
+  let mut currentState := entryState
+  let mut obligations := pending
+  let mut scope := (← siteAt sites []).afterScope
+  while !frames.isEmpty do
+    let frame :: parents := frames | break
+    let some code ← blockRemainder frame sites | frames := parents; continue
+    let initialization ← initializationPrefix code frame sites
+    let hasOuter := (← framesRemainder parents sites).isSome
     let mut remaining := initialization.fragments.size + initialization.remaining
-    let entryState ← if mode == .total then pure args[6]! else timeEntry args[6]!
-    let mut currentState : Lean.Expr := entryState
-    let mut obligations := []
     for fragment in initialization.fragments do
+      if hasOuter && remaining > 1 then goal ← reassociate goal mode
+      let hasTail := remaining > 1 || hasOuter
       if mode == .total then
-        if remaining > 1 then
+        if hasTail then
           goal ← applyOne goal (← `(tactic| apply Ram.Source.Verification.TotalWP.seq_iff.mpr))
-        let (next, nextState, pending) ← totalFragment goal facts
+        let (next, nextState, more) ← totalFragment goal facts
         goal := next
         currentState := nextState
-        obligations := obligations ++ pending
+        obligations := obligations ++ more
       else
-        let (next, nextState, pending) ← timeFragment goal fragment (remaining > 1) facts
-        obligations := obligations ++ pending
+        let (next, nextState, more) ← timeFragment goal fragment hasTail facts
+        obligations := obligations ++ more
         let some next := next | setGoals obligations; return
         goal := next
         currentState := nextState
       remaining := remaining - 1
-    let post? := if mode == .total && remaining == 0 && !initialization.fragments.isEmpty then
-        some args[5]! else none
-    goal ← nameState goal currentState initialization.scope current bindings facts mode post?
-    setGoals (obligations ++ [goal])
+    scope := initialization.scope
+    if initialization.remaining > 0 then
+      frames := { frame with nextChild := initialization.nextChild } :: parents
+      break
+    frames := parents
+    scope := (← siteAt sites []).afterScope
+  let post? := if mode == .total && frames.isEmpty then some args[5]! else none
+  goal ← nameState goal currentState scope current bindings facts mode post?
+  if let frame :: _ := frames then
+    goal ← markCursor goal ⟨name, frame.site.path, frame.nextChild⟩
+  setGoals (obligations ++ [goal])
+
+private def initializeSource (function : TSyntax `term) (current bindings : TSyntax `ident)
+    (facts : SimpFacts) (mode : InitMode) : TacticM Unit :=
+  Lean.Elab.Tactic.focus <| withMainContext do
+    let (name, sites, frames, goal) ← sourceLocation function mode
+    advancePrefix name sites frames goal current bindings facts mode
+
+private def enterBranch (function : TSyntax `term) (yes : Bool)
+    (current bindings : TSyntax `ident) (facts : SimpFacts) (mode : InitMode) :
+    TacticM Unit := Lean.Elab.Tactic.focus <| withMainContext do
+  let (name, sites, frames, initialGoal) ← sourceLocation function mode
+  let frame :: parents := frames | throwError "Expected a conditional source position"
+  let children ← blockChildren frame sites
+  let some site := children[frame.nextChild]? |
+    throwError "Expected a conditional source statement"
+  unless site.emitted.size == 1 do
+    throwError "Expected one actual conditional at this source position"
+  let count := (children.extract frame.nextChild children.size).foldl
+    (fun n child => n + child.emitted.size) 0
+  let hasOuter := (← framesRemainder parents sites).isSome
+  let mut goal := initialGoal
+  if hasOuter && count > 1 then goal ← reassociate goal mode
+  let hasTail := count > 1 || hasOuter
+  let code := (← goalView goal mode).getAppArgs[statementIndex mode]!
+  let statement ← if hasTail then do
+      let some (first, _) := (← whnf code).app2? ``Stmt.seq |
+        throwError "Expected the actual conditional and its continuation"
+      pure first
+    else pure code
+  let statement ← whnf statement
+  unless statement.isAppOfArity ``Stmt.ite 3 do
+    throwError "The next source statement is not a conditional"
+  if hasTail then
+    goal ← if mode == .total then
+      applyOne goal (← `(tactic| apply Ram.Source.Verification.TotalWP.ite_seq_iff.mpr))
+    else applyOne goal (← `(tactic| apply Ram.Source.TimeBound.ite_seq_iff.mpr))
+  setGoals [goal]
+  if mode == .total then
+    if yes then
+      evalTactic (← `(tactic| apply Ram.Source.Verification.TotalWP.ite_of_ne_zero))
+    else evalTactic (← `(tactic| apply Ram.Source.Verification.TotalWP.ite_of_eq_zero))
+  else
+    if yes then evalTactic (← `(tactic| apply Ram.Source.TimeBound.ite_of_ne_zero_at))
+    else evalTactic (← `(tactic| apply Ram.Source.TimeBound.ite_of_eq_zero_at))
+  let [first, second, branch] ← getUnsolvedGoals |
+    throwError "Expected the conditional obligations and selected code continuation"
+  let firstGoals ← trySafety first facts
+  let secondGoals ← if mode == .total then trySafety second facts else tryBudget second facts
+  let pending := firstGoals ++ secondGoals
+  let side := if yes then 0 else 1
+  let childCode := statement.getAppArgs[side + 1]!
+  let child ← if let some path := site.children[side]? then siteAt sites path else do
+    unless !yes && (← whnf childCode).isAppOf ``Stmt.skip do
+      throwError "Missing source metadata for the selected branch"
+    pure { site with source := none, emitted := #[], children := #[] }
+  let nextFrames := (⟨child, childCode, 0⟩ : BlockFrame) ::
+    { frame with nextChild := frame.nextChild + 1 } :: parents
+  advancePrefix name sites nextFrames branch current bindings facts mode pending
 
 /-- Consume the declared function's leading source initializers using total WP rules. -/
 syntax (name := ramTotalInit) "ram_total_init " term:max " at " ident " with " ident
@@ -302,11 +508,31 @@ syntax (name := ramTotalInit) "ram_total_init " term:max " at " ident " with " i
 syntax (name := ramTimeInit) "ram_time_init " term:max " at " ident " with " ident
   (" [" simpArg,* "]")? : tactic
 
+/-- Enter a selected source branch and expose its initialized lexical values. -/
+syntax (name := ramTotalBranch) "ram_total_branch " term:max (" then" <|> " else")
+  " at " ident " with " ident (" [" simpArg,* "]")? : tactic
+
+/-- Charge a selected source branch and initialize its independent time continuation. -/
+syntax (name := ramTimeBranch) "ram_time_branch " term:max (" then" <|> " else")
+  " at " ident " with " ident (" [" simpArg,* "]")? : tactic
+
 elab_rules : tactic
   | `(tactic| ram_total_init $function at $current:ident with $bindings:ident $[[$facts,*]]?) =>
       initializeSource function current bindings (facts.map (·.getElems) |>.getD #[]) .total
   | `(tactic| ram_time_init $function at $current:ident with $bindings:ident $[[$facts,*]]?) =>
       initializeSource function current bindings (facts.map (·.getElems) |>.getD #[]) .time
+  | `(tactic| ram_total_branch $function then at $current:ident with $bindings:ident
+      $[[$facts,*]]?) =>
+      enterBranch function true current bindings (facts.map (·.getElems) |>.getD #[]) .total
+  | `(tactic| ram_total_branch $function else at $current:ident with $bindings:ident
+      $[[$facts,*]]?) =>
+      enterBranch function false current bindings (facts.map (·.getElems) |>.getD #[]) .total
+  | `(tactic| ram_time_branch $function then at $current:ident with $bindings:ident
+      $[[$facts,*]]?) =>
+      enterBranch function true current bindings (facts.map (·.getElems) |>.getD #[]) .time
+  | `(tactic| ram_time_branch $function else at $current:ident with $bindings:ident
+      $[[$facts,*]]?) =>
+      enterBranch function false current bindings (facts.map (·.getElems) |>.getD #[]) .time
 
 /-- Open a raw or typed function contract, leaving its body unexecuted. -/
 syntax (name := ramTotalStart) "ram_total_start" ppSpace ident ppSpace ident ppSpace rcasesPat

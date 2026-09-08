@@ -93,7 +93,7 @@ contracts. A heap reference represented by a list is not an implemented
 | [ArraySlice](../Examples/Ram/ArraySlice.lean), [properties](../Examples/Ram/ArraySliceProperties.lean) | A real returned borrowed reference feeds another compiled call; its length controls the time continuation. | Typed-input selection and mathematical containment/representation facts remain explicit. |
 | [LowerBound](../Examples/Ram/LowerBound.lean) | Named source initialization supplies typed values and binding facts to both the shared total loop and its separate logarithmic bound; the executable result is `List.findIdx`. | The loop invariant still uses a register-role bridge. The loop-scoped midpoint is not a function-level binding. |
 | [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function yields `List.merge`, both preserved sources and an independent linear full-call bound. | The wrapper really calls the core and pays that overhead; extent and destination non-overlap remain premises. |
-| [MergeSort](../Examples/Ram/MergeSort.lean) | A two-array declaration recursively calls itself, merge and copy. Length induction gives sorted-permutation and contents-level `StateM` specifications; the same invocation has an `n log n` bound. | Correctness and time still repeat some stage composition. Recursive capacity, the whole-branch reserve and multi-buffer facts are explicit. |
+| [MergeSort](../Examples/Ram/MergeSort.lean) | A two-array declaration recursively calls itself, merge and copy. Its selected source branch exposes the actual `middle`, `left` and `right` values for those calls. Length induction gives sorted-permutation and contents-level `StateM` specifications; the same invocation has an `n log n` bound. | Correctness and time still repeat some stage composition. Recursive capacity, the recurrence and multi-buffer facts remain explicit; ordinary call tactics do not advance the source cursor. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [time](../Examples/Ram/FunctionCompositionTime.lean) | Imported copy passes complete array representations to sum; call accounting derives the remaining reserve. | Import transport and genuine equal-length, range and disjointness premises remain. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | An implemented sum transfers to a mathlib graph property. | Represented graph data is assumed; this is not a graph loader. |
 
@@ -142,7 +142,7 @@ retains intermediate lexical scopes and actual emitted fragments as proof-site
 metadata. Previously only bindings visible at the function return survived.
 This is necessary to distinguish a midpoint before/after its declaration and
 inner shadowing, but metadata alone does not improve a correctness proof.
-The first consumer is now source initialization: `ram_total_init` and
+Source initialization is the first consumer: `ram_total_init` and
 `ram_time_init` advance the same actual assignment prefix, name its current
 `Word`/`ArrayRef` values and produce the corresponding binding equations. Search
 no longer writes its own initialization state or proves its field updates.
@@ -150,10 +150,33 @@ Its initial invariant uses the shared `Pre.invariant` rule and the source facts.
 The time driver uses its own completed-execution rules, including affordability
 and actual assignment charges; it does not consume a total-correctness proof.
 
-This driver stops before calls and control-flow bodies. It is not yet a lexical
-proof cursor for arbitrary intermediate goals, nor a source-facing loop invariant
-elaborator. In particular, Search still reuses its register-role loop proof and
-Map still owns its fixed internal payload layout.
+`ram_total_branch` and `ram_time_branch` now enter a selected `then` or `else`
+branch and consume its leading initializers through the same rules. The
+[recursive sort proof](../Complexity/Computability/Ram/Array/MergeSort/Function.lean)
+uses the resulting `middle`, `left` and `right` values in its actual call arguments.
+An array binding appears only after both real
+field assignments. Its [time proof](../Complexity/Computability/Ram/Array/MergeSort/FunctionTime.lean)
+uses the corresponding branch interface, retaining the actual guard, jumps and
+assignment charges rather than a hand-written guard or branch-entry state.
+It starts from the original whole-body budget; the branch, initializer and call
+rules derive the remaining allowances without another hand-selected branch
+reserve. The recurrence and split-cover inequality remain mathematical work.
+
+These steps start at the whole named body or follow their own goal-local cursor.
+It records the exact lexical block and next source child, revalidates the actual
+remaining code, and belongs only to the code continuation. Following statements
+survive branch selection through proved sequencing rules; a missing `else` is
+the actual empty branch. No equal-AST search or source re-elaboration locates a
+proof site. Initialization stops at the next conditional, call, loop or other
+effect; branch entry handles the explicitly selected conditional.
+
+The named Lean values survive ordinary call proofs as snapshots. Restored caller
+registers preserve sort's borrowed descriptors across its `Unit` calls, but heap
+representations still come from the calls' actual postconditions. Ordinary call
+tactics do not maintain this cursor or rebind new source result names. This is
+not a general intermediate-goal cursor or source-facing loop-invariant elaborator:
+Search still reuses its register-role loop proof, and Map still owns its fixed
+internal payload layout.
 
 **Next work:**
 
@@ -162,21 +185,19 @@ Map still owns its fixed internal payload layout.
   operands can be inferred by unification; it does not need a second AST walk or
   lexical metadata. Scope metadata is needed for source-name visibility, not for
   every elementary proof operation.
-- The next structured-scope consumer is merge sort's existing `if` branch:
-  `middle`, `left` and `right` should become typed proof values at their actual
-  declaration sites and remain usable across calls. Its assignments are already
-  handled by the old VC tactic; the missing interface is source bindings and
-  branch/call continuation, not another initializer-state theorem. The time proof
-  also repeats the guard and branch-entry decomposition. Use these two real
-  proofs to exercise nested array initialization, retaining halving, slice
-  containment, disjointness and changed-heap reassembly as mathematical work.
-- Carry the same source positions through Map's actual named helper-call/store
-  body. A proof cursor must accompany code continuations,
-  not ordinary lookup, read-safety, representation or depth goals. Enter loop
+- Extend the source positions to Map's actual loaded/body scope and helper-call
+  continuation, rather than adding more root-initializer demonstrations. A proof
+  cursor must accompany code continuations, not ordinary lookup, read-safety,
+  representation or depth goals. Enter loop
   scopes only at their actual loaded/body entry; restore outer bindings on exit.
   Consume generated initialization and tail instructions rather than skipping
   them because they lack a source statement. Array-local initialization completes
   both real assignments before exposing the new descriptor.
+- Bind a source call's result name to its actual returned word or reference and
+  advance to the following source statement. Existing typed call rules already
+  provide that value and ordered receiver updates; connect their continuation to
+  the lexical scope without adding a call semantics or treating old snapshots as
+  newly assigned variables. Keep user-chosen contracts and inputs explicit.
 - Use the actual goal's statement and returned values. Do not find a source site
   by scanning for an equal AST or re-elaborate an embedded `const(t)` in a new
   Lean scope. Introduce ordinary word/reference values from current bindings;
@@ -216,7 +237,10 @@ The explicit-input `ram_total_apply contract on input` form follows the same
 selective premise handling as the time interface. Merge sort's recursive,
 merge and copy-back calls preserve their mathematical slice expressions in
 continuations instead of expanding them merely to match argument bindings.
-This reuses restored-call rules; it is not a new stage semantics.
+Generated local binding equations are also used only to close mechanical call
+conditions completely, not to rewrite functional preconditions or continuations.
+This reuses restored-call rules; it is not a new stage semantics or source-call
+cursor advancement.
 
 `TimeExact` supplies exact-count composition over the existing measured
 execution. Factorial's upper bound and measured endpoint reuse its one cost

@@ -10,6 +10,7 @@ import Complexity.Computability.Ram.Array.MergeSort.Ordering
 import Complexity.Computability.Ram.Array.MergeSort.Stages
 import Complexity.Computability.Ram.Array.TwoBuffer
 import Complexity.Computability.Ram.Source.Function.Linking
+import Complexity.Tactic.Ram.Source
 
 /-!
 # Recursive merge sort with typed array arguments
@@ -66,7 +67,7 @@ theorem function_contract {w heapLimit : Nat} {array scratch : ArrayRef w}
         TwoBufferFrame array.base xs.length scratch.base xs.length entry.mem finish.mem ∧
         finish.input = entry.input ∧ finish.outputRev = entry.outputRev) := by
   have positive : 0 < w := by omega
-  have two : (2 : Word w).toNat = 2 := Word.ofNat_toNat_of_lt
+  have two : (BitVec.ofNat w 2).toNat = 2 := Word.ofNat_toNat_of_lt
     (lt_of_lt_of_le (by decide : 2 < 2 ^ 2)
       (Nat.pow_le_pow_right (by decide : 0 < 2) hw))
   induction xs using (measure (fun xs : List (Word w) => xs.length)).wf.induction
@@ -79,13 +80,13 @@ theorem function_contract {w heapLimit : Nat} {array scratch : ArrayRef w}
       exact ⟨by simpa only [sorted_eq_self_of_length_le_one small] using sourceArray,
         ⟨workspace, scratchArray⟩, TwoBufferFrame.refl _ _ _ _ _⟩
     · have large : 2 ≤ xs.length := by omega
-      ram_total_vc input entry ⟨rfl, sourceArray, scratchArray⟩
-        [sortFunctions.body_eq.sort, sortFunctions.result_eq.sort,
-          BitVec.toNat_one positive, sourceArray.1,
+      ram_total_start input entry ⟨rfl, sourceArray, scratchArray⟩
+      ram_total_branch sortFunctions.function.sort then at initial with bindings
+        [BitVec.toNat_one positive, sourceArray.1,
           show 1 < xs.length by omega, Nat.ne_of_gt positive]
-      let k : Word w := array.length / 2
+      let k : Word w := initial.middle
       have half : k.toNat = xs.length / 2 := by
-        simp only [k, BitVec.toNat_udiv, sourceArray.1, two]
+        simp only [k, initial.middle, BitVec.toNat_udiv, sourceArray.1, two]
       have contained : k.toNat ≤ xs.length := by rw [half]; exact Nat.div_le_self _ _
       have takeLength : (xs.take k.toNat).length = k.toNat :=
         List.length_take_of_le contained
@@ -113,8 +114,10 @@ theorem function_contract {w heapLimit : Nat} {array scratch : ArrayRef w}
         Stages.split_arrays sourceArray scratchArray hlen disjoint k contained
       have leftCorrect := ih (xs.take k.toNat) leftShorter leftLength leftDisjoint
       ram_total_apply leftCorrect on
-        (array.subslice 0 k, scratch.subslice 0 k) [ArrayRef.subslice, k]
-      · exact ⟨rfl, leftSource, leftScratch⟩
+        (initial.left, initial.scratch.subslice 0 k)
+        [ArrayRef.subslice, k]
+      · exact ⟨by simp [initial.left, initial.scratch, initial.middle, ArrayRef.subslice, k],
+          leftSource, leftScratch⟩
       · exact leftDepth
       · rintro _ afterLeft ⟨leftSorted, _, leftFrame, leftInput, leftOutput⟩
         obtain ⟨sourceAfterLeft, ⟨leftWorkspace, scratchAfterLeft⟩, frameAfterLeft⟩ :=
@@ -134,9 +137,10 @@ theorem function_contract {w heapLimit : Nat} {array scratch : ArrayRef w}
         obtain ⟨rightSource, rightScratch, rightLength, rightDisjoint⟩ := rightViews
         have rightCorrect := ih (xs.drop k.toNat) rightShorter rightLength rightDisjoint
         ram_total_apply rightCorrect on
-          (array.subslice k (array.length - k), scratch.subslice k (array.length - k))
+          (initial.right, initial.scratch.subslice k (initial.xs.length - k))
           [ArrayRef.subslice, k]
-        · exact ⟨rfl, rightSource, rightScratch⟩
+        · exact ⟨by simp [initial.right, initial.scratch, initial.xs, initial.middle,
+              ArrayRef.subslice, k], rightSource, rightScratch⟩
         · exact rightDepth
         · rintro _ afterRight ⟨rightSorted, _, rightFrame, rightInput, rightOutput⟩
           obtain ⟨sourceAfterRight, ⟨rightWorkspace, scratchAfterRight⟩, frameAfterRight⟩ :=
@@ -157,9 +161,10 @@ theorem function_contract {w heapLimit : Nat} {array scratch : ArrayRef w}
             (rightWorkspaceLength.trans mergeLength.symm) mergeLeftDisjoint mergeRightDisjoint).renameCalls
               sortFunctions.embeds.Merge
           ram_total_apply mergeCorrect on
-            (array.subslice 0 k, array.subslice k (array.length - k), scratch)
+            (initial.left, initial.right, initial.scratch)
             [ArrayRef.subslice, k]
-          · exact ⟨rfl, mergeLeft, mergeRight, scratchAfterRight⟩
+          · exact ⟨by simp [initial.left, initial.right, initial.scratch, initial.middle,
+                ArrayRef.subslice, k], mergeLeft, mergeRight, scratchAfterRight⟩
           · have bound := Bounds.depth_left large
             simp only [Bounds.depth] at bound
             omega
@@ -175,11 +180,13 @@ theorem function_contract {w heapLimit : Nat} {array scratch : ArrayRef w}
               positive (by simpa only [List.length_append, length_sorted] using mergeLength)
               (by simpa only [length_sorted] using disjoint.symm)).renameCalls
                 sortFunctions.embeds.Copy
-            ram_total_apply copyCorrect on (scratch, array)
-              [ArrayRef.subslice, sourceArray.length_eq, scratchMerged.length_eq, length_sorted]
+            ram_total_apply copyCorrect on (initial.scratch, initial.xs)
+              [initial.scratch, initial.xs, sourceArray.length_eq,
+                scratchMerged.length_eq, length_sorted]
             · exact ⟨rfl, scratchMerged, sourceAfterRight.1, sourceBeforeCopy⟩
             · omega
             · rintro _ finish ⟨scratchDone, sourceDone, copyFrame, copyInput, copyOutput⟩
+              ram_total_vc [sortFunctions.result_eq.sort]
               simp only [length_sorted] at copyFrame
               refine ⟨sourceDone, ⟨sorted xs, scratchDone⟩,
                 frameAfterLeft.trans (frameAfterRight.trans
