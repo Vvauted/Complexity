@@ -572,6 +572,26 @@ original form. In particular, supplying a slice definition to match runtime
 arguments does not also expand every represented slice in the continuation.
 Merge sort uses this form for both recursive calls, merge and copy-back.
 
+Use `ram_total_store represented at index := value [facts]` to write one element
+of a represented array. It applies the existing array-store contract to the
+actual `TotalWP` store, opening one leading sequence when needed. No address
+expression, value expression or destination register needs to be repeated.
+The continuation retains the real updated state, a representation of
+`contents.set index value`, and the outside-array frame. The
+[map implementation](##Complexity.Computability.Ram.Array.Map.Correctness) uses:
+
+```lean
+ram_total_store h.array at i := (transform xs[i])
+  [indexFits, h.base_eq, h.index, arrayAddr]
+```
+
+Only completely solved side conditions are discharged. Index bounds, current
+representation, read safety and address/value equations otherwise remain visible;
+the continuation is not simplified. A representation survives local-register
+changes by its definition, but cannot be reused across a genuinely changed heap
+without a proof. The tactic neither advances the next statement nor supplies
+the next invariant. See [array automation](##Complexity.Tactic.Ram.Array).
+
 Use `ram_total_bind mid hmid [definitions, facts]` on a `TotalWP` assignment
 or a sequence beginning with one to name that assignment's actual word value.
 The continuation receives `mid` and `hmid : mid = entry.eval expression` without

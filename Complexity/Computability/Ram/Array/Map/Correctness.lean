@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.Map.Basic
 import Complexity.Computability.Ram.Array.Traversal
+import Complexity.Tactic.Ram.Array
 
 /-!
 # Correctness of in-place array mapping
@@ -116,26 +117,18 @@ private theorem Invariant.body {program : Program} {helper : Func}
   · simp [State.eval, Expr.eval, State.setReg, arrayAddr, loaded]
   · exact Nat.le_refl _
   · rintro value finish ⟨rfl, rfl⟩ _
-    rw [Verification.TotalWP.seq_iff]
-    apply Verification.TotalWP.of_relContract
-      (Array.store_contract (control := 0) indexFits
-        (.bin .add (.var 0) (.var 2)) (.var 6) (transform xs[i])).total
-    · refine ⟨?_, ?_, trivial, ?_, ?_⟩
-      · exact (h.array.setReg _ _).setReg _ _
-      · trivial
-      · ram_simp [h.base_eq, h.index, arrayAddr]
-      · ram_simp
-    · rintro stored ⟨rfl, represented, frame⟩
-      rw [Verification.TotalWP.assign_iff]
-      refine ⟨⟨trivial, trivial⟩, ?_⟩
-      refine ⟨?_, ?_, ?_, ?_, h.input, h.output⟩
-      · ram_simp [h.base_eq]
-      · ram_simp [h.index, BitVec.ofNat_add]
-      · rw [contents_set_next transform xs hi] at represented
-        exact represented.setReg _ _
-      · exact h.frame.trans (by
-          simpa only [contents_length transform xs hi.le, State.setRegs_cons,
-            State.setRegs_nil, State.setReg_mem] using frame)
+    ram_total_store h.array at i := (transform xs[i])
+      [indexFits, h.base_eq, h.index, arrayAddr]
+    rintro stored ⟨rfl, represented, frame⟩
+    rw [Verification.TotalWP.assign_iff]
+    refine ⟨⟨trivial, trivial⟩, ?_⟩
+    refine ⟨?_, ?_, ?_, ?_, h.input, h.output⟩
+    · ram_simp [h.base_eq]
+    · ram_simp [h.index, BitVec.ofNat_add]
+    · rw [contents_set_next transform xs hi] at represented
+      exact represented
+    · exact h.frame.trans (by
+        simpa only [contents_length transform xs hi.le] using frame)
 
 /-- The actual map loop safely transforms its represented array in place and
 preserves memory outside that array and both streams. The helper is required

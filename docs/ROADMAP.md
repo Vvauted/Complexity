@@ -123,6 +123,14 @@ reconstructs a whole-body execution endpoint before proving the array result.
 The underlying list identities remain upstream `take`, `drop`, `set` and `map`
 reasoning; the operation still owns its fixed local layout.
 
+`ram_total_store` now applies the existing array-store contract to the actual
+leading store. Map supplies its mathematical array assertion, index and value;
+it no longer repeats the address/value syntax or wraps the assertion around
+local-register updates. The continuation receives `List.set` and the actual
+outside-array frame. A changed heap still requires a current representation;
+routine simplification does not transport an assertion through arbitrary effects.
+The final index update and invariant implication remain explicit.
+
 The actual source now uses `for i, x in xs`, with both binders immutable and
 body-local. Its generated index initialization/increments give exactly the same
 map function, so the existing mathematical result and compiled costs are retained.
@@ -138,6 +146,11 @@ There is not yet a source-proof driver consuming these sites.
 
 **Next work:**
 
+- Keep removing repeated operation-level work using the existing WP goals before
+  adding a whole-source proof driver. The store step demonstrates that actual
+  operands can be inferred by unification; it does not need a second AST walk or
+  lexical metadata. Scope metadata is needed for source-name visibility, not for
+  every elementary proof operation.
 - Connect these sites to existing WP decomposition, beginning with Map's actual
   named helper-call/store body. A proof cursor must accompany code continuations,
   not ordinary lookup, read-safety, representation or depth goals. Enter loop

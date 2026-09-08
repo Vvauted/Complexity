@@ -244,6 +244,7 @@ import Complexity.Data.List.InsertIdx
 import Complexity.Data.List.StateM
 import Complexity.Data.Nat.Log
 import Complexity.LinearAlgebra.Matrix.Update
+import Complexity.Tactic.Ram.Array
 import Complexity.Tactic.Ram.Basic
 import Complexity.Tactic.Ram.Budget
 import Complexity.Tactic.Ram.Contract
