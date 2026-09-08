@@ -182,6 +182,48 @@ reuses it twice, without reopening the loop proof. Range and overflow premises s
 belong to the operation contract. See [data models](##ComplexityDocs.Models) for the
 representation boundary and current limits on array-valued source expressions.
 
+## Bind and borrow a local array
+
+The [slice sample](##Examples.Ram.ArraySlice) calls the same sum implementation
+on a locally constructed reference:
+
+```lean
+ram_def functions := ram_functions% {
+  include sumFunctions as Sum;
+  fn sumSlice(xs : array, offset, count) {
+    let window : array := subslice(xs, offset, count);
+    let answer ← call Sum.sum(window);
+    return answer;
+  }
+}
+```
+
+`subslice(xs, offset, count)` shifts the base by `offset` and sets the length to
+`count`. The two-word local descriptor is created by actual assignments, including
+the word addition; no array elements are copied and no heap storage is allocated.
+The function contract requires containment and no-wrap conditions and
+identifies the returned word with the sum of `(xs.drop offset.toNat).take count.toNat`.
+`sumSlice_eq` states the corresponding ordinary executable natural-number value
+modulo the word range, without a `main` or stream I/O.
+The sample runs on preloaded `[1, 2, 3, 4, 5]` with offset `1` and count `3`,
+returning `some (9, 196, Ram.StopReason.halted)`. Those 196 transitions include
+the actual descriptor work and calls, but not host-side heap preparation.
+
+Use `let other : array := window;` to copy a descriptor, or
+`let window : array := array(base, length);` to construct one from word expressions.
+An immutable binding forbids `window.base := ...` and `window.length := ...`, but
+does not forbid writes such as `window[i] := value`; it is not read-only ownership.
+`let mut window : array := ...;` permits descriptor-field updates. Copies refer to
+the same heap, so updating cells through either handle affects the shared data.
+Local handles also work with `for x in window` and typed array call arguments.
+
+Typed array call positions accept `array(base, length)` and `subslice(xs, offset, count)`
+directly. The first argument of `subslice` must be an already bound handle, optionally
+parenthesized: use a prior `let` to construct or slice an intermediate handle.
+These are not general eager array expressions, checked slice constructors or
+array-valued returns. Bounds and aliasing remain proof obligations; allocation and
+automatic loading from Lean lists are still separate work.
+
 ## Call functions declared in another module
 
 After importing modules containing earlier `ram_def` function declarations,
@@ -473,6 +515,8 @@ Continue with [proving correctness](##ComplexityDocs.Verification).
 | Executing a function with no input/output main | [Function runner](##Examples.Ram.FunctionRun) |
 | Adding stream I/O around a proved function | [Factorial stream driver](##Examples.Ram.FactorialStream) |
 | Typed array calls on explicitly preloaded data | [Array arguments](##Examples.Ram.ArrayArguments) |
+| Borrowing a local slice and calling an existing implementation | [Array slice](##Examples.Ram.ArraySlice) |
+| Proving slice laws with ordinary list identities | [Slice properties](##Examples.Ram.ArraySliceProperties) |
 | Composing calls with lexical value bindings | [Local bindings](##Examples.Ram.LocalBindings) |
 | Reusing a list operation for a mathlib graph property | [Graph degree](##Examples.Ram.GraphDegree) |
 | A logarithmic time bound | [Bit length](##Examples.Ram.BitLength) |

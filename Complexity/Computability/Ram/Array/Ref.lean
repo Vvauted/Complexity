@@ -55,6 +55,18 @@ and is not itself an implementation of in-program pointer arithmetic. -/
 def subslice (array : ArrayRef w) (offset length : Word w) : ArrayRef w :=
   ⟨array.base + offset, length⟩
 
+/-- A contained slice's endpoint is bounded by the whole reference's endpoint.
+The inequality also permits an empty slice at a wrapping allocation endpoint. -/
+theorem subslice_end_le (array : ArrayRef w) (offset length : Word w)
+    (span : offset.toNat + length.toNat ≤ array.length.toNat) :
+    (array.subslice offset length).base.toNat +
+      (array.subslice offset length).length.toNat ≤ array.base.toNat + array.length.toNat := by
+  change (array.base + offset).toNat + length.toNat ≤ array.base.toNat + array.length.toNat
+  have base_le : (array.base + offset).toNat ≤ array.base.toNat + offset.toNat := by
+    rw [BitVec.toNat_add]
+    exact Nat.mod_le _ _
+  omega
+
 namespace Rep
 
 variable {array : ArrayRef w} {heapLimit : Nat} {xs : List (Word w)} {s : Source.State w}
@@ -95,6 +107,17 @@ theorem subslice (h : array.Rep heapLimit xs s) (offset length : Word w)
   refine ⟨exactLength.symm, ?_⟩
   simpa [ArrayRef.subslice, arrayAddr] using
     h.2.slice (offset := offset.toNat) (by omega) length.toNat
+
+/-- A contained represented slice inherits the whole array's strict endpoint bound.
+This supplies no-wrap premises of operations on the ordinary `drop`/`take` view. -/
+theorem subslice_end_lt (h : array.Rep heapLimit xs s) (offset length : Word w)
+    (span : offset.toNat + length.toNat ≤ array.length.toNat)
+    (fit : array.base.toNat + xs.length < 2 ^ w) :
+    (array.subslice offset length).base.toNat +
+      ((xs.drop offset.toNat).take length.toNat).length < 2 ^ w := by
+  rw [← (h.subslice offset length span).1]
+  exact Nat.lt_of_le_of_lt (array.subslice_end_le offset length span)
+    (by simpa only [h.1] using fit)
 
 end Rep
 

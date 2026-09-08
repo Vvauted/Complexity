@@ -120,13 +120,32 @@ proved against that continuation, not passed to the implementation as fuel.
 Generated parameter/local-count equations and proved call-length formulas reduce
 overhead without reopening callee bodies. This automation does not choose the
 mathematical bounds, infer invariants or remove representation and safety premises.
+`ram_time_vc` also advances leading assignments and skips, reassociating sequences
+as necessary. It carries the actual updated state and subtracts only proved
+compiled assignment costs from the remaining proof bound, stopping at calls and
+loops. A descriptor initializer therefore cannot disappear from a call's cost proof.
 
 An `array` parameter is a typed by-value pair of words, not a newly allocated
 descriptor. Its base and length are passed by the same call compiler as scalar
 arguments. `ArrayRef.Rep` relates existing heap contents to a list; changing this
 mathematical view or forming host-side subarray metadata performs no RAM copy.
-Array construction inside a program must eventually have its own implementation
-and cost, not be smuggled into that representation predicate.
+Inside source code, `let window : array := subslice(xs, offset, count)` instead
+executes two fresh local assignments, including word addition for the shifted
+base. `let other : array := window` copies the two descriptor words, not heap cells;
+`array(base, length)` constructs a handle from ordinary word expressions.
+All such assignments and their local-frame effects have the compiler's real cost.
+
+Array initializers and typed array call arguments accept those forms, but they
+are not general eager array expressions. `subslice` starts from an already bound
+handle, optionally parenthesized; bind constructed or nested handles first. It
+sets the requested length without runtime containment checks, truncation or
+allocation. `ArrayRef.Rep.subslice` separately proves the `List.drop`/`List.take`
+view under containment, and operation contracts retain address-range premises.
+Immutable bindings prevent descriptor-field assignment while still allowing
+writes through their addresses; `let mut` permits updating `base` and `length`.
+Aliases share the underlying heap, with no ownership or disjointness guarantee.
+Array-valued returns, general typed results and allocated-array construction still
+need implementation and cost interfaces; representation predicates do not supply them.
 
 Heap and call-depth capacities are safety premises, not instruction budgets.
 Output-size guarantees support subsequent operations. Time analysis may reuse

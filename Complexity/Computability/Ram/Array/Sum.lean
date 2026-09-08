@@ -182,6 +182,22 @@ theorem sum_function_contract_of_ref {w heapLimit depth : Nat} {program : Progra
   · intro args entry value finish _ result
     exact result
 
+/-- The typed sum interface retains the same conditional body bound, independently
+of correctness. The represented length supplies the existing word-level premise. -/
+theorem sum_function_timeBound_of_ref {w control heapLimit depth : Nat} {program : Program}
+    {array : ArrayRef w} {xs : List (Word w)} (hw : 0 < w)
+    (hfit : array.base.toNat + xs.length < 2 ^ w) :
+    FunctionTimeBound control program heapLimit depth sumFunctions.function.sum
+      (fun args entry => args = sumFunctions.arguments.sum array ∧
+        array.Rep heapLimit xs entry)
+      (fun _ _ => 18 * xs.length + 8) := by
+  rintro args entry ⟨rfl, represented⟩ steps value finish execution
+  apply sum_function_timeBound (control := control) (program := program) (depth := depth)
+    (base := array.base) (xs := xs) hw hfit
+    (sumFunctions.arguments.sum array) entry ?_ steps value finish execution
+  refine ⟨?_, represented.2⟩
+  simp only [sumFunctions.arguments.sum, represented.length_eq]
+
 /-- A typed reference supplies the complete runtime array argument to the same
 function invocation, while the list appears only in the specification. -/
 theorem sum_function_runs_of_ref {w heapLimit depth : Nat} {program : Program}

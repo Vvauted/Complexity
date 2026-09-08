@@ -73,8 +73,12 @@ Named functions accept array parameters as well as words: `fn sum(xs : array)`
 and `call sum(xs)` pass a by-value base address and length through the existing ABI.
 `ArrayRef.Rep` connects that reference to an ordinary mathematical list. Sum and
 count use this interface; `sumPair` composes two sum calls without reconstructing
-their loops or frames. Array-valued locals and returns, allocation and automatic
-loading from Lean data remain unfinished.
+their loops or frames. Typed local handles can alias an existing array, construct
+`array(base, length)` or borrow `subslice(xs, offset, count)` into two fresh local
+slots. Their descriptor assignments and address arithmetic execute in the same
+source program; they neither allocate storage nor copy elements. Array-valued
+returns, general typed data values, allocation and automatic loading from Lean
+data remain unfinished.
 
 Source declarations can include earlier `ram_def` implementations under aliases.
 Stored word/array signatures guide their calls; generated function-table embeddings
@@ -85,6 +89,8 @@ Source-facing time rules infer call arguments and destinations from the generate
 body, including discarded results, and reuse correctness postconditions to continue
 the separate cost argument on actual shared state. Bounds and reserves remain
 proof obligations, not execution fuel or supplied prices.
+Assignment and skip prefixes, including the two assignments of a local array
+descriptor, are advanced with their compiled costs before those call rules apply.
 
 `TotalComponent` carries that separation through reusable program packaging and
 linking. A separate time proof recovers the same code through the resource-aware
@@ -188,6 +194,21 @@ refinement has been supplied; it does not derive that refinement automatically.
   two-array sample states its result using list concatenation, although the
   program only adds two returned sums and never allocates a concatenated array.
   Read-only references may overlap. Mixed array/word arguments also work for count.
+- The local-slice sample writes `let window : array := subslice(xs, offset, count)`
+  and calls the imported sum with `window`. Its function contract reuses
+  `ArrayRef.Rep.subslice` and sum's existing contract; its result is the ordinary
+  list expression `(xs.drop offset.toNat).take count.toNat`. The separate
+  `sumSlice_eq` equation exposes that result as an ordinary executable natural
+  number modulo the word range. Empty-slice, whole-array and adjacent-partition
+  properties then use standard list identities without reopening any execution
+  relation. The partition theorem compares returned values, not a newly compiled
+  two-call program. The descriptor is borrowed metadata, not a copied array or
+  checked slice constructor: containment and no-wrap conditions remain explicit.
+  Its independent time proof bounds the body by `18 * count.toNat + 72` and the
+  full invocation by `18 * count.toNat + 142`, including descriptor work, calls
+  and halt but not host preloading. These are upper bounds, not exact equations.
+  General nested array expressions are not implemented; `subslice` starts from
+  a bound handle, so construct or slice an intermediate handle with a prior `let`.
 - The expression-fold body counts are `18 * n + 8` for sum and `20 * n + 8` for
   count; their executable calls take `18 * n + 67` and `20 * n + 76`, including halt.
   Count's target is a real runtime parameter, not stream input or a proof-only value.
@@ -227,8 +248,10 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
   should reuse the same cursor and framing proofs. Bring richer existing traversal
   and recursive consumers to this source-facing interface, without making clients
   extract expressions or assemble register roles.
-- Build on typed array calls and the executable function adapter: support useful
-  local data bindings and return values through that same compiled call path.
+- Build on typed local array handles, typed calls and the executable function
+  adapter: support structured return values through that same compiled call path.
+  Descriptor aliases and borrowed slices now bind locally; general eager array
+  expressions, richer typed data and function-returned handles still need work.
   Extend the ordinary application interface to those data operations while
   retaining their effects and safety premises. Do not confuse proof-level `Part`
   observations with executable application, or require a proposed time bound merely
@@ -267,16 +290,19 @@ objects. Do not add more data-structure wrappers merely to expand a feature list
   client to compose richer existing operations without reopening their loops.
   Keep host-level `applyState` sequencing distinct from a single compiled source
   composition, retaining actual linking/call costs, effects and capacity premises.
-  Typed data locals, returned array values and allocation remain separate work;
-  linking existing word/array signatures does not provide those data operations.
+  Local descriptors and contained slices now compose with an imported operation.
+  Returned array values, allocation and richer typed data remain separate work;
+  constructing or copying a handle does not implement those data operations.
 - Build on the shared expression and verified-call folds for richer existing
   consumers: short-circuiting, multiple accumulators and mutable traversals need
   their actual effects and progress rules. Reuse ordinary `List` folds and their
   algebraic properties, while requiring a proved source implementation of each
   step. Mathematical callbacks are not executable primitives, and their work
   must not be silently free.
-- Handle subarrays, two live data objects and caller data that must survive a
-  call. Keep genuine range, overflow and non-aliasing obligations visible.
+- Build on the local borrowed-slice client for mutating subarrays, two live data
+  objects and caller data that must survive a call. Keep genuine range, overflow
+  and non-aliasing obligations visible. Immutable local handles protect descriptor
+  fields, not the heap cells they reference; they do not imply read-only ownership.
 - Separate changes of mathematical view from actual data conversion.
   Initialization, copying and conversion must have executable implementations.
 - Describe the existing finite-map representation accurately: it is a
@@ -293,7 +319,9 @@ them to source programs with less mechanical bookkeeping.
 
 - Derive local costs from compiled operations and compose them at actual
   intermediate values. Reuse functional invariants and output-size facts.
-- Extend the source-facing separate-time rules beyond leading/final calls.
+- Extend the source-facing separate-time rules beyond assignment prefixes and
+  leading/final calls. `ram_time_vc` now advances actual descriptor assignments,
+  with compiler-derived costs, before applying an existing callee time bound.
   The copy-then-sum body uses its callee bounds and postconditions without local
   register roles or inner-frame arithmetic. State-dependent remaining bounds are
   available through `FunctionTimeBound.call_seq_at`; the convenience tactic takes

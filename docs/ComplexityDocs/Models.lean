@@ -51,9 +51,17 @@ Its argument builder takes an `ArrayRef` followed by a word. The
 The sum and pair contracts return ordinary modular list sums and preserve shared state.
 Because both operations are read-only, the two references may overlap. Constructing a
 reference does not establish its contents, range or ownership, and it does not load or
-allocate memory. General array-valued local bindings, returned array values and automatic
-loading of Lean lists are not supplied by this parameter syntax. See
+allocate memory. Typed local bindings can hold descriptors for existing data;
+array-valued returns, allocation and automatic loading of Lean lists remain separate work. See
 [array references](##Complexity.Computability.Ram.Array.Ref) for the representation rules.
+
+Local descriptors can be constructed with `array(base, length)`, copied from another
+array binding or borrowed with `subslice(xs, offset, count)`. Each local binding
+executes two word assignments; it does not clone or allocate the referenced cells.
+`subslice` starts from a bound handle, so bind constructed or nested handles first.
+Immutable bindings protect their fields, not the shared heap cells; `let mut`
+permits assigning the descriptor's `base` and `length`. Neither form supplies
+ownership, runtime bounds checks or an array-valued return convention.
 
 The [ordinary sum application](##Examples.Ram.ArraySum) has the form
 `sum array heapLimit entry safe hstack : Nat`. Its data inputs are the reference,
@@ -72,7 +80,8 @@ frame and unchanged streams. The lists occur in erased proofs, while actual RAM
 stores produce the destination. Both arrays must already be represented and disjoint.
 `copyThenSum` feeds this returned state to the existing sum application, reusing its
 representation. This host-level sequencing is not a single compiled RAM program;
-returning shared state also does not add array-valued source locals or returns.
+returning shared state is separate from local array descriptors and does not add
+array-valued function returns.
 
 ## Fold through an expression or a proved function
 
@@ -188,9 +197,13 @@ views do not by themselves show that their union avoids wrapping.
 
 For a typed reference, `Ram.ArrayRef.Rep.subslice` reuses these rules to describe
 `(xs.drop offset).take length` at a contained borrowed interval. `ArrayRef.subslice`
-constructs metadata; it does not copy cells or itself implement in-program pointer
-arithmetic. Expressions used by an actual source call are evaluated and charged by the
-call compiler.
+constructs host-side metadata without copying cells. Inside a source function,
+`let window : array := subslice(xs, offset, count);` instead executes the base-address
+arithmetic and descriptor assignments. The [slice sample](##Examples.Ram.ArraySlice)
+passes this local reference to the existing sum function and states its result using
+ordinary list `drop` and `take`. Containment and non-wrapping premises remain explicit;
+arithmetic, bindings and calls retain their execution costs. A mathematical slice
+view does not silently perform any of those source instructions.
 
 For a matrix row, use `Ram.Source.MatrixAt.row_array`, apply an array operation, then use
 `Ram.Source.MatrixAt.replace_row_array` to recover the updated matrix. If the operation also

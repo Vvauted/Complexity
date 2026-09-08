@@ -216,6 +216,27 @@ does not prove its representation or execute a list loader. The
 Its explicit heap and stack premises are separate from any time estimate; the
 mathematical list concatenation does not allocate a new runtime array.
 
+The [local-slice client](##Examples.Ram.ArraySlice) binds
+`let window : array := subslice(xs, offset, count);` and calls the imported sum on
+that reference. `Ram.ArrayRef.Rep.subslice` supplies the ordinary
+`(xs.drop offset.toNat).take count.toNat` representation;
+`Ram.ArrayRef.Rep.subslice_end_lt` carries the parent's strict endpoint bound to
+the selected interval. Its `function_contract` starts with `ram_total_vc`, then
+uses those array facts and the existing sum contract through `ram_total_apply`.
+The descriptor assignments are part of the source, but the client does not name
+their register slots or reconstruct sum's traversal. Containment, representation
+and non-wrapping addresses remain explicit, and the postcondition preserves the
+entire caller state, including arbitrary initial stream contents.
+
+After `sumSlice_eq` identifies the ordinary executable result, the
+[slice-properties client](##Examples.Ram.ArraySliceProperties) proves
+`sumSlice_zero`, `sumSlice_whole` and `sumSlice_partition` by ordinary list reasoning.
+The whole-slice result agrees with `ArraySum.sum`; the partition result adds the two
+slice results modulo the word range. These proofs use the value equations and
+standard `List.take`/`List.drop` identities, not execution relations, register updates
+or loop proofs. The partition theorem compares returned values and does not compile
+its two host applications into one program or supply their combined cost.
+
 For a scoped `for` with one scalar expression update,
 [the source-derived rule](##Complexity.Computability.Ram.Array.ForIn.Expression)
 `Ram.Source.Array.ForIn.Expression.function_contract` uses the generated body and

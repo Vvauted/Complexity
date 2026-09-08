@@ -38,6 +38,62 @@ theorem assign {dst : Reg} {value : Expr} :
   cases hx
   exact Nat.le_refl _
 
+/-- Reassociation preserves both the executed sequence and its total count. -/
+theorem seq_assoc_iff {a b c : Stmt} {bound : State w → Nat} :
+    TimeBound control program heapLimit depth (.seq (.seq a b) c) P bound ↔
+      TimeBound control program heapLimit depth (.seq a (.seq b c)) P bound := by
+  constructor
+  · intro h s hs steps t execution
+    cases execution with
+    | seq first rest =>
+      cases rest with
+      | seq second third =>
+        simpa only [Nat.add_assoc] using
+          h s hs _ t (.seq (.seq first second) third)
+  · intro h s hs steps t execution
+    cases execution with
+    | seq first third =>
+      cases first with
+      | seq first second =>
+        simpa only [Nat.add_assoc] using
+          h s hs _ t (.seq first (.seq second third))
+
+/-- A leading skip changes neither the entry state nor the remaining count. -/
+theorem skip_seq_iff {tail : Stmt} {bound : State w → Nat} :
+    TimeBound control program heapLimit depth (.seq .skip tail) P bound ↔
+      TimeBound control program heapLimit depth tail P bound := by
+  constructor
+  · intro h s hs steps t execution
+    simpa only [Nat.zero_add] using h s hs _ t (.seq .skip execution)
+  · intro h s hs steps t execution
+    cases execution with
+    | seq first second =>
+      cases first
+      simpa only [Nat.zero_add] using h s hs _ t second
+
+/-- Advance an assignment at one actual entry state, charging its generated
+expression and move block before bounding the tail. The subtraction only
+describes a separate time-proof obligation; it does not supply execution fuel.
+Read safety comes from each completed execution, not from this conditional bound. -/
+theorem assign_seq_at {dst : Reg} {value : Expr} {tail : Stmt}
+    {entry : State w} {overall : Nat}
+    (budget : LocalCompiler.stmtSize control (LocalCompiler.calleeLocals program)
+      (.assign dst value) ≤ overall)
+    (continuation : TimeBound control program heapLimit depth tail
+      (fun s => s = entry.setReg dst (entry.eval value))
+      (fun _ => overall -
+        LocalCompiler.stmtSize control (LocalCompiler.calleeLocals program)
+          (.assign dst value))) :
+    TimeBound control program heapLimit depth (.seq (.assign dst value) tail)
+      (fun s => s = entry) (fun _ => overall) := by
+  rintro s rfl steps finish execution
+  cases execution with
+  | seq first second =>
+    cases first
+    have remaining := continuation _ rfl _ _ second
+    dsimp only at remaining ⊢
+    omega
+
 /-- Store accounting includes evaluation of its address and value. -/
 theorem store {address value : Expr} :
     TimeBound control program heapLimit depth (.store address value) P

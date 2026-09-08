@@ -46,7 +46,11 @@ The [source-facing time tactics](##Complexity.Tactic.Ram.Time) operate on the sa
 generated body used by the correctness proof:
 
 - `ram_time_vc args entry pattern [facts]` starts a `FunctionTimeBound` at the actual
-  parameter-bound state. Supply the generated body equation among the facts.
+  parameter-bound state and advances assignment and skip prefixes. Supply the
+  generated body equation among the facts.
+- `ram_time_vc [facts]` advances those same prefixes in an existing time goal,
+  retaining their actual state updates and compiled costs, and reassociating
+  nested sequences as needed. It stops at calls and loops.
 - `ram_time_call time [facts]` applies an independent callee bound to a final call.
 - `ram_time_apply correct time reserving N [facts]` handles a leading call and
   continues with a bound of `N` on the remainder. Its functional contract supplies
@@ -68,6 +72,12 @@ also uses an independently proved functional contract to establish facts about
 the state where the remainder executes. The theorem `call_seq_at` permits the
 remaining bound to depend on the actual returned value and shared state; the
 convenience tactic uses the supplied `N` independently of that returned pair.
+Assignment prefixes reuse `Ram.Source.TimeBound.assign_seq_at` and the sequence
+rules in [time composition](##Complexity.Computability.Ram.Verification.Time.Composition).
+Their costs come from compiled expression and assignment lengths; a local array
+descriptor's two assignments and base arithmetic are charged, not treated as a
+proof-only change of view. This prefix automation does not prove arbitrary loops
+or infer a callee's time bound.
 
 `N` is a bound to justify in the proof, not an operational budget or an unchecked
 cost annotation. The tactics neither choose it nor prove a callee's cost from
@@ -178,6 +188,18 @@ The full bound includes both inner calls, the outer call and halt, but no host-s
 heap preloading. This is a cost argument for one compiled source function, distinct
 from adding claims about two host-level runners. Discarding copy's returned word
 changes neither its execution nor the cost charged for its private destination.
+
+The [local-slice sample](##Examples.Ram.ArraySlice) adds a descriptor initializer
+before a call to imported sum. Its separate proof uses `ram_time_vc` to advance
+both local assignments and `ram_time_call` to reuse sum's independent time bound.
+Containment and representation identify the actual called slice; no sum-loop proof,
+temporary-register list or frame arithmetic is reconstructed in the body proof.
+For `n = count.toNat`, `function_timeBound` proves a body bound of `18 * n + 72`,
+and `runTotal_steps_le` proves a full-invocation bound of `18 * n + 142`.
+These are upper bounds, not general exact-count equations.
+The full-run bound additionally counts the outer invocation and halt, while
+host-side heap preloading remains outside that run. The ordinary result equation
+and normal-termination proof do not require this time theorem.
 
 ## Count calls inside an array fold
 

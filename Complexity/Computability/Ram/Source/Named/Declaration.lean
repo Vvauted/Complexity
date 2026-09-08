@@ -31,7 +31,7 @@ Lean declarations for its functions and source names:
 * `p.localReg.f.x` is the binding of `x` visible at the return of function `f`;
 * `p.mainReg.x` is a binding visible at the end of `main`, when present.
 
-An array parameter `xs` exports `p.localReg.f.xs.base` and
+An array parameter or local binding `xs` exports `p.localReg.f.xs.base` and
 `p.localReg.f.xs.length`. The typed argument builder passes those same two
 words; it does not allocate or load an in-memory descriptor.
 

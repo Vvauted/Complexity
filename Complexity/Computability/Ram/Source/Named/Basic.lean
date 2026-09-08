@@ -20,8 +20,9 @@ terms retain the enclosing Lean scope and never refer to runtime registers.
 A bare parameter is a word; `xs : array` declares a base-and-length handle.
 Its fields are word locals, and `xs[i]` performs the existing word load.
 At `call f(xs)`, the declared signature determines whether one word or the
-two array fields are passed. Handles currently originate from function
-parameters, not allocation or a general array-valued local-binding syntax.
+two array fields are passed. Handles can be parameters or typed lexical locals,
+constructed from word expressions or borrowed from an existing handle. Their
+two-word copies use the same local frame; no array allocation is implicit.
 
 The functions lower to the ordinary `Program`, with names kept as metadata.
 `Ram.Named.Functions.withMain` explicitly supplies an entry point when one is
@@ -267,7 +268,7 @@ private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl))
         for (param, arg) in params.zip args do
           match param.2 with
           | .word => lowered := lowered.push (← lowerExpr scope strict arg)
-          | .array => lowered := lowered ++ (← arrayArgument scope arg)
+          | .array => lowered := lowered ++ (← arrayArgument scope strict arg)
         let literal := Lean.Syntax.mkNumLit (toString index)
         return (← `($literal:num), lowered)
     | none => Lean.Macro.throwErrorAt name "unknown RAM function name"

@@ -27,8 +27,20 @@ Named functions additionally support `xs : array` parameters. A handle occupies
 two ordinary word parameters, exposed as `xs.base` and `xs.length`; `xs[i]`
 loads from its base. Named calls check the declared parameter kinds and pass
 both fields for an array argument. An array handle is not a word expression.
-The standalone `ram_fun%` form and lexical `let` bindings remain word-valued.
-`for x in xs { ... }` traverses a named array parameter. It copies the base and
+`let window : array := subslice(xs, offset, count);` binds a local handle in two
+fresh registers. `let other : array := window;` copies that handle, while
+`array(base, length)` constructs one from word expressions. These same array
+expressions can be passed directly to named calls. The first argument to
+`subslice` must be an already bound array handle, optionally parenthesized;
+bind a constructed or nested handle with `let` before slicing it. This keeps
+earlier descriptor computations explicit rather than silently discarding them.
+`subslice` adds the offset to the base and uses the chosen count; it does not
+check bounds, truncate, allocate or copy elements. Its address addition retains
+word overflow semantics.
+Immutable array bindings protect their descriptor fields, not their heap cells;
+`let mut` permits descriptor-field assignment. Standalone `ram_fun%` parameters
+remain word-valued, but its scoped body can construct local array handles.
+`for x in xs { ... }` traverses a typed array handle. It copies the base and
 length into fresh cursor locals and loads an immutable `x` for each iteration;
 the generated cursor updates do not modify the array descriptor. Elements are
 read from memory at each iteration, not snapshotted before the loop.
@@ -66,6 +78,10 @@ syntax:max "const(" term ")" : ramExpr
 syntax:max "load[" ramExpr "]" : ramExpr
 syntax:max "true" : ramExpr
 syntax:max "false" : ramExpr
+/-- Construct a by-value array handle from two word expressions, without allocating memory. -/
+syntax:max "array(" ramExpr ", " ramExpr ")" : ramExpr
+/-- Shift a bound array handle's base and select its length; bounds are proof obligations. -/
+syntax:max "subslice(" ramExpr ", " ramExpr ", " ramExpr ")" : ramExpr
 syntax:100 ramExpr:100 "[" ramExpr "]" : ramExpr
 syntax:80 "!" ramExpr:80 : ramExpr
 syntax:80 "-" ramExpr:80 : ramExpr
@@ -110,13 +126,17 @@ syntax "let " "_" " ← " "call " ident "(" ramExpr,* ")" ";" : ramStmt
 syntax "let " ident " := " ramExpr ";" : ramStmt
 /-- Bind a fresh mutable word local for the rest of the enclosing block. -/
 syntax "let " "mut " ident " := " ramExpr ";" : ramStmt
+/-- Bind a fresh immutable array handle for the rest of the enclosing block. -/
+syntax "let " ident " : " &"array" " := " ramExpr ";" : ramStmt
+/-- Bind an array handle whose base and length fields may be assigned. -/
+syntax "let " "mut " ident " : " &"array" " := " ramExpr ";" : ramStmt
 /-- Bind the result of a real source call, not a host-language computation. -/
 syntax "let " ident " ← " "call " ident "(" ramExpr,* ")" ";" : ramStmt
 syntax "let " "mut " ident " ← " "call " ident "(" ramExpr,* ")" ";" : ramStmt
 syntax "if " ramExpr " {" ramStmt* "}" : ramStmt
 syntax "if " ramExpr " {" ramStmt* "}" " else " "{" ramStmt* "}" : ramStmt
 syntax "while " ramExpr " {" ramStmt* "}" : ramStmt
-/-- Traverse a typed array parameter with an immutable block-local element. -/
+/-- Traverse a typed array handle with an immutable block-local element. -/
 syntax "for " ident " in " ident " {" ramStmt* "}" : ramStmt
 
 /-- Quote a RAM statement block. Braces delimit control-flow bodies; atomic
@@ -211,18 +231,6 @@ private def resolveBase (scope : LocalScope) (strict : Bool) (name : Lean.TSynta
   | some binding => registerTerm binding.register
   | none => resolveLocal scope strict name
 
-partial def arrayArgument (scope : LocalScope) (expr : Lean.TSyntax `ramExpr) :
-    Lean.MacroM (Array (Lean.TSyntax `term)) := do
-  match expr with
-  | `(ramExpr| ($arg:ramExpr)) => arrayArgument scope arg
-  | `(ramExpr| $name:ident) =>
-      match scope.find? (fun entry => entry.name == name.getId && entry.kind == .array) with
-      | some binding =>
-          return #[← `(Ram.Expr.var $(← registerTerm binding.register)),
-            ← `(Ram.Expr.var $(← registerTerm (binding.register + 1)))]
-      | none => Lean.Macro.throwErrorAt name "expected an array parameter"
-  | _ => Lean.Macro.throwErrorAt expr "expected an array parameter"
-
 partial def lowerExpr (scope : LocalScope) (strict : Bool)
     (expr : Lean.TSyntax `ramExpr) : Lean.MacroM (Lean.TSyntax `term) := do
   let binary (op : Lean.TSyntax `term) (a b : Lean.TSyntax `ramExpr) := do
@@ -237,6 +245,10 @@ partial def lowerExpr (scope : LocalScope) (strict : Bool)
   | `(ramExpr| load[$a:ramExpr]) => `(Ram.Expr.load $(← lowerExpr scope strict a))
   | `(ramExpr| true) => `(Ram.Expr.const 1)
   | `(ramExpr| false) => `(Ram.Expr.const 0)
+  | `(ramExpr| array($_base:ramExpr, $_length:ramExpr)) =>
+      Lean.Macro.throwErrorAt expr "expected a word, not an array handle"
+  | `(ramExpr| subslice($_array:ramExpr, $_offset:ramExpr, $_length:ramExpr)) =>
+      Lean.Macro.throwErrorAt expr "expected a word, not an array handle"
   | `(ramExpr| $a:ident[$i:ramExpr]) =>
       `(Ram.Expr.index (Ram.Expr.var $(← resolveBase scope strict a))
         $(← lowerExpr scope strict i))
@@ -264,6 +276,35 @@ partial def lowerExpr (scope : LocalScope) (strict : Bool)
   | `(ramExpr| $a:ramExpr > $b:ramExpr) => binary (← `(Ram.BinOp.ult)) b a
   | `(ramExpr| $a:ramExpr >= $b:ramExpr) => binary (← `(Ram.BinOp.ule)) b a
   | _ => Lean.Macro.throwErrorAt expr "unsupported RAM expression"
+
+private partial def boundArrayArgument (scope : LocalScope)
+    (expr : Lean.TSyntax `ramExpr) : Lean.MacroM (Array (Lean.TSyntax `term)) := do
+  match expr with
+  | `(ramExpr| ($arg:ramExpr)) => boundArrayArgument scope arg
+  | `(ramExpr| $name:ident) =>
+      match scope.find? (fun entry => entry.name == name.getId && entry.kind == .array) with
+      | some binding =>
+          return #[← `(Ram.Expr.var $(← registerTerm binding.register)),
+            ← `(Ram.Expr.var $(← registerTerm (binding.register + 1)))]
+      | none => Lean.Macro.throwErrorAt name "expected an array handle"
+  | _ =>
+      Lean.Macro.throwErrorAt expr
+        "expected a bound array handle; bind array construction or nested subslice with 'let' first"
+
+/-- Lower an array-valued source expression to its two ordinary word arguments.
+A subslice starts from an existing handle, so no earlier field computation is discarded. -/
+partial def arrayArgument (scope : LocalScope) (strict : Bool)
+    (expr : Lean.TSyntax `ramExpr) : Lean.MacroM (Array (Lean.TSyntax `term)) := do
+  match expr with
+  | `(ramExpr| ($arg:ramExpr)) => arrayArgument scope strict arg
+  | `(ramExpr| $_name:ident) => boundArrayArgument scope expr
+  | `(ramExpr| array($base:ramExpr, $length:ramExpr)) =>
+      return #[← lowerExpr scope strict base, ← lowerExpr scope strict length]
+  | `(ramExpr| subslice($array:ramExpr, $offset:ramExpr, $length:ramExpr)) =>
+      let fields ← boundArrayArgument scope array
+      return #[← `(Ram.Expr.bin .add $(fields[0]!) $(← lowerExpr scope strict offset)),
+        ← lowerExpr scope strict length]
+  | _ => Lean.Macro.throwErrorAt expr "expected an array handle"
 
 def externalFunction : FunctionResolver := fun scope strict name args => do
   return (← `($name:ident), ← args.mapM (lowerExpr scope strict))
@@ -309,7 +350,11 @@ partial def lowerStmt (scope : LocalScope) (strict : Bool) (function : FunctionR
       `(Ram.Stmt.while $(← expr c) $(← block body))
   | `(ramStmt| for $_element:ident in $_array:ident { $_body:ramStmt* }) =>
       Lean.Macro.throwErrorAt stmt
-        "'for' requires a function frame and a typed array parameter"
+        "'for' requires a function frame and a typed array handle"
+  | `(ramStmt| let $_name:ident : array := $_value:ramExpr;) =>
+      Lean.Macro.throwErrorAt stmt "array local bindings require a function or named main frame"
+  | `(ramStmt| let mut $_name:ident : array := $_value:ramExpr;) =>
+      Lean.Macro.throwErrorAt stmt "array local bindings require a function or named main frame"
   | _ => Lean.Macro.throwErrorAt stmt "unsupported RAM statement"
 
 partial def lowerBlock (scope : LocalScope) (strict : Bool) (function : FunctionResolver)
@@ -331,13 +376,20 @@ structure LoweredBlock where
   nextRegister : Nat
   deriving Inhabited
 
-private def checkMutable (immutable : Array Lean.Name) (name : Lean.TSyntax `ident) :
+private def checkMutable (scope : LocalScope) (immutable : Array Lean.Name)
+    (name : Lean.TSyntax `ident) :
     Lean.MacroM Unit := do
   if immutable.contains name.getId then
     Lean.Macro.throwErrorAt name "cannot assign to an immutable RAM local; use 'let mut'"
+  if !(scope.any (fun entry => entry.name == name.getId)) &&
+      (arrayField? scope name.getId).isSome then
+    let .str parent _ := name.getId | pure ()
+    if immutable.contains parent then
+      Lean.Macro.throwErrorAt name "cannot assign to an immutable array field; use 'let mut'"
 
 /-- Lower lexical declarations with the same expression and statement translator.
-Each declaration gets one fresh frame slot; a shadowed binding remains untouched. -/
+Words receive one fresh frame slot and array handles receive two; initializers
+refer to the previous scope, leaving shadowed bindings untouched. -/
 partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
     (nextRegister : Nat) (strict : Bool) (function : FunctionResolver)
     (body : Array (Lean.TSyntax `ramStmt)) : Lean.MacroM LoweredBlock := do
@@ -356,30 +408,47 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
         Lean.Macro.throwErrorAt name "assign to an array field instead of declaring it with 'let'"
       let register := Lean.Syntax.mkNumLit (toString nextRegister)
       let assignment ← `(Ram.Stmt.assign $register:num $value)
-      pure (name, mutable, assignment)
+      pure (name, mutable, ParameterKind.word, assignment)
+    let bindArray (name : Lean.TSyntax `ident) (mutable : Bool)
+        (value : Lean.TSyntax `ramExpr) := do
+      if (arrayField? scope name.getId).isSome then
+        Lean.Macro.throwErrorAt name "an array local cannot shadow an array field"
+      let fields ← arrayArgument scope strict value
+      let base ← registerTerm nextRegister
+      let length ← registerTerm (nextRegister + 1)
+      let assignment ← `(Ram.Stmt.seq (Ram.Stmt.assign $base $(fields[0]!))
+        (Ram.Stmt.assign $length $(fields[1]!)))
+      pure (name, mutable, ParameterKind.array, assignment)
     let bindCall (name : Lean.TSyntax `ident) (mutable : Bool)
         (fn : Lean.TSyntax `ident) (args : Array (Lean.TSyntax `ramExpr)) := do
       if (arrayField? scope name.getId).isSome then
         Lean.Macro.throwErrorAt name "assign to an array field instead of declaring it with 'let'"
       let invocation ← lowerCall fn args
-      pure (name, mutable, invocation)
+      pure (name, mutable, ParameterKind.word, invocation)
     let binding ← match stmt with
       | `(ramStmt| let $name:ident := $value:ramExpr;) =>
           pure (some (← bindLocal name Bool.false (← lowerExpr scope strict value)))
       | `(ramStmt| let mut $name:ident := $value:ramExpr;) =>
           pure (some (← bindLocal name Bool.true (← lowerExpr scope strict value)))
+      | `(ramStmt| let $name:ident : array := $value:ramExpr;) =>
+          pure (some (← bindArray name Bool.false value))
+      | `(ramStmt| let mut $name:ident : array := $value:ramExpr;) =>
+          pure (some (← bindArray name Bool.true value))
       | `(ramStmt| let $name:ident ← call $fn:ident($args:ramExpr,*);) =>
           pure (some (← bindCall name Bool.false fn args.getElems))
       | `(ramStmt| let mut $name:ident ← call $fn:ident($args:ramExpr,*);) =>
           pure (some (← bindCall name Bool.true fn args.getElems))
       | _ => pure none
     match binding with
-    | some (name, mutable, statement) =>
-        scope := (scope.filter (fun entry => entry.name != name.getId)).push
-          ⟨name.getId, nextRegister, .word⟩
-        immutable := immutable.filter (· != name.getId)
+    | some (name, mutable, kind, statement) =>
+        let shadowed (oldName : Lean.Name) := oldName == name.getId ||
+          (kind == .array &&
+            (oldName == name.getId ++ `base || oldName == name.getId ++ `length))
+        scope := (scope.filter (fun entry => !shadowed entry.name)).push
+          ⟨name.getId, nextRegister, kind⟩
+        immutable := immutable.filter (fun oldName => !shadowed oldName)
         if !mutable then immutable := immutable.push name.getId
-        nextRegister := nextRegister + 1
+        nextRegister := nextRegister + if kind == .array then 2 else 1
         statements := statements.push statement
     | none =>
         let statement ← match stmt with
@@ -407,7 +476,7 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
           | `(ramStmt| for $element:ident in $array:ident { $loop:ramStmt* }) => do
               let some arrayBinding := scope.find? (fun entry =>
                   entry.name == array.getId && entry.kind == .array)
-                | Lean.Macro.throwErrorAt array "expected an array parameter"
+                | Lean.Macro.throwErrorAt array "expected an array handle"
               if (arrayField? scope element.getId).isSome then
                 Lean.Macro.throwErrorAt element "a loop variable cannot shadow an array field"
               let pointer ← registerTerm nextRegister
@@ -425,13 +494,13 @@ partial def lowerScopedBlock (scope : LocalScope) (immutable : Array Lean.Name)
                 (Ram.Expr.var $(← registerTerm (arrayBinding.register + 1))) $(loop.term))
           | _ => do
               match stmt with
-              | `(ramStmt| $name:ident := $_value:ramExpr;) => checkMutable immutable name
-              | `(ramStmt| $name:ident += $_value:ramExpr;) => checkMutable immutable name
-              | `(ramStmt| $name:ident -= $_value:ramExpr;) => checkMutable immutable name
-              | `(ramStmt| $name:ident *= $_value:ramExpr;) => checkMutable immutable name
+              | `(ramStmt| $name:ident := $_value:ramExpr;) => checkMutable scope immutable name
+              | `(ramStmt| $name:ident += $_value:ramExpr;) => checkMutable scope immutable name
+              | `(ramStmt| $name:ident -= $_value:ramExpr;) => checkMutable scope immutable name
+              | `(ramStmt| $name:ident *= $_value:ramExpr;) => checkMutable scope immutable name
               | `(ramStmt| $name:ident := call $_fn:ident($_args:ramExpr,*);) =>
-                  checkMutable immutable name
-              | `(ramStmt| read $name:ident;) => checkMutable immutable name
+                  checkMutable scope immutable name
+              | `(ramStmt| read $name:ident;) => checkMutable scope immutable name
               | _ => pure ()
               lowerStmt scope strict function stmt
         statements := statements.push statement
