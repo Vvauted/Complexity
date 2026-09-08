@@ -171,6 +171,7 @@ import Complexity.Computability.Ram.Source.Named.Basic
 import Complexity.Computability.Ram.Source.Named.Declaration
 import Complexity.Computability.Ram.Source.Safe
 import Complexity.Computability.Ram.Source.State
+import Complexity.Computability.Ram.Source.State.Frame
 import Complexity.Computability.Ram.Source.StraightLine
 import Complexity.Computability.Ram.Source.Syntax
 import Complexity.Computability.Ram.Source.Value

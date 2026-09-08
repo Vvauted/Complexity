@@ -366,6 +366,21 @@ and eventual result. If a decreasing natural number is enough,
 `Ram.Source.Verification.TotalWP.while_variant` provides a direct total-correctness rule.
 The guard, representation and safety obligations remain at the implementation boundary.
 
+For local binding adapters, `Ram.Source.State.LocalFrame writes before after`
+packages unchanged memory and I/O with mathlib's
+`Set.EqOn after.regs before.regs writesᶜ`. Its assignment and composition rules
+let a proof carry all unaffected parameters together instead of rebuilding a
+chain of individual register updates. This is an endpoint relation, not an
+execution or a description of every write event. An expression still needs its
+read-safety and evaluation proof, and every actual assignment keeps its cost.
+
+Function entry initializes the entire local frame. To reason that new locals
+preserve parameters, compare subsequent states with `entry.enter args`, not
+with the original caller's register bank. `State.restore_eq_of_shared` uses
+proved memory/input/output equalities to restore the original caller without
+requiring preservation of discarded callee locals. See the
+[local-frame rules](##Complexity.Computability.Ram.Source.State.Frame).
+
 For a callable recursive function, ordinary mathematical induction can prove
 `Ram.Source.FunctionContract` directly. The [factorial example](##Examples.Ram.Factorial)
 uses natural-number induction in `function_contract`: `ram_total_vc args entry rfl`

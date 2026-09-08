@@ -83,21 +83,34 @@ theorem function_contract {program : Program} {f : Func}
   have hone : 1 < f.params := by omega
   let R := fun s : State w =>
     ∀ i, i < f.params → s.regs i = (array.args ++ captures)[i]?.getD 0
+  have separated : Disjoint {i : Reg | i < f.params}
+      ({accumulator, pointer, remaining, element} : Set Reg) := by
+    rw [Set.disjoint_left]
+    intro i hi written
+    have absent : i ∉ ({accumulator, pointer, remaining, element} : Set Reg) := by
+      simpa using fresh hi
+    exact absent written
+  have transport {writes : Set Reg} {before after : State w}
+      (frame : State.LocalFrame writes before after)
+      (contained : writes ⊆ {accumulator, pointer, remaining, element})
+      (parameters : R before) : R after := by
+    intro i hi
+    exact ((frame.mono contained).eqOn separated hi).trans (parameters i hi)
   apply FunctionContract.of_wp
   · rintro args entry ⟨rfl, _⟩
     simpa only [List.length_append, ArrayRef.length_args] using params.symm
   · exact layout.2
   · rintro args entry ⟨rfl, represented⟩
     let start := (entry.enter (array.args ++ captures)).setReg accumulator (BitVec.ofNat w seed)
+    have startParams : R start :=
+      transport (State.LocalFrame.setReg (entry.enter (array.args ++ captures)) accumulator
+        (BitVec.ofNat w seed)) (by simp) (by dsimp only [R]; intro i _; rfl)
     have baseValue : start.eval (.var 0) = array.base :=
-      State.setReg_ne (entry.enter (array.args ++ captures)) accumulator 0
-        (BitVec.ofNat w seed) (fresh hzero).1
+      startParams 0 hzero
     have lengthValue :
         (start.setReg registers.pointer (start.eval (.var 0))).eval (.var 1) = array.length :=
-      (State.setReg_ne start registers.pointer 1 (start.eval (.var 0))
-        (fresh hone).2.1).trans
-        (State.setReg_ne (entry.enter (array.args ++ captures)) accumulator 1
-          (BitVec.ofNat w seed) (fresh hone).1)
+      transport (State.LocalFrame.setReg start registers.pointer (start.eval (.var 0)))
+        (by simp [registers, registersOfNodup]) startParams 1 hone
     have implementation : ∀ current, R current →
         SafeExec program heapLimit depth (.assign accumulator expression)
           (current.setReg element (current.mem (current.regs pointer)))
@@ -105,9 +118,9 @@ theorem function_contract {program : Program} {f : Func}
             (step (current.regs accumulator) (current.mem (current.regs pointer)))) :=
       fun current hparams => by
         let loaded := current.setReg element (current.mem (current.regs pointer))
-        have loadedParams : R loaded := fun i hi =>
-          (State.setReg_ne current element i (current.mem (current.regs pointer))
-            (fresh hi).2.2.2).trans (hparams i hi)
+        have loadedParams : R loaded :=
+          transport (State.LocalFrame.setReg current element (current.mem (current.regs pointer)))
+            (by simp) hparams
         have evaluated : loaded.eval expression =
             step (current.regs accumulator) (current.mem (current.regs pointer)) :=
           (evaluate loaded loadedParams).trans
@@ -121,13 +134,14 @@ theorem function_contract {program : Program} {f : Func}
         simpa only [evaluated] using assigned
     have preserve : ∀ current, R current → R (stepState registers
         (step (current.regs accumulator) (current.mem (current.regs pointer))) current) :=
-      fun current hparams i hi => by
-        obtain ⟨ha, hp, hr, he⟩ := fresh hi
-        exact (stepState_other registers _ current hp hr ha he).trans (hparams i hi)
-    have initial : R (initialState registers (.var 0) (.var 1) start) := fun i hi => by
-      obtain ⟨ha, hp, hr, _⟩ := fresh hi
-      simp only [initialState, start, registers, registersOfNodup, State.setReg, State.enter,
-        if_neg ha, if_neg hp, if_neg hr]
+      fun current hparams => transport (stepState_localFrame registers _ current)
+        (by intro i hi; exact hi) hparams
+    have initial : R (initialState registers (.var 0) (.var 1) start) :=
+      transport (initialState_localFrame registers (.var 0) (.var 1) start)
+        (by
+          intro i hi
+          simp only [registers, registersOfNodup, Set.mem_insert_iff, Set.mem_singleton_iff] at hi
+          rcases hi with rfl | rfl <;> simp) startParams
     obtain ⟨finish, execution, result, _, _, _, memory, input, output, _⟩ :=
       ForIn.forIn_safe registers hw implementation preserve start xs initial
         (base := .var 0) (length := .var 1) (by trivial) (by trivial)
@@ -141,9 +155,7 @@ theorem function_contract {program : Program} {f : Func}
     · simpa only [resultShape, List.map_cons, List.map_nil, State.eval, Expr.eval,
         start, State.setReg_same, registers, registersOfNodup] using
         congrArg (fun value => [value]) result
-    · change State.mk entry.regs finish.mem finish.input finish.outputRev = entry
-      rw [memory, input, output]
-      rfl
+    · exact State.restore_eq_of_shared memory input output
 
 /-- Recover the exact compiled body count of the same completed invocation.
 The expression's instruction length is counted on every iteration; no result

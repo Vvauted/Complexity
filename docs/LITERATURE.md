@@ -165,11 +165,11 @@ both proof views. Behavioral equality alone must never transport a cost bound.
 For recursion we retain independent termination proofs rather than requiring a
 cost clock to publish correctness. Target adequacy remains the compiler's job.
 
-The sample review identifies the next concrete use: factorial should expose its
-cost recurrence without a second register-level induction, and typed calls should
-compose results and costs without unpacking execution trees. Separate theorem
-files alone do not establish CALF's full phase discipline or noninterference
-metatheorem; those claims are not made here.
+The sample review gives concrete uses: factorial exposes its cost recurrence
+without a second register-level induction, and typed calls compose results and
+costs without unpacking execution trees. Separate theorem files alone do not
+establish CALF's full phase discipline or noninterference metatheorem; those
+claims are not made here.
 
 Section 6's sorting results use a comparison-cost model, not total RAM
 transitions. Our recursive sorting consumer gives a concrete instance of the
@@ -179,6 +179,15 @@ declaration, including descriptor setup, calls and copy-back. Neither a slow
 reference function in a mathematical specification nor equality of sorted
 results changes the implementation's complexity. No parallel-span claim is
 inherited from CALF's separate parallel cost model.
+
+Appendix A distinguishes importing host-language data and mathematics from
+charging all traversals in a uniform cost model. Its imported natural-number
+operations suit an algorithm-specific instrumentation, whereas its queue analysis
+needs a cost-aware list type. For us, this reinforces two separate obligations:
+reuse Lean and mathlib for specifications and ordinary mathematics, but justify
+the cost of the actual representation and operations. In particular, a proof
+that fresh local assignments preserve an existing mathematical view does not
+erase those assignments from the executable program or its time theorem.
 
 ## 7. Preserve effects when composing cost arguments
 

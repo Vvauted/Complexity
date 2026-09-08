@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Array.Fold
 import Complexity.Computability.Ram.Source.ForIn
+import Complexity.Computability.Ram.Source.State.Frame
 
 /-!
 # Read-only scalar folds through array iteration
@@ -55,6 +56,16 @@ def initialState (registers : Registers) (base length : Expr) (s : State w) : St
   simp [initialState, State.setReg, Ne.symm registers.pointer_ne_accumulator,
     Ne.symm registers.remaining_ne_accumulator]
 
+/-- Cursor initialization changes only its two private locals. The second
+assignment still evaluates the length after the pointer assignment. -/
+theorem initialState_localFrame (registers : Registers) (base length : Expr) (s : State w) :
+    State.LocalFrame {registers.pointer, registers.remaining} s
+      (initialState registers base length s) := by
+  have frame := (State.LocalFrame.setReg s registers.pointer (s.eval base)).trans
+    (State.LocalFrame.setReg (s.setReg registers.pointer (s.eval base)) registers.remaining
+      ((s.setReg registers.pointer (s.eval base)).eval length))
+  exact frame.mono (by intro r hr; simpa [or_comm] using hr)
+
 /-- An iteration loads the head before storing its implemented accumulator
 result and advancing the private cursor. This describes the real state changes. -/
 def stepState (registers : Registers) (value : Word w) (s : State w) : State w :=
@@ -89,6 +100,19 @@ theorem stepState_other (registers : Registers) (value : Word w) (s : State w) {
     (stepState registers value s).regs r = s.regs r := by
   rw [stepState, Fold.advanceState_other registers.toRegisters _ _ hp hc ha]
   simp [State.setReg, he]
+
+/-- The real element load, scalar update and cursor advance have four writable
+roles. All other locals and every shared-state component are preserved. -/
+theorem stepState_localFrame (registers : Registers) (value : Word w) (s : State w) :
+    State.LocalFrame
+      {registers.accumulator, registers.pointer, registers.remaining, registers.element} s
+      (stepState registers value s) := by
+  refine { mem := rfl, input := rfl, outputRev := rfl, regs := ?_ }
+  intro r untouched
+  have absent : r ≠ registers.accumulator ∧ r ≠ registers.pointer ∧
+      r ≠ registers.remaining ∧ r ≠ registers.element := by
+    simpa using untouched
+  exact stepState_other registers value s absent.2.1 absent.2.2.1 absent.1 absent.2.2.2
 
 private structure LoopRep (registers : Registers) (heapLimit : Nat)
     (entry : State w) (target : Word w) (R : State w → Prop)

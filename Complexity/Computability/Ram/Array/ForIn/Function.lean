@@ -119,9 +119,7 @@ theorem function_contract_of_step {program : Program} {f helper : Func}
       · simpa only [resultShape, List.map_cons, List.map_nil, State.eval, Expr.eval,
           start, State.setReg_same, registers, registersOfNodup] using
           congrArg (fun value => [value]) result
-      · change State.mk entry.regs finish.mem finish.input finish.outputRev = entry
-        rw [memory, input, output]
-        rfl
+      · exact State.restore_eq_of_shared memory input output
 
 /-- A single-array function computes a read-only scalar fold through actual
 calls. Generated body/result equations infer every local slot; the layout

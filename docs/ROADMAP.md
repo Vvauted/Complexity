@@ -20,7 +20,7 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | [Factorial](../Examples/Ram/Factorial.lean), [FunctionRun](../Examples/Ram/FunctionRun.lean) | Ordinary induction proves correctness and a single exact-cost recurrence. The upper bound and measured endpoint reuse these proofs; executable values rewrite to mathlib factorial. | Publishing the runtime equation still assembles source observations and justified word/stack conditions; general state-dependent exact composition needs more rules. |
 | [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. Uniform and actual element/prefix-dependent cost rules are available, exercised by an adapter around the existing factorial. | The caller still supplies the mathematical update, element domain and accumulator invariant. Mutable or richer-accumulator traversals are not covered by this read-only scalar rule. |
 | [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Its time continuation receives that reference directly and bounds summation using its actual length. | The author still selects the typed input, transports representation facts and justifies the mathematical continuation bound. |
-| [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. | The implementation adapter still proves local-slot separation, initialization and shared-state restoration; the short client theorem does not remove that work. |
+| [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. Shared-state restoration uses a common rule. | The implementation adapter still proves local-slot separation and initialization; the short client theorem does not remove that work. |
 | [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost; clients still prove their genuine extent and aliasing conditions. |
 | [Merge sort](../Examples/Ram/MergeSort.lean) | A real two-array `Unit` declaration recursively calls itself, merge and copy. Ordinary length induction composes shared slice/reassembly rules; actual output has a sorted-permutation and `StateM` specification, with a separate full-run `n log n` reserve. Correctness and time calls restore caller bindings; the time rule derives each remaining reserve. | Correctness and time proofs still repeat stage composition. The author supplies the whole-branch reserve, recursive capacity and array facts; these must not be confused with automatically derived call accounting. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls, with independently reusable correctness and time proofs. | Clients transport contracts through imports, rebuild representations, unpack register preservation, and choose numeric continuation reserves. |
@@ -53,7 +53,8 @@ decomposition rather than forcing clients back to separate execution-tree proofs
 ### 2. Are we actually reusing Lean, Std, Batteries and mathlib?
 
 Already reused: `Part`, ordinary lists and vectors, `StateM` and `Std.Do.Triple`,
-standard induction, asymptotic relations, and mathlib's Akra–Bazzi machinery.
+standard induction, `Set.EqOn` for unchanged locals, asymptotic relations, and
+mathlib's Akra–Bazzi machinery.
 Do not build replacements for these.
 
 The word-sum algebra in [Array/Sum](../Complexity/Computability/Ram/Array/Sum.lean)
@@ -210,14 +211,28 @@ budget-free interval-halving iteration relation between termination and the
 separate time proof. The costs still include every compiled guard and back-edge;
 the shared rule does not assign an abstract constant price to the whole loop.
 
+**Checked local-binding step:** `State.LocalFrame` packages unchanged shared
+state with mathlib's `Set.EqOn` on unaffected locals. The expression-fold adapter
+proves parameter/local separation once and transports the same parameter facts
+through initialization, element loading and cursor advance. Search and both fold
+adapters reuse `restore_eq_of_shared` at return. Function entry is still a real
+change of register environment: the local frame starts after `entry.enter args`.
+Neither endpoint equality nor discarded locals erase executed assignment costs.
+
+This is an implementation-side bridge, not automatic scope inference or a net
+reduction in every proof's length. LocalBindings already composes its calls in
+a few lines; search's two single-register reads remain simpler without a set
+frame. Do not migrate such proofs just to demonstrate the new interface. The
+remaining `Nodup`/register-role adapter and expression meaning are still explicit.
+
 **Remaining work:**
 
 - Make local-block proofs follow the source structure without exposing numeric
   slots. Search's scoped midpoint must remain local to its loop body; exporting
   it as a function-level variable would misrepresent the language's scope.
   Reuse `TotalWP.while_variant`, ordinary-model `Refines.while_wellFounded`,
-  and existing statement rules. First remove
-  repeated binding, initialization and shared-state framing in real consumers;
+  and existing statement rules. Build on the checked parameter-preservation
+  bridge when a real local-block proof still repeats this work;
   do not replace the loop framework or accumulate whole-sample AST recognizers.
   A small binder tactic is worthwhile only if the resulting proof is actually
   clearer than the existing substitution rules.
@@ -346,10 +361,12 @@ reserve. Natural-number subtraction cannot justify overspending. Automation
 handles lookup and argument equations; it does not repeatedly search a large
 continuation or unfold mathematical names there while attempting those premises.
 
-**Next proof-experience work:** assess repeated stage composition and source-local
-bindings in existing consumers. Extract a shared rule only when it removes that
-work without hiding representation, mutation or capacity obligations. Do not add
-another recursion framework or whole-sample AST recognizer.
+**Next proof-experience work:** migrate copy-then-sum's effectful call to the
+existing typed/restored call rules before adding another interface. Its old proof
+still unpacks preserved registers and chooses a continuation reserve by hand.
+Then reassess repeated multi-buffer stage composition. Extract a shared rule only
+when it removes work without hiding representation, mutation or capacity
+obligations; do not add another recursion framework or whole-sample AST recognizer.
 
 **Checked lower-bound step:** search is now a named callable function, with
 ordinary endpoint initialization and a loop-scoped midpoint. Its shared interval
@@ -363,8 +380,8 @@ array-endpoint condition. Normal execution still needs its genuine stack capacit
 
 This completes one source-to-runtime consumer, not the full high-level interface.
 Its private binding adapter is a temporary localized cost to proof authors, not
-a new public verification framework. Address repeated binding and multi-buffer
-representation work during the typed merge-sort migration above. Do not add dummy
+a new public verification framework. Shared restoration is now factored out;
+source-local layout and multi-buffer representation still need attention. Do not add dummy
 parameters or whole-program renaming merely to preserve old numeric slots.
 
 The language itself is also unfinished. Word, borrowed-array and `Unit` results,

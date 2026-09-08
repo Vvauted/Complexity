@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Array.Search.Time
 import Complexity.Computability.Ram.Array.Ref
 import Complexity.Computability.Ram.Source.Named.Declaration
+import Complexity.Computability.Ram.Source.State.Frame
 import Complexity.Computability.Ram.Verification.Function.Typed
 import Complexity.Computability.Ram.Verification.Time.Function
 import Complexity.Tactic.Ram.Total
@@ -127,11 +128,9 @@ private theorem function_contract_of_body {w heapLimit depth : Nat} {program : P
     ram_total_vc [bodyShape, resultShape, ArrayRef.args, lengthLo]
     apply Verification.TotalWP.mono_post search
     intro finish post
-    have memory : finish.mem = entry.mem := post.mem
-    have input : finish.input = entry.input := post.input
-    have output : finish.outputRev = entry.outputRev := post.output
-    ram_simp [memory, input, output]
-    exact post.result
+    have shared : entry.restore finish = entry :=
+      State.restore_eq_of_shared post.mem post.input post.output
+    exact ⟨post.result, shared⟩
 
 /-- The named function returns the ordinary lower-bound position and preserves
 the entire caller state. Sortedness and represented data suffice; there is no

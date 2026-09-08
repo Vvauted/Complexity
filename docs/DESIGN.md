@@ -240,6 +240,17 @@ or the supported fixed helper call. Richer bodies, multiple accumulators,
 short-circuiting, mutation and array-valued accumulators need further interfaces;
 acceptance by the source parser alone does not supply their proofs.
 
+Local binding adapters can use `State.LocalFrame` to transport a collection of
+unchanged parameters through those actual state updates. Its register relation
+is mathlib's `Set.EqOn`; composition takes the union of allowed endpoint changes.
+It also requires unchanged shared memory and I/O, so it is not a general effect
+system or an execution trace. Parameter initialization replaces the whole local
+environment: subsequent local assignments are compared with `entry.enter args`,
+not the original caller. `restore_eq_of_shared` restores caller state from the
+three shared-state equalities without assumptions on discarded callee locals.
+Read safety, mathematical evaluation and compiler-derived costs remain separate
+obligations. Individual unchanged-register reads need not use the collection rule.
+
 ## The current machine model
 
 Words and addresses are finite bit vectors. Arithmetic has the specified modular
