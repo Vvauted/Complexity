@@ -72,6 +72,12 @@ count use this interface; `sumPair` composes two sum calls without reconstructin
 their loops or frames. Array-valued locals and returns, allocation and automatic
 loading from Lean data remain unfinished.
 
+Source declarations can include earlier `ram_def` implementations under aliases.
+Stored word/array signatures guide their calls; generated function-table embeddings
+transport contracts after linking and relocation. The copy-then-sum source client
+uses the existing copy and sum implementations inside one compiled invocation,
+with an independent cost proof rather than host-side runner sequencing.
+
 `TotalComponent` carries that separation through reusable program packaging and
 linking. A separate time proof recovers the same code through the resource-aware
 component interface; migrating richer data-operation clients remains part of the work below.
@@ -128,6 +134,19 @@ refinement has been supplied; it does not derive that refinement automatically.
   full-run RAM-cost theorem and implements no loader.
   A separate conditional body bound gives at most `19 * n + 42` steps for the actual
   single copy invocation, including call and halt, without entering its termination proof.
+- Cross-module source calls use `include copyFunctions as Copy` and
+  `include sumFunctions as Sum`. The new `FunctionComposition` client transports
+  their contracts through generated embeddings and calls them from one declared
+  `copyThenSum`. Its ordinary result retains the modular sum, copied destination
+  and framing; no callee loop is reimplemented. This is a different executable
+  composition from `ArrayCopyFunction.copyThenSum`'s two host-level calls.
+  Imported aliases retain all six generated interfaces; `imported_sumPair_eval`
+  also transports sumPair's existing theorem across its nested sum-call relocation.
+  Separate timing bounds the body by `37 * n + 107` and the full invocation by
+  `37 * n + 170`, where `n` is the represented list length. These are upper bounds,
+  not general exact equalities. The full bound includes both inner calls, the outer
+  call and halt, but not host-side heap preloading. The proof still configures
+  generated call arguments and local bindings.
 - The recursive factorial contract uses ordinary induction, generated parameter
   binding and the recursive call's argument/result contract. Its algorithmic
   proof names no registers or callee frames. A separate one-step bridge retains
@@ -183,6 +202,9 @@ branches, loops and named recursive calls, not arbitrary Lean compilation.
 
 - Make the source declaration the single executable definition. Expose parameters,
   local variables and returned values to proofs without register arithmetic.
+- Support effect-only calls without dummy scalar bindings. Calls currently require
+  an assignment or binding such as `let copied ← call Copy.copy(...)`; there is no
+  standalone call/discard statement or `Unit` result.
 - Build on the generated parameter binding, return/time observations and runtime
   entry points. Generate source-facing semantic equations that make larger body
   proofs compositional; keep the input/output driver as an optional executable
@@ -229,11 +251,12 @@ objects. Do not add more data-structure wrappers merely to expand a feature list
 
 - Expose each operation's mathematical effect, safety assumptions and unchanged
   state through a reusable call interface.
-- Build on `applyState` and the copy-then-sum client to compose more existing
-  effectful operations through their returned state and mathematical postconditions.
-  Move this convenience into single-source compiled compositions, retaining actual
-  linking/call costs, genuine effects and capacity premises. Typed data locals and
-  returned array values remain separate work; a source-state result is not that syntax.
+- Build on source `include`, generated embeddings and the compiled copy-then-sum
+  client to compose richer existing operations without reopening their loops.
+  Keep host-level `applyState` sequencing distinct from a single compiled source
+  composition, retaining actual linking/call costs, effects and capacity premises.
+  Typed data locals, returned array values and allocation remain separate work;
+  linking existing word/array signatures does not provide those data operations.
 - Build on the shared expression and verified-call folds for richer existing
   consumers: short-circuiting, multiple accumulators and mutable traversals need
   their actual effects and progress rules. Reuse ordinary `List` folds and their

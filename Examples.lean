@@ -8,6 +8,8 @@ import Examples.Ram.Arithmetic
 import Examples.Ram.ArrayArguments
 import Examples.Ram.ArrayCopy
 import Examples.Ram.ArrayCopyFunction
+import Examples.Ram.FunctionComposition
+import Examples.Ram.FunctionCompositionTime
 import Examples.Ram.ArraySum
 import Examples.Ram.ArrayCount
 import Examples.Ram.ArrayFold

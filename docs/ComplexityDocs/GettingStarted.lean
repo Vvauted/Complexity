@@ -182,6 +182,40 @@ reuses it twice, without reopening the loop proof. Range and overflow premises s
 belong to the operation contract. See [data models](##ComplexityDocs.Models) for the
 representation boundary and current limits on array-valued source expressions.
 
+## Call functions declared in another module
+
+After importing modules containing earlier `ram_def` function declarations,
+include their implementations under source aliases. The
+[source-composition sample](##Examples.Ram.FunctionComposition) writes:
+
+```lean
+ram_def functions := ram_functions% {
+  include copyFunctions as Copy;
+  include sumFunctions as Sum;
+  fn copyThenSum(source : array, destination : array) {
+    let copied ← call Copy.copy(source.base, destination.base, source.length);
+    let answer ← call Sum.sum(destination);
+    return answer;
+  }
+}
+```
+
+The earlier declarations' stored word/array signatures determine argument lowering:
+`Copy.copy` takes three words, while `Sum.sum` takes one array reference. The frontend
+links their function tables, relocates internal calls and appends the new functions.
+These are imported source implementations, not Lean callbacks or duplicated loop bodies.
+Imported aliases expose all six generated interfaces too, for example
+`functions.eval.Sum.sumPair` and `functions.run.Sum.sumPair`. Includes require
+`ram_def` and an earlier `ram_def` declaration; bare term quotations do not resolve them.
+
+The generated `functions.applyState.copyThenSum` executes one compiled invocation
+and returns its word and updated shared state. Its contract reuses copy and sum
+contracts through generated embeddings; matching lengths, represented disjoint arrays
+and sufficient code/stack capacity remain required. The mathematical result is the
+modular sum and copied destination contents. A
+[separate time proof](##Examples.Ram.FunctionCompositionTime) bounds that same invocation;
+correctness and termination require no proposed time bound.
+
 ## Iterate with an element binding
 
 The [array-fold sample](##Examples.Ram.ArrayFold) uses the same callable helpers
@@ -343,10 +377,13 @@ with `apply` does not prove shared state unchanged.
 The [state-returning copy sample](##Examples.Ram.ArrayCopyFunction) defines
 `copy source destination length heapLimit entry safe hstack : Source.State 32`.
 It executes the existing copy function's stores; `copy_contents` identifies the copied
-destination using the existing `arrayContents` observation. Its `copyThenSum` passes
-that returned state to the ordinary sum function. This is host-side sequencing of
-two real compiled calls, not one newly compiled RAM function or a complete combined
-RAM-cost theorem. Representation, disjointness and capacity remain explicit.
+destination using the existing `arrayContents` observation. Its
+`ArrayCopyFunction.copyThenSum` passes that returned state to the ordinary sum function.
+This is host-side sequencing of two real compiled calls, not one newly compiled RAM
+function, and has no combined RAM-cost theorem. Representation, disjointness and
+capacity remain explicit.
+The source-level `FunctionComposition.copyThenSum` above instead makes both calls
+inside one declared and compiled function.
 
 ## Add an executable driver when needed
 
@@ -430,6 +467,7 @@ Continue with [proving correctness](##ComplexityDocs.Verification).
 | Potential-based amortized analysis | [Amortized clearing](##Examples.Ram.AmortizedClear) |
 | Reusing an array contract and its frame | [Array copy](##Examples.Ram.ArrayCopy) |
 | Passing actual updated state to another call | [State-returning copy](##Examples.Ram.ArrayCopyFunction) |
+| Calling imported implementations inside one source function | [Source composition](##Examples.Ram.FunctionComposition) |
 | Lower bound with duplicates | [Binary search](##Examples.Ram.BinarySearch) |
 | Recursive calls, borrowed arrays and a recurrence | [Merge sort](##Examples.Ram.MergeSort) |
 

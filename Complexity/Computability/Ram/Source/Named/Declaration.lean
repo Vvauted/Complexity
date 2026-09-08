@@ -71,11 +71,32 @@ without maintaining a second syntax tree. The command and term quotations invoke
 the same lowering once, sharing name resolution, slot allocation and generated AST.
 No runtime lookup is introduced, and the compiler and verification rules are unchanged.
 Existing term-form declarations need not be migrated.
+
+Within `ram_def`, `include other as Alias;` imports a previously declared collection
+before the local functions. Calls such as `Alias.f(xs)` retain the imported word/array
+signature. Linking relocates every imported internal call; local functions are lowered
+once with their final indices. `p.importMap.Alias` and `p.embeds.Alias` expose the index
+map and semantic embedding. Imported members receive the same function, argument and
+runtime entries under `p.function.Alias.f`, `p.arguments.Alias.f`, `p.run.Alias.f`, and so
+on. Their source bodies are not lowered again. Retained signature metadata also includes
+imported members, so an already linked collection can itself be included later. Includes
+require `ram_def`; ordinary term quotations without includes remain unchanged.
 -/
 
 namespace Ram.DSL
 
 open Lean.Parser.Term
+
+/-- Source signatures persist across imports; the executable definitions remain the
+ordinary named function tables. No function bodies are stored in this extension. -/
+initialize functionSignatures :
+    Lean.SimplePersistentEnvExtension (Lean.Name × Array FunctionSignature)
+      (Lean.NameMap (Array FunctionSignature)) ←
+  Lean.registerSimplePersistentEnvExtension {
+    addImportedFn := fun modules => modules.foldl
+      (fun state entries => entries.foldl
+        (fun state entry => state.insert entry.1 entry.2) state) {}
+    addEntryFn := fun state entry => state.insert entry.1 entry.2 }
 
 private def localRegisterDeclarations (scopeName : Lean.Name)
     (scope : LocalScope) : Lean.MacroM (Array Lean.Syntax) := do
@@ -218,10 +239,10 @@ private def functionEquations (name fn functionName : Lean.TSyntax `ident)
 
 private def functionDeclarations (name : Lean.TSyntax `ident)
     (decls : Array FunctionDeclaration) (functions : Array (Lean.TSyntax `term))
-    (scopes : Array LocalScope) :
+    (scopes : Array LocalScope) (offset : Nat) :
     Lean.MacroM (Array Lean.Syntax) := do
   let mut declarations := #[]
-  let mut index := 0
+  let mut index := offset
   for ((decl, lowered), scope) in (decls.zip functions).zip scopes do
     let fn := decl.name
     let indexName := Lean.mkIdentFrom fn (name.getId ++ `functionIndex ++ fn.getId)
@@ -244,19 +265,89 @@ private def functionDeclarations (name : Lean.TSyntax `ident)
     index := index + 1
   return declarations
 
+private def importDeclarations (name : Lean.TSyntax `ident) (lowered : LoweredNamed) :
+    Lean.MacroM (Array Lean.Syntax) := do
+  let mut declarations := #[]
+  for position in [:lowered.imports.size] do
+    let dependency := lowered.imports[position]!
+    let src := dependency.source
+    let importAlias := dependency.alias
+    let before := lowered.prefixes[position]!
+    let label := Lean.Syntax.mkStrLit importAlias.getId.toString
+    let mapName := Lean.mkIdentFrom importAlias (name.getId ++ `importMap ++ importAlias.getId)
+    let embeddingName := Lean.mkIdentFrom importAlias (name.getId ++ `embeds ++ importAlias.getId)
+    let indexMap ← `(command| abbrev $mapName:ident : Nat → Nat :=
+      fun i => ($before).program.length + i)
+    declarations := declarations.push indexMap.raw
+    let mut embedding ← `(Ram.Named.Functions.embeds_link_right $before
+      (Ram.Named.Functions.mk ($src:ident).registers ($src:ident).declarations) $label:str)
+    for laterPosition in [position + 1:lowered.imports.size] do
+      let later := lowered.imports[laterPosition]!
+      let laterSource := later.source
+      let laterLabel := Lean.Syntax.mkStrLit later.alias.getId.toString
+      let laterPrefix := lowered.prefixes[laterPosition]!
+      embedding ← `(Ram.Program.Embeds.trans (ρ := $mapName:ident) (σ := id) $embedding
+        (Ram.Named.Functions.embeds_link_left $laterPrefix
+          (Ram.Named.Functions.mk ($laterSource:ident).registers
+            ($laterSource:ident).declarations) $laterLabel:str))
+    let linked := lowered.prefixes[lowered.imports.size]!
+    let registers := Lean.Syntax.mkNumLit (toString lowered.localRegisters)
+    let locals := lowered.functions
+    embedding ← `(Ram.Program.Embeds.trans (ρ := $mapName:ident) (σ := id) $embedding
+      (Ram.Named.Functions.embeds_extend $linked $registers:num [$locals,*]))
+    let embeddingDeclaration ← `(command| theorem $embeddingName:ident :
+      Ram.Program.Embeds $mapName:ident ($src:ident).program ($name:ident).program := $embedding)
+    declarations := declarations.push embeddingDeclaration.raw
+    for index in [:dependency.signatures.size] do
+      let signature := dependency.signatures[index]!
+      let fn := Lean.mkIdentFrom importAlias (importAlias.getId ++ signature.name)
+      let indexName := Lean.mkIdentFrom fn (name.getId ++ `functionIndex ++ fn.getId)
+      let functionName := Lean.mkIdentFrom fn (name.getId ++ `function ++ fn.getId)
+      let lookupName := Lean.mkIdentFrom fn (name.getId ++ `function_lookup ++ fn.getId)
+      let literal := Lean.Syntax.mkNumLit (toString index)
+      let original ← `(($src:ident).program[$literal:num]'(by decide))
+      let indexDeclaration ← `(command| abbrev $indexName:ident : Nat := $mapName:ident $literal:num)
+      let functionDeclaration ← `(command| abbrev $functionName:ident : Ram.Func :=
+        ($original).renameCalls $mapName:ident)
+      let lookupDeclaration ← `(command| theorem $lookupName:ident :
+        ($name:ident).program[$indexName:ident]? = some $functionName:ident :=
+        $embeddingName:ident (show ($src:ident).program[$literal:num]? = some $original from rfl))
+      declarations := declarations ++
+        #[indexDeclaration.raw, functionDeclaration.raw, lookupDeclaration.raw]
+      let params : Array Parameter := signature.params.map fun (parameter, kind) =>
+        { name := Lean.mkIdent parameter, kind := kind }
+      declarations := declarations ++ (← argumentDeclarations name fn params functionName)
+      declarations := declarations ++ (← functionEntryPoints name fn functionName params)
+  return declarations
+
 /-- Declare named RAM functions or a named bundle, exporting their functions,
 lookup theorems and source-level variable names for ordinary correctness proofs. -/
 syntax (name := ramDef) (docComment)? "ram_def " ident " := " term : command
 
-macro_rules
+elab_rules : command
   | `(command| $[$doc:docComment]? ram_def $name:ident := $source:term) => do
-      let lowered ← lowerNamed source
-      let declaration ← `(command| $[$doc:docComment]? def $name:ident :
-        $(lowered.type) := $(lowered.term))
-      let mut declarations := #[declaration.raw] ++ (← functionDeclarations name
-        lowered.parsed lowered.functions lowered.functionScopes)
-      declarations := declarations ++ (← localRegisterDeclarations
-        (name.getId ++ `mainReg) lowered.mainScope)
-      return Lean.mkNullNode declarations
+      let parsed ← Lean.Elab.liftMacroM (parseNamed source)
+      let mut imports : Array FunctionImport := #[]
+      for dependency in parsed.includes do
+        match dependency with
+        | `(ramInclude| include $src:ident as $importAlias:ident;) =>
+            let resolved ← Lean.resolveGlobalConstNoOverload src
+            let some signatures := (functionSignatures.getState (← Lean.getEnv)).find? resolved
+              | Lean.throwErrorAt src "included collection must be declared with 'ram_def'"
+            imports := imports.push ⟨src, importAlias, signatures⟩
+        | _ => Lean.throwErrorAt dependency "expected 'include collection as Alias;'"
+      let lowered ← Lean.Elab.liftMacroM (lowerNamed source imports)
+      let declarations ← Lean.Elab.liftMacroM do
+        let declaration ← `(command| $[$doc:docComment]? def $name:ident :
+          $(lowered.type) := $(lowered.term))
+        let mut declarations := #[declaration.raw] ++ (← importDeclarations name lowered)
+        declarations := declarations ++ (← functionDeclarations name
+          lowered.parsed lowered.functions lowered.functionScopes lowered.localOffset)
+        declarations := declarations ++ (← localRegisterDeclarations
+          (name.getId ++ `mainReg) lowered.mainScope)
+        pure (Lean.mkNullNode declarations)
+      Lean.Elab.Command.elabCommand declarations
+      let resolved ← Lean.resolveGlobalConstNoOverload name
+      Lean.modifyEnv (functionSignatures.addEntry · (resolved, lowered.signatures))
 
 end Ram.DSL

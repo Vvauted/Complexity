@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Local.Basic
+import Complexity.Computability.Ram.Source.Linking
 import Complexity.Computability.Ram.Source.Syntax
 
 /-!
@@ -43,6 +44,47 @@ structure Functions where
 /-- The function table used by the existing execution and compilation rules. -/
 def Functions.program (functions : Functions) : Program :=
   functions.declarations.map Prod.snd
+
+/-- Link an existing function collection under a source-name prefix. Only calls
+in the right collection are relocated; its function bodies are not recompiled. -/
+def Functions.link (left right : Functions) (namespacePrefix : String) : Functions where
+  registers := max left.registers right.registers
+  declarations := left.declarations ++ right.declarations.map fun (name, f) =>
+    (namespacePrefix ++ "." ++ name, f.renameCalls (fun i => left.program.length + i))
+
+@[simp] theorem Functions.link_program (left right : Functions) (namespacePrefix : String) :
+    (left.link right namespacePrefix).program = Program.link left.program right.program := by
+  simp [Functions.link, Functions.program, Program.link, List.map_map, Function.comp_def]
+
+theorem Functions.embeds_link_left (left right : Functions) (namespacePrefix : String) :
+    Program.Embeds id left.program (left.link right namespacePrefix).program := by
+  rw [Functions.link_program]
+  exact Program.embeds_link_left _ _
+
+theorem Functions.embeds_link_right (left right : Functions) (namespacePrefix : String) :
+    Program.Embeds (fun i => left.program.length + i) right.program
+      (left.link right namespacePrefix).program := by
+  rw [Functions.link_program]
+  exact Program.embeds_link_right _ _
+
+/-- Append functions whose calls already use the final table's indices.
+In contrast to linking an independent module, these calls must not be relocated. -/
+def Functions.extend (functions : Functions) (registers : Nat)
+    (declarations : List Declaration) : Functions where
+  registers := max functions.registers registers
+  declarations := functions.declarations ++ declarations
+
+@[simp] theorem Functions.extend_program (functions : Functions) (registers : Nat)
+    (declarations : List Declaration) :
+    (functions.extend registers declarations).program =
+      functions.program ++ declarations.map Prod.snd := by
+  simp [Functions.extend, Functions.program]
+
+theorem Functions.embeds_extend (functions : Functions) (registers : Nat)
+    (declarations : List Declaration) :
+    Program.Embeds id functions.program (functions.extend registers declarations).program := by
+  rw [Functions.extend_program]
+  exact Program.embeds_append_left _ _
 
 /-- Function names remain paired with their bodies for readable inspection.
 They are not runtime strings or a new instruction-level lookup operation. -/
@@ -109,6 +151,11 @@ namespace Ram.DSL
 
 declare_syntax_cat ramDecl (behavior := symbol)
 declare_syntax_cat ramParam
+declare_syntax_cat ramInclude
+
+/-- Import an already declared function collection with qualified source names.
+This form is resolved by `ram_def`, which retains declared parameter kinds. -/
+syntax &"include " ident &" as " ident ";" : ramInclude
 
 syntax ident : ramParam
 syntax ident " : " &"array" : ramParam
@@ -120,14 +167,14 @@ syntax &"fn " ident "(" ramParam,* ")" "{"
 
 /-- A collection of callable functions, without a required main statement.
 Calls share the same named function table, including recursive and forward calls. -/
-syntax:max "ram_functions% " "{" ramDecl* "}" : term
+syntax:max "ram_functions% " "{" ramInclude* ramDecl* "}" : term
 
 /-- A complete named program. Function declarations share a function table;
 each function and `main locals (...)` has its own independent variable table.
 The global register bound is inferred from the largest local frame. -/
-syntax:max "ram_program% " "{" ramDecl*
+syntax:max "ram_program% " "{" ramInclude* ramDecl*
   &"main " ident "(" ident,* ")" "{" ramStmt* "}" "}" : term
-syntax:max "ram_program% " "{" ramDecl*
+syntax:max "ram_program% " "{" ramInclude* ramDecl*
   &"main " "{" ramStmt* "}" "}" : term
 
 /-- A parsed function, shared by term quotations and proof-facing declarations. -/
@@ -138,6 +185,40 @@ structure FunctionDeclaration where
   body : Array (Lean.TSyntax `ramStmt)
   result : Lean.TSyntax `ramExpr
   deriving Inhabited
+
+/-- Source-level signature metadata in function-table order. Two physical word
+parameters do not determine whether the source parameter was an array. -/
+structure FunctionSignature where
+  name : Lean.Name
+  params : Array (Lean.Name × ParameterKind)
+  deriving Inhabited
+
+/-- A resolved existing declaration and its retained source signatures. -/
+structure FunctionImport where
+  source : Lean.TSyntax `ident
+  alias : Lean.TSyntax `ident
+  signatures : Array FunctionSignature
+  deriving Inhabited
+
+/-- The common parsed form for term quotations and declaration elaboration. -/
+structure ParsedNamed where
+  includes : Array (Lean.TSyntax `ramInclude)
+  declarations : Array (Lean.TSyntax `ramDecl)
+  main : Option (Array (Lean.TSyntax `ident) × Array (Lean.TSyntax `ramStmt))
+
+def parseNamed (source : Lean.TSyntax `term) : Lean.MacroM ParsedNamed := do
+  match source with
+  | `(ram_functions% { $imports:ramInclude* $decls:ramDecl* }) =>
+      return ⟨imports, decls, none⟩
+  | `(ram_program% { $imports:ramInclude* $decls:ramDecl*
+      main $mainLocals:ident ($mainNames:ident,*) { $mainBody:ramStmt* } }) =>
+      if mainLocals.getId != `locals then
+        Lean.Macro.throwErrorAt mainLocals "expected 'locals' followed by main's local register names"
+      return ⟨imports, decls, some (mainNames.getElems, mainBody)⟩
+  | `(ram_program% { $imports:ramInclude* $decls:ramDecl*
+      main { $mainBody:ramStmt* } }) =>
+      return ⟨imports, decls, some (#[], mainBody)⟩
+  | _ => Lean.Macro.throwErrorAt source "expected ram_functions% { ... } or ram_program% { ... }"
 
 private def parseParameter (param : Lean.TSyntax `ramParam) : Lean.MacroM Parameter := do
   match param with
@@ -162,26 +243,29 @@ private structure LoweredFunctions where
   scopes : Array LocalScope
   registers : Nat
   resolveFunction : FunctionResolver
+  signatures : Array FunctionSignature
 
 /-- Both entry-point forms collect function signatures before lowering bodies.
 Array parameters are flattened only at declared array argument positions. -/
-private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl)) :
+private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl))
+    (imported : Array FunctionSignature) :
     Lean.MacroM LoweredFunctions := do
   let parsed ← decls.mapM parseFunction
-  let mut functionNames : Array (Lean.Name × Nat) := #[]
+  let mut signatures := imported
   for decl in parsed do
-    if functionNames.any (fun entry => entry.1 == decl.name.getId) then
+    if signatures.any (fun entry => entry.name == decl.name.getId) then
       Lean.Macro.throwErrorAt decl.name "duplicate RAM function name"
-    functionNames := functionNames.push (decl.name.getId, functionNames.size)
+    signatures := signatures.push ⟨decl.name.getId,
+      decl.params.map (fun param => (param.name.getId, param.kind))⟩
   let resolveFunction : FunctionResolver := fun scope strict name args => do
-    match functionNames.find? (fun entry => entry.1 == name.getId) with
-    | some (_, index) =>
-        let params := parsed[index]!.params
+    match signatures.findIdx? (fun entry => entry.name == name.getId) with
+    | some index =>
+        let params := signatures[index]!.params
         if args.size != params.size then
           Lean.Macro.throwErrorAt name "wrong number of RAM function arguments"
         let mut lowered := #[]
         for (param, arg) in params.zip args do
-          match param.kind with
+          match param.2 with
           | .word => lowered := lowered.push (← lowerExpr scope strict arg)
           | .array => lowered := lowered ++ (← arrayArgument scope arg)
         let literal := Lean.Syntax.mkNumLit (toString index)
@@ -197,7 +281,7 @@ private def lowerFunctions (decls : Array (Lean.TSyntax `ramDecl)) :
     declarations := declarations.push (← `(($label:str, $(f.term))))
     scopes := scopes.push f.scope
     registers := max registers f.registers
-  return ⟨declarations, parsed, scopes, registers, resolveFunction⟩
+  return ⟨declarations, parsed, scopes, registers, resolveFunction, signatures⟩
 
 /-- One named lowering, retaining the bindings needed by `ram_def`. -/
 structure LoweredNamed where
@@ -207,48 +291,77 @@ structure LoweredNamed where
   functions : Array (Lean.TSyntax `term)
   functionScopes : Array LocalScope
   mainScope : LocalScope
+  imports : Array FunctionImport
+  prefixes : Array (Lean.TSyntax `term)
+  signatures : Array FunctionSignature
+  localOffset : Nat
+  localRegisters : Nat
 
 /-- Quotation and command forms share this single lowering, including allocation
 of lexical locals and the inferred maximum frame size. -/
-def lowerNamed (source : Lean.TSyntax `term) : Lean.MacroM LoweredNamed := do
-  let (decls, main) ← match source with
-    | `(ram_functions% { $decls:ramDecl* }) => pure (decls, none)
-    | `(ram_program% { $decls:ramDecl*
-        main $mainLocals:ident ($mainNames:ident,*) { $mainBody:ramStmt* } }) => do
-      if mainLocals.getId != `locals then
-        Lean.Macro.throwErrorAt mainLocals "expected 'locals' followed by main's local register names"
-      pure (decls, some (mainNames.getElems, mainBody))
-    | `(ram_program% { $decls:ramDecl* main { $mainBody:ramStmt* } }) =>
-        pure (decls, some (#[], mainBody))
-    | _ =>
-      Lean.Macro.throwErrorAt source
-        "expected ram_functions% { ... } or ram_program% { ... }"
-  let functions ← lowerFunctions decls
+def lowerNamed (source : Lean.TSyntax `term) (imports : Array FunctionImport := #[]) :
+    Lean.MacroM LoweredNamed := do
+  let parsed ← parseNamed source
+  if parsed.includes.size != imports.size then
+    Lean.Macro.throwErrorAt source "use 'ram_def' to resolve included function declarations"
+  let mut imported : Array FunctionSignature := #[]
+  let mut aliases : Array Lean.Name := #[]
+  let mut linkedPrefix ← `(Ram.Named.Functions.mk 0 [])
+  let mut prefixes := #[linkedPrefix]
+  for dependency in imports do
+    if aliases.contains dependency.alias.getId then
+      Lean.Macro.throwErrorAt dependency.alias "duplicate RAM import alias"
+    aliases := aliases.push dependency.alias.getId
+    for signature in dependency.signatures do
+      imported := imported.push { signature with name := dependency.alias.getId ++ signature.name }
+    let label := Lean.Syntax.mkStrLit dependency.alias.getId.toString
+    let src := dependency.source
+    linkedPrefix ← `(Ram.Named.Functions.link $linkedPrefix
+      (Ram.Named.Functions.mk ($src:ident).registers ($src:ident).declarations) $label:str)
+    prefixes := prefixes.push linkedPrefix
+  let functions ← lowerFunctions parsed.declarations imported
   let declarations := functions.declarations
-  match main with
+  let registerCount := Lean.Syntax.mkNumLit (toString functions.registers)
+  let collection ← if imports.isEmpty then
+      `(Ram.Named.Functions.mk $registerCount [$declarations,*])
+    else `(Ram.Named.Functions.extend $linkedPrefix $registerCount [$declarations,*])
+  let type ← `(Ram.Named.Functions)
+  let base : LoweredNamed := {
+    type := type
+    term := collection
+    parsed := functions.parsed
+    functions := declarations
+    functionScopes := functions.scopes
+    mainScope := #[]
+    imports := imports
+    prefixes := prefixes
+    signatures := functions.signatures
+    localOffset := imported.size
+    localRegisters := functions.registers }
+  match parsed.main with
   | none =>
-      let registerCount := Lean.Syntax.mkNumLit (toString functions.registers)
-      let term ← `(Ram.Named.Functions.mk $registerCount [$declarations,*])
-      return ⟨← `(Ram.Named.Functions), term, functions.parsed, declarations, functions.scopes, #[]⟩
+      return base
   | some (names, body) =>
       let scope ← makeLocalScope names
       let main ← lowerScopedBlock scope #[] (localRegisterCount scope)
         Bool.true functions.resolveFunction body
       let registerCount := Lean.Syntax.mkNumLit
         (toString (max main.nextRegister functions.registers))
-      let term ← `(Ram.Named.Bundle.mk $registerCount [$declarations,*] $(main.term))
-      return ⟨← `(Ram.Named.Bundle), term, functions.parsed, declarations,
-        functions.scopes, main.scope⟩
+      let term ← if imports.isEmpty then
+          `(Ram.Named.Bundle.mk $registerCount [$declarations,*] $(main.term))
+        else `(($collection).withMain $registerCount $(main.term))
+      let type ← `(Ram.Named.Bundle)
+      return { base with type := type, term := term, mainScope := main.scope }
 
 macro_rules
-  | `(ram_functions% { $decls:ramDecl* }) => do
-      return (← lowerNamed (← `(ram_functions% { $decls:ramDecl* }))).term
-  | `(ram_program% { $decls:ramDecl*
+  | `(ram_functions% { $imports:ramInclude* $decls:ramDecl* }) => do
+      return (← lowerNamed (← `(ram_functions% { $imports:ramInclude* $decls:ramDecl* }))).term
+  | `(ram_program% { $imports:ramInclude* $decls:ramDecl*
       main $locals:ident ($names:ident,*) { $body:ramStmt* } }) => do
-      return (← lowerNamed (← `(ram_program% { $decls:ramDecl*
+      return (← lowerNamed (← `(ram_program% { $imports:ramInclude* $decls:ramDecl*
         main $locals:ident ($names:ident,*) { $body:ramStmt* } }))).term
-  | `(ram_program% { $decls:ramDecl* main { $body:ramStmt* } }) => do
-      return (← lowerNamed (← `(ram_program% { $decls:ramDecl*
+  | `(ram_program% { $imports:ramInclude* $decls:ramDecl* main { $body:ramStmt* } }) => do
+      return (← lowerNamed (← `(ram_program% { $imports:ramInclude* $decls:ramDecl*
         main { $body:ramStmt* } }))).term
 
 end Ram.DSL

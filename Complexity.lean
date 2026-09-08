@@ -152,6 +152,7 @@ import Complexity.Computability.Ram.Source.ForIn
 import Complexity.Computability.Ram.Source.Function.Basic
 import Complexity.Computability.Ram.Source.Function.Eval
 import Complexity.Computability.Ram.Source.Function.Time
+import Complexity.Computability.Ram.Source.Function.Linking
 import Complexity.Computability.Ram.Source.Linking
 import Complexity.Computability.Ram.Source.Named.Basic
 import Complexity.Computability.Ram.Source.Named.Declaration
@@ -201,6 +202,7 @@ import Complexity.Computability.Ram.Verification.StateM.Traversal
 import Complexity.Computability.Ram.Verification.Time.Basic
 import Complexity.Computability.Ram.Verification.Time.Capacity
 import Complexity.Computability.Ram.Verification.Time.Composition
+import Complexity.Computability.Ram.Verification.Time.Function
 import Complexity.Computability.Ram.Verification.Time.StraightLine
 import Complexity.Computability.Ram.Verification.Total
 import Complexity.Computability.Ram.Word

@@ -335,6 +335,30 @@ hypotheses or turn modular arithmetic into exact arithmetic. Their API is under
 [total verification](##Complexity.Tactic.Ram.Total) and
 [model simplification](##Complexity.Tactic.Ram.Model).
 
+## Reuse contracts for included functions
+
+The [source-composition sample](##Examples.Ram.FunctionComposition) includes the
+existing copy and sum declarations as `Copy` and `Sum`, then calls them inside one
+new function. `functions.importMap.Copy` gives the old-to-new function index map;
+`functions.embeds.Copy` proves that the relocated implementation belongs to the
+combined table. The [function-linking rule](##Complexity.Computability.Ram.Source.Function.Linking)
+`Ram.Source.FunctionContract.renameCalls` transports the original contract through
+this embedding, retaining its arguments, returned value and shared-state postcondition.
+
+Apply that contract with `ram_total_apply` and the generated
+`functions.function_lookup.Copy.copy` fact, then reuse the sum contract through
+`functions.embeds.Sum`. Copy's postcondition supplies the destination representation
+needed by sum. Relocation does not discharge representation, equal-length or
+disjointness premises. The proof composes the existing contracts without expanding
+either callee loop; the generated `applyState` result belongs to one compiled run,
+unlike the host-level sequencing in `ArrayCopyFunction`.
+
+The same sample's `imported_sumPair_eval` transports the existing two-array execution
+through `functions.embeds.Sum` to `functions.eval.Sum.sumPair`. This also exercises
+relocation of the imported function's own two calls to sum, without reopening them
+or their loops. Imported aliases export lookup, argument and all six observation/run
+interfaces; body equations and local-register names remain with the original declaration.
+
 ## Publish and link a verified implementation
 
 Use `Ram.TotalComponent.ofNamed` to package a fixed named program with its

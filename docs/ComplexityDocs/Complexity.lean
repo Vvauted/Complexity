@@ -56,7 +56,7 @@ The wrappers do not change the RAM trace or price host-side work as RAM instruct
 they execute that trace and project its result. `Part` body-time observations remain
 noncomputable proof views, separate from this executable application.
 
-The [copy-then-sum client](##Examples.Ram.ArrayCopyFunction) sequences two actual
+The [host-level copy-then-sum client](##Examples.Ram.ArrayCopyFunction) sequences two actual
 compiled calls in Lean, passing the first call's returned state to the second.
 It is not a single compiled RAM program and has no combined full-run cost theorem.
 `Ram.LocalCompiler.Function.runTotal_steps_le_of_timeBound` transports an independent
@@ -117,6 +117,27 @@ theorem. Determinism identifies the measured count with that same invocation.
 `Ram.LocalCompiler.Function.callSteps_eq` then reduces the outer call overhead
 using generated code lengths, the declared parameter count and frame size.
 Neither lemma supplies an unproved cost or removes the stack-capacity premise.
+
+## Cost calls across included function tables
+
+The [function-linking rules](##Complexity.Computability.Ram.Source.Function.Linking)
+transport actual invocation counts with `FunctionMeasuredExec.renameCalls`.
+`FunctionTimeBound.renameCalls` transports a conditional bound using the generated
+embedding and the original correctness contract; determinism identifies the same
+execution rather than requiring backwards transport through the index map.
+`rebase` changes the reserved-register boundary without changing the body count.
+
+`Ram.Source.FunctionTimeBound.call` applies the imported body bound at actual
+argument values and adds the generated argument, frame, return and jump costs.
+The [source-composition time proof](##Examples.Ram.FunctionCompositionTime) uses this
+rule for copy and sum, with copy's budget-free contract supplying the intermediate
+array representation. For `n = xs.length`, `function_timeBound` bounds the body by
+`37 * n + 107`, and `runTotal_steps_le` bounds the actual complete invocation by
+`37 * n + 170`. These are upper bounds, not general exact step-count equations.
+The full bound includes both inner calls, the outer call and halt, but no host-side
+heap preloading. This is a cost argument for one compiled source function, distinct
+from adding claims about two host-level runners; the current proof still names
+generated call arguments.
 
 ## Count calls inside an array fold
 

@@ -22,6 +22,15 @@ parameters, followed by heap capacity and caller state. The last three additiona
 require a normal-halt proof. They reuse the existing semantics and runner; they do not fill
 in a reference result, a cost formula or a correctness proof.
 
+Source `include priorDeclaration as Alias;` reuses earlier `ram_def` implementations
+and their stored word/array signatures. Function tables are combined with the existing
+`Program.link` relocation; new functions are appended and qualified source calls
+resolve in that final table. Generated index maps and embeddings transport the old
+contracts instead of duplicating implementation proofs. These are static source
+imports, not host callbacks, runtime module loading or arbitrary Lean compilation.
+All six generated observation/run interfaces are available under imported aliases.
+Stored signatures survive further imports; bare term quotations cannot resolve includes.
+
 The generic execution state retains input and output fields because functions
 may have effects. Merely carrying those fields does not execute stream operations.
 A pure function's contract must establish independence from their initial contents
@@ -92,6 +101,9 @@ proves this projection equals the source final state; target stack cells are not
 shared data. Existing contract postconditions transfer through `applyState_spec`.
 Passing this state between host-level applications does not itself compile their
 composition into one RAM program or supply a combined RAM-cost theorem.
+Source composition is separate: including copy and sum and calling them inside a
+new function produces one compiled invocation. Its cost proof reuses independent
+callee bounds and counts the actual inner and outer calling conventions.
 
 An `array` parameter is a typed by-value pair of words, not a newly allocated
 descriptor. Its base and length are passed by the same call compiler as scalar

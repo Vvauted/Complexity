@@ -104,6 +104,14 @@ theorem Embeds.trans {source middle target : Program} {ρ σ : Nat → Nat}
   intro fn f h
   simpa only [Func.renameCalls_comp] using h₂ (h₁ h)
 
+/-- Appending declarations preserves the existing function table and its indices. -/
+theorem embeds_append_left (left right : Program) : Embeds id left (left ++ right) := by
+  intro fn f h
+  change (left ++ right)[fn]? = some (f.renameCalls id)
+  rw [Func.renameCalls_id,
+    List.getElem?_append_left (List.getElem?_eq_some_iff.mp h).1]
+  exact h
+
 /-- Link two independent function tables. Left indices stay unchanged; every
 call in the right module is relocated by the left table's length. -/
 def link (left right : Program) : Program :=
@@ -113,12 +121,8 @@ def link (left right : Program) : Program :=
     (link left right).length = left.length + right.length := by
   simp [link]
 
-theorem embeds_link_left (left right : Program) : Embeds id left (link left right) := by
-  intro fn f h
-  change (link left right)[fn]? = some (f.renameCalls id)
-  rw [Func.renameCalls_id, link,
-    List.getElem?_append_left (List.getElem?_eq_some_iff.mp h).1]
-  exact h
+theorem embeds_link_left (left right : Program) : Embeds id left (link left right) :=
+  embeds_append_left left (right.map (Func.renameCalls (fun i => left.length + i)))
 
 theorem embeds_link_right (left right : Program) :
     Embeds (fun i => left.length + i) right (link left right) := by
