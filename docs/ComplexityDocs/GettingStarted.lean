@@ -449,6 +449,18 @@ including the real call, return and halt but not host-side memory loading.
 The implementation proof remains more detailed than this client equation:
 it establishes the sorted interval invariant, safe word arithmetic and termination.
 
+For mutation, the [merge sample](##Examples.Ram.Merge) provides
+`Function.merge left right destination heapLimit entry safe hstack`, returning
+the actual shared state of a three-array, `Unit`-returning call.
+`Function.merge_contents` equates its destination contents to standard `List.merge`;
+`Function.merge_sorted` derives a sorted permutation when the sources are sorted.
+The source arrays may overlap each other, but the destination must be disjoint
+from each and its view must have exactly their combined length. This is existing
+storage, not an allocation. The separate full-run bound is
+`34 * (xs.length + ys.length) + 122`, including the wrapper's actual core call,
+its own calling convention and halt. This callable operation is a foundation
+for the typed recursive-sort migration, not a claim that migration is complete.
+
 Factorial, sum and the [slice sample](##Examples.Ram.ArraySlice) use
 `ram_run_apply theorem [facts]` to connect their function proofs to these executable values.
 This use-site tactic applies an existing runtime theorem and checks the standard

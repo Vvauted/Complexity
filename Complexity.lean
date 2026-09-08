@@ -28,7 +28,9 @@ import Complexity.Computability.Ram.Array.Indexed
 import Complexity.Computability.Ram.Array.Insertion.Basic
 import Complexity.Computability.Ram.Array.Merge.Basic
 import Complexity.Computability.Ram.Array.Merge.Complexity
+import Complexity.Computability.Ram.Array.Merge.Function
 import Complexity.Computability.Ram.Array.Merge.Ordering
+import Complexity.Computability.Ram.Array.Merge.Time
 import Complexity.Computability.Ram.Array.MergeSort.Basic
 import Complexity.Computability.Ram.Array.MergeSort.Bounds
 import Complexity.Computability.Ram.Array.MergeSort.Combine

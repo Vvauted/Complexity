@@ -125,6 +125,16 @@ initialization must execute the corresponding stores; array access needs address
 and representation lemmas. Clients should use those proved contracts without
 reopening the compiler.
 
+Section 3.2 makes a further useful distinction: a bind carries both the result
+relation and the updated relations for live data into its continuation. Section
+4.2 separates structural automation from proving operation side conditions.
+For our merge-sort migration, this points to reusing the existing two-buffer
+split/reassembly proofs independently of parameter slots and return fields.
+The real caller should receive the changed array representations and frame;
+sortedness, containment and aliasing premises remain mathematical obligations.
+This motivates improving our existing call rules, not porting Sepref or treating
+an abstract operation as an uncharged RAM instruction.
+
 ## 6. Separate behavior and cost without changing the machine
 
 Yue Niu, Jonathan Sterling, Harrison Grodin and Robert Harper,

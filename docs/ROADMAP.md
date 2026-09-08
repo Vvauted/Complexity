@@ -21,6 +21,7 @@ these through the actual compiler and runner, not syntax or backend lemmas alone
 | [LocalBindings](../Examples/Ram/LocalBindings.lean), [ArrayFold](../Examples/Ram/ArrayFold.lean) | Calls reuse helper correctness; shared traversal proves the list fold. Uniform and actual element/prefix-dependent cost rules are available, exercised by an adapter around the existing factorial. | The caller still supplies the mathematical update, element domain and accumulator invariant. Mutable or richer-accumulator traversals are not covered by this read-only scalar rule. |
 | [ArraySlice](../Examples/Ram/ArraySlice.lean), [ArraySliceProperties](../Examples/Ram/ArraySliceProperties.lean) | A real function returns a typed borrowed slice to another compiled call; ordinary `List.drop`, `take`, and sum identities apply. Its time continuation receives that reference directly and bounds summation using its actual length. | The author still selects the typed input, transports representation facts and justifies the mathematical continuation bound. |
 | [LowerBound](../Examples/Ram/LowerBound.lean) | A named binary-search function has budget-free total correctness, an ordinary executable `List.findIdx` equation, and a separate full-call logarithmic bound. | The implementation adapter still proves local-slot separation, initialization and shared-state restoration; the short client theorem does not remove that work. |
+| [Merge](../Examples/Ram/Merge.lean) | A three-array `Unit` function exposes its actual destination as standard `List.merge`, preserves both sources and has an independent full-call linear bound. Existing call automation reuses one verified core loop. | The typed entry is a real wrapper call with additional cost. Recursive merge sort still needs source-facing two-buffer representation transport, not another wrapper around its old dummy return. |
 | [FunctionComposition](../Examples/Ram/FunctionComposition.lean), [its time proof](../Examples/Ram/FunctionCompositionTime.lean) | Copy and sum are real imported source calls, with independently reusable correctness and time proofs. | Clients transport contracts through imports, rebuild representations, unpack register preservation, and choose numeric continuation reserves. |
 | [GraphDegree](../Examples/Ram/GraphDegree.lean) | A client can transfer an implemented list sum to a mathlib graph property. | This assumes represented graph data; it is not a graph loader or compilation of arbitrary Lean predicates. |
 
@@ -159,6 +160,10 @@ use actual returned fields from the same callee execution.
 remove per-client field-length and decoding proofs. This is a thin view of the
 one declared implementation, not another program container.
 
+`ram_total_vc` also starts these typed contracts through their existing `of_wp`
+rule. The callable merge uses it and `ram_total_apply` to leave only its array
+premises and result representation; no separate typed verification tactic is needed.
+
 **Checked evidence:** the slice consumer returns a borrowed array which another
 function passes to imported sum. Copy genuinely returns `Unit` and preserves its
 heap effects in copy-then-sum. Both have mathematical contracts and independent
@@ -273,6 +278,25 @@ ingredients; the existing actual `applyState` bridge provides the runtime one.
 Adding an unused wrapper would not yet shorten its multi-buffer binding proof.
 Copy already has a direct `Unit`/shared-state specification, so do not invent a
 duplicate stateful copy model just to demonstrate another interface.
+
+**Checked merge step:** the named core shares the existing merge loop, and the
+typed `merge(left : array, right : array, destination : array) : Unit` makes a
+real call to it. The destination equation is standard `List.merge`; sortedness
+is needed only for the sorted-permutation corollary. Both sources survive and
+may overlap each other. The destination view has exactly the combined length
+and is disjoint from each source. This typed length is word-representable;
+the raw core retains its broader domain of two separately representable counts.
+The actual typed invocation has bound `34 * (xs.length + ys.length) + 122`,
+including both calls, returns and halt. Neither storage allocation nor loading
+is claimed. A larger allocated buffer can supply a contained destination view.
+
+**Next migration, not yet checked:** split the existing `after_left` and
+`after_right` heap/frame arguments from their fixed registers and dummy return.
+Reuse those arguments in a genuine two-array, `Unit`-returning recursive source
+declaration. Recursive slices, merge and copy must compose their changed
+representations through actual calls. Its `StateM` sorting property and separate
+recurrence should then reuse that same declaration. Do not build another
+recursion framework or call the old three-parameter sort a typed implementation.
 
 **Checked lower-bound step:** search is now a named callable function, with
 ordinary endpoint initialization and a loop-scoped midpoint. Its shared interval

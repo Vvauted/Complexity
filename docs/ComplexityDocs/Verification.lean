@@ -84,6 +84,12 @@ The sample's independent `squaredNorm_bodyTime` theorem identifies the same body
 as 46. It includes both calls to `square`, not `squaredNorm`'s own final return expression
 or its enclosing calling convention.
 
+The same `ram_total_vc` supports `TypedFunctionContract` through its `of_wp` rule.
+The [three-array merge](##Complexity.Computability.Ram.Array.Merge.Function) uses
+`ram_total_vc` and `ram_total_apply` to call the already verified core: the remaining
+goals are its three represented arrays and the post-call list representations.
+It does not need another typed tactic or a second proof of the merge loop.
+
 For a named declaration `p`, use `p.eval.f` for function-value equations and
 `p.bodyTime.f` for separate body-count equations. These generated entry points take
 the declared word or array parameters, then `heapLimit` and `entry`. They specialize
@@ -176,6 +182,10 @@ Neither normal halt nor projecting a result asserts that the body has no effects
 with `(value, finish)`, while `applyStateTyped_spec` transfers a typed contract's
 postcondition directly. The [typed runtime bridge](##Complexity.Computability.Ram.Compiler.Local.Function.Typed)
 uses the same compiled run and does not introduce another runner.
+The [merge application](##Examples.Ram.Merge) uses `applyStateTyped_spec` directly:
+`Function.merge_spec` describes its three arrays and preserved frame, and
+`Function.merge_contents` rewrites the actual destination to standard `List.merge`.
+The sorted-permutation corollary then uses existing list mathematics.
 The raw `applyState_eq_of_execution` identifies `(values, finish)`.
 Its `returnState` projection keeps entry registers, takes actual target memory below
 `heapLimit` and entry memory outside it, and retains actual input/output effects.
