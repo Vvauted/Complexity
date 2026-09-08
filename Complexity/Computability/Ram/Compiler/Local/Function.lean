@@ -127,6 +127,13 @@ theorem callSteps_eq (control : Nat) (f : Func) (bodySteps : Nat) :
   simp only [arguments, List.length_map, List.length_range]
   omega
 
+/-- Increasing the body bound increases the complete invocation bound, keeping
+the actual argument, frame and result work unchanged. -/
+theorem callSteps_mono (control : Nat) (f : Func) : Monotone (callSteps control f) := by
+  intro first second bound
+  simp only [callSteps]
+  omega
+
 private theorem arguments_eval (args : List (Word w)) (entry : Source.State w) :
     (arguments args.length).map (entry.enter args).eval = args := by
   apply List.ext_getElem

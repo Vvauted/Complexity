@@ -175,6 +175,18 @@ theorem rebase {control heapLimit depth steps : Nat} {program : Program} {stmt :
 
 end LocalMeasuredExec
 
+/-- An existing safe assignment has exactly its emitted instruction length.
+The endpoint is retained, so clients can reuse a proved value correspondence
+without rebuilding the assignment or eliminating a fixed concrete state. -/
+theorem SafeExec.assign_localMeasured {program : Program} {heapLimit depth : Nat}
+    {dst : Reg} {value : Expr} {s t : State w}
+    (h : SafeExec program heapLimit depth (.assign dst value) s t) (control : Nat) :
+    LocalMeasuredExec control program heapLimit depth (.assign dst value)
+      (LocalCompiler.stmtSize control (LocalCompiler.calleeLocals program) (.assign dst value))
+      s t := by
+  cases h with
+  | assign reads => exact .assign reads
+
 /-- Every safe computation has a local-compiler-derived count, independently
 of whether the supplied register boundary is sufficient for its compilation.
 Compiler simulation separately requires well-formedness at that boundary. -/
