@@ -34,7 +34,8 @@ theorem increment_realizable {w : Nat} :
   intro args fits
   change (Env.head args : Nat) + 1 < 2 ^ w at fits
   change RealizationWP program w 0 increment (fun _ => False) (fun _ _ => True) args
-  simp only [increment, RealizationWP.letPrim_iff, RealizationWP.ret_iff,
+  simp only [increment, Implementation.incrementBody, RealizationWP.letPrim_iff,
+    RealizationWP.ret_iff,
     PrimFits, Prim.eval, Atom.eval, Env.cons_here, valueToNat, and_true]
   change (Env.head args < 2 ^ w ∧ 1 < 2 ^ w ∧ Env.head args + 1 < 2 ^ w) ∧
     Env.head args + 1 < 2 ^ w

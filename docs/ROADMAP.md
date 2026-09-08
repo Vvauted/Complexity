@@ -8,7 +8,8 @@ algorithm author should have to prove correctness.
 The [high-level language design](HIGH_LEVEL_LANGUAGE.md) is the architectural
 decision for the next phase. It introduces an independently interpreted typed
 core, source-level verification, and checked lowering to the existing backend.
-This is planned work, not an interface already implemented by `ram_def`.
+The scalar path is under implementation; `ram_def` remains the separate
+register-source interface, not the implementation of this new semantics.
 
 ## The correction in direction
 
@@ -122,6 +123,12 @@ composition and a shared reserved-register separation lemma. Its public theorem
 signatures, generated code and step counts are unchanged. This simplifies the
 proof; no measured compilation-speed improvement is claimed.
 
+[`FramePreserved.frameSaved`](../Complexity/Computability/Ram/Compiler/Effects.lean)
+now transports a protected memory interval to the concrete saved caller frame.
+The ordinary call proof and the local exact/memory call proofs reuse it instead
+of repeating slot-address and no-wrap arguments. Heap effects remain allowed;
+the execution model, public call theorems and costs are unchanged.
+
 1. **Register states and frames, starting with M1.** Reuse state-update lemmas,
    `State.LocalFrame`, `Stmt.writtenRegs` and the compiler's matching relations.
    Factor repeated read-after-write, fresh-slot, unchanged-local and saved-frame
@@ -196,6 +203,30 @@ Status: in progress, not complete.
   budget-free mathematical contracts. The
   [scalar consumer](../Examples/Language/Scalar.lean) proves an actual helper-call
   and branch program returns `min (n + 1) limit`, without a RAM proof.
+- [Independent partial observations](../Complexity/Language/Eval/Basic.lean)
+  retain finite normal continuation, return and fault. At a function boundary,
+  `Program.eval` returns `Part (Except Fault result)`: finite faults, including
+  missing returns for Unit, are defined errors, while `Part.none` means no finite
+  outcome. Successful result equations include termination and observe source
+  execution, not a result chosen from a specification or a lowered RAM run.
+- [Evaluation composition](../Complexity/Language/Eval/Composition.lean) gives
+  equations for skip, return, primitive binding, sequencing, conditionals and
+  actual calls. The [strict Part adapter](../Complexity/Control/Part.lean) reuses
+  mathlib's lawful monad with `open scoped Part.TotalCorrectness`: its native
+  `Std.Do.WPMonad` requires a returned value, so divergence cannot prove a
+  postcondition vacuously. The
+  [source adequacy layer](../Complexity/Language/Eval/Verification.lean) connects
+  source contracts to these observations and exception-aware native triples;
+  their false exceptional postcondition also rejects finite faults.
+- [Named scalar syntax](../Complexity/Language/Syntax.lean),
+  `source_program P where`, now supports Nat/Bool/Unit functions, immutable
+  `let`, named calls, conditionals and returns. Operations use atomic operands;
+  deeper expressions must first be named with `let`. Its generated curried
+  `P.f` is a noncomputable `Part (Except Fault result)` observation, not a
+  `#eval` runtime. The scalar consumer now uses this frontend while retaining
+  its previous typed AST definitionally and preserving its public API.
+  Mutable bindings, heap operations, loops and automatic source proofs are not
+  supplied by this surface.
 - [Scalar lowering](../Complexity/Computability/Ram/Compiler/Language/Scalar.lean)
   connects Nat/Bool atoms and operations to the existing expression compiler,
   with source range conditions, preserved state and counted machine execution.
@@ -247,15 +278,18 @@ Status: in progress, not complete.
 
 Next, before broadening the frontend:
 
-1. Add the Lean-like surface and semantic `Part`/Std.Do adapter over the proved
-   core, without exposing backend layout or simulation obligations. Preserve
-   ordinary mathematical values and source total correctness; do not implement
-   the source evaluator by evaluating lowered RAM code.
-2. Make source correctness, realization and conditional cost proofs convenient
-   through shared structural rules, including actual returned-value call
-   continuations. The current cost consumer still performs explicit structural
-   case analysis. Extend proof automation over these checked rules, not through
-   per-program adapters or manually supplied instruction prices.
+1. Make the existing source equations and strict Std.Do adapter convenient for
+   shared specifications and source proof automation. Present named arguments,
+   actual call results and return propagation through the proved rules, rather
+   than requiring each consumer to repeat context projections and structural
+   case analysis. A named declaration and a curried semantic equation alone do
+   not complete that proof interface.
+2. Generate structured realization and cost obligations from the same source
+   constructors and shared callee contracts. The current cost consumer still
+   performs explicit structural case analysis. Reuse checked range, call-nesting
+   and emitted-cost rules without per-program simulation adapters or manually
+   supplied instruction prices. The executable observation remains the existing
+   compiled runner, not the noncomputable source `Part` value.
 
 The present cost interpretation concerns successful realized scalar executions.
 It is not yet instrumentation of every unrestricted source execution, nor
@@ -268,7 +302,9 @@ can add instructions and enlarge frames compared with small CPS examples;
 smaller code on branching families is not a claim of universally faster runs.
 
 Mutable data and loops remain subsequent milestones. M1 is not complete merely
-because static compilation and functional transfer now succeed.
+because the scalar surface, semantic observations, static compilation and
+functional transfer now exist; shared proof and realization/cost automation
+remain part of its completion gate.
 
 Build one complete scalar path before extending the surface language broadly.
 The first executable subset is Nat/Bool literals, addition/comparison, lexical
@@ -283,10 +319,10 @@ rejected explicitly; there is no placeholder code or user-supplied RAM proof.
    terminal returns. Prove source determinism and proof-independent observations.
    Product encodings and further arithmetic operations follow the first scalar
    transfer; completing all value types is not an M1 prerequisite.
-2. Prove source total-WP and structural verification rules. Establish the
-   required semantic `Part`/Std.Do adequacy and `pure/bind` laws where used;
-   a thin tactic over the same source rules can precede the full Std adapter.
-   Do not assume `mvcgen` supplies termination or compiler correctness.
+2. Reuse the source total-WP rules, semantic `Part` equations and scoped
+   Std.Do interpretation to generate source verification conditions. Their
+   adequacy and `pure/bind` laws justify the interface; `mvcgen` does not supply
+   missing termination, operation specifications or compiler correctness.
 3. Implement lowering and the reusable source-to-IR simulation cases. Generate
    checked certificates for concrete declarations; infer static layouts and
    discharge their register/ABI obligations internally.

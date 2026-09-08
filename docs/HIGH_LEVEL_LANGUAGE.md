@@ -6,7 +6,11 @@ the existing executable RAM runner. Return-flag lowering avoids continuation
 duplication and has exact static code-size formulas. A separate cost observation
 of realized scalar executions now transfers source bounds to the actual runner,
 including internal calls and the outer invocation overhead. The Lean-like
-surface, mutable source data, loops and semantic Std.Do adapter remain unfinished. The
+scalar `source_program` surface, independent `Part` observations, compositional
+evaluation equations and a scoped strict Std.Do interpretation are now present.
+The generated curried functions are noncomputable semantic observations, not
+`#eval` runtimes. Shared source-specification and realization/cost automation
+remain incomplete; mutable source data and loops are not yet supported. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -99,9 +103,12 @@ are retained for diagnostics and proof display.
 
 Use an administrative-normal-form core: variables and literal values are atoms;
 arithmetic, comparisons, reads, writes, calls and other operations are explicit
-nodes whose results are bound before use. Nested surface expressions elaborate
-in a specified left-to-right order. Atom materialization, moves and returns can
-still require target instructions and are included in backend accounting.
+nodes whose results are bound before use. The current scalar surface accepts
+addition and comparisons with atomic operands; a compound return or guard
+introduces an actual primitive binding. Deeper expressions must first be named
+with `let`. More general nested-expression support must preserve a specified
+left-to-right order. Atom materialization, moves and returns can still require
+target instructions and are included in backend accounting.
 
 There is no runtime `pure arbitraryLeanTerm` escape hatch. A mathematical
 `List.map`, `Nat.factorial` or sorting relation is freely usable in a
@@ -136,14 +143,39 @@ Static specialization may later support generic combinators; dynamic closures,
 arbitrary dependent runtime types and a general effect-handler system are not
 prerequisites. Function contracts are reusable across callers and imports.
 
-### Example of the intended surface
+### Current scalar surface and intended data extension
 
-The following is a design sketch, not currently accepted Lean syntax:
+The [scalar frontend](../Complexity/Language/Syntax.lean) accepts ordinary typed
+headers and `do` bodies inside `source_program`:
+
+```lean
+source_program Implementation where
+  def increment (n : Nat) : Nat := do
+    return n + 1
+
+  def boundedIncrement (n : Nat) (limit : Nat) : Nat := do
+    let next ← increment n
+    if next ≤ limit then
+      return next
+    else
+      return limit
+```
+
+The [existing scalar consumer](../Examples/Language/Scalar.lean) uses this
+declaration and retains its previous typed core definitionally. The declaration
+exports signatures, function identifiers and bodies, the shared program, and
+curried mathematical observations. In particular,
+`Implementation.boundedIncrement n limit` has type `Part (Except Fault Nat)`;
+its equation identifies `Part.some (.ok (min (n + 1) limit))` from the source proof.
+It is noncomputable, not an executable replacement for the compiled runner.
+All function signatures are collected before lowering the bodies, so named
+calls refer to the same source program rather than arbitrary host callbacks.
+The available surface is Nat/Bool/Unit, immutable `let`, calls, `if` and `return`;
+it does not yet supply mutable locals, buffers, loops or automatic proofs.
+
+The buffer program below remains a design sketch, not accepted source syntax:
 
 ```text
-program increment (x : Nat) : Nat := do
-  return x + 1
-
 program transform (xs : Buffer Nat) (limit : Nat) : Unit := do
   for i in [0 : xs.size] do
     let x <- xs.get i
@@ -184,6 +216,24 @@ computation has no finite successful execution. Total correctness establishes
 normal termination, not just absence of a counterexample. Neither source
 execution nor source total correctness takes a proposed time budget.
 
+The implemented scalar observations make this distinction explicit.
+[`Stmt.eval`](../Complexity/Language/Eval/Basic.lean) has result
+`Part (Env Γ × Control result)`, preserving the final lexical environment and
+finite control outcome. `Program.eval` has result
+`Part (Except Fault (Value result))`: fallthrough becomes `.missingReturn`,
+including for Unit, while an actual return becomes `.ok value`.
+`Part.none` means there is no finite outcome; a finite fault is a defined error,
+not divergence. Successful result equations are equivalent to finite returned
+source execution and therefore include termination.
+
+These noncomputable observations are determined by independent source execution
+and determinism. They neither run the lowered RAM code nor choose a value from
+the user's mathematical postcondition. The
+[composition equations](../Complexity/Language/Eval/Composition.lean) cover
+skip, return, primitive binding, sequencing, conditionals and calls, preserving
+return/fault propagation and lexical scope. They provide an equational
+mathematical interface to the same source program, not a second algorithm.
+
 Prove determinism of source outcomes and final state. Mathematical result and
 cost observations must not depend on which proof of execution or termination
 was supplied. When allocation is introduced, use a deterministic fresh-object
@@ -221,18 +271,27 @@ equalities by hand.
 
 ### Reuse Std.Do without hiding a second implementation
 
-Give the independent source semantics an adequate monadic interpretation using
-existing `Part` and `StateT/ExceptT` facilities where appropriate. Prove the
-total-WP adapter and its adequacy, then reuse `Std.Do.Triple`, bind/consequence,
-`@[spec]` and `mvcgen`. This is a semantic view of the core, not executable
-acceptance of every host monadic term.
+The [generic Part adapter](../Complexity/Control/Part.lean) reuses mathlib's
+`Monad Part` and `LawfulMonad Part`. Its strict `Std.Do.WPMonad` interpretation
+is enabled explicitly by `open scoped Part.TotalCorrectness`, not installed as
+a global choice. It requires an actual returned value satisfying the
+postcondition; `Part.none` has false weakest precondition. The existing monad's
+`pure` and `bind` satisfy the required predicate-transformer laws.
 
-The pinned Std interfaces require `WPMonad`, including `wp_pure/wp_bind`.
-Do not assume a raw syntax tree has lawful monad equalities, or that a ready-made
-total-WP instance for our partial interpreter exists. Establish the laws on the
-semantic interpretation and connect generated node rules to it. A small explicit
-source-WP tactic can apply these same proved rules while the Std adapter is
-developed; it is not a second long-term verification-condition engine.
+The [source adequacy interface](../Complexity/Language/Eval/Verification.lean)
+connects source total correctness to the semantic result and native
+`Std.Do.Triple`. Functions reuse `ExceptT Fault Part` with a false exceptional
+postcondition: divergence fails the strict Part obligation, and finite faults
+fail that exceptional postcondition. A generic strict Part WP alone need not
+reject an error value; the source function specification supplies that policy.
+
+Next connect the compositional equations and shared operation specifications to
+`@[spec]`, `mvcgen` and focused source proof automation. The current scalar
+consumer still uses explicit source-WP reasoning; the frontend does not
+automatically discharge mathematical contracts, realization conditions or cost
+bounds. These are semantic views of the core, not acceptance of arbitrary host
+monadic terms as executable primitives. The laws belong to the interpretation,
+not unproved syntactic monad equalities for raw source trees.
 
 A native list iterator visits fixed list values. For a mutable buffer, iterate
 a captured index range and perform an actual read in each body; do not import
@@ -426,7 +485,7 @@ allows mathematical reuse but never transfers an algorithm's cost by itself.
 
 ## 8. Migration and module boundaries
 
-Keep `Complexity/` as the only reusable library root. A proposed
+Keep `Complexity/` as the only reusable library root. The
 `Complexity/Language/` subtree holds typed syntax, independent semantics,
 source proof rules and frontend support. Its semantics/proof modules must not
 import RAM. Backend realization and lowering live under the existing RAM topic
@@ -470,12 +529,13 @@ Fixed decisions: independent typed core, explicit executable operations,
 shared mutable heap, budget-free behavior, checked lowering, backend-derived
 costs and preservation of real safety conditions.
 
-Details to settle in the first small implementation, not by building a large
-framework now: the exact typed-context encoding, the thin Std.Do adapter,
-surface declaration spelling and the smallest generated-certificate format.
-Evaluate them with one scalar call/branch and one buffer operation before
-extending the language. No choice may define high-level meaning through lowering
-or expose register proofs to algorithm authors.
+The scalar implementation now fixes typed lexical contexts, the `source_program`
+spelling and a strict scoped Part/Std.Do interpretation. M1 remains open:
+structured realization/cost obligations and shared-specification automation
+must make the complete scalar author proof convenient, not only its final
+equation. Improve that path before broadening the language to the first buffer
+operation. No choice may define high-level meaning through lowering, accept
+manually entered instruction prices or expose register proofs to algorithm authors.
 
 Richer data operations and allocation remain scheduled capabilities, not
 assumed consequences of a mathematical view. Arbitrary Lean compilation,

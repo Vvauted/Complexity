@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Verification
+import Complexity.Language.Syntax
 
 /-!
 # A mathematical proof of an independent source program
@@ -20,25 +21,31 @@ theorems.
 
 namespace Complexity.Language.Examples.Scalar
 
+source_program Implementation where
+  def increment (n : Nat) : Nat := do
+    return n + 1
+
+  def boundedIncrement (n : Nat) (limit : Nat) : Nat := do
+    let next ← increment n
+    if next ≤ limit then
+      return next
+    else
+      return limit
+
 /-- The increment helper and its two-argument caller. -/
-abbrev signatures : List Signature := [⟨[.nat], .nat⟩, ⟨[.nat, .nat], .nat⟩]
+abbrev signatures : List Signature := Implementation.signatures
 
 /-- Bind the mathematical sum, then return it from the helper. -/
 def increment : Stmt signatures [.nat] .nat :=
-  .letPrim (.add (.var .here) (.nat 1)) (.ret (.var .here))
+  Implementation.incrementBody
 
 /-- Call the real helper, bind its Boolean comparison, then return from the
 selected branch. The caller's second argument remains the original limit. -/
 def boundedIncrement : Stmt signatures [.nat, .nat] .nat :=
-  .call (0 : Fin 2) (.cons (.var .here) .nil)
-    (.letPrim (.le (.var .here) (.var (.there (.there .here))))
-      (.ite (.var .here)
-        (.ret (.var (.there .here)))
-        (.ret (.var (.there (.there (.there .here)))))))
+  Implementation.boundedIncrementBody
 
 /-- Both actual typed function bodies, with no host-side executable callback. -/
-def program : Program signatures where
-  body := Fin.cases increment (Fin.cases boundedIncrement (fun i => Fin.elim0 i))
+def program : Program signatures := Implementation.program
 
 /-- Ordinary addition specifies the actual source helper. -/
 theorem increment_total :
@@ -48,7 +55,7 @@ theorem increment_total :
   intro args _
   change TotalWP program increment (fun _ => False)
     (fun value _ => value = Env.head args + 1) args
-  simp [increment, Env.head]
+  simp [increment, Implementation.incrementBody, Env.head]
 
 /-- The caller's source proof composes the helper contract and the actual branch. -/
 theorem boundedIncrement_total :
@@ -58,7 +65,7 @@ theorem boundedIncrement_total :
   intro args _
   change TotalWP program boundedIncrement (fun _ => False)
     (fun value _ => value = min (Env.head args + 1) (Env.head (Env.tail args))) args
-  unfold boundedIncrement
+  unfold boundedIncrement Implementation.boundedIncrementBody
   apply TotalWP.call increment_total trivial
   intro value returned
   have value_eq : value = Env.head args + 1 := returned
@@ -67,7 +74,7 @@ theorem boundedIncrement_total :
     Prim.eval, Atom.eval, Env.cons_here, Env.cons_there]
   by_cases small : Env.head args + 1 ≤ Env.head (Env.tail args)
   · simp only [Env.head, Env.get_tail] at small ⊢
-    simp [small, Nat.min_eq_left small]
+    simp [small]
   · simp only [Env.head, Env.get_tail] at small ⊢
     simp [small, Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small))]
 
@@ -88,5 +95,11 @@ theorem boundedIncrement_result (n limit value : Nat)
       (Env.cons n (Env.cons limit Env.empty)) finish (.returned value)) :
     value = min (n + 1) limit :=
   boundedIncrement_total.postcondition trivial execution
+
+/-- The named source function has an ordinary curried mathematical result,
+obtained from the same source correctness proof. -/
+theorem boundedIncrement_eval (n limit : Nat) :
+    Implementation.boundedIncrement n limit = Part.some (.ok (min (n + 1) limit)) :=
+  Program.eval_eq_ok_iff.mpr (boundedIncrement_returns n limit)
 
 end Complexity.Language.Examples.Scalar

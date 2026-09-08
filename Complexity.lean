@@ -257,12 +257,17 @@ import Complexity.Computability.Recurrence.Growth
 import Complexity.Computability.Recurrence.Majorant
 import Complexity.Computability.Recurrence.Rounding
 import Complexity.Computability.Recurrence.Supercritical
+import Complexity.Control.Part
 import Complexity.Data.List.Fold
 import Complexity.Data.List.InsertIdx
 import Complexity.Data.List.StateM
 import Complexity.Data.Nat.Log
 import Complexity.Language.Basic
+import Complexity.Language.Eval.Basic
+import Complexity.Language.Eval.Composition
+import Complexity.Language.Eval.Verification
 import Complexity.Language.Semantics
+import Complexity.Language.Syntax
 import Complexity.Language.Verification
 import Complexity.LinearAlgebra.Matrix.Update
 import Complexity.Tactic.Ram.Array

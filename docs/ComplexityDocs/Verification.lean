@@ -22,6 +22,42 @@ postconditions; faults cannot satisfy it. `FunctionTotal` requires an actual
 returned value, with no proposed instruction bound. See the
 [source verification rules](##Complexity.Language.Verification).
 
+The [named frontend](##Complexity.Language.Syntax) accepts scalar programs such as:
+
+```lean
+source_program Bounded where
+  def increment (n : Nat) : Nat := do
+    return n + 1
+
+  def boundedIncrement (n : Nat) (limit : Nat) : Nat := do
+    let next ← increment n
+    if next ≤ limit then
+      return next
+    else
+      return limit
+```
+
+It generates typed source bodies and ordinary curried semantic functions. A result
+statement can be written as
+`Bounded.boundedIncrement n limit = Part.some (.ok (min (n + 1) limit))`.
+This is the actual source program's result, not a separately implemented answer.
+These `Part` functions are noncomputable mathematical observations, not host
+executables for `#eval`; execution still uses the compiled RAM runner.
+
+[Evaluation adequacy](##Complexity.Language.Eval.Basic) distinguishes finite
+faults from absence of a finite result. The
+[composition equations](##Complexity.Language.Eval.Composition) preserve lexical
+scope, actual callee results and early returns. Recursive call equations are
+explicit rules, not automatically unfolding simplifications.
+
+For native `Std.Do` reasoning, `open scoped Part.TotalCorrectness` activates the
+[strict partial-value WP adapter](##Complexity.Control.Part). It requires an actual
+returned value: divergence cannot establish a postcondition vacuously. The
+[verification bridge](##Complexity.Language.Eval.Verification) proves source
+`FunctionTotal` equivalent to ordinary result equations and to native `ExceptT`
+Hoare triples with false fault postconditions. It reuses the standard transformer
+instances; it does not make `mvcgen` prove source termination automatically.
+
 The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
 branches on its returned value and proves the result equals `min (n + 1) limit`
 using ordinary Nat facts. Its
@@ -64,12 +100,25 @@ the source bound with the original correctness and realization contracts.
 The complete invocation bound adds the outer calling convention and final halt
 exactly once. The scalar consumer reuses its helper bound and both branch rules.
 
-This remains typed core syntax, not the planned Lean-like frontend. Costs are
-currently derived for successfully realized scalar executions, not an
-instrumentation theorem for every unrestricted source execution. Mutable data,
-loop cost rules and the semantic Std.Do adapter remain future work.
+The frontend currently supports `Nat`, `Bool`, `Unit`, lexical bindings, actual
+named calls, branches and returns. Addition/comparison operands must be atomic;
+name deeper expressions with `let`. Mutable data, loop syntax and fully automated
+source contract/range/cost proofs remain future work. Costs are currently derived
+for successfully realized scalar executions, not an instrumentation theorem for
+every unrestricted source execution.
 Optimizing code size does not imply every execution is faster.
 The executable word-RAM workflow and maintainer interfaces below remain available.
+
+Compiler maintenance is a separate, active proof workflow. The
+[layout rules](##Complexity.Computability.Ram.Compiler.Language.Layout),
+[return-flag preservation](##Complexity.Computability.Ram.Compiler.Language.Control)
+and measured simulation compose actual register updates and calling conventions.
+Maintainers may use these lemmas directly, without frontend metadata. Preserving
+caller registers does not imply that a callee leaves memory or I/O unchanged.
+The [frame-effect rules](##Complexity.Computability.Ram.Compiler.Effects) include
+`FramePreserved.frameSaved`: a saved caller frame within the protected stack
+interval remains valid after the callee. Ordinary and local call proofs reuse
+this rule, while retaining genuine heap effects and address bounds.
 
 ## Choose a specification
 
