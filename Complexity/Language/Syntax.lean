@@ -10,6 +10,9 @@ import Complexity.Language.Eval.Locals.Continuation
 import Complexity.Language.Eval.Locals.Effects
 import Complexity.Language.Eval.Locals.Verification
 import Complexity.Language.Eval.Locals.Captures
+import Complexity.Language.Linking.Eval
+import Complexity.Language.Linking.Extension
+import Complexity.Language.Syntax.Imports
 import Std.Do.WP.SimpLemmas
 import Lean.Elab.Command
 import Lean.Elab.Do
@@ -33,6 +36,15 @@ computation replaces the generated operations.
 
 A named function returning `Unit` may be called directly as a `do` statement.
 Other return types require an explicit binding; results are not silently discarded.
+
+`source_program P importing Library, Other where` additionally permits qualified
+calls such as `Library.f x`. The imported programs retain their actual bodies,
+including recursive calls and transitive imports, in the combined table. The
+generated one-step equations use the original library observations through proved
+program embeddings, so callers can reuse existing mathematical specifications.
+Lean's persistent environment records public headers across ordinary module
+imports; it does not supply an implementation or an assumed callee contract.
+Compiled realization and instruction bounds remain separate proof obligations.
 
 Each `while` has an actual source guard block, including for compound Boolean
 conditions and parenthesized effectful `do` guards. The guard is reevaluated in
@@ -65,8 +77,9 @@ The noncomputable action takes the actual
 initial heap and observes `Part (Except Fault result × Heap)`; no empty heap is
 supplied implicitly. It is a mathematical proof interface, not a host executable
 for `#eval`.
-All signatures are collected before any body is translated, so forward calls
-and mutual recursion refer to actual entries of the same program. This does
+All local signatures and imported references are collected before any new body
+is translated, so forward calls and mutual recursion refer to actual entries of the
+combined program. This does
 not assert termination or accept arbitrary Lean functions as primitives.
 
 Only the existing typed core is produced. Its independent execution gives
@@ -89,6 +102,10 @@ syntax "def " ident sourceParameter* " : " term " := " term : sourceFunction
 
 /-- Declare a finite family of named, independently interpreted source functions. -/
 syntax (name := sourceProgram) "source_program " ident " where" ppLine
+  many1Indent(sourceFunction) : command
+
+/-- Declare source functions with qualified calls into previously declared source programs. -/
+syntax (name := importingSourceProgram) "source_program " ident " importing " ident,+ " where" ppLine
   many1Indent(sourceFunction) : command
 
 -- Internal emission point: infer an equation from its checked proof instead of
@@ -128,6 +145,30 @@ private structure Function where
   params : Array Parameter
   result : Ty
   body : TSyntax `term
+
+private structure Callee where
+  name : TSyntax `ident
+  params : Array Parameter
+  result : Ty
+  id : TSyntax `ident
+  observation : TSyntax `ident
+  fold : TSyntax `ident
+
+private structure ImportedProgram where
+  name : TSyntax `ident
+  family : Name
+  functions : Array FunctionInfo
+
+private structure ImportEmbedding where
+  source : ImportedProgram
+  map : TSyntax `term
+  proof : TSyntax `term
+
+private structure ImportDeclarations where
+  declarations : Array Syntax
+  program : TSyntax `term
+  signatures : TSyntax `term
+  embeddings : Array ImportEmbedding
 
 private structure Binding where
   name : Option Name
@@ -460,17 +501,18 @@ private def checkAnnotation (annotation : Option (TSyntax `term)) (actual : Ty) 
   if let some annotation := annotation then
     expectType annotation actual (← parseType annotation)
 
-private def lookupFunction (functions : Array Function) (name : TSyntax `ident) : MacroM Function := do
+private def lookupFunction (functions : Array Callee) (name : TSyntax `ident) : MacroM Callee := do
   let some fn := functions.find? (fun fn => fn.name.getId == name.getId)
-    | Macro.throwErrorAt name s!"unknown source function '{name.getId}'; calls must name this program's functions"
+    | Macro.throwErrorAt name s!"unknown source function '{name.getId}'; name a local function or a qualified imported function"
   return fn
 
-private def parseBinding (family : TSyntax `ident) (functions : Array Function)
+private def parseBinding (functions : Array Callee)
     (scope : Scope) (stx : TSyntax `term) :
     MacroM (Ty × TSyntax `term × TSyntax `term) := do
   if let `($head:term $operands:term*) := stx then
     if let some (receiver, field) := fieldAccess? head then
-      if field == `get || field == `slice then
+      if (field == `get || field == `slice) &&
+          !functions.any (fun fn => fn.name.getId == head.raw.getId) then
         let (kind, buffer) ← parseBuffer scope receiver
         if field == `get then
           unless operands.size == 1 do
@@ -507,10 +549,8 @@ private def parseBinding (family : TSyntax `ident) (functions : Array Function)
   let mut args ← `(Complexity.Language.Args.nil)
   for atom in atoms.reverse do
     args ← `(Complexity.Language.Args.cons $atom $args)
-  let name := generatedName family fn.name ""
-  let id := generatedName family fn.name "Id"
-  return (fn.result, ← `(Complexity.Language.Stmt.call $id:ident $args),
-    Lean.Syntax.mkApp ⟨name.raw⟩ values)
+  return (fn.result, ← `(Complexity.Language.Stmt.call $(fn.id):ident $args),
+    Lean.Syntax.mkApp ⟨fn.observation.raw⟩ values)
 
 private def writeCode (scope : Scope) (stx : TSyntax `term) : MacroM LoweredBlock := do
   let `($head:term $operands:term*) := stx
@@ -530,13 +570,13 @@ private def writeCode (scope : Scope) (stx : TSyntax `term) : MacroM LoweredBloc
     #[← `(doElem| Complexity.Language.Buffer.writeM $(buffer.value) $(index.value) $(value.value))],
     true, #[]⟩
 
-private def actionCode (family : TSyntax `ident) (functions : Array Function)
+private def actionCode (functions : Array Callee)
     (scope : Scope) (action : TSyntax `term) : MacroM LoweredBlock := do
   if let `($head:term $_operands:term*) := action then
     if let some (_, field) := fieldAccess? head then
-      if field == `set then
+      if field == `set && !functions.any (fun fn => fn.name.getId == head.raw.getId) then
         return ← writeCode scope action
-  let (resultType, statement, invocation) ← parseBinding family functions scope action
+  let (resultType, statement, invocation) ← parseBinding functions scope action
   unless resultType == .unit do
     Macro.throwErrorAt action
       "a standalone source call must return Unit; bind its result with 'let name ← ...'"
@@ -557,12 +597,12 @@ private def assignCode (scope : Scope) (name : TSyntax `ident) (value : TSyntax 
   return ⟨← `(Complexity.Language.Stmt.assign $(← variableTerm index) $(parsed.term)),
     #[← `(doElem| $(binding.proofName):ident := $(parsed.value))], true, #[]⟩
 
-private def assignBindingCode (family : TSyntax `ident) (functions : Array Function)
+private def assignBindingCode (functions : Array Callee)
     (scope : Scope) (name : TSyntax `ident) (action : TSyntax `term) : MacroM LoweredBlock := do
   let (binding, index) ← lookupBinding scope name
   unless binding.isMutable do
     Macro.throwErrorAt name s!"source variable '{name.getId}' is immutable; declare it with 'let mut'"
-  let (resultType, statement, invocation) ← parseBinding family functions scope action
+  let (resultType, statement, invocation) ← parseBinding functions scope action
   expectType action resultType binding.type
   -- The action's fresh result is innermost only for this assignment. Leaving
   -- that scope drops the result slot, retaining the updated outer binding.
@@ -692,14 +732,14 @@ private def normalizeElement (element : TSyntax `doElem) :
       return (bindings, ← `(doElem| $action:term))
   | _ => return (#[], element)
 
-private def statementCode (family : TSyntax `ident) (functions : Array Function)
+private def statementCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident)
     (recurse : Scope → Ty → List (TSyntax `doElem) → Nat → MacroM LoweredBlock)
     (scope : Scope) (result : Ty) (element : TSyntax `doElem) (nextIndex : Nat) :
     MacroM LoweredBlock := withRef element do
   match element with
   | `(doElem| $name:ident := $value:term) => assignCode scope name value
-  | `(doElem| $name:ident ← $action:term) => assignBindingCode family functions scope name action
+  | `(doElem| $name:ident ← $action:term) => assignBindingCode functions scope name action
   | `(doElem| return $value:term) => returnCode scope result value
   | `(doElem| return) => returnCode scope result (← `(()))
   | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) =>
@@ -737,12 +777,12 @@ private def statementCode (family : TSyntax `ident) (functions : Array Function)
       let code := loopMember site "Code"
       return ⟨⟨code.raw⟩, ← loopProofBody site, true,
         guardCode.loops ++ bodyCode.loops |>.push site⟩
-  | `(doElem| $action:term) => actionCode family functions scope action
+  | `(doElem| $action:term) => actionCode functions scope action
   | _ =>
       Macro.throwErrorAt element
         "unsupported source statement; use let, let mut, assignment, a named call, buffer access, if/then/else, while, or return"
 
-private partial def blockCode (family : TSyntax `ident) (functions : Array Function)
+private partial def blockCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident) (scope : Scope) (result : Ty)
     (elements : List (TSyntax `doElem)) (nextIndex : Nat) : MacroM LoweredBlock := do
   match elements with
@@ -774,7 +814,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Funct
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
       | `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term) =>
-          let (bindingType, statement, invocation) ← parseBinding family functions scope action
+          let (bindingType, statement, invocation) ← parseBinding functions scope action
           checkAnnotation annotation bindingType
           let proofName ← freshProofName name name.getId
           let body ← blockCode family functions owner
@@ -784,7 +824,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Funct
           return ⟨← `($statement $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
       | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
-          let (bindingType, statement, invocation) ← parseBinding family functions scope action
+          let (bindingType, statement, invocation) ← parseBinding functions scope action
           checkAnnotation annotation bindingType
           let proofName ← freshProofName name name.getId
           let body ← blockCode family functions owner
@@ -807,7 +847,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Funct
               statement.fallsThrough && continuation.fallsThrough,
               statement.loops ++ continuation.loops⟩
 
-private def functionCode (family : TSyntax `ident) (functions : Array Function)
+private def functionCode (family : TSyntax `ident) (functions : Array Callee)
     (fn : Function) : MacroM LoweredBlock := do
   match fn.body with
   | `(do $body:doSeq) =>
@@ -1299,7 +1339,8 @@ private def calleeObservationDeclaration (family program : TSyntax `ident)
     theorem $name:ident : $type := $proof)).raw
 
 private def equationDeclaration (family programName : TSyntax `ident)
-    (fn : Function) (lowered : LoweredBlock) : MacroM Syntax := do
+    (fn : Function) (lowered : LoweredBlock)
+    (importFolds : Array (TSyntax `ident)) : MacroM Syntax := do
   let name := generatedName family fn.name "_eq"
   let observation := generatedName family fn.name ""
   let bodyName := generatedName family fn.name "Body"
@@ -1318,7 +1359,7 @@ private def equationDeclaration (family programName : TSyntax `ident)
     ``Complexity.Language.Stmt.evalWith_ite, ``Complexity.Language.Stmt.evalWith_call,
     ``Complexity.Language.Stmt.evalWith_read, ``Complexity.Language.Stmt.evalWith_write,
     ``Complexity.Language.Stmt.evalWith_slice]
-  let allArgs := (← namedSimpArgs #[bodyName]) ++ loopContinuations ++ loopViews ++
+  let allArgs := (← namedSimpArgs (#[bodyName] ++ importFolds)) ++ loopContinuations ++ loopViews ++
     (← viewSimpArgs) ++ compositionArgs ++ (← valueSimpArgs) ++
     (← constantSimpArgs #[``Complexity.Language.Env.tail_set_here,
       ``Complexity.Language.Env.tail_set_there, ``ExceptT.bind_throw])
@@ -1463,8 +1504,64 @@ private def specificationDeclaration (family programName : TSyntax `ident)
         ($contract:ident : Complexity.Language.FunctionTotal $programName:ident $id:ident
           $pre:ident $post:ident) : $type := $proof)).raw
 
+private def importedDeclarations (family : TSyntax `ident)
+    (imports : Array ImportedProgram) : MacroM (Option ImportDeclarations) := do
+  let some first := imports[0]? | return none
+  let mut program : TSyntax `term := ⟨(mkCIdent (first.family ++ `program)).raw⟩
+  let mut signatures : TSyntax `term := ⟨(mkCIdent (first.family ++ `signatures)).raw⟩
+  let mut embeddings : Array ImportEmbedding := #[⟨first,
+    ← `(Complexity.Language.SignatureMap.refl $signatures),
+    ← `(Complexity.Language.Program.Embeds.refl $program)⟩]
+  for imported in imports.toList.drop 1 do
+    let next : TSyntax `term := ⟨(mkCIdent (imported.family ++ `program)).raw⟩
+    let nextSignatures : TSyntax `term := ⟨(mkCIdent (imported.family ++ `signatures)).raw⟩
+    let leftMap ← `(Complexity.Language.SignatureMap.appendLeft $signatures $nextSignatures)
+    let leftProof ← `(Complexity.Language.Program.embeds_link_left $program $next)
+    embeddings ← embeddings.mapM fun entry => do
+      return { entry with
+        map := ← `(Complexity.Language.SignatureMap.trans $(entry.map) $leftMap)
+        proof := ← `(Complexity.Language.Program.Embeds.trans $(entry.proof) $leftProof) }
+    embeddings := embeddings.push ⟨imported,
+      ← `(Complexity.Language.SignatureMap.appendRight $signatures $nextSignatures),
+      ← `(Complexity.Language.Program.embeds_link_right $program $next)⟩
+    program ← `(Complexity.Language.Program.link $program $next)
+    signatures ← `($signatures ++ $nextSignatures)
+  let signaturesName := mkIdentFrom family (family.getId ++ `importedSignatures)
+  let programName := mkIdentFrom family (family.getId ++ `importedProgram)
+  let signatureDeclaration ← `(command|
+    /-- The complete signature tables retained from imported source programs. -/
+    abbrev $signaturesName:ident : List Complexity.Language.Signature := $signatures)
+  let programDeclaration ← `(command|
+    /-- Actual imported function bodies with their internal calls relocated. -/
+    def $programName:ident : Complexity.Language.Program $signaturesName:ident := $program)
+  return some ⟨#[signatureDeclaration.raw, programDeclaration.raw],
+    ⟨programName.raw⟩, ⟨signaturesName.raw⟩, embeddings⟩
+
+private def importedObservationDeclaration (program map embedded : TSyntax `ident)
+    (source : ImportedProgram) (fn : FunctionInfo) (callee : Callee) : MacroM Syntax := do
+  let params ← parameterTypes callee.params
+  let env ← freshProofName callee.name `arguments
+  let originalId := mkCIdent (source.family ++ Name.mkSimple (fn.name.toString ++ "Id"))
+  let originalFold := mkCIdent (source.family ++ Name.mkSimple (fn.name.toString ++ "_observe"))
+  let mut remaining ← `($env:ident)
+  let mut arguments := #[]
+  for _ in callee.params do
+    arguments := arguments.push (← `(Complexity.Language.Env.head $remaining))
+    remaining ← `(Complexity.Language.Env.tail $remaining)
+  let observed := Lean.Syntax.mkApp ⟨callee.observation.raw⟩ arguments
+  return (← `(command|
+    /-- Reuse an imported native action through the proved embedding of its real body. -/
+    theorem $(callee.fold):ident ($env:ident : Complexity.Language.Env $params) :
+        Complexity.Language.Program.eval $program:ident $(callee.id):ident $env:ident =
+          $observed := by
+      change Complexity.Language.SignatureMap.eval $map:ident $program:ident
+        $originalId:ident $env:ident = _
+      rw [Complexity.Language.Program.Embeds.eval_eq $embedded:ident]
+      exact $originalFold:ident $env:ident)).raw
+
 private def programDeclarations (family : TSyntax `ident)
-    (sources : Array (TSyntax `sourceFunction)) : MacroM Syntax := do
+    (sources : Array (TSyntax `sourceFunction)) (imports : Array ImportedProgram) :
+    MacroM (Syntax × Array FunctionInfo) := do
   let mut functions : Array Function := #[]
   for source in sources do
     let fn ← parseFunction source
@@ -1472,14 +1569,27 @@ private def programDeclarations (family : TSyntax `ident)
       Macro.throwErrorAt fn.name "duplicate source function name"
     functions := functions.push fn
   let signaturesName := mkIdentFrom family (family.getId ++ `signatures)
+  let localSignaturesName := mkIdentFrom family (family.getId ++ `localSignatures)
+  let localBodiesName := mkIdentFrom family (family.getId ++ `localBodies)
+  let programName := mkIdentFrom family (family.getId ++ `program)
   let signatures ← functions.mapM fun fn => do
     let params ← parameterTypes fn.params
     let result ← typeTerm fn.result
     `(({ params := $params, result := $result } : Complexity.Language.Signature))
+  let imported ← importedDeclarations family imports
+  let mut declarations := imported.map (·.declarations) |>.getD #[]
+  let signatureValue ← match imported with
+    | none => `([$signatures,*])
+    | some imported => do
+        declarations := declarations.push (← `(command|
+          /-- Signatures of the functions added by this source declaration. -/
+          abbrev $localSignaturesName:ident : List Complexity.Language.Signature :=
+            [$signatures,*])).raw
+        `($localSignaturesName:ident ++ $(imported.signatures))
   let signatureDeclaration ← `(command|
     /-- The source program's declared first-order signatures. -/
-    abbrev $signaturesName:ident : List Complexity.Language.Signature := [$signatures,*])
-  let mut declarations := #[signatureDeclaration.raw]
+    abbrev $signaturesName:ident : List Complexity.Language.Signature := $signatureValue)
+  declarations := declarations.push signatureDeclaration.raw
   for (fn, index) in functions.zipIdx do
     let id := generatedName family fn.name "Id"
     let number := Syntax.mkNumLit (toString index)
@@ -1487,12 +1597,57 @@ private def programDeclarations (family : TSyntax `ident)
       /-- This named source function's index in its declared signature table. -/
       abbrev $id:ident : Fin ($signaturesName:ident).length := ⟨$number:num, by decide⟩)
     declarations := declarations.push declaration.raw
+  let mut callees : Array Callee := functions.map fun fn =>
+    ⟨fn.name, fn.params, fn.result, generatedName family fn.name "Id",
+      generatedName family fn.name "", generatedName family fn.name "_observe"⟩
+  let mut importedProofs : Array Syntax := #[]
+  let mut importedObservations : Array Syntax := #[]
+  let mut importFolds : Array (TSyntax `ident) := #[]
+  if let some imported := imported then
+    for entry in imported.embeddings do
+      let map ← freshProofName family `sourceImportMap
+      let embedded ← freshProofName family `sourceImportEmbedding
+      let sourceSignatures := mkCIdent (entry.source.family ++ `signatures)
+      let sourceProgram := mkCIdent (entry.source.family ++ `program)
+      declarations := declarations.push (← `(command|
+        /-- Signature-preserving positions of this imported source program. -/
+        abbrev $map:ident : Complexity.Language.SignatureMap
+            $sourceSignatures:ident $signaturesName:ident :=
+          Complexity.Language.SignatureMap.trans $(entry.map)
+            (Complexity.Language.SignatureMap.appendRight
+              $localSignaturesName:ident $(imported.signatures)))).raw
+      importedProofs := importedProofs.push (← `(command|
+        /-- The imported functions retain their actual relocated bodies. -/
+        theorem $embedded:ident : Complexity.Language.Program.Embeds
+            $sourceProgram:ident $map:ident $programName:ident :=
+          Complexity.Language.Program.Embeds.trans $(entry.proof)
+            (Complexity.Language.Program.embeds_extend $(imported.program)
+              $localSignaturesName:ident $localBodiesName:ident))).raw
+      for fn in entry.source.functions do
+        let name := mkIdentFrom entry.source.name (entry.source.name.getId ++ fn.name)
+        if callees.any (fun previous => previous.name.getId == name.getId) then
+          Macro.throwErrorAt name "ambiguous source function name"
+        let id ← freshProofName family `sourceImportedFunction
+        let fold ← freshProofName family `sourceImportedObservation
+        let originalId := mkCIdent (entry.source.family ++ Name.mkSimple (fn.name.toString ++ "Id"))
+        declarations := declarations.push (← `(command|
+          /-- The actual target index of an imported function. -/
+          abbrev $id:ident : Fin ($signaturesName:ident).length :=
+            Complexity.Language.SignatureMap.toFun $map:ident $originalId:ident)).raw
+        let callee : Callee := ⟨name,
+          fn.params.map (fun param => ⟨mkIdentFrom entry.source.name param.1, param.2⟩),
+          fn.result, id,
+          mkCIdent (entry.source.family ++ Name.mkSimple fn.name.toString), fold⟩
+        callees := callees.push callee
+        importFolds := importFolds.push fold
+        importedObservations := importedObservations.push (← importedObservationDeclaration
+          programName map embedded entry.source fn callee)
   let mut loweredBodies : Array LoweredBlock := #[]
   for fn in functions do
     let name := generatedName family fn.name "Body"
     let params ← parameterTypes fn.params
     let result ← typeTerm fn.result
-    let body ← functionCode family functions fn
+    let body ← functionCode family callees fn
     loweredBodies := loweredBodies.push body
     for site in body.loops do
       declarations := declarations ++ (← loopCodeDeclarations signaturesName site)
@@ -1504,16 +1659,27 @@ private def programDeclarations (family : TSyntax `ident)
   for fn in functions.reverse do
     let name := generatedName family fn.name "Body"
     bodies ← `(Fin.cases $name:ident $bodies)
-  let programName := mkIdentFrom family (family.getId ++ `program)
+  let programValue ← match imported with
+    | none => `(({ body := $bodies } : Complexity.Language.Program $signaturesName:ident))
+    | some imported => do
+        declarations := declarations.push (← `(command|
+          /-- Added function bodies already typed against the complete linked table. -/
+          def $localBodiesName:ident : (fn : Fin ($localSignaturesName:ident).length) →
+              Complexity.Language.Stmt $signaturesName:ident
+                ($localSignaturesName:ident)[fn].params ($localSignaturesName:ident)[fn].result :=
+            $bodies)).raw
+        `(Complexity.Language.Program.extend $(imported.program)
+          $localSignaturesName:ident $localBodiesName:ident)
   let programDeclaration ← `(command|
     /-- The finite table of actual named source bodies. -/
-    def $programName:ident : Complexity.Language.Program $signaturesName:ident := { body := $bodies })
+    def $programName:ident : Complexity.Language.Program $signaturesName:ident := $programValue)
   declarations := declarations.push programDeclaration.raw
+  declarations := declarations ++ importedProofs ++ importedObservations
   for fn in functions do
     declarations := declarations.push (← observationDeclaration family programName fn)
   for fn in functions do
     declarations := declarations.push (← calleeObservationDeclaration family programName fn)
-  let calleeFolds := functions.map fun fn => generatedName family fn.name "_observe"
+  let calleeFolds := callees.map (·.fold)
   let loopSites := loweredBodies.flatMap (·.loops)
   for site in loopSites do
     declarations := declarations ++ (← loopObservationDeclarations programName site)
@@ -1524,15 +1690,32 @@ private def programDeclarations (family : TSyntax `ident)
     declarations := declarations ++ (← loopCaptureFrameDeclarations programName site loopSites)
     declarations := declarations.push (← loopVariantDeclaration programName site)
   for fn in functions, body in loweredBodies do
-    declarations := declarations.push (← equationDeclaration family programName fn body)
+    declarations := declarations.push (← equationDeclaration family programName fn body importFolds)
   for fn in functions do
     declarations := declarations.push (← totalDeclaration family programName fn)
     declarations := declarations.push (← specificationDeclaration family programName fn)
-  return mkNullNode declarations
+  return (mkNullNode declarations, functions.map fun fn =>
+    ⟨fn.name.getId, fn.params.map (fun param => (param.name.getId, param.type)), fn.result⟩)
+
+private def elaborateProgram (family : TSyntax `ident)
+    (functions : Array (TSyntax `sourceFunction)) (libraries : Array (TSyntax `ident)) :
+    Lean.Elab.Command.CommandElabM Unit := do
+  let mut imports : Array ImportedProgram := #[]
+  for library in libraries do
+    let (name, functions) ← getProgramInfo library
+    if imports.any (fun imported => imported.family == name) then
+      Lean.throwErrorAt library "duplicate source program import"
+    imports := imports.push ⟨library, name, functions⟩
+  let (declarations, information) ←
+    Lean.Elab.liftMacroM (programDeclarations family functions imports)
+  Lean.Elab.Command.elabCommand declarations
+  registerProgramInfo family information
 
 elab_rules : command
   | `(command| source_program $family:ident where $functions:sourceFunction*) => do
-      let declarations ← Lean.Elab.liftMacroM (programDeclarations family functions)
-      Lean.Elab.Command.elabCommand declarations
+      elaborateProgram family functions #[]
+  | `(command| source_program $family:ident importing $libraries:ident,* where
+      $functions:sourceFunction*) => do
+      elaborateProgram family functions libraries.getElems
 
 end Complexity.Language.Syntax

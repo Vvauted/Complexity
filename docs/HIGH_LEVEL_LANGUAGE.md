@@ -32,8 +32,11 @@ bound, subject to word-range and code/stack-capacity conditions. The
 Typed program embeddings now preserve complete source observations, including
 divergence and finite faults. Linking the existing traversal and recursive
 factorial tables reuses their original native proofs without unfolding either
-algorithm. Named cross-program calls and transport of compiled resource bounds
-remain separate work; combining two closed tables does not create new call edges.
+algorithm. The frontend now accepts `source_program P importing Library, Other where`
+and qualified calls into those libraries. Added bodies use the combined table;
+generated caller equations expose original library actions through proved
+embeddings. An imported program can itself contain imports. Transport of compiled
+resource bounds remains separate work; source action equality does not supply it.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
 
@@ -176,10 +179,15 @@ program. The [source linker](../Complexity/Language/Linking/Basic.lean) now
 provides signature-preserving call renaming and checked embeddings of actual
 bodies. Its [observation theorem](../Complexity/Language/Linking/Eval.lean)
 preserves the entire partial action, so existing mathematical contracts transfer
-without re-proving recursion, loops or heap effects. The frontend still needs
-to resolve imported declarations against a combined table and generate native
-caller equations. A Lean `import` alone does not supply that interface. Source
-observation equality also does not by itself transport compiler-derived costs.
+without re-proving recursion, loops or heap effects. The frontend's `importing`
+clause now resolves previously declared source families, retains their complete
+function tables and generates equations for qualified calls into them. Ordinary
+Lean module imports retain their public headers through Lean's persistent
+environment. Headers select existing declarations, not arbitrary executable
+Lean primitives. The [client examples](../Examples/Language/Imports.lean) reuse
+the original factorial and two-buffer composition proofs, then import that client
+again. Source observation equality does not by itself transport compiler-derived
+realization or costs; those connection-layer rules remain to be supplied.
 
 ### Current surface and intended traversal extension
 

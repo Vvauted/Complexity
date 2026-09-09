@@ -292,11 +292,13 @@ import Complexity.Language.Eval.Verification
 import Complexity.Language.Heap
 import Complexity.Language.Linking.Basic
 import Complexity.Language.Linking.Eval
+import Complexity.Language.Linking.Extension
 import Complexity.Language.Linking.Reflection
 import Complexity.Language.Linking.Semantics
 import Complexity.Language.Semantics
 import Complexity.Language.State
 import Complexity.Language.Syntax
+import Complexity.Language.Syntax.Imports
 import Complexity.Language.Verification
 import Complexity.Language.Verification.Recursion
 import Complexity.LinearAlgebra.Matrix.Update

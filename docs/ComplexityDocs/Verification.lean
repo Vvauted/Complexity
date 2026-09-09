@@ -139,7 +139,20 @@ call's current input; the second preserves the first result. The resulting
 contract retains both `Array.map` results and all initially valid views disjoint
 from both buffers. Disjoint slices of the same object are allowed. Neither
 callee body nor its array invariant is unfolded in the caller proof.
-Calls in the frontend currently name functions in the same `source_program`.
+Calls can name local functions or functions from explicitly imported source programs:
+
+```lean
+source_program Client importing Library, Other where
+  def compute (n : Nat) : Nat := do
+    let result ← Library.compute n
+    let updated ← Other.update result
+    return updated
+```
+
+The libraries must be previously declared `source_program` families, available
+through ordinary Lean imports or earlier declarations. Qualify a library call
+with the family name used in the `importing` clause. Public headers persist in
+Lean's environment; arbitrary Lean functions are not accepted as implementations.
 The [typed source linker](##Complexity.Language.Linking.Basic) can now combine
 separately declared tables while renaming their actual internal calls. An
 embedding preserves every selected signature and body, not just an assumed
@@ -151,11 +164,18 @@ parameter/result-type transport; it observes the actual target function.
 The [linked examples](##Examples.Language.Linking) place the existing recursive
 factorial after the traversal table, relocating its self-call, and reuse the old
 factorial and array-map/frame proofs directly. Neither algorithm is reimplemented
-or unfolded again. This is source-semantic reuse: the frontend does not yet
-resolve calls into separately declared programs, and appending two closed tables
-does not create new calls between them. Compiled realization and cost transfer
-require their own lowering correspondence; they do not follow merely from equal
-source observations.
+or unfolded again. The [extension rule](##Complexity.Language.Linking.Extension)
+adds new bodies already typed against the combined table, allowing real calls
+from the client into imported libraries. Generated `Client.f_eq` equations
+replace imported invocation observations by the original library actions through
+the proved embeddings. The [named clients](##Examples.Language.Imports) therefore
+reuse the old factorial and two-buffer frame proofs without source ASTs or table
+indices; a second client imports the first with the same interface.
+
+This is source-semantic reuse. Compiled realization and cost transfer require
+their own lowering correspondence; they do not follow merely from equal source
+observations. The frontend introduces neither host callbacks nor trusted cost
+annotations to stand in for that remaining proof work.
 
 The typed core also has an effectful-guard `Stmt.while`. Its guard is an actual
 Boolean-producing block: it runs in the current state on every iteration, and
