@@ -50,4 +50,18 @@ theorem stateT_triple_of_eq {σ α : Type u} {action : StateT σ Part α}
   subst state
   exact ⟨value, finish, executed, property⟩
 
+/-- Apply a native specification to the actual observed result and state.
+The existing partial computation has at most one result, so a consumer need
+not repeat the specification's termination or result-uniqueness proof. -/
+theorem stateT_post_of_eq {σ α : Type u} {action : StateT σ Part α}
+    {pre : σ → Prop} {post : PostCond α (.arg σ .pure)}
+    (specification : Triple action (fun state => ⟨pre state⟩) post)
+    {entry finish : σ} {value : α} (initial : pre entry)
+    (executed : action entry = Part.some (value, finish)) :
+    (post.1 value finish).down := by
+  obtain ⟨actualValue, actualFinish, actual, property⟩ :=
+    (stateT_triple_iff action pre post).mp specification entry initial
+  rcases Prod.mk.inj (Part.some_injective (actual.symm.trans executed)) with ⟨rfl, rfl⟩
+  exact property
+
 end Part.TotalCorrectness

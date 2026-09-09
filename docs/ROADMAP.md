@@ -559,8 +559,9 @@ source termination proof; cost composition reuses its array invariant, without
 a second array-correctness proof. Native operation specifications and strict
 `StateT` adequacy remove routine WP/bind unfolding from the source proof.
 The remaining gate includes a reusable outside-buffer frame and an indexed
-traversal interface. Choosing and composing supplied contracts, fixed-capture
-transport and guard/body outcome handling still need better automation.
+traversal interface. Fixed-capture transport is now shared; choosing and
+composing supplied contracts and handling guard/body outcomes still need better
+automation.
 This first complete invocation does not finish M2.
 
 This completes a useful borrowed-array subset, not allocated-container support.
@@ -602,14 +603,21 @@ halted invocation and a separate linear bound. This closes the first named-loop
 behavior/cost chain, not general loop-proof automation. Do not substitute an
 opaque native loop or a user-maintained host implementation.
 
-The next proof-interface step is to keep immutable captures out of realization
-and cost invariants too, reusing their proved lexical frame through the
-connection layer. The current compiled traversal still repeats lossless-local
-tuple equations and guard/body result decomposition. Replace that mechanical
-transport with shared rules while retaining the actual heap, source range
-conditions and cost inequalities. Keep RAM-specific rules out of the source
-semantics and syntax; this work must simplify the existing proof, not introduce
-another implementation or whole-loop template.
+Fixed-capture realization and cost rules now keep immutable values out of those
+invariants too, reusing the generated lexical frame through the connection
+layer. The compiled traversal no longer supplies capture-preservation equations
+or dedicated result-uniqueness proofs. Its ordinary guard/body contracts feed
+the same actual outcomes into correctness and resource reasoning through the
+shared strict `StateT` postcondition rule.
+
+The next proof-interface step is automatic application of supplied contracts
+and reuse of a round's mathematical postcondition. The current compiled
+traversal still explicitly selects views/frames, folds named observations and
+substitutes post-guard indices and heaps in several obligations. Remove this
+mechanical repetition while retaining the actual heap, source range conditions
+and cost inequalities. Keep RAM-specific rules out of the source semantics and
+syntax; simplify the existing proof rather than introducing another
+implementation or whole-loop template.
 
 The shared ordinary-local observation now retains all lexical values and the
 actual heap on every exit. Its well-founded and natural-variant specifications

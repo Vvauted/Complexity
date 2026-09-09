@@ -202,6 +202,96 @@ theorem while_observe_of_total
       (observation test) (observation iteration)
   · simpa only [Equiv.apply_symm_apply] using initial
 
+/-- Add loop realization while keeping fixed captures out of the invariant and
+round obligations. The generated capture frames restore those coordinates
+internally; preserving a borrowed descriptor does not freeze its heap contents.
+The original local view is retained for guard/body observations, so existing
+named equations can be reused without transporting an observation through a map.
+Source totality and its postconditions are reused unchanged. -/
+theorem while_observe_fixed_of_total
+    {signatures : List Signature} {program : Complexity.Language.Program signatures}
+    {w depth : Nat} {Γ : List Ty} {result : Ty} {Locals Mutable Captured : Type}
+    (view : Env Γ ≃ Locals) (regroup : Locals ≃ Mutable × Captured)
+    {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    (guardFrame : ∀ {entry finish : Complexity.Language.State Γ} {control : Control .bool},
+      Complexity.Language.Exec program guard entry finish control →
+        (regroup (view finish.locals)).2 = (regroup (view entry.locals)).2)
+    (bodyFrame : ∀ {entry finish : Complexity.Language.State Γ} {control : Control result},
+      Complexity.Language.Exec program body entry finish control →
+        (regroup (view finish.locals)).2 = (regroup (view entry.locals)).2)
+    (captures : Captured)
+    {invariant : Mutable → Heap → Prop}
+    {normal : Complexity.Language.State Γ → Prop}
+    {returned : Value result → Complexity.Language.State Γ → Prop}
+    {mutable : Mutable} {heap : Heap}
+    (total : Complexity.Language.TotalWP program (.while guard body) normal returned
+      ⟨view.symm (regroup.symm (mutable, captures)), heap⟩)
+    (guardRealizable : ∀ current currentHeap, invariant current currentHeap →
+      RealizationWP program w depth guard (fun _ => False) (fun _ _ => True)
+        ⟨view.symm (regroup.symm (current, captures)), currentHeap⟩)
+    (bodyRealizable : ∀ current currentHeap afterGuard guardHeap,
+      invariant current currentHeap →
+      Complexity.Language.Stmt.observe view guard program
+          (regroup.symm (current, captures)) currentHeap =
+        Part.some ((.returned true, regroup.symm (afterGuard, captures)), guardHeap) →
+      RealizationWP program w depth body (fun _ => True) (fun _ _ => True)
+        ⟨view.symm (regroup.symm (afterGuard, captures)), guardHeap⟩)
+    (preserve : ∀ current currentHeap afterGuard guardHeap afterBody bodyHeap,
+      invariant current currentHeap →
+      Complexity.Language.Stmt.observe view guard program
+          (regroup.symm (current, captures)) currentHeap =
+        Part.some ((.returned true, regroup.symm (afterGuard, captures)), guardHeap) →
+      Complexity.Language.Stmt.observe view body program
+          (regroup.symm (afterGuard, captures)) guardHeap =
+        Part.some ((.normal, regroup.symm (afterBody, captures)), bodyHeap) →
+      invariant afterBody bodyHeap)
+    (initial : invariant mutable heap) :
+    RealizationWP program w depth (.while guard body) normal returned
+      ⟨view.symm (regroup.symm (mutable, captures)), heap⟩ := by
+  have repack (current : Locals) (same : (regroup current).2 = captures) :
+      regroup.symm ((regroup current).1, captures) = current := by
+    apply regroup.injective
+    simp only [Equiv.apply_symm_apply]
+    exact Prod.ext rfl same.symm
+  have captured_eq {τ : Ty} {stmt : Complexity.Language.Stmt signatures Γ τ}
+      {current finish : Locals} {currentHeap finalHeap : Heap} {control : Control τ}
+      (frame : ∀ {entry finish : Complexity.Language.State Γ} {control : Control τ},
+        Complexity.Language.Exec program stmt entry finish control →
+          (regroup (view finish.locals)).2 = (regroup (view entry.locals)).2)
+      (observed : Complexity.Language.Stmt.observe view stmt program current currentHeap =
+        Part.some ((control, finish), finalHeap)) :
+      (regroup finish).2 = (regroup current).2 := by
+    simpa only [Equiv.apply_symm_apply] using
+      frame (Complexity.Language.Stmt.observe_eq_some_iff.mp observed)
+  apply while_observe_of_total view
+    (invariant := fun current currentHeap =>
+      (regroup current).2 = captures ∧ invariant (regroup current).1 currentHeap) total
+  · intro current currentHeap currentInvariant
+    simpa only [repack current currentInvariant.1] using
+      guardRealizable (regroup current).1 currentHeap currentInvariant.2
+  · intro current currentHeap afterGuard guardHeap currentInvariant tested
+    have guardCaptured : (regroup afterGuard).2 = captures :=
+      (captured_eq guardFrame tested).trans currentInvariant.1
+    have bodyProof := bodyRealizable (regroup current).1 currentHeap
+      (regroup afterGuard).1 guardHeap currentInvariant.2 (by
+        simpa only [repack current currentInvariant.1, repack afterGuard guardCaptured] using tested)
+    simpa only [repack afterGuard guardCaptured] using bodyProof
+  · intro current currentHeap afterGuard guardHeap afterBody bodyHeap
+      currentInvariant tested iterated
+    have guardCaptured : (regroup afterGuard).2 = captures :=
+      (captured_eq guardFrame tested).trans currentInvariant.1
+    have bodyCaptured : (regroup afterBody).2 = captures :=
+      (captured_eq bodyFrame iterated).trans guardCaptured
+    refine ⟨bodyCaptured, ?_⟩
+    apply preserve (regroup current).1 currentHeap (regroup afterGuard).1 guardHeap
+      (regroup afterBody).1 bodyHeap currentInvariant.2
+    · simpa only [repack current currentInvariant.1, repack afterGuard guardCaptured] using tested
+    · simpa only [repack afterGuard guardCaptured, repack afterBody bodyCaptured] using iterated
+  · constructor
+    · simp only [Equiv.apply_symm_apply]
+    · simpa only [Equiv.apply_symm_apply] using initial
+
 end RealizationWP
 
 end Ram.LanguageCompiler

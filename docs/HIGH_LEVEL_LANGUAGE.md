@@ -239,9 +239,13 @@ a linear instruction bound for the actual halted invocation. Word ranges,
 preloaded heap representation and code/stack capacity remain explicit. Shared
 realization rules reuse source termination rather than requiring a second
 decreasing measure, and cost composition reuses the source array invariant.
-The compiled proof still manually transports fixed captures and decomposes
-guard/body outcomes. Removing that plumbing and exporting an outside-buffer
-frame remain separate work.
+Fixed-capture realization and cost rules now reuse the generated lexical frame,
+so their invariants and potentials need only the mutable index and heap. Native
+guard/body contracts supply mathematical facts about the actual outcomes through
+`Part.TotalCorrectness.stateT_post_of_eq`, without consumer-specific uniqueness
+proofs. Selecting the generated views/frames, applying these contracts and
+normalizing guard/body outcomes remain explicit. Further named automation and
+an exported outside-buffer frame remain separate work.
 
 The [recursive factorial](../Examples/Language/Factorial.lean) makes a real
 source self-call on `n - 1`. Rewriting its generated one-step equation and using

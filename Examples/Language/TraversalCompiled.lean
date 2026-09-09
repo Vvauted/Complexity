@@ -68,39 +68,6 @@ theorem body_costBound (locals : Implementation.boundedMap_loop1.Locals) (heap :
   · ram_source_cost_step using increment_costBound
   · ram_source_cost_step; omega
 
-private theorem guard_result (xs : Buffer .nat) (limit i : Nat) (heap : Heap)
-    {decision : Bool} {locals : Implementation.boundedMap_loop1.Locals} {finish : Heap}
-    (executed : Implementation.boundedMap_loop1.guard i xs limit heap =
-      Part.some ((.returned decision, locals), finish)) :
-    decision = decide (i < xs.length) ∧ locals = (i, xs, limit, ()) ∧ finish = heap := by
-  rw [guard_eval] at executed
-  change Part.some ((Control.returned (result := .bool) (decide (i < xs.length)),
-    i, xs, limit, ()), heap) =
-    Part.some ((Control.returned decision, locals), finish) at executed
-  simpa only [Prod.mk.injEq, Control.returned.injEq, and_assoc] using
-    (Part.some_injective executed).symm
-
-private theorem body_result (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
-    {i : Nat} {heap : Heap} (current : invariant xs limit contents i heap)
-    (bound : i < contents.size) {control : Control .unit}
-    {locals : Implementation.boundedMap_loop1.Locals} {finish : Heap}
-    (executed : Implementation.boundedMap_loop1.body i xs limit heap =
-      Part.some ((control, locals), finish)) :
-    control = .normal ∧ locals = (i + 1, xs, limit, ()) ∧
-      invariant xs limit contents (i + 1) finish := by
-  obtain ⟨actualHeap, actual, updated⟩ := body_step xs limit contents current bound
-  have same : control = .normal ∧ locals = (i + 1, xs, limit, ()) ∧ finish = actualHeap := by
-    simpa only [Prod.mk.injEq, and_assoc] using
-      Part.some_injective (executed.symm.trans actual)
-  rcases same with ⟨rfl, rfl, rfl⟩
-  exact ⟨rfl, rfl, updated⟩
-
-/-- The lossless generated view retains fixed captures as well as the mutable
-index. The array property is exactly the existing source invariant. -/
-private def loopInvariant (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
-    (locals : Implementation.boundedMap_loop1.Locals) (heap : Heap) : Prop :=
-  locals.2.1 = xs ∧ locals.2.2.1 = limit ∧ invariant xs limit contents locals.1 heap
-
 /-- The real loop has a linear potential: every round pays for its guard,
 body and loop control, and the remaining constant pays for the final false
 guard. The original source invariant supplies preservation, not new contents
@@ -111,68 +78,83 @@ theorem loop_costBound (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
       ⟨Implementation.boundedMap_loop1.View.symm (i, xs, limit, ()), heap⟩
       ((callCost Implementation.program Implementation.incrementId 10 + 43) *
         (contents.size - i) + 21) := by
-  apply StmtCostBound.while_observe Implementation.boundedMap_loop1.View
-    (invariant := loopInvariant xs limit contents)
+  apply StmtCostBound.while_observe_fixed Implementation.boundedMap_loop1.View
+    Implementation.boundedMap_loop1.Regroup
+    Implementation.boundedMap_loop1.guard_preservesCaptures
+    Implementation.boundedMap_loop1.body_preservesCaptures (xs, limit, ())
+    (mutable := (i, ())) (heap := heap)
+    (invariant := fun mutable => invariant xs limit contents mutable.1)
     (guardBound := fun _ _ => 10)
     (bodyBound := fun _ _ _ _ => callCost Implementation.program Implementation.incrementId 10 + 23)
     (potential := fun locals _ =>
       (callCost Implementation.program Implementation.incrementId 10 + 43) *
         (contents.size - locals.1) + 21)
-  · intro locals heap _
-    exact guard_costBound locals heap
-  · intro locals heap afterGuard afterHeap _ _
-    exact body_costBound afterGuard afterHeap
-  · rintro ⟨j, other, bound, ⟨⟩⟩ entry afterGuard afterHeap afterBody bodyHeap
-      ⟨sameBuffer, sameLimit, initial⟩ tested iterated
-    change other = xs at sameBuffer
-    change bound = limit at sameLimit
-    subst other bound
-    obtain ⟨selected, rfl, sameHeap⟩ := guard_result xs limit j entry
-      (by simpa only [Implementation.boundedMap_loop1.guard_observe] using tested)
-    subst afterHeap
+  · intro mutable heap _
+    exact guard_costBound (Implementation.boundedMap_loop1.Regroup.symm
+      (mutable, (xs, limit, ()))) heap
+  · intro mutable heap afterGuard afterHeap _ _
+    exact body_costBound (Implementation.boundedMap_loop1.Regroup.symm
+      (afterGuard, (xs, limit, ()))) afterHeap
+  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial tested iterated
+    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
+      (guard_spec xs limit j entry) rfl
+      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
+        Implementation.boundedMap_loop1.guard_observe] using tested)
+    change k = j at sameIndex
+    subst k afterHeap
     have size : contents.size = xs.length := by
       simpa only [Array.size_mapIdx] using initial.2.size_eq
     have available : j < contents.size := by
-      simpa only [size, decide_eq_true_eq] using selected.symm
-    obtain ⟨_, rfl, updated⟩ := body_result xs limit contents initial available
-      (by simpa only [Implementation.boundedMap_loop1.body_observe] using iterated)
-    exact ⟨rfl, rfl, updated⟩
-  · intro locals heap afterGuard afterHeap _ _
+      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
+    obtain ⟨sameOutcome, updated⟩ := Part.TotalCorrectness.stateT_post_of_eq
+      (body_spec xs limit contents initial available) rfl
+      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
+        Implementation.boundedMap_loop1.body_observe] using iterated)
+    have next : l = j + 1 := congrArg (fun outcome => outcome.2.1) sameOutcome
+    simpa only [next] using updated
+  · intro mutable heap afterGuard afterHeap _ _
+    dsimp only
     omega
-  · rintro ⟨j, other, bound, ⟨⟩⟩ entry afterGuard afterHeap afterBody bodyHeap
-      ⟨sameBuffer, sameLimit, initial⟩ tested iterated
-    change other = xs at sameBuffer
-    change bound = limit at sameLimit
-    subst other bound
-    obtain ⟨selected, rfl, sameHeap⟩ := guard_result xs limit j entry
-      (by simpa only [Implementation.boundedMap_loop1.guard_observe] using tested)
-    subst afterHeap
+  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial tested iterated
+    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
+      (guard_spec xs limit j entry) rfl
+      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
+        Implementation.boundedMap_loop1.guard_observe] using tested)
+    change k = j at sameIndex
+    subst k afterHeap
     have size : contents.size = xs.length := by
       simpa only [Array.size_mapIdx] using initial.2.size_eq
     have available : j < contents.size := by
-      simpa only [size, decide_eq_true_eq] using selected.symm
-    obtain ⟨_, rfl, updated⟩ := body_result xs limit contents initial available
-      (by simpa only [Implementation.boundedMap_loop1.body_observe] using iterated)
+      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
+    obtain ⟨sameOutcome, _⟩ := Part.TotalCorrectness.stateT_post_of_eq
+      (body_spec xs limit contents initial available) rfl
+      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
+        Implementation.boundedMap_loop1.body_observe] using iterated)
+    have next : l = j + 1 := congrArg (fun outcome => outcome.2.1) sameOutcome
+    subst l
     have remaining : contents.size - j = contents.size - (j + 1) + 1 := by omega
     dsimp only
     rw [remaining, Nat.mul_add, Nat.mul_one]
     omega
-  · rintro ⟨j, other, bound, ⟨⟩⟩ entry afterGuard afterHeap finalLocals finalHeap value
-      ⟨sameBuffer, sameLimit, initial⟩ tested iterated
-    change other = xs at sameBuffer
-    change bound = limit at sameLimit
-    subst other bound
-    obtain ⟨selected, rfl, sameHeap⟩ := guard_result xs limit j entry
-      (by simpa only [Implementation.boundedMap_loop1.guard_observe] using tested)
-    subst afterHeap
+  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ finalHeap value initial tested iterated
+    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
+      (guard_spec xs limit j entry) rfl
+      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
+        Implementation.boundedMap_loop1.guard_observe] using tested)
+    change k = j at sameIndex
+    subst k afterHeap
     have size : contents.size = xs.length := by
       simpa only [Array.size_mapIdx] using initial.2.size_eq
     have available : j < contents.size := by
-      simpa only [size, decide_eq_true_eq] using selected.symm
-    obtain ⟨impossible, _, _⟩ := body_result xs limit contents initial available
-      (by simpa only [Implementation.boundedMap_loop1.body_observe] using iterated)
+      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
+    obtain ⟨sameOutcome, _⟩ := Part.TotalCorrectness.stateT_post_of_eq
+      (body_spec xs limit contents initial available) rfl
+      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
+        Implementation.boundedMap_loop1.body_observe] using iterated)
+    have impossible : (Control.returned value : Control .unit) = .normal :=
+      congrArg Prod.fst sameOutcome
     cases impossible
-  · exact ⟨rfl, rfl, current⟩
+  · exact current
 
 /-- Guard realization only needs the compared natural values and its Boolean
 result to fit. No assumption on the array's contents is used by the guard. -/
@@ -247,45 +229,47 @@ theorem loop_realizable {w : Nat} (hw : 0 < w) (xs : Buffer .nat) (limit : Nat)
       | normal => trivial
       | returned value => exact property
       | fault error => exact property
-  apply RealizationWP.while_observe_of_total Implementation.boundedMap_loop1.View
-    (invariant := loopInvariant xs limit contents) total
-  · rintro ⟨j, other, bound, ⟨⟩⟩ entry ⟨sameBuffer, sameLimit, initial⟩
-    change other = xs at sameBuffer
-    change bound = limit at sameLimit
-    subst other bound
+  apply RealizationWP.while_observe_fixed_of_total Implementation.boundedMap_loop1.View
+    Implementation.boundedMap_loop1.Regroup
+    Implementation.boundedMap_loop1.guard_preservesCaptures
+    Implementation.boundedMap_loop1.body_preservesCaptures (xs, limit, ())
+    (mutable := (i, ())) (heap := heap)
+    (invariant := fun mutable => invariant xs limit contents mutable.1) total
+  · rintro ⟨j, ⟨⟩⟩ entry initial
     have size : contents.size = xs.length := by
       simpa only [Array.size_mapIdx] using initial.2.size_eq
     exact guard_realizable hw xs limit j entry (by have := initial.1; omega) lengthFits
-  · rintro ⟨j, other, bound, ⟨⟩⟩ entry afterGuard afterHeap
-      ⟨sameBuffer, sameLimit, initial⟩ tested
-    change other = xs at sameBuffer
-    change bound = limit at sameLimit
-    subst other bound
-    obtain ⟨selected, rfl, sameHeap⟩ := guard_result xs limit j entry
-      (by simpa only [Implementation.boundedMap_loop1.guard_observe] using tested)
-    subst afterHeap
+  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap initial tested
+    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
+      (guard_spec xs limit j entry) rfl
+      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
+        Implementation.boundedMap_loop1.guard_observe] using tested)
+    change k = j at sameIndex
+    subst k afterHeap
     have size : contents.size = xs.length := by
       simpa only [Array.size_mapIdx] using initial.2.size_eq
     have available : j < contents.size := by
-      simpa only [size, decide_eq_true_eq] using selected.symm
+      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
     exact body_realizable hw xs limit contents j entry initial available lengthFits limitFits
       (incrementsFit j available)
-  · rintro ⟨j, other, bound, ⟨⟩⟩ entry afterGuard afterHeap afterBody bodyHeap
-      ⟨sameBuffer, sameLimit, initial⟩ tested iterated
-    change other = xs at sameBuffer
-    change bound = limit at sameLimit
-    subst other bound
-    obtain ⟨selected, rfl, sameHeap⟩ := guard_result xs limit j entry
-      (by simpa only [Implementation.boundedMap_loop1.guard_observe] using tested)
-    subst afterHeap
+  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial tested iterated
+    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
+      (guard_spec xs limit j entry) rfl
+      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
+        Implementation.boundedMap_loop1.guard_observe] using tested)
+    change k = j at sameIndex
+    subst k afterHeap
     have size : contents.size = xs.length := by
       simpa only [Array.size_mapIdx] using initial.2.size_eq
     have available : j < contents.size := by
-      simpa only [size, decide_eq_true_eq] using selected.symm
-    obtain ⟨_, rfl, updated⟩ := body_result xs limit contents initial available
-      (by simpa only [Implementation.boundedMap_loop1.body_observe] using iterated)
-    exact ⟨rfl, rfl, updated⟩
-  · exact ⟨rfl, rfl, current⟩
+      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
+    obtain ⟨sameOutcome, updated⟩ := Part.TotalCorrectness.stateT_post_of_eq
+      (body_spec xs limit contents initial available) rfl
+      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
+        Implementation.boundedMap_loop1.body_observe] using iterated)
+    have next : l = j + 1 := congrArg (fun outcome => outcome.2.1) sameOutcome
+    simpa only [next] using updated
+  · exact current
 
 /-- The traversal uses one call level for its helper. Its original values'
 increments, limit and view length are the genuine bounded-word obligations. -/

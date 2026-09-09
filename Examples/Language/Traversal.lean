@@ -100,6 +100,69 @@ theorem guard_eval (xs : Buffer .nat) (limit i : Nat) :
         StateT Heap Part (Control .bool × Implementation.boundedMap_loop1.Locals)) :=
   Implementation.boundedMap_loop1.guard_eq i xs limit
 
+/-- The guard's native contract exposes its mathematical decision and unchanged
+index and heap, for reuse by correctness and separate resource proofs. -/
+theorem guard_spec (xs : Buffer .nat) (limit i : Nat) (heap : Heap) :
+    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+      (Implementation.boundedMap_loop1.guard i xs limit)
+      (fun entry => ⟨entry = heap⟩)
+      (fun outcome finish =>
+        ⟨outcome.1 = .returned (decide (i < xs.length)) ∧ outcome.2.1 = i ∧ finish = heap⟩,
+        ⟨⟩) := by
+  rw [guard_eval]
+  apply Std.Do.Triple.pure
+  intro finish same
+  exact ⟨rfl, rfl, same⟩
+
+/-- A native contract for the actual loop body. Shared read/write rules and
+the named helper advance the mathematical prefix, retaining the actual heap. -/
+theorem body_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
+    {i : Nat} {heap : Heap} (current : invariant xs limit contents i heap)
+    (bound : i < contents.size) :
+    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+      (Implementation.boundedMap_loop1.body i xs limit)
+      (fun entry => ⟨entry = heap⟩)
+      (fun outcome finish => ⟨outcome = (.normal, i + 1, xs, limit, ()) ∧
+        invariant xs limit contents (i + 1) finish⟩, ⟨⟩) := by
+  rw [Implementation.boundedMap_loop1.body_eq]
+  simp only [increment_eval]
+  mvcgen
+  rename_i entry same
+  subst entry
+  let values := contents.mapIdx fun j x => if j < i then min (x + 1) limit else x
+  have available : i < values.size := by simpa only [values, Array.size_mapIdx] using bound
+  refine ⟨values, available, current.2, ?_⟩
+  have next : values[i] = contents[i] := by simp only [values, Array.getElem_mapIdx,
+    Nat.lt_irrefl, if_false]
+  simp only [next]
+  mvcgen
+  · rename_i small
+    have small : contents[i] + 1 ≤ limit := by
+      simpa only [decide_eq_true_eq] using small
+    refine ⟨values, available, current.2, ?_⟩
+    intro finish _ updated
+    mvcgen
+    have advanced : invariant xs limit contents (i + 1) finish := by
+      refine ⟨by omega, ?_⟩
+      rw [← Nat.min_eq_left small] at updated
+      simpa only [values,
+        Array.set_mapIdx_ite_lt (fun x => min (x + 1) limit) bound] using updated
+    simpa using advanced
+  · rename_i large
+    have large : limit ≤ contents[i] + 1 := by
+      have : ¬contents[i] + 1 ≤ limit := by
+        simpa only [decide_eq_true_eq] using large
+      omega
+    refine ⟨values, available, current.2, ?_⟩
+    intro finish _ updated
+    mvcgen
+    have advanced : invariant xs limit contents (i + 1) finish := by
+      refine ⟨by omega, ?_⟩
+      rw [← Nat.min_eq_right large] at updated
+      simpa only [values,
+        Array.set_mapIdx_ite_lt (fun x => min (x + 1) limit) bound] using updated
+    simpa using advanced
+
 /-- One real iteration advances the mathematical prefix. The named helper and
 the shared read/write contracts provide the actual finite outcome. -/
 theorem body_step (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
@@ -108,51 +171,9 @@ theorem body_step (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     ∃ finish, Implementation.boundedMap_loop1.body i xs limit heap =
         Part.some ((.normal, i + 1, xs, limit, ()), finish) ∧
       invariant xs limit contents (i + 1) finish := by
-  have specification : Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
-      (Implementation.boundedMap_loop1.body i xs limit)
-      (fun entry => ⟨entry = heap⟩)
-      (fun outcome finish => ⟨outcome = (.normal, i + 1, xs, limit, ()) ∧
-        invariant xs limit contents (i + 1) finish⟩, ⟨⟩) := by
-    rw [Implementation.boundedMap_loop1.body_eq]
-    simp only [increment_eval]
-    mvcgen
-    rename_i entry same
-    subst entry
-    let values := contents.mapIdx fun j x => if j < i then min (x + 1) limit else x
-    have available : i < values.size := by simpa only [values, Array.size_mapIdx] using bound
-    refine ⟨values, available, current.2, ?_⟩
-    have next : values[i] = contents[i] := by simp only [values, Array.getElem_mapIdx,
-      Nat.lt_irrefl, if_false]
-    simp only [next]
-    mvcgen
-    · rename_i small
-      have small : contents[i] + 1 ≤ limit := by
-        simpa only [decide_eq_true_eq] using small
-      refine ⟨values, available, current.2, ?_⟩
-      intro finish _ updated
-      mvcgen
-      have advanced : invariant xs limit contents (i + 1) finish := by
-        refine ⟨by omega, ?_⟩
-        rw [← Nat.min_eq_left small] at updated
-        simpa only [values,
-          Array.set_mapIdx_ite_lt (fun x => min (x + 1) limit) bound] using updated
-      simpa using advanced
-    · rename_i large
-      have large : limit ≤ contents[i] + 1 := by
-        have : ¬contents[i] + 1 ≤ limit := by
-          simpa only [decide_eq_true_eq] using large
-        omega
-      refine ⟨values, available, current.2, ?_⟩
-      intro finish _ updated
-      mvcgen
-      have advanced : invariant xs limit contents (i + 1) finish := by
-        refine ⟨by omega, ?_⟩
-        rw [← Nat.min_eq_right large] at updated
-        simpa only [values,
-          Array.set_mapIdx_ite_lt (fun x => min (x + 1) limit) bound] using updated
-      simpa using advanced
   obtain ⟨outcome, finish, executed, same, updated⟩ :=
-    (Part.TotalCorrectness.stateT_triple_iff _ _ _).mp specification heap rfl
+    (Part.TotalCorrectness.stateT_triple_iff _ _ _).mp
+      (body_spec xs limit contents current bound) heap rfl
   exact ⟨finish, same ▸ executed, updated⟩
 
 /-- The generated loop rule needs an invariant only for the changing index.

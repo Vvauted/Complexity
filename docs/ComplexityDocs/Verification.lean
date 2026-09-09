@@ -147,9 +147,14 @@ representation and code/stack capacity are explicit. The
 [realization loop rules](##Complexity.Computability.Ram.Compiler.Language.Realization.Loop)
 reuse source termination without a second decreasing measure, and the
 [ordinary-local cost rules](##Complexity.Computability.Ram.Compiler.Language.CostBound.Locals)
-compose actual guard/body bounds and the source invariant. Fixed-capture and
-outcome bookkeeping in the compiled proof still needs a named interface;
-exported outside-buffer frames also remain work.
+compose actual guard/body bounds and the source invariant. Their fixed-capture
+rules reuse generated lexical preservation, leaving only mutable locals and the
+heap in the author's invariant and potential. The source guard/body native
+contracts feed actual outcome facts into both proofs through
+`Part.TotalCorrectness.stateT_post_of_eq`; no dedicated result-uniqueness proof is
+needed. Selecting views and contracts and normalizing each round's outcomes
+still need a more convenient named interface. Exported outside-buffer frames
+also remain work.
 
 For recursion, the [source contract rule](##Complexity.Language.Verification.Recursion)
 supplies complete callable specifications at smaller mathematical indices through
