@@ -1136,6 +1136,10 @@ private def loopEquationDeclarations (site : LoopSite) (sites : Array LoopSite)
         simp only [$allArgs,*]
         dsimp only [Complexity.Language.Env.equivProd, Complexity.Language.Env.equivUnit,
           Equiv.symm]
+        simp (config := { failIfUnchanged := false }) only
+          [Equiv.coe_fn_mk, Complexity.Language.Env.cons_here,
+            Complexity.Language.Env.cons_there, Complexity.Language.Env.head_cons,
+            Complexity.Language.Env.tail_cons, Complexity.Language.Env.get_tail]
       exact equation.symm))
     declarations := declarations.push (← `(command| source_equation% $equation:ident := $proof)).raw
   let name := site.name

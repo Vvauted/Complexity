@@ -258,7 +258,8 @@ Status: in progress, not complete.
   triples retain the initial heap as a ghost.
   Buffer length, read, write and relative slice operations use the same current
   heap. Direct and action-result assignment update the actual locals, including
-  across a branch join. Loops are not yet supplied by this surface.
+  across a branch join. Named `while` supplies guard/body equations and an
+  invariant/variant rule over the changing locals.
   The same buffer declaration now has compiled execution and cost theorems.
 - [Scalar lowering](../Complexity/Computability/Ram/Compiler/Language/Scalar.lean)
   connects Nat/Bool atoms and operations to the existing expression compiler,
@@ -367,15 +368,19 @@ Before broadening the surface further, close these connected gaps:
 
 These priorities refine M1–M3; they do not remove products, loops, recursion,
 allocation or compiler automation from the intended language. The named while
-frontend now supplies an ordinary-local invariant/variant interface; its first
-complete traversal proof still exposes native WP and bind bookkeeping that
-belongs in reusable rules.
+frontend now supplies an ordinary-local invariant/variant interface. Its first
+complete traversal proof composes native operation specifications, using shared
+strict `StateT` adequacy instead of unfolding WP or partial-state binds. Further
+automation should select and compose supplied contracts without guessing their
+mathematical content.
 
 The present cost interpretation concerns successful realized executions.
 It is not yet instrumentation of every unrestricted source execution.
 Borrowed-buffer operations and typed effectful-guard loops have their own
 lowering and cost observations. The loop potential rule follows actual current
-states; composing named-loop cost proofs and indexed traversal remain M2–M3 work.
+states. The first named traversal now composes those bounds through the actual
+compiled invocation; more convenient named-loop cost proofs and indexed
+traversal remain M2–M3 work.
 
 Complete function bodies now omit their redundant empty final dispatch. Exact
 code-size comparison proves a three-instruction saving with the same register
@@ -500,9 +505,10 @@ inside a branch and observes the result afterward without changing its mathemati
 specification. The buffer consumer rebinds a mutable descriptor to a real slice
 result and retains its array-update specification. Layout regularity and update
 preservation are compiler lemmas, automatically supplied by generated functions;
-buffer self-assignment remains allowed. The named while traversal now has a
-complete source correctness and termination proof. Its specific compiled bound
-and general indexed-traversal interface remain open.
+buffer self-assignment remains allowed. The named while traversal now has source
+correctness and termination proofs, a compiled invocation theorem and an
+independent linear instruction bound. The general indexed-traversal interface
+and exported outside-buffer frame remain open.
 
 The [buffer consumer](../Examples/Language/Buffer.lean) uses native operation
 specifications to prove its ordinary `Array.set` result. Its
@@ -544,13 +550,18 @@ store loop, with a transformed-prefix/unread-suffix invariant and an independent
 bound for its compiled execution. It must not be reduced to a newly invented
 `MapWithBranch.function` template. Reuse ordinary List/Array identities.
 
-The [named while traversal](../Examples/Language/Traversal.lean) now discharges
-the source-behavior part of this gate on the actual helper/branch/write program.
-It uses native array identities and a generated variant rule with fixed
-captures. The remaining gate includes its compiled invocation and independent
-bound, a reusable outside-buffer frame, and removing routine native WP/bind
-plumbing from the author proof. Do not count the source theorem alone as M2
-completion.
+The [named while traversal](../Examples/Language/Traversal.lean) and its
+[compiled invocation](../Examples/Language/TraversalCompiled.lean) now discharge
+the behavior, termination and independent linear-bound parts of this gate on
+the actual helper/branch/write program. They use native array identities and a
+generated variant rule with fixed captures. Compiled realizability reuses the
+source termination proof; cost composition reuses its array invariant, without
+a second array-correctness proof. Native operation specifications and strict
+`StateT` adequacy remove routine WP/bind unfolding from the source proof.
+The remaining gate includes a reusable outside-buffer frame and an indexed
+traversal interface. Choosing and composing supplied contracts, fixed-capture
+transport and guard/body outcome handling still need better automation.
+This first complete invocation does not finish M2.
 
 This completes a useful borrowed-array subset, not allocated-container support.
 
@@ -571,6 +582,14 @@ iteration and early return, including the final guard. `StmtCostBound.while`
 composes state-dependent guard/body bounds with a remaining potential, without
 using that potential as execution fuel or a source termination premise.
 
+The [realization loop rules](../Complexity/Computability/Ram/Compiler/Language/Realization/Loop.lean)
+can now reuse already proved source termination and postconditions. The extra
+round obligations concern operation ranges, call nesting and preservation of
+their admissibility invariant, not a second decreasing measure. The
+[ordinary-local cost bridge](../Complexity/Computability/Ram/Compiler/Language/CostBound/Locals.lean)
+reuses actual guard/body observations and source invariant preservation; it
+neither re-proves contents nor defines a separate cost interpreter.
+
 The surface now accepts `while` and emits actual named guard/body/loop
 observations, their one-step equations and a normal-continuation theorem.
 Pointwise coordinate equations keep equivalence proof fields opaque, and a
@@ -578,9 +597,19 @@ lexical-position frame preserves immutable captures automatically. The generated
 `variant_spec` takes an invariant and natural-valued variant over named mutable
 locals and the actual heap. The read/helper/branch/write traversal now consumes
 it to prove finite success and the complete native array-map result, without
-an `Env` or register argument. This closes the first named-loop source proof,
-not its specific compiled cost proof or general loop-proof automation. Do not
-substitute an opaque native loop or a user-maintained host implementation.
+an `Env` or register argument. Its compiled consumer now establishes the actual
+halted invocation and a separate linear bound. This closes the first named-loop
+behavior/cost chain, not general loop-proof automation. Do not substitute an
+opaque native loop or a user-maintained host implementation.
+
+The next proof-interface step is to keep immutable captures out of realization
+and cost invariants too, reusing their proved lexical frame through the
+connection layer. The current compiled traversal still repeats lossless-local
+tuple equations and guard/body result decomposition. Replace that mechanical
+transport with shared rules while retaining the actual heap, source range
+conditions and cost inequalities. Keep RAM-specific rules out of the source
+semantics and syntax; this work must simplify the existing proof, not introduce
+another implementation or whole-loop template.
 
 The shared ordinary-local observation now retains all lexical values and the
 actual heap on every exit. Its well-founded and natural-variant specifications

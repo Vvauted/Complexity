@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Language.Syntax
 import Complexity.Language.Eval.Locals.Verification
 import Complexity.Data.Array.MapIdx
+import Complexity.Control.Part.StateT
 import Std.Tactic.Do
 
 /-!
@@ -15,8 +16,9 @@ Each iteration reads the current cell, calls the source increment function,
 selects the bounded value and writes it to the same shared buffer. The source
 uses ordinary mutable locals and a while loop. The complete source proof shows
 termination and the native array map result by `fun x => min (x + 1) limit`;
-no host array operation executes in place of the declared traversal. A separate
-compiled invocation and execution-cost proof are not supplied in this module.
+no host array operation executes in place of the declared traversal.
+`Examples.Language.TraversalCompiled` connects this same source proof to its
+compiled invocation and an independent linear execution-cost bound.
 -/
 
 namespace Complexity.Language.Examples.Traversal
@@ -48,13 +50,13 @@ theorem increment_eval (x : Nat) :
 
 /-- At the traversal boundary, the processed prefix uses the mathematical
 update while the unread suffix still has its original values. -/
-private def invariant (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
+def invariant (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     (i : Nat) (heap : Heap) : Prop :=
   i ≤ contents.size ∧ xs.Contents heap
     (contents.mapIdx fun j x => if j < i then min (x + 1) limit else x)
 
 /-- Before the first iteration, the mapped prefix is empty. -/
-private theorem invariant_zero (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
+theorem invariant_zero (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     {heap : Heap} (observed : xs.Contents heap contents) :
     invariant xs limit contents 0 heap := by
   refine ⟨Nat.zero_le _, ?_⟩
@@ -82,7 +84,7 @@ private theorem invariant_done (xs : Buffer .nat) (limit : Nat) (contents : Arra
   exact values ▸ current.2
 
 /-- The next cell still contains its original mathematical value. -/
-private theorem invariant_read (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
+theorem invariant_read (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     {i : Nat} {heap : Heap} (current : invariant xs limit contents i heap)
     (bound : i < contents.size) :
     heap.read xs i = .ok contents[i] := by
@@ -91,22 +93,8 @@ private theorem invariant_read (xs : Buffer .nat) (limit : Nat) (contents : Arra
     simpa only [Array.size_mapIdx] using bound
   simpa only [Array.getElem_mapIdx, Nat.lt_irrefl, if_false] using current.2.read available
 
-/-- Updating the next cell advances the processed prefix by one position. -/
-private theorem invariant_write (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
-    {i : Nat} {heap : Heap} (current : invariant xs limit contents i heap)
-    (bound : i < contents.size) :
-    ∃ finish, heap.write xs i (min (contents[i] + 1) limit) = .ok finish ∧
-      invariant xs limit contents (i + 1) finish := by
-  have available : i <
-      (contents.mapIdx fun j x => if j < i then min (x + 1) limit else x).size := by
-    simpa only [Array.size_mapIdx] using bound
-  obtain ⟨finish, written, updated⟩ :=
-    current.2.write_exists available (min (contents[i] + 1) limit)
-  refine ⟨finish, written, Nat.succ_le_of_lt bound, ?_⟩
-  simpa only [Array.set_mapIdx_ite_lt (fun x => min (x + 1) limit) bound] using updated
-
 /-- The actual guard tests the current index and preserves all its inputs. -/
-private theorem guard_eval (xs : Buffer .nat) (limit i : Nat) :
+theorem guard_eval (xs : Buffer .nat) (limit i : Nat) :
     Implementation.boundedMap_loop1.guard i xs limit =
       (pure (.returned (decide (i < xs.length)), i, xs, limit, ()) :
         StateT Heap Part (Control .bool × Implementation.boundedMap_loop1.Locals)) :=
@@ -114,29 +102,62 @@ private theorem guard_eval (xs : Buffer .nat) (limit i : Nat) :
 
 /-- One real iteration advances the mathematical prefix. The named helper and
 the shared read/write contracts provide the actual finite outcome. -/
-private theorem body_step (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
+theorem body_step (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     {i : Nat} {heap : Heap} (current : invariant xs limit contents i heap)
     (bound : i < contents.size) :
     ∃ finish, Implementation.boundedMap_loop1.body i xs limit heap =
         Part.some ((.normal, i + 1, xs, limit, ()), finish) ∧
       invariant xs limit contents (i + 1) finish := by
-  obtain ⟨finish, written, updated⟩ := invariant_write xs limit contents current bound
-  refine ⟨finish, ?_, updated⟩
-  rw [Implementation.boundedMap_loop1.body_eq]
-  simp only [increment_eval, ExceptT.run, ExceptT.mk, Bind.bind, StateT.bind,
-    Pure.pure, ExceptT.pure, StateT.pure,
-    Buffer.readM_eq_ok (invariant_read xs limit contents current bound), Part.bind_some]
-  by_cases small : contents[i] + 1 ≤ limit
-  · simp only [Nat.min_eq_left small] at written
-    simp [small, Buffer.writeM_eq_ok written, Part.bind_some,
-      Bind.bind, Pure.pure, StateT.bind, StateT.pure]
-  · simp only [Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small))] at written
-    simp [small, Buffer.writeM_eq_ok written, Part.bind_some,
-      Bind.bind, Pure.pure, StateT.bind, StateT.pure]
+  have specification : Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+      (Implementation.boundedMap_loop1.body i xs limit)
+      (fun entry => ⟨entry = heap⟩)
+      (fun outcome finish => ⟨outcome = (.normal, i + 1, xs, limit, ()) ∧
+        invariant xs limit contents (i + 1) finish⟩, ⟨⟩) := by
+    rw [Implementation.boundedMap_loop1.body_eq]
+    simp only [increment_eval]
+    mvcgen
+    rename_i entry same
+    subst entry
+    let values := contents.mapIdx fun j x => if j < i then min (x + 1) limit else x
+    have available : i < values.size := by simpa only [values, Array.size_mapIdx] using bound
+    refine ⟨values, available, current.2, ?_⟩
+    have next : values[i] = contents[i] := by simp only [values, Array.getElem_mapIdx,
+      Nat.lt_irrefl, if_false]
+    simp only [next]
+    mvcgen
+    · rename_i small
+      have small : contents[i] + 1 ≤ limit := by
+        simpa only [decide_eq_true_eq] using small
+      refine ⟨values, available, current.2, ?_⟩
+      intro finish _ updated
+      mvcgen
+      have advanced : invariant xs limit contents (i + 1) finish := by
+        refine ⟨by omega, ?_⟩
+        rw [← Nat.min_eq_left small] at updated
+        simpa only [values,
+          Array.set_mapIdx_ite_lt (fun x => min (x + 1) limit) bound] using updated
+      simpa using advanced
+    · rename_i large
+      have large : limit ≤ contents[i] + 1 := by
+        have : ¬contents[i] + 1 ≤ limit := by
+          simpa only [decide_eq_true_eq] using large
+        omega
+      refine ⟨values, available, current.2, ?_⟩
+      intro finish _ updated
+      mvcgen
+      have advanced : invariant xs limit contents (i + 1) finish := by
+        refine ⟨by omega, ?_⟩
+        rw [← Nat.min_eq_right large] at updated
+        simpa only [values,
+          Array.set_mapIdx_ite_lt (fun x => min (x + 1) limit) bound] using updated
+      simpa using advanced
+  obtain ⟨outcome, finish, executed, same, updated⟩ :=
+    (Part.TotalCorrectness.stateT_triple_iff _ _ _).mp specification heap rfl
+  exact ⟨finish, same ▸ executed, updated⟩
 
 /-- The generated loop rule needs an invariant only for the changing index.
 Readonly captures are handled by the frontend's proved frame. -/
-private theorem loop_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat) (i : Nat) :
+theorem loop_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat) (i : Nat) :
     Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
       (Implementation.boundedMap_loop1 i xs limit)
       (fun heap => ⟨invariant xs limit contents i heap⟩)
@@ -150,22 +171,16 @@ private theorem loop_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat
     (fun _ _ _ => False) ?_ i
   intro j entry current
   rw [guard_eval]
-  simp only [Std.Do.Triple, Std.Do.WP.wp, Std.Do.PredTrans.pushArg,
-    Part.TotalCorrectness.wp]
+  apply Std.Do.Triple.pure
   intro heap same
   subst heap
-  refine ⟨((.returned (decide (j < xs.length)), j, xs, limit, ()), entry),
-    Part.eq_some_iff.mp rfl, ?_⟩
   have length : contents.size = xs.length := by
     simpa only [Array.size_mapIdx] using current.2.size_eq
   by_cases fits : j < xs.length
   · simp only [decide_eq_true_eq, if_pos fits]
-    intro heap same
-    subst heap
     obtain ⟨finish, executed, updated⟩ :=
       body_step xs limit contents current (by omega)
-    exact ⟨((.normal, j + 1, xs, limit, ()), finish),
-      Part.eq_some_iff.mp executed, updated, by
+    exact Part.TotalCorrectness.stateT_triple_of_eq executed ⟨updated, by
         change contents.size - (j + 1) < contents.size - j
         omega⟩
   · simp only [decide_eq_true_eq, if_neg fits]
@@ -178,21 +193,19 @@ theorem boundedMap_eval (xs : Buffer .nat) (limit : Nat) {contents : Array Nat} 
     (observed : xs.Contents heap contents) :
     ∃ finish, Implementation.boundedMap xs limit heap = Part.some (.ok (), finish) ∧
       xs.Contents finish (contents.map fun x => min (x + 1) limit) := by
-  have specification := loop_spec xs limit contents 0
-  simp only [Std.Do.Triple, Std.Do.WP.wp, Std.Do.PredTrans.pushArg,
-    Part.TotalCorrectness.wp] at specification
-  obtain ⟨⟨⟨control, locals⟩, finish⟩, member, property⟩ :=
-    specification heap (invariant_zero xs limit contents observed)
-  cases control with
-  | normal =>
-      refine ⟨finish, ?_, property⟩
-      have loopResult := Part.eq_some_iff.mpr member
-      rw [Implementation.boundedMap_eq]
-      simp only [ExceptT.lift, ExceptT.mk, ExceptT.bind, ExceptT.bindCont,
-        Functor.map, StateT.map, Bind.bind, StateT.bind,
-        Pure.pure, ExceptT.pure, StateT.pure, loopResult, Part.bind_some]
-  | returned value => exact False.elim property
-  | fault error => exact False.elim property
+  have specification : Std.Do.Triple (m := ExceptT Fault (StateT Heap Part))
+      (ps := .except Fault (.arg Heap .pure)) (Implementation.boundedMap xs limit)
+      (fun heap => ⟨invariant xs limit contents 0 heap⟩)
+      (fun _ heap => ⟨xs.Contents heap (contents.map fun x => min (x + 1) limit)⟩,
+        (fun _ _ => ⟨False⟩, ⟨⟩)) := by
+    rw [Implementation.boundedMap_eq]
+    mvcgen [loop_spec]
+    rw [Std.Do.WP.lift_ExceptT, Std.Do.WP.monadLift_ExceptT]
+    mvcgen [loop_spec]
+    all_goals simp_all
+  obtain ⟨value, finish, executed, updated⟩ :=
+    (triple_iff_eval _ _ _).mp specification heap (invariant_zero xs limit contents observed)
+  exact ⟨finish, executed, updated⟩
 
 /-- The ordinary array specification transfers to the source function contract
 through its generated argument interface, with no register or environment proof. -/

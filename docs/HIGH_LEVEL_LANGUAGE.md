@@ -21,9 +21,10 @@ bindings and assignments use the same source state, native equations and lowerin
 The typed core now includes effectful-guard loops and well-founded source rules.
 The surface accepts `while` and generates named guard/body/loop equations,
 normal-continuation proofs and a variant rule over named mutable locals.
-The complete buffer traversal proof now gives its ordinary `Array.map` result
-and termination; a self-recursive factorial proof uses ordinary induction and
-mathlib's `Nat.factorial`. Their specific compiled bounds remain unfinished. The
+The complete buffer traversal proof now gives its ordinary `Array.map` result,
+termination, compiled invocation and independent linear instruction bound.
+A self-recursive factorial proof uses ordinary induction and mathlib's
+`Nat.factorial`; its compiled invocation and bound remain unfinished. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -228,9 +229,19 @@ correctness and termination proof reuses native `Array.mapIdx`, `Array.set` and
 `Array.map` facts. The generated `boundedMap_loop1.variant_spec` needs an
 invariant and descent measure only on `i` and the heap; `xs` and `limit` are fixed
 by generated lexical preservation proofs. This preserves the buffer descriptor,
-not its contents. The proof still has native WP/bind bookkeeping to remove;
-its specific compiled invocation, cost and exported outside-buffer frame are
-separate work.
+not its contents. The complete source proof now composes native `Std.Do`
+operation rules and uses the strict `StateT` adequacy interface to recover actual
+result equations. It no longer unfolds WP, `Part.bind`, environments or control
+execution trees. Selecting the loop contract and mathematical contents remains
+explicit. The [compiled traversal](../Examples/Language/TraversalCompiled.lean)
+now reuses this source proof and establishes the same final array contents and
+a linear instruction bound for the actual halted invocation. Word ranges,
+preloaded heap representation and code/stack capacity remain explicit. Shared
+realization rules reuse source termination rather than requiring a second
+decreasing measure, and cost composition reuses the source array invariant.
+The compiled proof still manually transports fixed captures and decomposes
+guard/body outcomes. Removing that plumbing and exporting an outside-buffer
+frame remain separate work.
 
 The [recursive factorial](../Examples/Language/Factorial.lean) makes a real
 source self-call on `n - 1`. Rewriting its generated one-step equation and using
@@ -446,8 +457,8 @@ is carried by the source execution state, including across calls and faults.
 reads and writes to `getElem` and `Array.set`, including updates through aliases.
 Read/write/slice statements now invoke these same operations; calls retain their
 actual updated heap. The named while traversal now proves its complete array
-update and termination; generic traversal automation and its compiled bound
-remain unfinished.
+update, termination and a linear bound for its compiled invocation. General
+indexed-traversal automation and exported outside-buffer frames remain unfinished.
 
 The [borrowed-buffer representation](../Complexity/Computability/Ram/Compiler/Language/Heap.lean)
 fixes an object-to-base placement as proof data, represents each complete object

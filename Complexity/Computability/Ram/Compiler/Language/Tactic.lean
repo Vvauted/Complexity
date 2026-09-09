@@ -28,6 +28,12 @@ uses a maximum for branches and uniform continuation bounds at calls, so it
 does not require a correctness proof when the bound does not depend on returned
 contents. For result-dependent bounds use `StmtCostBound.call` directly.
 
+`ram_source_realize_step` and `ram_source_cost_step` run the same structural
+passes on statement-level goals, without introducing a function contract or
+unpacking function arguments. They accept the same optional callee facts.
+Loop contracts remain goals for explicit invariant and potential rules; neither
+pass unfolds a loop or a recursive callee implementation.
+
 These tactics only construct proofs with public rules. They do not introduce
 an execution semantics, unfold callee bodies or maintain an instruction-price
 table. The source frontend does not import this backend module.
@@ -50,7 +56,7 @@ private def onGoals (action : TacticM Unit) : TacticM Unit := do
 
 /-- Expose only the selected statement, not recursive callee implementations. -/
 private def exposeStatement (position : Nat) : TacticM Lean.Expr := withMainContext do
-  let target := (← instantiateMVars (← getMainTarget)).headBeta
+  let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
   let arguments := target.getAppArgs
   let statement ← whnf arguments[position]!
   let exposed := mkAppN target.getAppFn (arguments.set! position statement)
@@ -98,6 +104,7 @@ private def normalizeTypeIndices (expression : Lean.Expr) : MetaM Lean.Expr := d
     if let .proj ``Complexity.Language.Signature _ _ := expression then
       return .done (← whnf expression)
     if expression.isAppOf ``Complexity.Language.Value ||
+        expression.isAppOf ``Complexity.Language.CellValue ||
         expression.isAppOf ``Ram.LanguageCompiler.fieldCount then
       let arguments := expression.getAppArgs
       unless arguments.isEmpty do
@@ -129,7 +136,8 @@ source correctness contracts or machine execution. -/
 private def normalizeValues : TacticM Unit := do
   normalizeTypeIndicesGoal
   evalTactic (← `(tactic|
-    (dsimp (config := { failIfUnchanged := false }) only [Complexity.Language.Value] at * <;>
+    (dsimp (config := { failIfUnchanged := false }) only
+       [Complexity.Language.Value, Complexity.Language.CellValue] at * <;>
      simp (config := { failIfUnchanged := false }) only
       [Ram.LanguageCompiler.PrimFits, Complexity.Language.Prim.eval,
         Complexity.Language.Atom.eval, Complexity.Language.Args.eval,
@@ -143,7 +151,7 @@ private def normalizeValues : TacticM Unit := do
         Complexity.Language.State.locals_tail, Complexity.Language.State.heap_tail,
         Complexity.Language.State.locals_set, Complexity.Language.State.heap_set,
         Complexity.Language.State.tail_cons,
-        Complexity.Language.Value, Ram.LanguageCompiler.ValueFits,
+        Complexity.Language.Value, Complexity.Language.CellValue, Ram.LanguageCompiler.ValueFits,
         Complexity.Language.CellTy.toValue, Complexity.Language.CellTy.ofValue,
         Complexity.Language.CellTy.toTy,
         Ram.LanguageCompiler.EnvFits.cons_nat_iff,
@@ -157,7 +165,7 @@ private partial def realize
     (callee : Option (TSyntax `term × TSyntax `term)) : TacticM Unit := do
   unless (← getGoals).isEmpty do
     withMainContext do
-      let target := (← instantiateMVars (← getMainTarget)).headBeta
+      let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
       if target.isForall then
         evalTactic (← `(tactic| intro))
         realize callee
@@ -184,6 +192,8 @@ private partial def realize
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
           evalTactic (← `(tactic|
             (rw [Ram.LanguageCompiler.RealizationWP.ite_iff]; split)))
+        else if statement.isAppOf ``Complexity.Language.Stmt.while then
+          return
         else if statement.isAppOf ``Complexity.Language.Stmt.call then
           match callee with
           | some (feasible, specification) =>
@@ -201,7 +211,7 @@ private partial def realize
 applications of the existing cost rules, not by a new cost interpreter. -/
 private def inferLocalBound : TacticM Unit := withMainContext do
   let goal ← getMainGoal
-  let target ← instantiateMVars (← getMainTarget)
+  let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
   let arguments := target.getAppArgs
   let bound ← mkFreshExprMVar (some arguments[0]!)
   let proof ← mkFreshExprMVar (some (mkApp arguments[1]! bound))
@@ -213,7 +223,11 @@ private def inferLocalBound : TacticM Unit := withMainContext do
 private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
   unless (← getGoals).isEmpty do
     withMainContext do
-      let target := (← instantiateMVars (← getMainTarget)).headBeta
+      let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
+      -- Unresolved bound parameters are data, not proof obligations. Leave them
+      -- for cost certificates to infer instead of choosing a local Nat by assumption.
+      unless ← isProp target do
+        return
       if target.isForall then
         evalTactic (← `(tactic| intro))
         cost callee
@@ -240,6 +254,8 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.seq))
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.ite_max))
+        else if statement.isAppOf ``Complexity.Language.Stmt.while then
+          return
         else if statement.isAppOf ``Complexity.Language.Stmt.call then
           match callee with
           | some certificate =>
@@ -308,3 +324,27 @@ elab_rules : tactic
       Ram.LanguageCompiler.Tactic.startCost names none
   | `(tactic| ram_source_cost ($names:ident*) using $certificate) =>
       Ram.LanguageCompiler.Tactic.startCost names (some certificate)
+
+/-- Compose the existing realization rules at a statement-level goal. Optional
+callee facts supply realizability and source correctness. Mathematical leaves
+and loop contracts remain goals, without introducing a function wrapper. -/
+syntax (name := ramSourceRealizeStep) "ram_source_realize_step"
+  (" using " term:max ", " term:max)? : tactic
+
+elab_rules : tactic
+  | `(tactic| ram_source_realize_step) => focus do
+      Ram.LanguageCompiler.Tactic.realize none
+  | `(tactic| ram_source_realize_step using $feasible, $specification) => focus do
+      Ram.LanguageCompiler.Tactic.realize (some (feasible, specification))
+
+/-- Compose the existing cost rules at a statement-level goal, optionally using
+a callee bound. This does not add a function-body wrapper charge. Loop contracts
+remain goals for a separate potential argument. -/
+syntax (name := ramSourceCostStep) "ram_source_cost_step"
+  (" using " term:max)? : tactic
+
+elab_rules : tactic
+  | `(tactic| ram_source_cost_step) => focus do
+      Ram.LanguageCompiler.Tactic.cost none
+  | `(tactic| ram_source_cost_step using $certificate) => focus do
+      Ram.LanguageCompiler.Tactic.cost (some certificate)

@@ -93,6 +93,7 @@ import Complexity.Computability.Ram.Compiler.Language.Control
 import Complexity.Computability.Ram.Compiler.Language.Copy
 import Complexity.Computability.Ram.Compiler.Language.Contract
 import Complexity.Computability.Ram.Compiler.Language.CostBound
+import Complexity.Computability.Ram.Compiler.Language.CostBound.Locals
 import Complexity.Computability.Ram.Compiler.Language.CostDeterministic
 import Complexity.Computability.Ram.Compiler.Language.CostExecution
 import Complexity.Computability.Ram.Compiler.Language.Effects
@@ -106,6 +107,7 @@ import Complexity.Computability.Ram.Compiler.Language.Lowering
 import Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation
 import Complexity.Computability.Ram.Compiler.Language.MeasuredValues
 import Complexity.Computability.Ram.Compiler.Language.Realization
+import Complexity.Computability.Ram.Compiler.Language.Realization.Loop
 import Complexity.Computability.Ram.Compiler.Language.Scalar
 import Complexity.Computability.Ram.Compiler.Language.Simulation
 import Complexity.Computability.Ram.Compiler.Language.Tactic
@@ -267,6 +269,7 @@ import Complexity.Computability.Recurrence.Majorant
 import Complexity.Computability.Recurrence.Rounding
 import Complexity.Computability.Recurrence.Supercritical
 import Complexity.Control.Part
+import Complexity.Control.Part.StateT
 import Complexity.Data.Array.MapIdx
 import Complexity.Data.List.Fold
 import Complexity.Data.List.InsertIdx

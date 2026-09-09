@@ -135,8 +135,21 @@ this preserves a buffer descriptor, not its contents. The
 and native array identities to prove termination and its complete `Array.map`
 result. Its author-supplied invariant describes the processed prefix and unread
 suffix; generated frames keep `xs` and `limit` out of its changing locals.
-The proof still has native WP/bind plumbing to move into shared rules. Its
-specific compiled bound and exported outside-buffer frame remain separate work.
+Native read/write specifications and the
+[partial-state adequacy rules](##Complexity.Control.Part.StateT) now supply its
+actual step result without unfolding WP or `Part.bind`. The function's final
+continuation uses the native lift/bind rules and the same loop contract.
+Selecting these contracts and mathematical contents remains explicit. The
+[compiled traversal](##Examples.Language.TraversalCompiled) reuses this source
+proof to establish the same array result and an independent linear instruction
+bound for the actual halted invocation. Its word ranges, preloaded heap
+representation and code/stack capacity are explicit. The
+[realization loop rules](##Complexity.Computability.Ram.Compiler.Language.Realization.Loop)
+reuse source termination without a second decreasing measure, and the
+[ordinary-local cost rules](##Complexity.Computability.Ram.Compiler.Language.CostBound.Locals)
+compose actual guard/body bounds and the source invariant. Fixed-capture and
+outcome bookkeeping in the compiled proof still needs a named interface;
+exported outside-buffer frames also remain work.
 
 For recursion, the [source contract rule](##Complexity.Language.Verification.Recursion)
 supplies complete callable specifications at smaller mathematical indices through
