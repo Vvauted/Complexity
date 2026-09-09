@@ -366,15 +366,16 @@ Before broadening the surface further, close these connected gaps:
   Passing source semantics alone does not establish its compiled execution.
 
 These priorities refine M1–M3; they do not remove products, loops, recursion,
-allocation or compiler automation from the intended language. Mutable locals
-now have direct semantics and lowering, but do not by themselves provide the
-ordinary loop-invariant interface.
+allocation or compiler automation from the intended language. The named while
+frontend now supplies an ordinary-local invariant/variant interface; its first
+complete traversal proof still exposes native WP and bind bookkeeping that
+belongs in reusable rules.
 
 The present cost interpretation concerns successful realized executions.
 It is not yet instrumentation of every unrestricted source execution.
 Borrowed-buffer operations and typed effectful-guard loops have their own
 lowering and cost observations. The loop potential rule follows actual current
-states; named-loop automation and indexed traversal remain M2–M3 work.
+states; composing named-loop cost proofs and indexed traversal remain M2–M3 work.
 
 Complete function bodies now omit their redundant empty final dispatch. Exact
 code-size comparison proves a three-instruction saving with the same register
@@ -499,7 +500,9 @@ inside a branch and observes the result afterward without changing its mathemati
 specification. The buffer consumer rebinds a mutable descriptor to a real slice
 result and retains its array-update specification. Layout regularity and update
 preservation are compiler lemmas, automatically supplied by generated functions;
-buffer self-assignment remains allowed. Traversal is still an open milestone.
+buffer self-assignment remains allowed. The named while traversal now has a
+complete source correctness and termination proof. Its specific compiled bound
+and general indexed-traversal interface remain open.
 
 The [buffer consumer](../Examples/Language/Buffer.lean) uses native operation
 specifications to prove its ordinary `Array.set` result. Its
@@ -541,6 +544,14 @@ store loop, with a transformed-prefix/unread-suffix invariant and an independent
 bound for its compiled execution. It must not be reduced to a newly invented
 `MapWithBranch.function` template. Reuse ordinary List/Array identities.
 
+The [named while traversal](../Examples/Language/Traversal.lean) now discharges
+the source-behavior part of this gate on the actual helper/branch/write program.
+It uses native array identities and a generated variant rule with fixed
+captures. The remaining gate includes its compiled invocation and independent
+bound, a reusable outside-buffer frame, and removing routine native WP/bind
+plumbing from the author proof. Do not count the source theorem alone as M2
+completion.
+
 This completes a useful borrowed-array subset, not allocated-container support.
 
 ## M3 — While, recursion and reusable high-level implementation proofs
@@ -563,10 +574,12 @@ using that potential as execution fuel or a source termination premise.
 The surface now accepts `while` and emits actual named guard/body/loop
 observations, their one-step equations and a normal-continuation theorem.
 Pointwise coordinate equations keep equivalence proof fields opaque, and a
-lexical-position frame preserves immutable captures automatically. The checked
-read/helper/branch/write traversal consumes this frontend. This does not complete
-the named-loop gate: its full array-map proof and automatically generated
-invariant/variant bindings still need to use these same observations. Do not
+lexical-position frame preserves immutable captures automatically. The generated
+`variant_spec` takes an invariant and natural-valued variant over named mutable
+locals and the actual heap. The read/helper/branch/write traversal now consumes
+it to prove finite success and the complete native array-map result, without
+an `Env` or register argument. This closes the first named-loop source proof,
+not its specific compiled cost proof or general loop-proof automation. Do not
 substitute an opaque native loop or a user-maintained host implementation.
 
 The shared ordinary-local observation now retains all lexical values and the
@@ -575,17 +588,22 @@ reuse the same source loop rule, and its continuation bridge distinguishes
 normal continuation from return and fault. Generated observations use these
 same shared composition equations. The fixed-capture variant
 rule now keeps immutable values out of the author's invariant, using a proved
-local frame. Connecting it to the named frontend remains open; a hidden saved condition
-cannot be recomputed after a mutable operand changes, and the proof view cannot
-simply drop lexical slots.
+local frame, and the named frontend now instantiates it. The full lossless
+lexical view remains available: a hidden saved condition cannot be recomputed
+after a mutable operand changes, and the proof view cannot simply drop lexical
+slots. Preserving a buffer capture preserves its descriptor, not its heap cells.
 
 `FunctionTotal.verify_wellFounded` supplies complete callable contracts at
 smaller mathematical indices, reusing ordinary well-founded induction and the
 existing source body rule. The index may select one function or mutually
-recursive functions with different signatures. Named function equations already
-allow ordinary parameter induction; generating convenient recursive hypotheses
-and demonstrating the whole named recursive proof path remain open. Neither
-correctness route requires a proposed instruction budget or call-stack depth.
+recursive functions with different signatures. The
+[named factorial](../Examples/Language/Factorial.lean) now demonstrates the
+ordinary parameter-induction path: its real self-call returns mathlib's
+`Nat.factorial` and preserves every initial heap. It does not consume the generic
+contract rule or demonstrate mutual recursion. Convenient generated recursive
+contract hypotheses and an effectful recursive consumer remain open. Neither
+correctness route requires a proposed instruction budget or call-stack depth;
+compiled realizability and cost are separate obligations.
 
 1. Provide well-founded source `while` and recursive-call rules; user invariants
    and recursive hypotheses concern source values, not backend state.

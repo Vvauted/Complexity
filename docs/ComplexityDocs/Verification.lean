@@ -128,18 +128,27 @@ and the current heap. The [continuation bridge](##Complexity.Language.Eval.Local
 runs the remaining function only on normal completion. These are proved changes
 of view of the same source execution, not another implementation.
 Named `while` syntax now generates actual guard/body/loop observations, one-step
-equations and normal-continuation proofs. The
-[read/helper/branch/write traversal](##Examples.Language.Traversal) checks this
-frontend and its mathematical prefix lemmas. Its whole-loop array-map proof and
-automatically generated invariant bindings remain unfinished; accepting the
-syntax alone does not complete that author interface.
+equations, normal-continuation proofs and a `variant_spec` over named mutable
+locals. Immutable captures are fixed by generated lexical preservation proofs;
+this preserves a buffer descriptor, not its contents. The
+[read/helper/branch/write traversal](##Examples.Language.Traversal) uses this rule
+and native array identities to prove termination and its complete `Array.map`
+result. Its author-supplied invariant describes the processed prefix and unread
+suffix; generated frames keep `xs` and `limit` out of its changing locals.
+The proof still has native WP/bind plumbing to move into shared rules. Its
+specific compiled bound and exported outside-buffer frame remain separate work.
 
 For recursion, the [source contract rule](##Complexity.Language.Verification.Recursion)
 supplies complete callable specifications at smaller mathematical indices through
 ordinary well-founded induction. It supports a fixed function or a family of
 mutually recursive functions without imposing a runtime budget or stack depth.
 Convenient generated recursive hypotheses over named parameters remain separate
-frontend work.
+frontend work. The [named factorial](##Examples.Language.Factorial) demonstrates
+the ordinary-induction route instead: rewriting the generated one-step equation
+and using `Nat` induction proves the real recursive action equals
+`pure (Nat.factorial n)` for every input, with every initial heap preserved.
+It does not yet consume the generic contract rule, demonstrate mutual recursion
+or establish a bounded-word compiled invocation and cost.
 
 The [compiled buffer invocation](##Examples.Language.BufferCompiled) reuses this
 source proof and derives the read cell's range from the input heap representation.

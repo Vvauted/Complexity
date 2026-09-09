@@ -54,6 +54,11 @@ def equivUnit : Env [] ≃ Unit where
 @[simp] theorem equivProd_symm_apply {Γ : List Ty} {τ : Ty} (values : Value τ × Env Γ) :
     equivProd.symm values = Env.cons values.1 values.2 := rfl
 
+/-- Read a scoped ordinary value without unfolding the equivalence structure. -/
+@[simp] theorem get_equivProd_symm {Γ : List Ty} {τ σ : Ty}
+    (values : Value τ × Env Γ) (v : Var (τ :: Γ) σ) :
+    (equivProd.symm values).get v = (Env.cons values.1 values.2).get v := rfl
+
 @[simp] theorem equivUnit_apply (env : Env []) : equivUnit env = () := rfl
 
 @[simp] theorem equivUnit_symm_apply (value : Unit) : equivUnit.symm value = Env.empty := rfl

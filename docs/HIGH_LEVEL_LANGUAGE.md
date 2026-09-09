@@ -19,8 +19,11 @@ Borrowed-buffer length, reads, writes and slices now have source syntax and
 semantics and checked whole-compiler behavior/cost connections. Mutable local
 bindings and assignments use the same source state, native equations and lowering.
 The typed core now includes effectful-guard loops and well-founded source rules.
-The surface accepts `while` and generates named guard/body/loop equations and
-normal-continuation proofs. Automatic named invariant bindings remain open. The
+The surface accepts `while` and generates named guard/body/loop equations,
+normal-continuation proofs and a variant rule over named mutable locals.
+The complete buffer traversal proof now gives its ordinary `Array.map` result
+and termination; a self-recursive factorial proof uses ordinary induction and
+mathlib's `Nat.factorial`. Their specific compiled bounds remain unfinished. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -148,8 +151,10 @@ from the start. A return crosses nested blocks and loops and is caught by the
 function boundary; sequencing executes its tail only on normal continuation.
 The scalar compiler already handles returns through nested bindings, branches
 and sequences using a private flag, without duplicating the remaining code.
-Loop lowering and the named loop frontend propagate the same control outcome;
-the automatically generated ordinary-local invariant interface remains unfinished.
+Loop lowering and the named loop frontend propagate the same control outcome.
+The generated loop rule takes an invariant and variant over ordinary mutable
+locals, fixing immutable captures with proved lexical preservation. Authors
+still supply the mathematical invariant and descent proof.
 `break/continue` and tagged
 `Option/Sum` values are subsequent supported constructs, with real control and
 tag/payload lowering, not dummy returned words.
@@ -205,7 +210,8 @@ calls, reads and slices. An immutable nearest binding cannot be bypassed to
 assign an outer mutable binding with the same name. The native equation uses
 Lean's own mutable `do` and branch joins, not a second environment monad.
 Surface `while` now generates observations and equations for the actual parsed
-guard and body. General proof automation remains unfinished. The buffer consumer separately
+guard and body, together with a named-local `variant_spec`. General proof automation
+remains unfinished. The buffer consumer separately
 checks its source specification and the compiled invocation of that declaration.
 
 Assignments also cover borrowed descriptors: changing a local handle does not
@@ -217,9 +223,21 @@ still charged. Ordinary source proofs never supply these layout arguments.
 
 The indexed `for` notation below remains a design sketch. The checked
 [while traversal](../Examples/Language/Traversal.lean) already expresses the
-read/helper/branch/write body with an explicit mutable index. Its generated
-equations and mathematical prefix lemmas are checked; the complete array-map
-correctness proof and generated invariant bindings are still being connected.
+read/helper/branch/write body with an explicit mutable index. Its complete
+correctness and termination proof reuses native `Array.mapIdx`, `Array.set` and
+`Array.map` facts. The generated `boundedMap_loop1.variant_spec` needs an
+invariant and descent measure only on `i` and the heap; `xs` and `limit` are fixed
+by generated lexical preservation proofs. This preserves the buffer descriptor,
+not its contents. The proof still has native WP/bind bookkeeping to remove;
+its specific compiled invocation, cost and exported outside-buffer frame are
+separate work.
+
+The [recursive factorial](../Examples/Language/Factorial.lean) makes a real
+source self-call on `n - 1`. Rewriting its generated one-step equation and using
+ordinary `Nat` induction proves the same action equals `pure (Nat.factorial n)`:
+finite success with the expected result and preservation of every initial heap.
+This does not establish bounded-word realizability or a runtime cost, and it
+is not yet a consumer of the generic mutual-recursion contract rule.
 
 The core's `Stmt.while guard body` uses a Boolean-producing statement block as
 its guard. Every iteration runs that block in the current state and passes its
@@ -427,7 +445,9 @@ is carried by the source execution state, including across calls and faults.
 `Buffer.Contents` observes a valid view as an ordinary native array and transfers
 reads and writes to `getElem` and `Array.set`, including updates through aliases.
 Read/write/slice statements now invoke these same operations; calls retain their
-actual updated heap. Mutable traversal remains a separate unfinished capability.
+actual updated heap. The named while traversal now proves its complete array
+update and termination; generic traversal automation and its compiled bound
+remain unfinished.
 
 The [borrowed-buffer representation](../Complexity/Computability/Ram/Compiler/Language/Heap.lean)
 fixes an object-to-base placement as proof data, represents each complete object

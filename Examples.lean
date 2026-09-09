@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Examples.Language.Buffer
 import Examples.Language.BufferCompiled
+import Examples.Language.Factorial
 import Examples.Language.Remainder
 import Examples.Language.Scalar
 import Examples.Language.ScalarCompiled
