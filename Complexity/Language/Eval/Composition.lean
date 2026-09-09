@@ -13,7 +13,7 @@ The partial-value semantics of source statements composes through mathlib's
 finite source execution relation, not a second interpreter or a lowering.
 
 Sequencing preserves early returns and faults. Lexical bindings are removed on
-exit without discarding heap changes, and calls bind the actual callee result
+exit without discarding outer-local or heap changes, and calls bind the actual callee result
 in the caller's locals with the callee's final shared heap.
 `eval_call` deliberately is not a simplification rule: recursive program bodies
 must not be unfolded automatically. Missing returns remain defined faults.
@@ -29,6 +29,14 @@ variable (program : Program signatures)
     (Stmt.skip : Stmt signatures Γ result).eval program entry =
       Part.some (entry, .normal) :=
   (Exec.skip entry).eval_eq_some
+
+/-- Assignment evaluates its actual primitive in the entry environment and
+continues with the updated local, retaining the current shared heap. -/
+@[simp] theorem eval_assign {τ : Ty} (target : Var Γ τ) (value : Prim Γ τ)
+    (entry : State Γ) :
+    (Stmt.assign target value : Stmt signatures Γ result).eval program entry =
+      Part.some (entry.set target (value.eval entry.locals), .normal) :=
+  (Exec.assign target value entry).eval_eq_some
 
 /-- Returning an atom produces its actual source value and stops continuation. -/
 @[simp] theorem eval_ret (value : Atom Γ result) (entry : State Γ) :

@@ -58,11 +58,12 @@ theorem clamp_costBound :
   ram_source_cost (x limit)
   all_goals omega
 
-/-- Read, helper call, write, length, slice and return are all charged by the
-shared lowering rules. This conditional cost proof does not repeat correctness. -/
+/-- Descriptor binding, read, helper call, write, length, slice, reassignment and
+return are charged by the shared lowering rules. This conditional cost proof
+does not repeat correctness. -/
 theorem clipHead_costBound :
     FunctionCostBound Implementation.program Implementation.clipHeadId (fun _ _ => True)
-      (fun _ _ => callCost Implementation.program Implementation.clampId 13 + 28) := by
+      (fun _ _ => callCost Implementation.program Implementation.clampId 13 + 38) := by
   ram_source_cost (xs limit) using clamp_costBound
   all_goals omega
 
@@ -104,12 +105,12 @@ theorem clipHead_runUntil_le {w heapLimit : Nat} (hw : 0 < w)
           (lowerProgram Implementation.program) heapLimit
           (envWords placement (Env.cons (τ := .buffer .nat) xs
             (Env.cons (τ := .nat) limit Env.empty))) entry = Part.some bodySteps ∧
-      bodySteps ≤ callCost Implementation.program Implementation.clampId 13 + 28 ∧
+      bodySteps ≤ callCost Implementation.program Implementation.clampId 13 + 38 ∧
       Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.clipHeadId) bodySteps + 1 ≤
         Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.clipHeadId)
-          (callCost Implementation.program Implementation.clampId 13 + 28) + 1 := by
+          (callCost Implementation.program Implementation.clampId 13 + 38) + 1 := by
   let args : Env [.buffer .nat, .nat] :=
     Env.cons (τ := .buffer .nat) xs (Env.cons (τ := .nat) limit Env.empty)
   have arguments : EnvFits w args := by

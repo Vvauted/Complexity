@@ -63,6 +63,25 @@ theorem lowerPrim_measured (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ
       cases prim with
       | atom atom => exact copyAtom_measured layout dst atom env entry hw matched fits copySafe
 
+/-- Existing-variable assignment retains the primitive's actual emitted cost,
+including every field of self-copies. It reuses the proved safe endpoint. -/
+theorem lowerAssign_measured (layout : RegisterMap Γ) (target : Var Γ τ) (value : Prim Γ τ)
+    (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
+    (matched : layout.Matches placement env entry.regs) (fits : PrimFits w env value)
+    (regular : layout.Regular) :
+    Source.LocalMeasuredExec control program heapLimit depth (lowerAssign layout target value)
+      (primCodeSize value) entry
+      (entry.setRegs (valueRegs τ (layout.base target)) (valueWords placement (value.eval env))) := by
+  rw [← lowerAssign_stmtSize control (LocalCompiler.calleeLocals program) layout target value]
+  have execution := lowerAssign_safe layout target value env entry hw matched fits regular
+    (program := program) (heapLimit := heapLimit) (depth := depth)
+  cases τ with
+  | nat | bool => exact execution.assign_localMeasured control
+  | unit => exact .skip
+  | buffer kind =>
+      cases value with
+      | atom atom => exact copyFields_safe_localMeasured execution control
+
 /-- Count actual result-field materialization. Unit performs no assignment. -/
 theorem lowerReturn_measured (layout : RegisterMap Γ) (resultSlot : Reg) (atom : Atom Γ τ)
     (env : Env Γ) (entry : Source.State w) (hw : 0 < w)

@@ -16,7 +16,8 @@ budget: a call's continuation and sequential siblings reuse the caller's depth.
 
 Erasure gives the independent `Complexity.Language.Exec`. No target execution,
 register assignment or chosen instruction count occurs in these conditions.
-Locals are immutable, while buffer operations use the actual shared heap.
+Local assignment updates the actual lexical environment; buffer operations use
+the actual shared heap.
 Caller-local restoration never resets the callee's final heap. Buffer range
 conditions concern lengths and actual scalar operands; physical placement and
 address representation belong to the separate simulation layer.
@@ -35,6 +36,12 @@ inductive RealizedExec {signatures : List Signature}
   | skip {Γ : List Ty} {result : Ty} {depth : Nat} (entry : Complexity.Language.State Γ) :
       RealizedExec program w depth
         (.skip : Complexity.Language.Stmt signatures Γ result) entry entry .normal
+  | assign {Γ : List Ty} {τ result : Ty} {depth : Nat}
+      (target : Var Γ τ) (value : Prim Γ τ) (entry : Complexity.Language.State Γ)
+      (fits : PrimFits w entry.locals value) :
+      RealizedExec program w depth
+        (.assign target value : Complexity.Language.Stmt signatures Γ result)
+        entry (entry.set target (value.eval entry.locals)) .normal
   | letPrim {Γ : List Ty} {τ result : Ty} {depth : Nat} {value : Prim Γ τ}
       {continuation : Complexity.Language.Stmt signatures (τ :: Γ) result}
       {entry : Complexity.Language.State Γ} {finish : Complexity.Language.State (τ :: Γ)}
@@ -144,6 +151,7 @@ theorem erase (execution : RealizedExec program w depth stmt entry finish contro
     Complexity.Language.Exec program stmt entry finish control := by
   induction execution with
   | skip entry => exact .skip entry
+  | assign target value entry fits => exact .assign target value entry
   | letPrim fits body ih => exact .letPrim ih
   | read bufferFits indexFits loaded valueFits body ih => exact .read loaded ih
   | write bufferFits indexFits valueFits written => exact .write written
@@ -155,10 +163,11 @@ theorem erase (execution : RealizedExec program w depth stmt entry finish contro
   | ret value entry fits => exact .ret value entry
   | callReturn arguments callee body ihCallee ihBody => exact .callReturn ihCallee ihBody
 
-/-- Immutable locals preserve the enclosing lexical environment.
-New inner bindings are discarded on scope exit, including when returning. -/
-theorem locals_eq (execution : RealizedExec program w depth stmt entry finish control) :
-    finish.locals = entry.locals := execution.erase.locals_eq
+/-- Source blocks with no local assignments retain the enclosing environment.
+This does not assert unchanged heap contents or prohibit callee-local updates. -/
+theorem locals_eq (execution : RealizedExec program w depth stmt entry finish control)
+    (unchanged : stmt.NoLocalWrites) : finish.locals = entry.locals :=
+  execution.erase.locals_eq unchanged
 
 /-- Every actual returned value is representable; successful normal continuation
 requires no result value, and a realized execution cannot fault. -/
@@ -166,6 +175,7 @@ theorem outcome_fits (execution : RealizedExec program w depth stmt entry finish
     ControlFits w control := by
   induction execution with
   | skip => trivial
+  | assign => trivial
   | letPrim fits body ih => exact ih
   | read bufferFits indexFits loaded valueFits body ih => exact ih
   | write => trivial
@@ -189,6 +199,7 @@ theorem mono_depth (execution : RealizedExec program w depth stmt entry finish c
     RealizedExec program w depth' stmt entry finish control := by
   induction execution generalizing depth' with
   | skip entry => exact .skip entry
+  | assign target value entry fits => exact .assign target value entry fits
   | letPrim fits body ih => exact .letPrim fits (ih capacity)
   | read bufferFits indexFits loaded valueFits body ih =>
       exact .read bufferFits indexFits loaded valueFits (ih capacity)
@@ -263,6 +274,18 @@ theorem mono_depth (h : RealizationWP program w depth stmt normal returned entry
     exact post
   · intro post
     exact ⟨entry, .normal, .skip entry, post⟩
+
+/-- Assignment requires the actual primitive to fit and continues with the
+updated local, without imposing a time budget or changing the heap. -/
+@[simp] theorem assign_iff {τ : Ty} (target : Var Γ τ) (value : Prim Γ τ) :
+    RealizationWP program w depth (.assign target value) normal returned entry ↔
+      PrimFits w entry.locals value ∧ normal (entry.set target (value.eval entry.locals)) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | assign target value entry fits => exact ⟨fits, post⟩
+  · rintro ⟨fits, post⟩
+    exact ⟨_, .normal, .assign target value entry fits, post⟩
 
 /-- Return materialization requires the actual source result to fit. -/
 @[simp] theorem ret_iff (value : Atom Γ result) :

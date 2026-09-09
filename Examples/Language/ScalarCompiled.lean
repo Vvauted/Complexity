@@ -144,11 +144,11 @@ theorem increment_costBound :
     FunctionCostBound program (0 : Fin 2) (fun _ _ => True) (fun _ _ => 10) := by
   ram_source_cost (n)
 
-/-- The caller reuses the helper's complete call bound. Its comparison, selected
-return branch and initialization add at most thirteen transitions. -/
+/-- The caller reuses the helper's complete call bound. Local initialization,
+comparison, the selected assignment, dispatch and return add at most nineteen transitions. -/
 theorem boundedIncrement_costBound :
     FunctionCostBound program (1 : Fin 2) (fun _ _ => True)
-      (fun _ _ => callCost program (0 : Fin 2) 10 + 13) := by
+      (fun _ _ => callCost program (0 : Fin 2) 10 + 19) := by
   ram_source_cost (n limit) using increment_costBound
   all_goals omega
 
@@ -172,11 +172,11 @@ theorem boundedIncrement_runUntil_le {w heapLimit : Nat} (hw : 0 < w) (n limit :
       (lowerFunc program (1 : Fin 2)).bodyTime (lowerProgram program) heapLimit
           (envWords (fun _ => 0) (Env.cons (τ := .nat) n (Env.cons (τ := .nat) limit Env.empty))) entry =
         Part.some bodySteps ∧
-      bodySteps ≤ callCost program (0 : Fin 2) 10 + 13 ∧
+      bodySteps ≤ callCost program (0 : Fin 2) 10 + 19 ∧
       Ram.LocalCompiler.Function.callSteps (programControl program)
           (lowerFunc program (1 : Fin 2)) bodySteps + 1 ≤
         Ram.LocalCompiler.Function.callSteps (programControl program)
-          (lowerFunc program (1 : Fin 2)) (callCost program (0 : Fin 2) 10 + 13) + 1 := by
+          (lowerFunc program (1 : Fin 2)) (callCost program (0 : Fin 2) 10 + 19) + 1 := by
   clear _sourceHeap
   let args : Env [.nat, .nat] :=
     Env.cons (τ := .nat) n (Env.cons (τ := .nat) limit Env.empty)

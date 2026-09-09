@@ -54,6 +54,11 @@ inductive ExecutionCost {signatures : List Signature}
   | skip {Γ : List Ty} {result : Ty} {depth : Nat} (entry : Complexity.Language.State Γ) :
       ExecutionCost (RealizedExec.skip (program := program) (w := w)
         (result := result) (depth := depth) entry) 0
+  | assign {Γ : List Ty} {τ result : Ty} {depth : Nat}
+      (target : Var Γ τ) (value : Prim Γ τ) (entry : Complexity.Language.State Γ)
+      {fits : PrimFits w entry.locals value} :
+      ExecutionCost (RealizedExec.assign (program := program) (result := result) (depth := depth)
+        target value entry fits) (primCodeSize value)
   | letPrim {Γ : List Ty} {τ result : Ty} {depth : Nat} {value : Prim Γ τ}
       {continuation : Complexity.Language.Stmt signatures (τ :: Γ) result}
       {entry : Complexity.Language.State Γ} {finish : Complexity.Language.State (τ :: Γ)}
@@ -163,6 +168,7 @@ theorem RealizedExec.exists_cost {signatures : List Signature}
     ∃ steps, ExecutionCost execution steps := by
   induction execution with
   | skip entry => exact ⟨0, .skip entry⟩
+  | assign target value entry fits => exact ⟨_, .assign target value entry (fits := fits)⟩
   | letPrim fits body ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .letPrim (fits := fits) cost⟩

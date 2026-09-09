@@ -54,6 +54,17 @@ theorem skip (entry : Complexity.Language.State Γ) :
   cases cost
   exact Nat.le_refl _
 
+/-- Assignment pays for the primitive's actual emitted fields and updates its
+existing lexical target. The observation retains that changed source state;
+this bound does not re-prove ranges or give self-copies an unproved discount. -/
+theorem assign {τ : Ty} (target : Var Γ τ) (value : Prim Γ τ)
+    (entry : Complexity.Language.State Γ) :
+    StmtCostBound program (.assign target value : Complexity.Language.Stmt signatures Γ result)
+      entry (primCodeSize value) := by
+  intro w depth finish control execution steps cost
+  cases cost
+  exact Nat.le_refl _
+
 /-- Return accounting includes the actual result fields and private return flag. -/
 theorem ret (value : Atom Γ result) (entry : Complexity.Language.State Γ) :
     StmtCostBound program (.ret value) entry (2 * fieldCount result + 2) := by

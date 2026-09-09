@@ -135,11 +135,13 @@ private def normalizeValues : TacticM Unit := do
         Complexity.Language.Atom.eval, Complexity.Language.Args.eval,
         Complexity.Language.Env.cons_here, Complexity.Language.Env.cons_there,
         Complexity.Language.Env.head_cons, Complexity.Language.Env.tail_cons,
-        Complexity.Language.Env.get_tail,
+        Complexity.Language.Env.get_tail, Complexity.Language.Env.set_here,
+        Complexity.Language.Env.set_there,
         Complexity.Language.State.locals_enter, Complexity.Language.State.heap_enter,
         Complexity.Language.State.locals_restore, Complexity.Language.State.heap_restore,
         Complexity.Language.State.locals_cons, Complexity.Language.State.heap_cons,
         Complexity.Language.State.locals_tail, Complexity.Language.State.heap_tail,
+        Complexity.Language.State.locals_set, Complexity.Language.State.heap_set,
         Complexity.Language.State.tail_cons,
         Complexity.Language.Value, Ram.LanguageCompiler.ValueFits,
         Complexity.Language.CellTy.toValue, Complexity.Language.CellTy.ofValue,
@@ -163,6 +165,9 @@ private partial def realize
         let statement ← exposeStatement 6
         if statement.isAppOf ``Complexity.Language.Stmt.skip then
           evalTactic (← `(tactic| rw [Ram.LanguageCompiler.RealizationWP.skip_iff]))
+        else if statement.isAppOf ``Complexity.Language.Stmt.assign then
+          evalTactic (← `(tactic|
+            (rw [Ram.LanguageCompiler.RealizationWP.assign_iff]; constructor)))
         else if statement.isAppOf ``Complexity.Language.Stmt.ret then
           evalTactic (← `(tactic| rw [Ram.LanguageCompiler.RealizationWP.ret_iff]))
         else if statement.isAppOf ``Complexity.Language.Stmt.letPrim then
@@ -219,6 +224,8 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
         let statement ← exposeStatement 4
         if statement.isAppOf ``Complexity.Language.Stmt.skip then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.skip))
+        else if statement.isAppOf ``Complexity.Language.Stmt.assign then
+          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.assign))
         else if statement.isAppOf ``Complexity.Language.Stmt.ret then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.ret))
         else if statement.isAppOf ``Complexity.Language.Stmt.letPrim then

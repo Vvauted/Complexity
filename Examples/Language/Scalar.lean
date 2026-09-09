@@ -10,7 +10,8 @@ import Complexity.Language.Syntax
 # A mathematical proof of an independent source program
 
 The program calls an increment function, compares its actual returned natural
-number with a supplied limit, and returns the smaller value. Both function
+number with a supplied limit, and assigns the smaller value to a local before
+returning it. Both function
 bodies are typed source syntax. Their mathematical proof uses generated monadic
 equations and ordinary natural-number facts. Shared evaluation adequacy supplies
 the source contracts used by the compiler, without another implementation proof.
@@ -27,11 +28,13 @@ source_program Implementation where
     return n + 1
 
   def boundedIncrement (n : Nat) (limit : Nat) : Nat := do
+    let mut result := limit
     let next ← increment n
     if next ≤ limit then
-      return next
+      result := next
     else
-      return limit
+      result := limit
+    return result
 
 /-- The increment helper and its two-argument caller. -/
 abbrev signatures : List Signature := Implementation.signatures
@@ -40,8 +43,8 @@ abbrev signatures : List Signature := Implementation.signatures
 def increment : Stmt signatures [.nat] .nat :=
   Implementation.incrementBody
 
-/-- Call the real helper, bind its Boolean comparison, then return from the
-selected branch. The caller's second argument remains the original limit. -/
+/-- Call the real helper, update a local in the selected branch, and observe
+that update after the branch. The original limit parameter is unchanged. -/
 def boundedIncrement : Stmt signatures [.nat, .nat] .nat :=
   Implementation.boundedIncrementBody
 
@@ -62,9 +65,9 @@ theorem boundedIncrement_eval (n limit : Nat) :
       (pure (n + 1) : ExceptT Fault (StateT Heap Part) Nat) := increment_eval n
   rw [Implementation.boundedIncrement_eq, helper, pure_bind]
   by_cases small : n + 1 ≤ limit
-  · simp only [decide_eq_true_eq, if_pos small, Nat.min_eq_left small]
+  · simp only [decide_eq_true_eq, if_pos small, Nat.min_eq_left small, pure_bind]
   · simp only [decide_eq_true_eq, if_neg small,
-      Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small))]
+      Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small)), pure_bind]
 
 /-- Ordinary addition specifies the actual source helper. -/
 theorem increment_total :

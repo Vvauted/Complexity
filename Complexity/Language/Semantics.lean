@@ -25,7 +25,9 @@ Unit must be returned explicitly and is not a default for a missing return.
 Reads and writes operate on the current shared heap. A failed operation leaves
 its entry state unchanged, without rolling back earlier effects. Slices check
 their relative extent and bind another view of the same object, not a snapshot.
-Locals remain immutable; caller restoration is lexical, not heap rollback.
+Assignment evaluates its right-hand side in the current locals once, then updates
+the selected local without changing the heap. Scope exit preserves assignments
+to outer locals; caller restoration is lexical, not heap rollback.
 -/
 
 namespace Complexity.Language
@@ -50,6 +52,10 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
       State Γ → State Γ → Control result → Prop where
   | skip {Γ : List Ty} {result : Ty} (entry : State Γ) :
       Exec program (.skip : Stmt signatures Γ result) entry entry .normal
+  | assign {Γ : List Ty} {τ result : Ty} (target : Var Γ τ) (value : Prim Γ τ)
+      (entry : State Γ) :
+      Exec program (.assign target value : Stmt signatures Γ result) entry
+        (entry.set target (value.eval entry.locals)) .normal
   | letPrim {Γ : List Ty} {τ result : Ty} {value : Prim Γ τ}
       {continuation : Stmt signatures (τ :: Γ) result}
       {entry : State Γ} {finish : State (τ :: Γ)} {control : Control result}
@@ -154,35 +160,48 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
 
 namespace Exec
 
-/-- The statement vocabulary has no local assignment. Scoped values are dropped
-on exit and calls restore caller locals, independently of actual heap effects. -/
+/-- Statements with no local writes preserve their enclosing environment even
+when the shared heap changes. Callee-local assignment is allowed: calls restore
+the caller's locals before executing its continuation. -/
 theorem locals_eq {signatures : List Signature} {program : Program signatures}
     {Γ : List Ty} {result : Ty} {stmt : Stmt signatures Γ result}
     {entry finish : State Γ} {control : Control result}
-    (execution : Exec program stmt entry finish control) : finish.locals = entry.locals := by
+    (execution : Exec program stmt entry finish control) (unchanged : stmt.NoLocalWrites) :
+    finish.locals = entry.locals := by
+  revert unchanged
   induction execution with
-  | skip => rfl
+  | skip => intro _; rfl
+  | assign => intro impossible; exact False.elim impossible
   | letPrim body ih =>
-      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using congrArg Env.tail ih
+      intro unchanged
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
+        congrArg Env.tail (ih unchanged)
   | read loaded body ih =>
-      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using congrArg Env.tail ih
-  | readFault => rfl
-  | write => rfl
-  | writeFault => rfl
+      intro unchanged
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
+        congrArg Env.tail (ih unchanged)
+  | readFault => intro _; rfl
+  | write => intro _; rfl
+  | writeFault => intro _; rfl
   | slice sliced body ih =>
-      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using congrArg Env.tail ih
-  | sliceFault => rfl
-  | seqNormal head tail ihHead ihTail => exact ihTail.trans ihHead
-  | seqReturn head ih => exact ih
-  | seqFault head ih => exact ih
-  | iteTrue test body ih => exact ih
-  | iteFalse test body ih => exact ih
-  | ret => rfl
+      intro unchanged
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
+        congrArg Env.tail (ih unchanged)
+  | sliceFault => intro _; rfl
+  | seqNormal head tail ihHead ihTail =>
+      intro unchanged
+      exact (ihTail unchanged.2).trans (ihHead unchanged.1)
+  | seqReturn head ih => intro unchanged; exact ih unchanged.1
+  | seqFault head ih => intro unchanged; exact ih unchanged.1
+  | iteTrue test body ih => intro unchanged; exact ih unchanged.1
+  | iteFalse test body ih => intro unchanged; exact ih unchanged.2
+  | ret => intro _; rfl
   | callReturn callee body ihCallee ihBody =>
-      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons, State.locals_restore]
-        using congrArg Env.tail ihBody
-  | callFault => rfl
-  | callMissingReturn => rfl
+      intro unchanged
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons, State.locals_restore] using
+        congrArg Env.tail (ihBody unchanged)
+  | callFault => intro _; rfl
+  | callMissingReturn => intro _; rfl
 
 /-- The same source statement and entry state determine both its final state
 and its finite control outcome, independently of execution proofs. -/
@@ -194,6 +213,9 @@ theorem deterministic {signatures : List Signature} {program : Program signature
     finish = finish' ∧ control = control' := by
   induction first with
   | skip =>
+      cases second
+      exact ⟨rfl, rfl⟩
+  | assign =>
       cases second
       exact ⟨rfl, rfl⟩
   | letPrim body ih =>

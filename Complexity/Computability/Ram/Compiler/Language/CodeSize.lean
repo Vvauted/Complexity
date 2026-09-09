@@ -48,6 +48,7 @@ by a program author. It is specialized to the generated table at function entry.
 def sourceCodeSize {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (localsTable : Nat → Nat) : Complexity.Language.Stmt signatures Γ result → Nat
   | .skip => 0
+  | .assign _ value => primCodeSize value
   | .letPrim value body => primCodeSize value + sourceCodeSize localsTable body
   | .read _ _ body => readCodeSize + sourceCodeSize localsTable body
   | .write .. => writeCodeSize
@@ -105,6 +106,14 @@ theorem lowerPrim_stmtSize (control : Nat) (localsTable : Nat → Nat)
   cases τ <;> cases prim <;>
     simp [lowerPrim, LocalCompiler.stmtSize_assign, LocalCompiler.stmtSize_skip,
       copyFields_stmtSize, atomExprs_compile_lengths, primExpr_compile_length, primCodeSize]
+
+/-- Local assignment emits the same primitive materialization at the existing
+binding's field region, with no additional control or snapshot instructions. -/
+theorem lowerAssign_stmtSize (control : Nat) (localsTable : Nat → Nat)
+    (layout : RegisterMap Γ) (target : Var Γ τ) (value : Prim Γ τ) :
+    LocalCompiler.stmtSize control localsTable (lowerAssign layout target value) =
+      primCodeSize value :=
+  lowerPrim_stmtSize control localsTable layout (RegisterMap.base layout target) value
 
 /-- Every return field is materialized before setting the separate flag. -/
 theorem lowerReturn_stmtSize (control : Nat) (localsTable : Nat → Nat)
@@ -164,6 +173,7 @@ theorem lowerStmtCore_stmtSize {signatures : List Signature} {Γ : List Ty} {res
         (lowerStmtCore layout next resultSlot flag stmt) = sourceCodeSize localsTable stmt := by
   induction stmt generalizing next resultSlot flag with
   | skip => rfl
+  | assign target value => exact lowerAssign_stmtSize control localsTable layout target value
   | letPrim value body ih =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerPrim_stmtSize,
         ih, sourceCodeSize]

@@ -19,8 +19,9 @@ A finite signature table types first-order calls. A program supplies an actual
 statement body for each signature, including bodies that call themselves. No
 termination, machine representation or time bound is implicit in this
 syntax. Heap accesses are explicit statements on the shared current objects.
-Lexical bindings are immutable; a binding's
-continuation is its scope, and a return can occur inside that continuation.
+A binding's continuation is its lexical scope. Typed assignment updates a local
+in that scope; surface mutability is checked by the frontend. Scope exit retains
+outer updates, and a return can occur inside any continuation.
 -/
 
 namespace Complexity.Language
@@ -197,9 +198,12 @@ inductive Args (Γ : List Ty) : List Ty → Type where
   | .cons value rest => Env.cons (value.eval env) (rest.eval env)
 
 /-- Typed statements. A primitive or call result is scoped over its continuation;
-sequencing and branches keep the enclosing context and declared return type. -/
+assignment updates an existing typed local, while sequencing and branches keep
+the enclosing context and declared return type. -/
 inductive Stmt (signatures : List Signature) : List Ty → Ty → Type where
   | skip {Γ : List Ty} {result : Ty} : Stmt signatures Γ result
+  | assign {Γ : List Ty} {τ result : Ty} (target : Var Γ τ) (value : Prim Γ τ) :
+      Stmt signatures Γ result
   | letPrim {Γ : List Ty} {τ result : Ty} (value : Prim Γ τ)
       (continuation : Stmt signatures (τ :: Γ) result) : Stmt signatures Γ result
   | read {Γ : List Ty} {result : Ty} {kind : CellTy}
@@ -220,6 +224,24 @@ inductive Stmt (signatures : List Signature) : List Ty → Ty → Type where
   | ite {Γ : List Ty} {result : Ty} (condition : Atom Γ .bool)
       (yes no : Stmt signatures Γ result) : Stmt signatures Γ result
   | ret {Γ : List Ty} {result : Ty} (value : Atom Γ result) : Stmt signatures Γ result
+
+/-- A sufficient structural condition for preserving the enclosing locals.
+Heap writes are allowed. Calls only check the caller's continuation: callee
+locals are independent and are restored at the call boundary. This condition
+conservatively rejects assignments even to a binding that will leave scope. -/
+@[simp] def Stmt.NoLocalWrites {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    (stmt : Stmt signatures Γ result) : Prop :=
+  match stmt with
+  | .skip => True
+  | .assign _ _ => False
+  | .letPrim _ continuation => continuation.NoLocalWrites
+  | .read _ _ continuation => continuation.NoLocalWrites
+  | .write _ _ _ => True
+  | .slice _ _ _ continuation => continuation.NoLocalWrites
+  | .call _ _ continuation => continuation.NoLocalWrites
+  | .seq first second => first.NoLocalWrites ∧ second.NoLocalWrites
+  | .ite _ yes no => yes.NoLocalWrites ∧ no.NoLocalWrites
+  | .ret _ => True
 
 /-- A finite function table whose entries are actual typed statement bodies.
 The function field selects syntax; it is not an executable host callback. -/

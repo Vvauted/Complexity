@@ -30,11 +30,13 @@ source_program Bounded where
     return n + 1
 
   def boundedIncrement (n : Nat) (limit : Nat) : Nat := do
+    let mut result := limit
     let next ← increment n
     if next ≤ limit then
-      return next
+      result := next
     else
-      return limit
+      result := limit
+    return result
 ```
 
 It generates typed source bodies, ordinary curried semantic functions and one-step
@@ -49,6 +51,12 @@ The action equation quantifies over every initial heap and preserves its value;
 it does not select an empty heap or assert zero execution cost.
 These `Part` functions are noncomputable mathematical observations, not host
 executables for `#eval`; execution still uses the compiled RAM runner.
+
+Mutable bindings use ordinary Lean `do` in the generated equation. `x := value`
+updates an existing local, and `x ← action` rebinds it to the result of a real
+source call, read or slice. Branch joins retain outer updates; leaving a scope
+drops only its inner bindings. Ordinary `let` and parameters are immutable.
+Changing a buffer handle does not copy its contents or alter the heap.
 
 [Evaluation adequacy](##Complexity.Language.Eval.Basic) distinguishes finite
 faults from absence of a finite result. The
@@ -109,7 +117,7 @@ actual returned descriptor and updated heap. Borrowed aliases remain allowed;
 the example does not establish a general mutable-loop proof interface.
 
 The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
-branches on its returned value and proves the result equals `min (n + 1) limit`
+assigns a local in the selected branch, then proves its returned value equals `min (n + 1) limit`
 using ordinary Nat facts. Its primary `increment_eval` and `boundedIncrement_eval`
 proofs rewrite the generated equations; the latter reuses the helper result and
 splits the mathematical comparison. The generated `P.f_total_iff` accepts ordinary
@@ -192,8 +200,8 @@ The [remainder example](##Examples.Language.Remainder) implements
 `n - (n / d) * d`, reuses the ordinary Nat identity, and derives the actual
 compiled result with a separate instruction bound. Divisor zero is included;
 no artificial subtraction-order condition is required.
-Mutable local bindings, loop syntax, products and allocation remain future
-work. The source tactics automate structural range/cost obligations, but richer
+Loop syntax, products and allocation remain future work. Local assignment is
+covered by the same structural realization and cost tactics. Richer
 callee selection, recursive proofs and data-dependent bound automation remain
 unfinished. Costs are currently derived
 for successfully realized executions, not an instrumentation theorem for
@@ -211,7 +219,10 @@ The same layout indexes every actual value field. Parameter packing and fresh
 receivers use those indices and the existing register-update rules; Unit has no
 dummy field. Buffers have two fields, their actual base address and length;
 arbitrary products are not enabled yet. Sequential multi-field copies preserve
-their operands through proved destination separation, not an assumed snapshot.
+their operands through proved destination separation or actual self-copy
+identities, not an assumed snapshot. `RegisterMap.Regular` proves the field
+layout needed to update an existing variable without changing another live
+variable; parameter layouts and fresh bindings supply it automatically.
 Maintainers may use these lemmas directly, without frontend metadata. Preserving
 caller registers does not imply that a callee leaves memory or I/O unchanged.
 The [frame-effect rules](##Complexity.Computability.Ram.Compiler.Effects) include

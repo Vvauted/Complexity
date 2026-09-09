@@ -60,7 +60,8 @@ private theorem get_set_of_ne_same {Γ : List Ty} {τ : Ty} (env : Env Γ)
       | there other =>
           exact ih env.tail value other (fun same => different (congrArg Var.there same))
 
-private theorem get_set_of_type_ne {Γ : List Ty} {τ σ : Ty} (env : Env Γ)
+/-- Updating a typed local preserves every local of a different source type. -/
+theorem get_set_of_type_ne {Γ : List Ty} {τ σ : Ty} (env : Env Γ)
     (v : Var Γ τ) (value : Value τ) (other : Var Γ σ) (different : τ ≠ σ) :
     (env.set v value).get other = env.get other := by
   induction v generalizing σ with

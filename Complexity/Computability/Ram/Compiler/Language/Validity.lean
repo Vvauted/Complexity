@@ -43,6 +43,12 @@ theorem lowerPrim_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
       cases prim with
       | atom atom => exact copyFields_callsValid program dst (atomExprs layout atom)
 
+/-- Updating an existing local introduces no function call. -/
+theorem lowerAssign_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
+    (target : Var Γ τ) (value : Prim Γ τ) :
+    Compiler.CallsValid program (lowerAssign layout target value) :=
+  lowerPrim_callsValid program layout (RegisterMap.base layout target) value
+
 /-- Returning the declared fields introduces no function call. -/
 theorem lowerReturn_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
     (dst : Reg) (atom : Atom Γ τ) : Compiler.CallsValid program (lowerReturn layout dst atom) :=
@@ -68,6 +74,7 @@ theorem lowerStmtCore_callsValid {signatures : List Signature}
       (lowerStmtCore layout next resultSlot flag stmt) := by
   induction stmt generalizing next resultSlot flag with
   | skip => trivial
+  | assign target value => exact lowerAssign_callsValid _ layout target value
   | letPrim value body ih =>
       exact ⟨lowerPrim_callsValid _ _ _ _, ih _ _ _ _⟩
   | read buffer index body ih => exact ⟨trivial, ih _ _ _ _⟩

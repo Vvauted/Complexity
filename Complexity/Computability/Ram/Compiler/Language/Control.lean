@@ -25,7 +25,7 @@ namespace Ram.LanguageCompiler
 
 open Complexity.Language
 
-/-- Normal completion retains the lexical environment; return exposes its
+/-- Normal completion exposes the actual lexical environment; return exposes its
 actual fields. The private flag distinguishes these outcomes without requiring
 returned executions to preserve source bindings that are no longer live. -/
 def ControlMatches (layout : RegisterMap Γ) (placement : Nat → Word w)
@@ -64,6 +64,17 @@ theorem Avoids.extend {layout : RegisterMap Γ} (avoids : layout.Avoids flag)
       change dst + i.val ≠ flag
       exact Nat.ne_of_gt (Nat.lt_of_lt_of_le fresh (Nat.le_add_right dst i.val))
   | there v => exact avoids v i
+
+/-- Assignment to a regular variable writes only its actual fields, so a
+compiler-private register remains outside the complete receiver interval. -/
+theorem Regular.not_mem_valueRegs_of_avoids {layout : RegisterMap Γ}
+    (regular : RegisterMap.Regular layout) (avoids : layout.Avoids flag)
+    (target : Var Γ τ) : flag ∉ valueRegs τ (RegisterMap.base layout target) := by
+  intro member
+  obtain ⟨i, bound, assigned⟩ := List.mem_iff_getElem.mp member
+  apply avoids target ⟨i, by simpa only [valueRegs_length] using bound⟩
+  rw [regular.fields]
+  simpa only [valueRegs, List.getElem_range', Nat.one_mul] using assigned
 
 /-- Initializing or updating a private register preserves every represented
 source value. This applies equally to the initial zero and the returned flag. -/

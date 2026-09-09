@@ -243,7 +243,7 @@ Status: in progress, not complete.
   their false exceptional postcondition also rejects finite faults.
 - [Named scalar syntax](../Complexity/Language/Syntax.lean),
   `source_program P where`, now supports Nat/Bool/Unit and borrowed-buffer
-  functions, immutable `let`, named calls, conditionals and returns. Nested arithmetic and comparisons
+  functions, lexical `let`/`let mut`, assignment, named calls, conditionals and returns. Nested arithmetic and comparisons
   are normalized left to right into actual primitive bindings, including within
   call arguments and guards. Its generated curried
   `P.f` is a noncomputable `ExceptT Fault (StateT Heap Part) result` observation, not a
@@ -257,7 +257,8 @@ Status: in progress, not complete.
   empty heap. Function contracts relate initial and final heaps; their native
   triples retain the initial heap as a ghost.
   Buffer length, read, write and relative slice operations use the same current
-  heap. Mutable local bindings and loops are not yet supplied by this surface.
+  heap. Direct and action-result assignment update the actual locals, including
+  across a branch join. Loops are not yet supplied by this surface.
   The same buffer declaration now has compiled execution and cost theorems.
 - [Scalar lowering](../Complexity/Computability/Ram/Compiler/Language/Scalar.lean)
   connects Nat/Bool atoms and operations to the existing expression compiler,
@@ -364,8 +365,10 @@ Before broadening the surface further, close these connected gaps:
 - Validate behavior, realization and cost on the same source declaration.
   Passing source semantics alone does not establish its compiled execution.
 
-These priorities refine M1–M3; they do not remove products, mutable locals,
-loops, recursion, allocation or compiler automation from the intended language.
+These priorities refine M1–M3; they do not remove products, loops, recursion,
+allocation or compiler automation from the intended language. Mutable locals
+now have direct semantics and lowering, but do not by themselves provide the
+ordinary loop-invariant interface.
 
 The present cost interpretation concerns successful realized executions.
 It is not yet instrumentation of every unrestricted source execution, nor
@@ -489,7 +492,13 @@ The same source execution and function contracts carry this heap. The compiler's
 existing layouts now index actual fields uniformly, including parameter packing,
 fresh call receivers and result lookup. Buffer types and statements now exist;
 their whole-compiler and actual-runner integration is checked.
-Mutable local bindings and traversal remain an open milestone.
+Mutable local bindings and assignments now have native proof equations, shared
+realization/cost rules and generic lowering. The existing scalar consumer assigns
+inside a branch and observes the result afterward without changing its mathematical
+specification. The buffer consumer rebinds a mutable descriptor to a real slice
+result and retains its array-update specification. Layout regularity and update
+preservation are compiler lemmas, automatically supplied by generated functions;
+buffer self-assignment remains allowed. Traversal is still an open milestone.
 
 The [buffer consumer](../Examples/Language/Buffer.lean) uses native operation
 specifications to prove its ordinary `Array.set` result. Its
@@ -507,8 +516,11 @@ heap; scope exit preserves updates to outer locals and the current heap.
 This state feeds the existing execution and proof interfaces, not a parallel
 language. The present scalar instructions preserve arbitrary heaps; that fact
 must not become an assumed frame rule for future effectful instructions.
-Next connect actual buffer operations and their representations. Direct source
-assignment precedes any optional SSA normalization.
+Direct source assignment is implemented independently of any optional SSA
+normalization. Loop guards must next be reevaluated in the actual current state;
+normalization cannot move a changing guard outside the loop. Their source proof
+rules must carry updated locals and heap, and their cost must include the final
+false guard as well as successful iterations and early returns.
 
 1. Give borrowed objects/views independent heap semantics with actual aliasing.
    Prove read/write/slice and local-frame rules using ordinary contents.
@@ -541,6 +553,16 @@ This completes a useful borrowed-array subset, not allocated-container support.
    Translate sufficient bounds through the compiler's inferred frame layout.
 4. Migrate Search as a different loop shape, then recursive MergeSort as a
    multiple-buffer and recursive-call consumer.
+
+The pinned Lean runtime implements native `while` through the partial
+`Lean.Loop.forIn`. Accepting that syntax is not a proved mathematical unfolding
+rule for the source loop. Derive loop equations and well-founded correctness
+from the same source `Exec`/`Stmt.eval`, preserving the guard's actual final
+locals and heap, then connect them to the existing strict Part WP. For bounded
+traversal, reuse `Std.Do.Invariant`, `Invariant.withEarlyReturn` and the existing
+`Spec.forIn_range`/`Spec.forIn_rco` rules after proving the source observation
+correspondence. Iterate indices and read the current buffer, not a snapshot of
+its contents. A second user-maintained StateM algorithm is not this bridge.
 
 **Completion evidence:** Search's algorithm proof uses `lo/hi/mid` and array
 contents without a `Registers` bridge. Recursive sort composes source contracts,

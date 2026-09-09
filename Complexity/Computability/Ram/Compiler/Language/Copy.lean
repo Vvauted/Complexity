@@ -87,7 +87,75 @@ theorem AvoidsRange.readsBelow_setReg {expr : Expr} {dst count register limit : 
 
 end Ram.Expr
 
+namespace Ram.Source.State
+
+/-- Writing back a register's current value leaves the state unchanged. -/
+@[simp] theorem setReg_self (entry : State w) (dst : Reg) :
+    entry.setReg dst (entry.regs dst) = entry := by
+  have registers : (fun r => if r = dst then entry.regs dst else entry.regs r) =
+      entry.regs := by
+    funext r
+    split <;> simp_all
+  change { entry with regs := _ } = entry
+  rw [registers]
+
+/-- Receiving exactly the current register values preserves the whole state. -/
+@[simp] theorem setRegs_map_regs (entry : State w) (dsts : List Reg) :
+    entry.setRegs dsts (dsts.map entry.regs) = entry := by
+  induction dsts with
+  | nil => rfl
+  | cons dst dsts ih =>
+      simpa only [List.map_cons, setRegs_cons, setReg_self] using ih
+
+end Ram.Source.State
+
 namespace Ram.LanguageCompiler
+
+/-- Reuse any proved safe field-copy endpoint at its actual emitted size.
+This straight-line fragment has no unexecuted branch or loop instructions. -/
+theorem copyFields_safe_localMeasured {heapLimit depth : Nat} {program : Program}
+    {entry finish : Source.State w} {dst : Reg} {exprs : List Expr}
+    (execution : Source.SafeExec program heapLimit depth (copyFields dst exprs) entry finish)
+    (control : Nat) :
+    Source.LocalMeasuredExec control program heapLimit depth (copyFields dst exprs)
+      (LocalCompiler.stmtSize control (LocalCompiler.calleeLocals program) (copyFields dst exprs))
+      entry finish := by
+  induction exprs generalizing dst entry finish with
+  | nil => cases execution; exact .skip
+  | cons expr exprs ih =>
+      cases exprs with
+      | nil => exact execution.assign_localMeasured control
+      | cons next exprs =>
+          cases execution with
+          | seq first second =>
+              simpa only [copyFields, LocalCompiler.stmtSize_seq] using
+                Source.LocalMeasuredExec.seq (first.assign_localMeasured control) (ih second)
+
+/-- Copying each consecutive register back to itself performs every assignment
+and leaves the state unchanged. It does not require avoiding the destination. -/
+theorem copyFields_self_localMeasured {control heapLimit depth : Nat} {program : Program}
+    (entry : Source.State w) (dst count : Nat) :
+    Source.LocalMeasuredExec control program heapLimit depth
+      (copyFields dst ((List.range' dst count).map Expr.var))
+      (LocalCompiler.stmtSize control (LocalCompiler.calleeLocals program)
+        (copyFields dst ((List.range' dst count).map Expr.var))) entry entry := by
+  have assignment (register : Reg) :
+      Source.LocalMeasuredExec control program heapLimit depth (.assign register (.var register))
+        (LocalCompiler.stmtSize control (LocalCompiler.calleeLocals program)
+          (.assign register (.var register))) entry entry := by
+    simpa only [Source.State.eval, Expr.eval, Source.State.setReg_self] using
+      (Source.LocalMeasuredExec.assign (control := control) (program := program)
+        (heapLimit := heapLimit) (d := depth) (s := entry)
+        (dst := register) (value := Expr.var register) True.intro)
+  induction count generalizing dst with
+  | zero => exact .skip
+  | succ count ih =>
+      cases count with
+      | zero => exact assignment dst
+      | succ count =>
+          simpa only [List.range'_succ, List.map_cons, copyFields,
+            LocalCompiler.stmtSize_seq] using
+            Source.LocalMeasuredExec.seq (assignment dst) (ih (dst + 1))
 
 /-- Sequential copying produces the original operand values in order. Singleton
 copies allow arbitrary aliasing; longer copies keep every operand disjoint from

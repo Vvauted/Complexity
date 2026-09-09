@@ -31,7 +31,7 @@ open Complexity.Language
 the same property for the complete program's bodies when using a frame theorem. -/
 def NoHeapWrites {signatures : List Signature} {Γ : List Ty} {result : Ty} :
     Complexity.Language.Stmt signatures Γ result → Prop
-  | .skip | .ret _ => True
+  | .skip | .assign .. | .ret _ => True
   | .letPrim _ body | .read _ _ body | .slice _ _ _ body | .call _ _ body =>
       NoHeapWrites body
   | .write .. => False
@@ -57,6 +57,11 @@ theorem lowerPrim_noSharedWrites (layout : RegisterMap Γ) (dst : Reg) (prim : P
       cases prim with
       | atom atom => exact copyFields_noSharedWrites dst (atomExprs layout atom)
 
+/-- Reassigning a local does not write through a buffer or change either stream. -/
+theorem lowerAssign_noSharedWrites (layout : RegisterMap Γ) (target : Var Γ τ)
+    (value : Prim Γ τ) : (lowerAssign layout target value).NoSharedWrites :=
+  lowerPrim_noSharedWrites layout (RegisterMap.base layout target) value
+
 /-- Returning a value writes only its local result fields, or none for Unit. -/
 theorem lowerReturn_noSharedWrites (layout : RegisterMap Γ) (resultSlot : Reg)
     (atom : Atom Γ τ) : (lowerReturn layout resultSlot atom).NoSharedWrites :=
@@ -70,6 +75,7 @@ theorem lowerStmtCore_noSharedWrites {signatures : List Signature} {Γ : List Ty
     NoHeapWrites stmt → (lowerStmtCore layout next resultSlot flag stmt).NoSharedWrites := by
   induction stmt generalizing next resultSlot flag with
   | skip => intro _; trivial
+  | assign target value => intro _; exact lowerAssign_noSharedWrites layout target value
   | letPrim value body ih =>
     intro condition
     exact ⟨lowerPrim_noSharedWrites layout next value, ih _ _ _ _ condition⟩
@@ -136,6 +142,11 @@ theorem lowerPrim_noIOWrites (layout : RegisterMap Γ) (dst : Reg) (prim : Prim 
       cases prim with
       | atom atom => exact copyFields_noIOWrites dst (atomExprs layout atom)
 
+/-- Updating any local value leaves the input and output streams untouched. -/
+theorem lowerAssign_noIOWrites (layout : RegisterMap Γ) (target : Var Γ τ)
+    (value : Prim Γ τ) : (lowerAssign layout target value).NoIOWrites :=
+  lowerPrim_noIOWrites layout (RegisterMap.base layout target) value
+
 /-- Returning actual value fields does not write to an output stream. -/
 theorem lowerReturn_noIOWrites (layout : RegisterMap Γ) (resultSlot : Reg)
     (atom : Atom Γ τ) : (lowerReturn layout resultSlot atom).NoIOWrites :=
@@ -164,6 +175,7 @@ theorem lowerStmtCore_noIOWrites {signatures : List Signature} {Γ : List Ty} {r
     (lowerStmtCore layout next resultSlot flag stmt).NoIOWrites := by
   induction stmt generalizing next resultSlot flag with
   | skip => trivial
+  | assign target value => exact lowerAssign_noIOWrites layout target value
   | letPrim value body ih => exact ⟨lowerPrim_noIOWrites _ _ _, ih _ _ _ _⟩
   | read buffer index body ih => exact ⟨lowerRead_noIOWrites _ _ _ _, ih _ _ _ _⟩
   | write buffer index value => exact lowerWrite_noIOWrites _ _ _ _

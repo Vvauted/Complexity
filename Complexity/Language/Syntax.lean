@@ -14,10 +14,14 @@ import Lean.Parser.Do
 
 `source_program P where` declares an independent typed source program from
 Lean-style function headers and `do` blocks. The supported types are
-`Nat`, `Bool`, `Unit`, `Buffer Nat` and `Buffer Bool`, with immutable lexical `let`, named first-order calls,
-`if`/`then`/`else` and `return`. Natural arithmetic and comparisons may be nested
-in bindings, return values, conditions and call arguments. Their operands are
-normalized left to right into actual lexical primitive bindings; no host
+`Nat`, `Bool`, `Unit`, `Buffer Nat` and `Buffer Bool`, with lexical `let` and
+`let mut`, assignment, named first-order calls, `if`/`then`/`else` and `return`.
+Only the nearest mutable binding may be assigned; ordinary `let` bindings and
+parameters are immutable. `x ← action` rebinds a mutable local to the actual
+result of a supported named call, buffer read or slice. Natural arithmetic and
+comparisons may be nested in bindings, assignments, return values, conditions
+and call arguments. Their operands are normalized left to right into actual
+lexical primitive bindings; no host
 computation replaces the generated operations.
 
 Borrowed buffers expose `xs.length`, `let x ← xs.get i`, `xs.set i value` and
@@ -72,7 +76,12 @@ private structure Function where
   result : Ty
   body : TSyntax `term
 
-private abbrev Scope := List (Option Name × Ty)
+private structure Binding where
+  name : Option Name
+  type : Ty
+  isMutable : Bool
+
+private abbrev Scope := List Binding
 
 private structure Atomic where
   type : Ty
@@ -175,12 +184,16 @@ private def variableTerm (index : Nat) : MacroM (TSyntax `term) := do
     result ← `(Complexity.Language.Var.there $result)
   return result
 
-private def lookupVariable (scope : Scope) (name : TSyntax `ident) : MacroM Atomic := do
-  for ((binding, type), index) in scope.zipIdx do
-    if binding == some name.getId then
-      return ⟨type, ← `(Complexity.Language.Atom.var $(← variableTerm index)),
-        ← `($name:ident)⟩
+private def lookupBinding (scope : Scope) (name : TSyntax `ident) : MacroM (Binding × Nat) := do
+  for (binding, index) in scope.zipIdx do
+    if binding.name == some name.getId then
+      return (binding, index)
   Macro.throwErrorAt name s!"unknown source variable '{name.getId}'"
+
+private def lookupVariable (scope : Scope) (name : TSyntax `ident) : MacroM Atomic := do
+  let (binding, index) ← lookupBinding scope name
+  return ⟨binding.type, ← `(Complexity.Language.Atom.var $(← variableTerm index)),
+    ← `($name:ident)⟩
 
 private partial def parseAtom (scope : Scope) (stx : TSyntax `term) : MacroM Atomic := do
   match stx with
@@ -322,6 +335,32 @@ private def writeCode (scope : Scope) (stx : TSyntax `term) : MacroM LoweredBloc
     #[← `(doElem| Complexity.Language.Buffer.writeM $(buffer.value) $(index.value) $(value.value))],
     true⟩
 
+private def assignCode (scope : Scope) (name : TSyntax `ident) (value : TSyntax `term) :
+    MacroM LoweredBlock := do
+  -- The normalizer has already introduced every RHS temporary into this scope.
+  -- Looking up the target here therefore uses its actual, possibly lifted index.
+  let (binding, index) ← lookupBinding scope name
+  unless binding.isMutable do
+    Macro.throwErrorAt name s!"source variable '{name.getId}' is immutable; declare it with 'let mut'"
+  let parsed ← parsePrimitive scope value
+  expectType value parsed.type binding.type
+  return ⟨← `(Complexity.Language.Stmt.assign $(← variableTerm index) $(parsed.term)),
+    #[← `(doElem| $name:ident := $(parsed.value))], true⟩
+
+private def assignBindingCode (family : TSyntax `ident) (functions : Array Function)
+    (scope : Scope) (name : TSyntax `ident) (action : TSyntax `term) : MacroM LoweredBlock := do
+  let (binding, index) ← lookupBinding scope name
+  unless binding.isMutable do
+    Macro.throwErrorAt name s!"source variable '{name.getId}' is immutable; declare it with 'let mut'"
+  let (resultType, statement, invocation) ← parseBinding family functions scope action
+  expectType action resultType binding.type
+  -- The action's fresh result is innermost only for this assignment. Leaving
+  -- that scope drops the result slot, retaining the updated outer binding.
+  let assignment ← `(Complexity.Language.Stmt.assign
+    (Complexity.Language.Var.there $(← variableTerm index))
+    (Complexity.Language.Prim.atom (Complexity.Language.Atom.var Complexity.Language.Var.here)))
+  return ⟨← `($statement $assignment), #[← `(doElem| $name:ident ← $invocation:term)], true⟩
+
 private def returnCode (scope : Scope) (result : Ty) (value : TSyntax `term) :
     MacroM LoweredBlock := do
   let parsed ← parsePrimitive scope value
@@ -385,13 +424,26 @@ private def normalizeCall (stx : TSyntax `term) :
 private def normalizeElement (element : TSyntax `doElem) :
     MacroM (Array (TSyntax `doElem) × TSyntax `doElem) := withRef element do
   match element with
+  | `(doElem| let mut $name:ident $[: $annotation:term]? := $value:term) =>
+      let normalized ← normalizeValue value false
+      return (normalized.bindings,
+        ← `(doElem| let mut $name:ident $[: $annotation:term]? := $(normalized.value)))
   | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
       let normalized ← normalizeValue value false
       return (normalized.bindings,
         ← `(doElem| let $name:ident $[: $annotation:term]? := $(normalized.value)))
+  | `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term) =>
+      let (bindings, action) ← normalizeCall action
+      return (bindings, ← `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term))
   | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
       let (bindings, action) ← normalizeCall action
       return (bindings, ← `(doElem| let $name:ident $[: $annotation:term]? ← $action:term))
+  | `(doElem| $name:ident := $value:term) =>
+      let normalized ← normalizeValue value false
+      return (normalized.bindings, ← `(doElem| $name:ident := $(normalized.value)))
+  | `(doElem| $name:ident ← $action:term) =>
+      let (bindings, action) ← normalizeCall action
+      return (bindings, ← `(doElem| $name:ident ← $action:term))
   | `(doElem| return $value:term) =>
       let normalized ← normalizeValue value false
       return (normalized.bindings, ← `(doElem| return $(normalized.value)))
@@ -414,18 +466,38 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Funct
       if !bindings.isEmpty then
         return ← blockCode family functions scope result (bindings.toList ++ element :: rest)
       match element with
+      | `(doElem| let mut $name:ident $[: $annotation:term]? := $value:term) =>
+          let parsed ← parsePrimitive scope value
+          checkAnnotation annotation parsed.type
+          let body ← blockCode family functions
+            (⟨some name.getId, parsed.type, true⟩ :: scope) result rest
+          let type ← valueTypeTerm parsed.type
+          let binding ← `(doElem| let mut $name:ident : $type := $(parsed.value))
+          return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
+            #[binding] ++ body.proofBody, body.fallsThrough⟩
       | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
           let parsed ← parsePrimitive scope value
           checkAnnotation annotation parsed.type
-          let body ← blockCode family functions ((some name.getId, parsed.type) :: scope) result rest
+          let body ← blockCode family functions
+            (⟨some name.getId, parsed.type, false⟩ :: scope) result rest
           let type ← valueTypeTerm parsed.type
           let binding ← `(doElem| let $name:ident : $type := $(parsed.value))
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough⟩
+      | `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term) =>
+          let (bindingType, statement, invocation) ← parseBinding family functions scope action
+          checkAnnotation annotation bindingType
+          let body ← blockCode family functions
+            (⟨some name.getId, bindingType, true⟩ :: scope) result rest
+          let type ← valueTypeTerm bindingType
+          let binding ← `(doElem| let mut $name:ident : $type ← $invocation:term)
+          return ⟨← `($statement $(body.term)),
+            #[binding] ++ body.proofBody, body.fallsThrough⟩
       | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
           let (bindingType, statement, invocation) ← parseBinding family functions scope action
           checkAnnotation annotation bindingType
-          let body ← blockCode family functions ((some name.getId, bindingType) :: scope) result rest
+          let body ← blockCode family functions
+            (⟨some name.getId, bindingType, false⟩ :: scope) result rest
           let type ← valueTypeTerm bindingType
           let binding ← `(doElem| let $name:ident : $type ← $invocation:term)
           return ⟨← `($statement $(body.term)),
@@ -433,12 +505,15 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Funct
       | _ =>
           -- A term-valued match keeps its local `return` from exiting this block's translation.
           let statement ← (match element with
+            | `(doElem| $name:ident := $value:term) => assignCode scope name value
+            | `(doElem| $name:ident ← $action:term) =>
+                assignBindingCode family functions scope name action
             | `(doElem| return $value:term) => returnCode scope result value
             | `(doElem| return) => do returnCode scope result (← `(()))
             | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) => do
                 let parsed ← parsePrimitive scope condition
                 expectType condition parsed.type .bool
-                let inner := if parsed.atom.isSome then scope else (none, Ty.bool) :: scope
+                let inner := if parsed.atom.isSome then scope else ⟨none, Ty.bool, false⟩ :: scope
                 let yesCode ← blockCode family functions inner result (getDoElems yes).toList
                 let noCode ← blockCode family functions inner result (getDoElems no).toList
                 let term ← match parsed.atom with
@@ -458,7 +533,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Funct
             | `(doElem| $action:term) => writeCode scope action
             | _ =>
                 Macro.throwErrorAt element
-                  "unsupported source statement; use immutable let, a named call, buffer access, if/then/else, or return")
+                  "unsupported source statement; use let, let mut, assignment, a named call, buffer access, if/then/else, or return")
           if rest.isEmpty then
             return statement
           else
@@ -472,7 +547,7 @@ private def functionCode (family : TSyntax `ident) (functions : Array Function)
     (fn : Function) : MacroM LoweredBlock := do
   match fn.body with
   | `(do $body:doSeq) =>
-      let scope := fn.params.toList.map fun param => (some param.name.getId, param.type)
+      let scope : Scope := fn.params.toList.map fun param => ⟨some param.name.getId, param.type, false⟩
       blockCode family functions scope fn.result (getDoElems body).toList
   | _ => Macro.throwErrorAt fn.body "source function bodies must be supported 'do' blocks"
 
@@ -521,6 +596,7 @@ private def equationDeclaration (family programName : TSyntax `ident)
       rw [Complexity.Language.Program.eval_eq_evalWith, body_selected]
     simp only [$bodyName:ident,
       Complexity.Language.Stmt.evalWith_skip, Complexity.Language.Stmt.evalWith_ret,
+      Complexity.Language.Stmt.evalWith_assign,
       Complexity.Language.Stmt.evalWith_letPrim, Complexity.Language.Stmt.evalWith_seq,
       Complexity.Language.Stmt.evalWith_ite, Complexity.Language.Stmt.evalWith_call,
       Complexity.Language.Stmt.evalWith_read, Complexity.Language.Stmt.evalWith_write,
@@ -528,7 +604,10 @@ private def equationDeclaration (family programName : TSyntax `ident)
       Complexity.Language.Atom.eval, Complexity.Language.Prim.eval, Complexity.Language.Args.eval,
       Complexity.Language.CellTy.toValue, Complexity.Language.CellTy.ofValue,
       Complexity.Language.Env.cons_here, Complexity.Language.Env.cons_there,
-      Complexity.Language.Env.tail_cons, Complexity.Language.Env.get_tail, pure_bind]
+      Complexity.Language.Env.head_cons, Complexity.Language.Env.tail_cons,
+      Complexity.Language.Env.get_tail, Complexity.Language.Env.set_here,
+      Complexity.Language.Env.set_there, Complexity.Language.Env.tail_set_here,
+      Complexity.Language.Env.tail_set_there, pure_bind]
     all_goals rfl)
   for param in fn.params.reverse do
     let parameter := param.name

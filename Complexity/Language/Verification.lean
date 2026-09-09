@@ -13,6 +13,8 @@ Normal continuation and function return have separate postconditions; a fault
 satisfies neither. The structural rules follow actual lexical values, callee
 returns and branch conditions without mentioning a machine representation or
 an instruction budget.
+Local assignment evaluates the mathematical right-hand side in the entry state
+and applies the normal postcondition to the updated state.
 
 `FunctionTotal` requires the declared body to return a value. Falling through
 the body is not successful function termination. Function contracts compose
@@ -69,6 +71,19 @@ theorem mono_post (h : TotalWP program stmt normal returned entry)
     exact post
   · intro post
     exact ⟨entry, .normal, .skip entry, post⟩
+
+/-- Assignment evaluates its right-hand side before updating the selected local.
+The normal postcondition observes that update and the same current heap. -/
+@[simp] theorem assign_iff {τ : Ty} (target : Var Γ τ) (value : Prim Γ τ) :
+    TotalWP program (.assign target value) normal returned entry ↔
+      normal (entry.set target (value.eval entry.locals)) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution
+    exact post
+  · intro post
+    exact ⟨entry.set target (value.eval entry.locals), .normal,
+      .assign target value entry, post⟩
 
 @[simp] theorem ret_iff (value : Atom Γ result) :
     TotalWP program (.ret value) normal returned entry ↔
@@ -197,6 +212,13 @@ theorem letPrim {τ : Ty} {value : Prim Γ τ}
       (State.cons (value.eval entry.locals) entry)) :
     TotalWP program (.letPrim value continuation) normal returned entry :=
   (letPrim_iff value continuation).mpr body
+
+/-- Establish a local assignment using a mathematical postcondition on its
+actual updated state; no additional lexical binding is introduced. -/
+theorem assign {τ : Ty} {target : Var Γ τ} {value : Prim Γ τ}
+    (post : normal (entry.set target (value.eval entry.locals))) :
+    TotalWP program (.assign target value) normal returned entry :=
+  (assign_iff target value).mpr post
 
 /-- Compose a successful current-heap read with a proof about its actual value. -/
 theorem read {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}

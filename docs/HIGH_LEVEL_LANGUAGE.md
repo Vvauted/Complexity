@@ -16,8 +16,9 @@ focused scalar tactics compose realization and uniform structural cost rules.
 Source execution and function contracts carry typed locals and a shared heap;
 their native monadic view retains the final heap on success and failure.
 Borrowed-buffer length, reads, writes and slices now have source syntax and
-semantics and checked whole-compiler behavior/cost connections. Full source
-proof automation, mutable local bindings and loops are not yet supported. The
+semantics and checked whole-compiler behavior/cost connections. Mutable local
+bindings and assignments use the same source state, native equations and lowering.
+Full source proof automation and loops are not yet supported. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -166,15 +167,17 @@ source_program Implementation where
     return n + 1
 
   def boundedIncrement (n : Nat) (limit : Nat) : Nat := do
+    let mut result := limit
     let next ← increment n
     if next ≤ limit then
-      return next
+      result := next
     else
-      return limit
+      result := limit
+    return result
 ```
 
 The [existing scalar consumer](../Examples/Language/Scalar.lean) uses this
-declaration and retains its previous typed core definitionally. The declaration
+declaration and retains its mathematical minimum specification. The declaration
 exports signatures, function identifiers and bodies, the shared program, and
 curried mathematical observations. In particular,
 `Implementation.boundedIncrement n limit` has type
@@ -193,9 +196,20 @@ All function signatures are collected before lowering the bodies, so named
 calls refer to the same source program rather than arbitrary host callbacks.
 The available surface also accepts `Buffer Nat` and `Buffer Bool`, their length,
 `let x ← xs.get i`, `xs.set i x` and `let ys ← xs.slice offset length`.
-These operations use the actual current shared heap. Mutable locals, loops and
-general proof automation remain unimplemented. The buffer consumer separately
+These operations use the actual current shared heap. `let mut`, `x := expression`
+and `x ← action` update existing typed locals; the latter reuses the same real
+calls, reads and slices. An immutable nearest binding cannot be bypassed to
+assign an outer mutable binding with the same name. The native equation uses
+Lean's own mutable `do` and branch joins, not a second environment monad.
+Loops and general proof automation remain unimplemented. The buffer consumer separately
 checks its source specification and the compiled invocation of that declaration.
+
+Assignments also cover borrowed descriptors: changing a local handle does not
+copy or change the referenced heap object. The compiler proves contiguous
+fields and distinct live-variable slots for generated layouts, then reuses a
+shared update correspondence. Buffer self-assignment is a safe sequential copy,
+not an implicit snapshot or an extra no-alias requirement. Its real moves are
+still charged. Ordinary source proofs never supply these layout arguments.
 
 The traversal program below remains a design sketch: its loop is not accepted
 source syntax yet.

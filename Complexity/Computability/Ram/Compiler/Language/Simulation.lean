@@ -12,7 +12,7 @@ import Complexity.Computability.Ram.Verification.Total
 The proof follows a source execution, not an evaluation of its compiled syntax.
 The shared measured simulation supplies behavior by erasing its derived count;
 no proposed time bound is needed and no second structural simulation is maintained.
-Normal completion preserves the represented lexical values and a zero return
+Normal completion exposes the actual updated lexical values and a zero return
 flag. A source return writes its actual result and sets the flag; enclosing
 sequences then skip their remaining statements. Calls execute the selected
 lowered function and restore caller locals, including the caller's private
@@ -46,7 +46,8 @@ arbitrary normal continuation. The continuation's own budget-free contract
 supplies the final postcondition; returned paths bypass that continuation. -/
 private theorem lower_of_core (hw : 0 < w)
     (core : ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
-      layout.Bounded next → layout.Matches placement entry.locals s.regs → layout.Avoids flag →
+      layout.Regular → layout.Bounded next →
+      layout.Matches placement entry.locals s.regs → layout.Avoids flag →
       flag < next → resultSlot + fieldCount result ≤ flag →
       (fieldCount result ≤ 1 ∨ layout.AvoidsRange resultSlot (fieldCount result)) →
       HeapRep placement heapLimit entry.heap s → s.regs flag = 0 →
@@ -56,7 +57,7 @@ private theorem lower_of_core (hw : 0 < w)
         HeapRep placement heapLimit finish.heap t) :
     ∀ (layout : RegisterMap Γ) (next resultSlot : Reg) (s : Source.State w)
       (continuation : Ram.Stmt) (post : Source.State w → Prop),
-      layout.Bounded next → layout.Matches placement entry.locals s.regs →
+      layout.Regular → layout.Bounded next → layout.Matches placement entry.locals s.regs →
       (fieldCount result ≤ 1 ∨ layout.AvoidsRange resultSlot (fieldCount result)) →
       HeapRep placement heapLimit entry.heap s →
       (control = .normal → ∀ t, layout.Matches placement finish.locals t.regs →
@@ -68,7 +69,7 @@ private theorem lower_of_core (hw : 0 < w)
         HeapRep placement heapLimit finish.heap t → post t) →
       Source.Verification.TotalWP (lowerProgram program) heapLimit depth
         (lowerStmt layout next resultSlot stmt continuation) post s := by
-  intro layout next resultSlot s continuation post bounded matched copySafe represented
+  intro layout next resultSlot s continuation post regular bounded matched copySafe represented
     normal returned
   let flag := returnFlag result next resultSlot
   have nextFlag : next ≤ flag := Nat.le_max_left _ _
@@ -83,7 +84,7 @@ private theorem lower_of_core (hw : 0 < w)
     RegisterMap.Matches.setReg_of_ne matched avoids 0
   obtain ⟨t, body, property, finalHeap⟩ :=
     core layout (flag + 1) resultSlot flag (s.setReg flag 0)
-      bounded' matched' avoids (Nat.lt_succ_self flag) resultFlag copySafe
+      regular bounded' matched' avoids (Nat.lt_succ_self flag) resultFlag copySafe
       (represented.setReg flag 0) (Source.State.setReg_same s flag 0)
   have flagInit : Source.SafeExec (lowerProgram program) heapLimit depth
       (.assign flag (.const 0)) s (s.setReg flag 0) := .assign trivial
@@ -106,7 +107,8 @@ the current shared-heap representation remain explicit compiler premises. -/
 theorem lowerCore (execution : RealizedExec program w depth stmt entry finish control)
     (hw : 0 < w) :
     ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
-      layout.Bounded next → layout.Matches placement entry.locals s.regs → layout.Avoids flag →
+      layout.Regular → layout.Bounded next →
+      layout.Matches placement entry.locals s.regs → layout.Avoids flag →
       flag < next → resultSlot + fieldCount result ≤ flag →
       (fieldCount result ≤ 1 ∨ layout.AvoidsRange resultSlot (fieldCount result)) →
       HeapRep placement heapLimit entry.heap s → s.regs flag = 0 →
@@ -115,10 +117,11 @@ theorem lowerCore (execution : RealizedExec program w depth stmt entry finish co
         ControlMatches layout placement resultSlot flag finish.locals control t ∧
         HeapRep placement heapLimit finish.heap t := by
   obtain ⟨steps, cost⟩ := execution.exists_cost
-  intro layout next resultSlot flag s bounded matched avoids fresh resultFlag copySafe
+  intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
     represented flagZero
   obtain ⟨t, measured, property, finalHeap⟩ := cost.lowerCoreMeasured (heapLimit := heapLimit) 0 hw
-    layout next resultSlot flag s bounded matched avoids fresh resultFlag copySafe represented flagZero
+    layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
+      represented flagZero
   exact ⟨t, measured.erase, property, finalHeap⟩
 
 /-- Generic continuation simulation. Register preservation is needed only when
@@ -129,7 +132,7 @@ theorem lower (execution : RealizedExec program w depth stmt entry finish contro
     (hw : 0 < w) :
     ∀ (layout : RegisterMap Γ) (next resultSlot : Reg) (s : Source.State w)
       (continuation : Ram.Stmt) (post : Source.State w → Prop),
-      layout.Bounded next → layout.Matches placement entry.locals s.regs →
+      layout.Regular → layout.Bounded next → layout.Matches placement entry.locals s.regs →
       (fieldCount result ≤ 1 ∨ layout.AvoidsRange resultSlot (fieldCount result)) →
       HeapRep placement heapLimit entry.heap s →
       (control = .normal → ∀ t, layout.Matches placement finish.locals t.regs →

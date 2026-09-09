@@ -70,6 +70,12 @@ def lowerPrim (layout : RegisterMap Γ) (dst : Reg) : {τ : Ty} → Prim Γ τ �
   | .unit, _ => .skip
   | .buffer _, .atom atom => copyFields dst (atomExprs layout atom)
 
+/-- Update an existing local through its actual field region. This reuses
+primitive materialization, including real descriptor copies and empty Unit
+updates; an assignment to the same buffer binding is not removed. -/
+def lowerAssign (layout : RegisterMap Γ) (target : Var Γ τ) (value : Prim Γ τ) : Ram.Stmt :=
+  lowerPrim layout (RegisterMap.base layout target) value
+
 /-- Write the function's actual result fields. Multiple fields require a
 non-overlapping source layout; the code does not provide an implicit snapshot. -/
 def lowerReturn (layout : RegisterMap Γ) (resultSlot : Reg) (atom : Atom Γ τ) : Ram.Stmt :=
@@ -103,6 +109,7 @@ def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (layout : RegisterMap Γ) (next resultSlot flag : Reg) :
     Complexity.Language.Stmt signatures Γ result → Ram.Stmt
   | .skip => .skip
+  | .assign target value => lowerAssign layout target value
   | .letPrim (τ := τ) value body =>
       .seq (lowerPrim layout next value)
         (lowerStmtCore (RegisterMap.extend layout τ next)

@@ -33,11 +33,12 @@ source_program Implementation where
       return limit
 
   def clipHead (xs : Buffer Nat) (limit : Nat) : Buffer Nat := do
-    let head ← xs.get 0
+    let mut view := xs
+    let head ← view.get 0
     let updated ← clamp head limit
-    xs.set 0 updated
-    let ys ← xs.slice 0 xs.length
-    return ys
+    view.set 0 updated
+    view ← view.slice 0 view.length
+    return view
 
 /-- The branching helper computes the ordinary mathematical minimum and
 preserves any current heap, without assuming that heap is empty. -/

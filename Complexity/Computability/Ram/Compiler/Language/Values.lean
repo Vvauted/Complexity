@@ -183,6 +183,32 @@ theorem copyAtom_safe (layout : RegisterMap Γ) (dst : Reg) (atom : Atom Γ τ)
   rw [atomExprs_eval layout atom env entry hw matched fits] at execution
   simpa only [valueRegs, atomExprs_length] using execution
 
+/-- Copying a variable into its own contiguous fields performs real assignments
+but preserves the state. The encoded endpoint follows from the original match. -/
+theorem copyVar_self_safe (layout : RegisterMap Γ) (target : Var Γ τ) (dst : Reg)
+    (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
+    (matched : layout.Matches placement env entry.regs) (fits : ValueFits w (env.get target))
+    (contiguous : ∀ i : Fin (fieldCount τ), layout target i = dst + i.val) :
+    Source.SafeExec program heapLimit depth (copyFields dst (atomExprs layout (.var target)))
+      entry (entry.setRegs (valueRegs τ dst) (valueWords placement (env.get target))) := by
+  have expressions : atomExprs layout (.var target) = (valueRegs τ dst).map Expr.var := by
+    apply List.ext_getElem
+    · simp only [atomExprs_length, List.length_map, valueRegs_length]
+    · intro i leftBound _
+      have bound : i < fieldCount τ := by simpa only [atomExprs_length] using leftBound
+      simpa only [atomExprs, valueRegs, List.getElem_ofFn, List.getElem_map,
+        List.getElem_range', Nat.one_mul, atomFieldExpr] using
+        congrArg Expr.var (contiguous ⟨i, bound⟩)
+  have encoded := atomExprs_eval layout (.var target) env entry hw matched fits
+  rw [expressions, List.map_map] at encoded
+  simp only [Atom.eval] at encoded
+  have received : entry.setRegs (valueRegs τ dst) (valueWords placement (env.get target)) =
+      entry := by
+    rw [← encoded]
+    exact Source.State.setRegs_map_regs entry (valueRegs τ dst)
+  rw [received, expressions]
+  exact (copyFields_self_localMeasured (control := 0) entry dst (fieldCount τ)).erase
+
 /-- A primitive executes its assignments or actual sequential field copy and
 produces its encoded fields. This theorem does not assume a time budget. -/
 theorem lowerPrim_safe (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ)
@@ -206,6 +232,45 @@ theorem lowerPrim_safe (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ)
   | buffer kind =>
       cases prim with
       | atom atom => exact copyAtom_safe layout dst atom env entry hw matched fits copySafe
+
+/-- Assign an existing source variable through its regular field layout.
+Distinct variables have disjoint fields; self-assignment executes each field
+copy without changing its value. No global avoidance of the target is required. -/
+theorem lowerAssign_safe (layout : RegisterMap Γ) (target : Var Γ τ) (value : Prim Γ τ)
+    (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
+    (matched : layout.Matches placement env entry.regs) (fits : PrimFits w env value)
+    (regular : layout.Regular) :
+    Source.SafeExec program heapLimit depth (lowerAssign layout target value) entry
+      (entry.setRegs (valueRegs τ (layout.base target)) (valueWords placement (value.eval env))) := by
+  classical
+  cases τ with
+  | nat | bool =>
+      exact lowerPrim_safe layout (layout.base target) value env entry hw matched fits
+        (Or.inl (by decide))
+  | unit => exact .skip
+  | buffer kind =>
+      cases value with
+      | atom atom =>
+          cases atom with
+          | var source =>
+              by_cases same : source = target
+              · subst source
+                exact copyVar_self_safe layout target (layout.base target) env entry hw
+                  matched fits (regular.fields target)
+              · have separated : ∀ expr ∈ atomExprs layout (.var source),
+                    expr.AvoidsRange (layout.base target) (atomExprs layout (.var source)).length := by
+                  intro expr member
+                  obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+                  change layout source i < layout.base target ∨
+                    layout.base target + (atomExprs layout (.var source)).length ≤ layout source i
+                  rw [atomExprs_length]
+                  exact regular.other target source (fun equal => same (eq_of_heq equal).symm) i
+                have execution := copyFields_safe entry (layout.base target)
+                  (atomExprs layout (.var source)) (atomExprs_readsBelow layout (.var source) entry)
+                  (Or.inr separated) (program := program) (heapLimit := heapLimit) (depth := depth)
+                rw [atomExprs_eval layout (.var source) env entry hw matched fits] at execution
+                simpa only [lowerAssign, lowerPrim, Prim.eval, Atom.eval, valueRegs,
+                  atomExprs_length] using execution
 
 /-- A realized primitive's actual result satisfies the source value range
 condition, including a buffer's length rather than a fictitious scalar handle. -/
@@ -231,6 +296,17 @@ theorem lowerPrim_matches (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ 
     RegisterMap.Matches (RegisterMap.extend layout τ dst) placement (Env.cons (prim.eval env) env)
       (entry.setRegs (valueRegs τ dst) (valueWords placement (prim.eval env))).regs :=
   matched.setRegs bounded (prim.eval env) (primExpr_valueFits layout prim env entry hw matched fits)
+
+/-- Existing-variable assignment updates exactly that mathematical binding and
+preserves every other represented local. -/
+theorem lowerAssign_matches (layout : RegisterMap Γ) (target : Var Γ τ) (value : Prim Γ τ)
+    (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
+    (matched : layout.Matches placement env entry.regs) (fits : PrimFits w env value)
+    (regular : layout.Regular) :
+    RegisterMap.Matches layout placement (env.set target (value.eval env))
+      (entry.setRegs (valueRegs τ (layout.base target)) (valueWords placement (value.eval env))).regs :=
+  matched.set regular target (value.eval env)
+    (primExpr_valueFits layout value env entry hw matched fits)
 
 /-- Return materialization writes only the source result's actual fields. -/
 theorem lowerReturn_safe (layout : RegisterMap Γ) (resultSlot : Reg) (atom : Atom Γ τ)

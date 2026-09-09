@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Scalar
 import Complexity.Computability.Ram.Source.Function.Basic
+import Complexity.Language.State
 import Init.Data.List.Nat.Range
 
 /-!
@@ -110,6 +111,14 @@ theorem cons {env : Env Γ} (fits : EnvFits w env) (value : Value τ)
 theorem tail {env : Env (τ :: Γ)} (fits : EnvFits w env) : EnvFits w env.tail :=
   fun v => fits (.there v)
 
+/-- Updating an existing variable preserves all source value range facts. -/
+theorem set {env : Env Γ} (fits : EnvFits w env) (target : Var Γ τ)
+    (value : Value τ) (fitsValue : ValueFits w value) : EnvFits w (env.set target value) := by
+  induction target with
+  | here => exact EnvFits.cons (EnvFits.tail fits) value fitsValue
+  | there target ih =>
+      exact EnvFits.cons (ih (EnvFits.tail fits) value fitsValue) env.head (fits .here)
+
 /-- Parameter ranges decompose into the actual head value and outer environment. -/
 @[simp] theorem cons_iff (value : Value τ) (env : Env Γ) :
     EnvFits w (Env.cons value env) ↔
@@ -153,6 +162,45 @@ end EnvFits
 
 namespace RegisterMap
 
+/-- The first actual field of a variable. A fieldless Unit needs no destination. -/
+def base (layout : RegisterMap Γ) (target : Var Γ τ) : Reg :=
+  if positive : 0 < fieldCount τ then layout target ⟨0, positive⟩ else 0
+
+/-- A represented variable's base is its zero-indexed field. -/
+theorem base_of_pos (layout : RegisterMap Γ) (target : Var Γ τ)
+    (positive : 0 < fieldCount τ) :
+    base layout target = layout target ⟨0, positive⟩ := by
+  simp only [base, dif_pos positive]
+
+/-- Generated layouts give each variable consecutive fields and never identify
+fields belonging to different typed variables. No heap separation is asserted. -/
+structure Regular (layout : RegisterMap Γ) : Prop where
+  fields : ∀ {τ} (target : Var Γ τ) (i : Fin (fieldCount τ)),
+    layout target i = base layout target + i.val
+  injective : ∀ {τ σ} (target : Var Γ τ) (other : Var Γ σ)
+    (i : Fin (fieldCount τ)) (j : Fin (fieldCount σ)),
+    layout target i = layout other j →
+      (⟨τ, target⟩ : Sigma (Var Γ)) = ⟨σ, other⟩
+
+/-- A distinct variable's fields avoid the complete receiver of the target. -/
+theorem Regular.other {layout : RegisterMap Γ} (regular : Regular layout)
+    (target : Var Γ τ) (source : Var Γ σ) (different : ¬HEq target source)
+    (i : Fin (fieldCount σ)) :
+    layout source i < base layout target ∨
+      base layout target + fieldCount τ ≤ layout source i := by
+  by_cases before : layout source i < base layout target
+  · exact Or.inl before
+  · apply Or.inr
+    by_contra after
+    have lower : base layout target ≤ layout source i := Nat.le_of_not_gt before
+    have upper : layout source i < base layout target + fieldCount τ := Nat.lt_of_not_ge after
+    let j : Fin (fieldCount τ) :=
+      ⟨layout source i - base layout target, (Nat.sub_lt_iff_lt_add' lower).mpr upper⟩
+    have equal : layout target j = layout source i := by
+      rw [regular.fields target j]
+      exact Nat.add_sub_of_le lower
+    exact different (Sigma.mk.inj (regular.injective target source j i equal)).2
+
 /-- Every live source field lies outside a contiguous destination interval. -/
 def AvoidsRange (layout : RegisterMap Γ) (dst count : Reg) : Prop :=
   ∀ {τ} (v : Var Γ τ) (i : Fin (fieldCount τ)),
@@ -184,6 +232,47 @@ def extend (layout : RegisterMap Γ) (τ : Ty) (dst : Reg) : RegisterMap (τ :: 
 @[simp] theorem extend_there (layout : RegisterMap Γ) (τ : Ty) (dst : Reg)
     (v : Var Γ σ) (i : Fin (fieldCount σ)) :
     RegisterMap.extend layout τ dst (.there v) i = layout v i := rfl
+
+/-- A nonempty fresh binding starts at its allocated destination. -/
+@[simp] theorem base_extend_here (layout : RegisterMap Γ) (dst : Reg)
+    (positive : 0 < fieldCount τ) : base (extend layout τ dst) .here = dst := by
+  rw [base_of_pos _ _ positive, extend_here, Nat.add_zero]
+
+/-- A fresh binding does not relocate any existing variable. -/
+@[simp] theorem base_extend_there (layout : RegisterMap Γ) (τ : Ty) (dst : Reg)
+    (target : Var Γ σ) : base (extend layout τ dst) (.there target) = base layout target := by
+  simp only [base, extend_there]
+
+/-- Fresh allocation automatically preserves the layout discipline needed by
+updates of existing variables. -/
+theorem Regular.extend {layout : RegisterMap Γ} (regular : Regular layout)
+    (bounded : layout.Bounded next) : Regular (RegisterMap.extend layout τ next) := by
+  constructor
+  · intro σ target i
+    cases target with
+    | here =>
+        rw [extend_here, base_extend_here layout next (Nat.lt_of_le_of_lt (Nat.zero_le _) i.isLt)]
+    | there target =>
+        simpa only [extend_there, base_extend_there] using regular.fields target i
+  · intro σ υ target other i j equal
+    cases target with
+    | here =>
+        cases other with
+        | here => rfl
+        | there other =>
+            change next + i.val = layout other j at equal
+            exact False.elim (Nat.not_le_of_gt (bounded other j)
+              (equal ▸ Nat.le_add_right next i.val))
+    | there target =>
+        cases other with
+        | here =>
+            change layout target i = next + j.val at equal
+            exact False.elim (Nat.not_le_of_gt (bounded target i)
+              (equal.symm ▸ Nat.le_add_right next j.val))
+        | there other =>
+            exact congrArg
+              (fun v : Sigma (Var Γ) => (⟨v.1, Var.there v.2⟩ : Sigma (Var (τ :: Γ))))
+              (regular.injective target other i j equal)
 
 /-- Fresh allocation uses precisely the new value's number of fields. -/
 theorem extend_bounded {layout : RegisterMap Γ} (bounded : layout.Bounded next) :
@@ -244,6 +333,52 @@ theorem parameterMap_bounded (Γ : List Ty) (base : Reg := 0) :
       | there v =>
           simpa only [parameterMap_there, contextSize, Nat.add_assoc] using
             ih (base + fieldCount τ) v i
+
+/-- Compact parameter allocation is regular, including zero-field parameters. -/
+theorem parameterMap_regular (Γ : List Ty) (base : Reg := 0) :
+    RegisterMap.Regular (parameterMap Γ base) := by
+  induction Γ generalizing base with
+  | nil =>
+      constructor
+      · intro τ target i; cases target
+      · intro τ σ target other i j equal; cases target
+  | cons τ Γ ih =>
+      constructor
+      · intro σ target i
+        cases target with
+        | here =>
+            change base + i.val =
+              RegisterMap.base (RegisterMap.extend (parameterMap Γ (base + fieldCount τ)) τ base)
+                .here + i.val
+            rw [RegisterMap.base_extend_here _ _ (Nat.lt_of_le_of_lt (Nat.zero_le _) i.isLt)]
+        | there target =>
+            simpa only [parameterMap, RegisterMap.extend_there, RegisterMap.base_extend_there]
+              using (ih (base + fieldCount τ)).fields target i
+      · intro σ υ target other i j equal
+        cases target with
+        | here =>
+            cases other with
+            | here => rfl
+            | there other =>
+                have lower : base + fieldCount τ ≤ parameterMap Γ (base + fieldCount τ) other j := by
+                  rw [parameterMap_add]
+                  exact Nat.le_add_right _ _
+                change base + i.val = parameterMap Γ (base + fieldCount τ) other j at equal
+                exact False.elim (Nat.ne_of_lt
+                  (Nat.lt_of_lt_of_le (Nat.add_lt_add_left i.isLt base) lower) equal)
+        | there target =>
+            cases other with
+            | here =>
+                have lower : base + fieldCount τ ≤ parameterMap Γ (base + fieldCount τ) target i := by
+                  rw [parameterMap_add]
+                  exact Nat.le_add_right _ _
+                change parameterMap Γ (base + fieldCount τ) target i = base + j.val at equal
+                exact False.elim (Nat.ne_of_lt
+                  (Nat.lt_of_lt_of_le (Nat.add_lt_add_left j.isLt base) lower) equal.symm)
+            | there other =>
+                exact congrArg
+                  (fun v : Sigma (Var Γ) => (⟨v.1, Var.there v.2⟩ : Sigma (Var (τ :: Γ))))
+                  ((ih (base + fieldCount τ)).injective target other i j equal)
 
 /-- Each parameter field has an actual entry at its compact slot. The optional
 lookup returns `some`, so the frame's out-of-range default is never used here. -/
@@ -318,6 +453,53 @@ theorem setRegs {layout : RegisterMap Γ} {env : Env Γ} {entry : Source.State w
           (valueRegs_nodup τ dst) (by simp) i.val (by simp)
     rw [assigned]
     exact Word.ofNat_toNat_of_lt (fits.fields placement i)
+
+/-- Ordered field reception updates exactly the selected source variable.
+Regularity is supplied by the generated layout, not by the source algorithm. -/
+theorem set {layout : RegisterMap Γ} {env : Env Γ} {entry : Source.State w}
+    {placement : Nat → Word w} (matched : layout.Matches placement env entry.regs)
+    (regular : RegisterMap.Regular layout) (target : Var Γ τ) (value : Value τ)
+    (fits : ValueFits w value) :
+    layout.Matches placement (env.set target value)
+      (entry.setRegs (valueRegs τ (RegisterMap.base layout target))
+        (valueWords placement value)).regs := by
+  intro σ other i
+  by_cases same : (⟨τ, target⟩ : Sigma (Var Γ)) = ⟨σ, other⟩
+  · have types := congrArg Sigma.fst same
+    cases types
+    have matchedVariables := eq_of_heq (Sigma.mk.inj same).2
+    cases matchedVariables
+    rw [Env.get_set_self, regular.fields target i]
+    have assigned :
+        (entry.setRegs (valueRegs τ (RegisterMap.base layout target))
+          (valueWords placement value)).regs (RegisterMap.base layout target + i.val) =
+          BitVec.ofNat w (valueField placement value i) := by
+      simpa only [valueRegs_getElem, valueWords_getElem] using
+        Source.State.setRegs_getElem entry (valueRegs τ (RegisterMap.base layout target))
+          (valueWords placement value) (valueRegs_nodup τ _) (by simp) i.val (by simp)
+    rw [assigned]
+    exact Word.ofNat_toNat_of_lt (fits.fields placement i)
+  · have outside : layout other i ∉ valueRegs τ (RegisterMap.base layout target) := by
+      intro member
+      have interval := mem_valueRegs.mp member
+      let j : Fin (fieldCount τ) :=
+        ⟨layout other i - RegisterMap.base layout target,
+          (Nat.sub_lt_iff_lt_add' interval.1).mpr interval.2⟩
+      apply same
+      apply regular.injective target other j i
+      rw [regular.fields target j]
+      exact Nat.add_sub_of_le interval.1
+    rw [Source.State.setRegs_ne entry _ _ _ outside, matched other i]
+    have unchanged : (env.set target value).get other = env.get other := by
+      by_cases types : τ = σ
+      · cases types
+        apply Env.get_set_of_ne
+        intro equal
+        apply same
+        cases eq_of_heq equal
+        rfl
+      · exact Env.get_set_of_type_ne env target value other types
+    rw [unchanged]
 
 /-- Caller restoration retains the lexical environment while preserving the
 callee's actual shared state. No heap or I/O frame premise is needed. -/

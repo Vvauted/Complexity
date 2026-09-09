@@ -12,6 +12,8 @@ import Complexity.Language.Eval.Composition
 continuation only on normal completion. Actual returns and faults bypass that
 continuation. The result uses `ExceptT Fault (StateT Heap Part)`, retaining the
 actual final heap even on a fault, and distinguishing finite fault from divergence.
+Normal continuations receive the actual updated locals as ordinary arguments;
+assignment does not introduce another state monad or hide changes at scope exit.
 
 The equations below follow from the existing evaluation composition laws and
 mathlib's partial-value monad laws. They neither define another interpreter nor
@@ -44,6 +46,16 @@ variable (program : Program signatures)
     (Stmt.skip : Stmt signatures Γ result).evalWith program entry next = next entry := by
   funext heap
   simp only [evalWith, eval_skip, Part.bind_some]
+
+/-- Assignment passes the updated local environment to the normal continuation.
+The native action still carries only the actual shared heap; lexical values
+are supplied directly rather than interpreted through a second state monad. -/
+@[simp] theorem evalWith_assign {τ : Ty} (target : Var Γ τ) (value : Prim Γ τ)
+    (entry : Env Γ) (next : Env Γ → ExceptT Fault (StateT Heap Part) (Value result)) :
+    (Stmt.assign target value : Stmt signatures Γ result).evalWith program entry next =
+      next (entry.set target (value.eval entry)) := by
+  funext heap
+  simp only [evalWith, eval_assign, Part.bind_some, State.set]
 
 /-- Return supplies its actual mathematical value and ignores the normal tail. -/
 @[simp] theorem evalWith_ret (value : Atom Γ result) (entry : Env Γ)

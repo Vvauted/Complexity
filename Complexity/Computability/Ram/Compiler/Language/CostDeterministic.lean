@@ -49,6 +49,10 @@ theorem deterministic {signatures : List Signature}
       intro w' depth' finish' control' execution' steps' second
       cases second
       rfl
+  | assign =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second
+      rfl
   | letPrim tail ih =>
       intro w' depth' finish' control' execution' steps' second
       cases second with
