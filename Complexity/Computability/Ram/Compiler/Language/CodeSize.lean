@@ -58,6 +58,7 @@ def sourceCodeSize {signatures : List Signature} {Γ : List Ty} {result : Ty}
         fieldCount signatures[fn].result + sourceCodeSize localsTable body
   | .seq first second => sourceCodeSize localsTable first + sourceCodeSize localsTable second + 3
   | .ite _ yes no => sourceCodeSize localsTable yes + sourceCodeSize localsTable no + 3
+  | .while guard body => sourceCodeSize localsTable guard + sourceCodeSize localsTable body + 15
   | .ret _ => 2 * fieldCount result + 2
 
 /-- Each atomic argument field is materialized by one actual instruction. -/
@@ -195,6 +196,11 @@ theorem lowerStmtCore_stmtSize {signatures : List Signature} {Γ : List Ty} {res
   | ite condition yes no ihYes ihNo =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_ite, atomExpr_compile_length,
         ihYes, ihNo, sourceCodeSize]
+      omega
+  | «while» guard body ihGuard ihBody =>
+      simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, LocalCompiler.stmtSize_assign,
+        LocalCompiler.stmtSize_while, LocalCompiler.stmtSize_ite, LocalCompiler.stmtSize_skip,
+        Expr.compile, List.length_singleton, ihGuard, ihBody, sourceCodeSize]
       omega
   | ret value =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerReturn_stmtSize,

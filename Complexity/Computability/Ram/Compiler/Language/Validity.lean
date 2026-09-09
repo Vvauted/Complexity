@@ -86,6 +86,8 @@ theorem lowerStmtCore_callsValid {signatures : List Signature}
       exact ⟨ihFirst _ _ _ _, trivial, ihSecond _ _ _ _⟩
   | ite condition yes no ihYes ihNo =>
       exact ⟨ihYes _ _ _ _, ihNo _ _ _ _⟩
+  | «while» guard body ihGuard ihBody =>
+      exact ⟨trivial, trivial, ihGuard _ _ _ _, ⟨ihBody _ _ _ _, trivial, trivial⟩, trivial⟩
   | ret value => exact ⟨lowerReturn_callsValid _ _ _ _, trivial⟩
 
 /-- A call-valid normal continuation stays call-valid under syntax-directed

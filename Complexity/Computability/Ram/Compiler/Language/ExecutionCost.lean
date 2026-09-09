@@ -135,6 +135,34 @@ inductive ExecutionCost {signatures : List Signature}
       {body : RealizedExec program w depth no entry finish control} {steps : Nat}
       (cost : ExecutionCost body steps) :
       ExecutionCost (.iteFalse (yes := yes) test body) (steps + 2)
+  | whileFalse {Γ : List Ty} {result : Ty} {depth : Nat}
+      {guard : Complexity.Language.Stmt signatures Γ .bool}
+      {body : Complexity.Language.Stmt signatures Γ result}
+      {entry finish : Complexity.Language.State Γ}
+      {test : RealizedExec program w depth guard entry finish (.returned false)}
+      {guardSteps : Nat} (guardCost : ExecutionCost test guardSteps) :
+      ExecutionCost (.whileFalse (body := body) test) (guardSteps + 11)
+  | whileTrue {Γ : List Ty} {result : Ty} {depth : Nat}
+      {guard : Complexity.Language.Stmt signatures Γ .bool}
+      {body : Complexity.Language.Stmt signatures Γ result}
+      {entry afterGuard afterBody finish : Complexity.Language.State Γ}
+      {control : Control result}
+      {test : RealizedExec program w depth guard entry afterGuard (.returned true)}
+      {iteration : RealizedExec program w depth body afterGuard afterBody .normal}
+      {rest : RealizedExec program w depth (.while guard body) afterBody finish control}
+      {guardSteps bodySteps restSteps : Nat}
+      (guardCost : ExecutionCost test guardSteps) (bodyCost : ExecutionCost iteration bodySteps)
+      (restCost : ExecutionCost rest restSteps) :
+      ExecutionCost (.whileTrue test iteration rest) (guardSteps + bodySteps + restSteps + 10)
+  | whileReturn {Γ : List Ty} {result : Ty} {depth : Nat}
+      {guard : Complexity.Language.Stmt signatures Γ .bool}
+      {body : Complexity.Language.Stmt signatures Γ result}
+      {entry afterGuard finish : Complexity.Language.State Γ} {value : Value result}
+      {test : RealizedExec program w depth guard entry afterGuard (.returned true)}
+      {iteration : RealizedExec program w depth body afterGuard finish (.returned value)}
+      {guardSteps bodySteps : Nat}
+      (guardCost : ExecutionCost test guardSteps) (bodyCost : ExecutionCost iteration bodySteps) :
+      ExecutionCost (.whileReturn test iteration) (guardSteps + bodySteps + 17)
   | ret {Γ : List Ty} {result : Ty} {depth : Nat}
       (value : Atom Γ result) (entry : Complexity.Language.State Γ)
       {fits : ValueFits w (value.eval entry.locals)} :
@@ -196,6 +224,18 @@ theorem RealizedExec.exists_cost {signatures : List Signature}
   | iteFalse test body ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .iteFalse (test := test) cost⟩
+  | whileFalse test ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .whileFalse cost⟩
+  | whileTrue test iteration rest ihTest ihIteration ihRest =>
+      obtain ⟨guardSteps, guardCost⟩ := ihTest
+      obtain ⟨bodySteps, bodyCost⟩ := ihIteration
+      obtain ⟨restSteps, restCost⟩ := ihRest
+      exact ⟨_, .whileTrue guardCost bodyCost restCost⟩
+  | whileReturn test iteration ihTest ihIteration =>
+      obtain ⟨guardSteps, guardCost⟩ := ihTest
+      obtain ⟨bodySteps, bodyCost⟩ := ihIteration
+      exact ⟨_, .whileReturn guardCost bodyCost⟩
   | ret value entry fits => exact ⟨_, .ret value entry (fits := fits)⟩
   | callReturn arguments callee body ihCallee ihBody =>
       obtain ⟨calleeSteps, calleeCost⟩ := ihCallee

@@ -371,9 +371,10 @@ now have direct semantics and lowering, but do not by themselves provide the
 ordinary loop-invariant interface.
 
 The present cost interpretation concerns successful realized executions.
-It is not yet instrumentation of every unrestricted source execution, nor
-source-level loop/potential support. Borrowed-buffer operations now have their
-own lowering and cost observations; loops still require those cases in M2–M3.
+It is not yet instrumentation of every unrestricted source execution.
+Borrowed-buffer operations and typed effectful-guard loops have their own
+lowering and cost observations. The loop potential rule follows actual current
+states; named-loop automation and indexed traversal remain M2–M3 work.
 
 Complete function bodies now omit their redundant empty final dispatch. Exact
 code-size comparison proves a three-instruction saving with the same register
@@ -517,10 +518,11 @@ This state feeds the existing execution and proof interfaces, not a parallel
 language. The present scalar instructions preserve arbitrary heaps; that fact
 must not become an assumed frame rule for future effectful instructions.
 Direct source assignment is implemented independently of any optional SSA
-normalization. Loop guards must next be reevaluated in the actual current state;
-normalization cannot move a changing guard outside the loop. Their source proof
-rules must carry updated locals and heap, and their cost must include the final
-false guard as well as successful iterations and early returns.
+normalization. Typed loop guards now reevaluate in the actual current state;
+their source rules carry updated locals and heap, and their cost includes the
+final false guard as well as successful iterations and early returns. The
+frontend must preserve this behavior: normalization cannot move a changing
+guard outside the loop.
 
 1. Give borrowed objects/views independent heap semantics with actual aliasing.
    Prove read/write/slice and local-frame rules using ordinary contents.
@@ -542,6 +544,29 @@ bound for its compiled execution. It must not be reduced to a newly invented
 This completes a useful borrowed-array subset, not allocated-container support.
 
 ## M3 — While, recursion and reusable high-level implementation proofs
+
+The typed core now has effectful-guard `Stmt.while` and six finite execution
+cases, including guard/body faults and missing guard returns. Source
+`TotalWP.while_wellFounded` and `while_variant` measure progress over the whole
+guard/body cycle; false exits and early returns preserve their actual final
+state and require no further descent. `Stmt.action` is a state-preserving view
+of the same observation, not another interpreter.
+
+The native [loop equation and specification](../Complexity/Language/Eval/Loop.lean)
+reuse the existing strict Part/StateT interpretation. Generic lowering emits
+the guard and body once each; its measured simulation preserves updated locals,
+heap and enclosing return control. Runtime cost distinguishes false exit, normal
+iteration and early return, including the final guard. `StmtCostBound.while`
+composes state-dependent guard/body bounds with a remaining potential, without
+using that potential as execution fuel or a source termination premise.
+
+This is not the named-loop completion gate. The surface still lacks loops and
+ordinary-local invariant bindings. Its existing function `evalWith` observation
+discards locals on return, which is appropriate at a function boundary but
+insufficient for a Boolean-producing guard block. Generate lossless named block
+observations and their composition equations from `Stmt.action`, then connect
+the invariant/variant rule and continuation to those same blocks. Do not hide
+an opaque native `while` or require a user-maintained host implementation.
 
 1. Provide well-founded source `while` and recursive-call rules; user invariants
    and recursive hypotheses concern source values, not backend state.

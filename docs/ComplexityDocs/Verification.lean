@@ -110,6 +110,19 @@ reasoning. `FunctionTotal.triple_spec` turns a supplied source function contract
 into a native continuation rule without unfolding the callee. This does not yet
 automatically synthesize a whole function's frame contract or a loop invariant.
 
+The typed core also has an effectful-guard `Stmt.while`. Its guard is an actual
+Boolean-producing block: it runs in the current state on every iteration, and
+even its false exit retains local and heap updates. A normally completing body
+repeats the loop; a return exits the enclosing function. A guard that falls
+through without returning a Boolean faults. `TotalWP.while_wellFounded` and
+`while_variant` require mathematical descent only after a full normal cycle,
+not on a false exit or early return. These are source rules, without a time budget.
+The [native loop interface](##Complexity.Language.Eval.Loop) gives a one-step
+equation for the same `Stmt.action` and `Stmt.while_spec` for strict `Std.Do`
+reasoning. Its guard and body are actual source blocks, not a second host loop.
+Named loop syntax and an invariant interface over ordinary named locals are
+still unfinished; this core support is not yet the ordinary-loop author experience.
+
 The [compiled buffer invocation](##Examples.Language.BufferCompiled) reuses this
 source proof and derives the read cell's range from the input heap representation.
 Its separate bound concerns the same read/helper/write/slice program and its
@@ -191,6 +204,13 @@ result-dependent bounds can reuse an existing source contract through the call
 rule. The tactic currently uses uniform bounds at branches and call
 continuations; result-dependent bounds retain the explicit rule interface.
 Neither instruction prices nor mathematical correctness proofs are duplicated.
+
+For typed loops, `StmtCostBound.while` uses a state-dependent potential. The
+guard and body bounds follow the actual state; normal iterations account for
+the remaining potential, while false exits and early returns discharge their
+own remaining work. The final false guard is counted. This is a conditional
+cost rule for the same execution, separate from the well-founded termination
+rule; the structural tactic does not yet choose or apply loop invariants.
 
 The frontend currently supports `Nat`, `Bool`, `Unit`, borrowed buffers, lexical bindings, actual
 named calls, branches and returns. Nested addition, multiplication, saturating

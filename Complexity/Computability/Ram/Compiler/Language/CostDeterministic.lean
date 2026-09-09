@@ -99,6 +99,37 @@ theorem deterministic {signatures : List Signature}
       cases second with
       | iteTrue cost' => simp_all
       | iteFalse cost' => rw [ih cost']
+  | whileFalse guardCost ihGuard =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | whileFalse guardCost' => rw [ihGuard guardCost']
+      | whileTrue guardCost' bodyCost' restCost' =>
+          cases Control.returned.inj (observations_eq guardCost guardCost').2
+      | whileReturn guardCost' bodyCost' =>
+          cases Control.returned.inj (observations_eq guardCost guardCost').2
+  | whileTrue guardCost bodyCost restCost ihGuard ihBody ihRest =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | whileFalse guardCost' =>
+          cases Control.returned.inj (observations_eq guardCost guardCost').2
+      | whileTrue guardCost' bodyCost' restCost' =>
+          obtain ⟨rfl, _⟩ := observations_eq guardCost guardCost'
+          obtain ⟨rfl, _⟩ := observations_eq bodyCost bodyCost'
+          rw [ihGuard guardCost', ihBody bodyCost', ihRest restCost']
+      | whileReturn guardCost' bodyCost' =>
+          obtain ⟨rfl, _⟩ := observations_eq guardCost guardCost'
+          cases (observations_eq bodyCost bodyCost').2
+  | whileReturn guardCost bodyCost ihGuard ihBody =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | whileFalse guardCost' =>
+          cases Control.returned.inj (observations_eq guardCost guardCost').2
+      | whileTrue guardCost' bodyCost' restCost' =>
+          obtain ⟨rfl, _⟩ := observations_eq guardCost guardCost'
+          cases (observations_eq bodyCost bodyCost').2
+      | whileReturn guardCost' bodyCost' =>
+          obtain ⟨rfl, _⟩ := observations_eq guardCost guardCost'
+          rw [ihGuard guardCost', ihBody bodyCost']
   | ret =>
       intro w' depth' finish' control' execution' steps' second
       cases second

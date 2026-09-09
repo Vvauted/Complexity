@@ -275,6 +275,7 @@ import Complexity.Language.Basic
 import Complexity.Language.Eval.Basic
 import Complexity.Language.Eval.Composition
 import Complexity.Language.Eval.Continuation
+import Complexity.Language.Eval.Loop
 import Complexity.Language.Eval.Verification
 import Complexity.Language.Heap
 import Complexity.Language.Semantics

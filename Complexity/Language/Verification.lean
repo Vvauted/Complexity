@@ -15,6 +15,9 @@ returns and branch conditions without mentioning a machine representation or
 an instruction budget.
 Local assignment evaluates the mathematical right-hand side in the entry state
 and applies the normal postcondition to the updated state.
+A while guard is itself a value-producing statement block. Its final state
+feeds either the body or the exit. Well-founded descent covers a complete
+guard-and-body iteration, without requiring descent on an early return.
 
 `FunctionTotal` requires the declared body to return a value. Falling through
 the body is not successful function termination. Function contracts compose
@@ -203,6 +206,96 @@ passes directly to the enclosing return postcondition. -/
         | iteFalse truth body => cases hcondition.symm.trans truth
       · rintro ⟨finish, control, execution, post⟩
         exact ⟨finish, control, .iteTrue hcondition execution, post⟩
+
+/-- Unfold one iteration of an effectful guard loop. A guard must return a
+Boolean; normal guard fallthrough and faults cannot establish total correctness.
+Only a normally completing body repeats the loop at its actual final state.
+This recursive equation is deliberately not a simplification rule. -/
+theorem while_iff (guard : Stmt signatures Γ .bool) (body : Stmt signatures Γ result) :
+    TotalWP program (.while guard body) normal returned entry ↔
+      TotalWP program guard (fun _ => False)
+        (fun test afterGuard =>
+          if test then
+            TotalWP program body (TotalWP program (.while guard body) normal returned)
+              returned afterGuard
+          else normal afterGuard) entry := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | whileFalse test => exact ⟨finish, .returned false, test, post⟩
+    | whileTrue test iteration rest =>
+        exact ⟨_, .returned true, test, _, .normal, iteration, finish, control, rest, post⟩
+    | whileReturn test iteration =>
+        exact ⟨_, .returned true, test, finish, _, iteration, post⟩
+    | whileFault test iteration => exact False.elim post
+    | whileGuardFault test => exact False.elim post
+    | whileGuardMissingReturn test => exact False.elim post
+  · rintro ⟨afterGuard, guardControl, test, post⟩
+    cases guardControl with
+    | normal => exact False.elim post
+    | fault error => exact False.elim post
+    | returned condition =>
+        cases condition with
+        | false => exact ⟨afterGuard, .normal, .whileFalse test, post⟩
+        | true =>
+            obtain ⟨afterBody, bodyControl, iteration, post⟩ := post
+            cases bodyControl with
+            | normal =>
+                obtain ⟨finish, control, rest, post⟩ := post
+                exact ⟨finish, control, .whileTrue test iteration rest, post⟩
+            | returned value =>
+                exact ⟨afterBody, .returned value, .whileReturn test iteration, post⟩
+            | fault error => exact False.elim post
+
+/-- An invariant before the guard and well-founded descent after a complete
+normal iteration establish termination. The guard may update both locals and
+heap. A false guard supplies the normal postcondition at its actual final state;
+an early body return supplies the returning postcondition without further descent. -/
+theorem while_wellFounded {guard : Stmt signatures Γ .bool}
+    {body : Stmt signatures Γ result} {invariant : State Γ → Prop}
+    {r : State Γ → State Γ → Prop} (wf : WellFounded r)
+    (step : ∀ current, invariant current →
+      TotalWP program guard (fun _ => False)
+        (fun test afterGuard =>
+          if test then
+            TotalWP program body
+              (fun afterBody => invariant afterBody ∧ r afterBody current)
+              returned afterGuard
+          else normal afterGuard) current)
+    (initial : invariant entry) :
+    TotalWP program (.while guard body) normal returned entry := by
+  have loop : ∀ current, invariant current →
+      TotalWP program (.while guard body) normal returned current := by
+    intro current
+    induction current using wf.induction with
+    | h current ih =>
+        intro preserved
+        apply (while_iff guard body).mpr
+        apply (step current preserved).mono_post (fun _ impossible => False.elim impossible)
+        intro test afterGuard post
+        cases test with
+        | false => exact post
+        | true =>
+            exact post.mono_post
+              (fun afterBody next => ih afterBody next.2 next.1) (fun _ _ h => h)
+  exact loop entry initial
+
+/-- A natural-number variant measures mathematical progress over a whole
+guard-and-body iteration. It is independent of instruction costs or fuel. -/
+theorem while_variant {guard : Stmt signatures Γ .bool}
+    {body : Stmt signatures Γ result} {invariant : State Γ → Prop}
+    (variant : State Γ → Nat)
+    (step : ∀ current, invariant current →
+      TotalWP program guard (fun _ => False)
+        (fun test afterGuard =>
+          if test then
+            TotalWP program body
+              (fun afterBody => invariant afterBody ∧ variant afterBody < variant current)
+              returned afterGuard
+          else normal afterGuard) current)
+    (initial : invariant entry) :
+    TotalWP program (.while guard body) normal returned entry :=
+  while_wellFounded (measure variant).wf step initial
 
 /-- Compose a primitive step after identifying its actual source value. -/
 theorem letPrim {τ : Ty} {value : Prim Γ τ}

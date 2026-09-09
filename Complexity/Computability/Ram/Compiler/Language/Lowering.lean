@@ -21,6 +21,9 @@ the function returned; sequence tails and the final normal continuation inspect
 that flag instead of copying the tail into every branch. The flag is a real
 local word and its assignments and tests are emitted by the existing compiler.
 It is separate from the result fields, including a Unit result's empty tuple.
+Loops reevaluate their guard block on every iteration using a private Boolean
+result and private guard-return flag. A body return retains the enclosing
+function's flag and clears the loop test before the next loop condition.
 Falling through a source function is not certified as a successful source
 return. Behavioral transfer concerns executions that actually return.
 
@@ -134,6 +137,15 @@ def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
       .ite (atomExpr layout condition .bool)
         (lowerStmtCore layout next resultSlot flag yes)
         (lowerStmtCore layout next resultSlot flag no)
+  | .while guard body =>
+      .seq (.assign next (.const 1))
+        (.while (.var next)
+          (.seq (.assign (next + 1) (.const 0))
+            (.seq (lowerStmtCore layout (next + 2) next (next + 1) guard)
+              (.ite (.var next)
+                (.seq (lowerStmtCore layout (next + 2) resultSlot flag body)
+                  (.ite (.var flag) (.assign next (.const 0)) .skip))
+                .skip))))
   | .ret value => .seq (lowerReturn layout resultSlot value) (.assign flag (.const 1))
 
 /-- Evaluate a value-producing block without leaving the surrounding function.

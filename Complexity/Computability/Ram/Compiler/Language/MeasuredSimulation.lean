@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.MeasuredValues
 import Complexity.Computability.Ram.Compiler.Language.Control
+import Complexity.Computability.Ram.Compiler.Language.Effects
 
 /-!
 # Exact costs of independently proved source executions
@@ -60,6 +61,90 @@ variable {placement : Nat → Word w}
 variable {stmt : Complexity.Language.Stmt signatures Γ result}
 variable {entry finish : Complexity.Language.State Γ} {outcome : Control result}
 variable {execution : RealizedExec program w depth stmt entry finish outcome}
+
+/-- A redundant initialization in an induction hypothesis is not an extra
+instruction in the loop tail: retain its actual count separately. -/
+private theorem drop_initialized_one
+    {control count : Nat} {code : Ram.Program} {r : Reg} {body : Ram.Stmt}
+    {s t : Source.State w}
+    (run : Source.LocalMeasuredExec control code heapLimit depth
+      (.seq (.assign r (.const 1)) body) count s t)
+    (one : s.regs r = 1) :
+    ∃ tailSteps, count = 2 + tailSteps ∧
+      Source.LocalMeasuredExec control code heapLimit depth body tailSteps s t := by
+  have unchanged : s.setReg r 1 = s := by
+    simpa only [one] using Source.State.setReg_self s r
+  cases run with
+  | seq first rest =>
+      cases first with
+      | assign reads =>
+          refine ⟨_, rfl, ?_⟩
+          change Source.LocalMeasuredExec control code heapLimit depth body _
+            (s.setReg r 1) t at rest
+          rw [unchanged] at rest
+          exact rest
+
+/-- Use the shared core induction for a typed guard, retaining the guard's
+actual locals and heap and protecting the enclosing return flag. -/
+private theorem lowerGuard_of_core
+    {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {guardFinish : Complexity.Language.State Γ} {choice : Bool} {guardSteps : Nat}
+    (controlReg : Nat)
+    (core : ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
+      RegisterMap.Regular layout → layout.Bounded next →
+      layout.Matches placement entry.locals s.regs → layout.Avoids flag →
+      flag < next → resultSlot + fieldCount .bool ≤ flag →
+      (fieldCount .bool ≤ 1 ∨ layout.AvoidsRange resultSlot (fieldCount .bool)) →
+      HeapRep placement heapLimit entry.heap s → s.regs flag = 0 →
+      ∃ t, Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+        (lowerStmtCore layout next resultSlot flag guard) guardSteps s t ∧
+        ControlMatches (result := .bool) layout placement resultSlot flag
+          guardFinish.locals (.returned choice) t ∧
+        HeapRep placement heapLimit guardFinish.heap t ∧
+        (layout.AvoidsRange resultSlot (fieldCount .bool) →
+          layout.Matches placement guardFinish.locals t.regs))
+    (layout : RegisterMap Γ) (next outerFlag : Reg) (s : Source.State w)
+    (regular : RegisterMap.Regular layout) (bounded : layout.Bounded next)
+    (matched : layout.Matches placement entry.locals s.regs)
+    (avoids : layout.Avoids outerFlag) (fresh : outerFlag < next)
+    (represented : HeapRep placement heapLimit entry.heap s) (flagZero : s.regs outerFlag = 0) :
+    ∃ t, Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+      (lowerStmtCore layout (next + 2) next (next + 1) guard) guardSteps
+        ((s.setReg next 1).setReg (next + 1) 0) t ∧
+      layout.Matches placement guardFinish.locals t.regs ∧
+      HeapRep placement heapLimit guardFinish.heap t ∧
+      t.regs next = (if choice then 1 else 0) ∧ t.regs outerFlag = 0 := by
+  have avoidsTest : layout.Avoids next := by
+    intro τ v i
+    exact Nat.ne_of_lt (bounded v i)
+  have avoidsGuardFlag : layout.Avoids (next + 1) := by
+    intro τ v i
+    exact Nat.ne_of_lt (Nat.lt_trans (bounded v i) (Nat.lt_succ_self next))
+  have bounded' : layout.Bounded (next + 2) := by
+    intro τ v i
+    exact Nat.lt_of_lt_of_le (bounded v i) (Nat.le_add_right next 2)
+  have activeMatches : layout.Matches placement entry.locals (s.setReg next 1).regs :=
+    RegisterMap.Matches.setReg_of_ne matched avoidsTest 1
+  have preparedMatches : layout.Matches placement entry.locals
+      ((s.setReg next 1).setReg (next + 1) 0).regs :=
+    RegisterMap.Matches.setReg_of_ne activeMatches avoidsGuardFlag 0
+  obtain ⟨t, measured, property, finalHeap, finalMatches⟩ :=
+    core layout (next + 2) next (next + 1) _ regular bounded' preparedMatches
+      avoidsGuardFlag (Nat.lt_succ_self (next + 1)) (Nat.le_refl _) (Or.inl (Nat.le_refl 1))
+      ((represented.setReg next 1).setReg (next + 1) 0)
+      (Source.State.setReg_same _ _ _)
+  have tested : t.regs next = (if choice then 1 else 0) := by
+    cases choice <;> simpa [resultExprs, Source.State.eval, Expr.eval] using property.1
+  have flagPreserved := lowerStmtCore_regs_eq (r := outerFlag) measured.erase
+    regular bounded' avoids (Nat.lt_of_lt_of_le fresh (Nat.le_add_right next 2))
+    (flag_not_mem_valueRegs_of_lt .bool next outerFlag fresh)
+    (Nat.ne_of_lt (Nat.lt_of_lt_of_le fresh (Nat.le_add_right next 1)))
+  have unchanged : t.regs outerFlag = 0 := by
+    rw [flagPreserved,
+      Source.State.setReg_ne _ _ _ _
+        (Nat.ne_of_lt (Nat.lt_of_lt_of_le fresh (Nat.le_add_right next 1))),
+      Source.State.setReg_ne _ _ _ _ (Nat.ne_of_lt fresh), flagZero]
+  exact ⟨t, measured, finalMatches (bounded.avoidsRange _), finalHeap, tested, unchanged⟩
 
 /-- Initialize the flag while retaining the actual heap and preparing the
 same layout for the generic wrapper or a complete function. -/
@@ -370,6 +455,142 @@ theorem lowerCoreMeasuredWithLocals (cost : ExecutionCost execution steps) (cont
         (atomExpr_readsBelow layout condition .bool s) conditionFalse body using 1
       simp only [atomExpr_compile_length]
       omega
+  | @whileFalse Γ result depth guard body entry finish test guardSteps guardCost ihGuard =>
+      intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
+        represented flagZero
+      obtain ⟨t, guardRun, guardMatches, finalHeap, tested, preservedFlag⟩ :=
+        lowerGuard_of_core (choice := false) controlReg ihGuard
+          layout next flag s regular bounded matched avoids fresh represented flagZero
+      have initialized : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (.assign next (.const 1)) 2 s (s.setReg next 1) := .assign trivial
+      have reset : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (.assign (next + 1) (.const 0)) 2 (s.setReg next 1)
+            ((s.setReg next 1).setReg (next + 1) 0) := .assign trivial
+      have active : (s.setReg next 1).eval (.var next) ≠ 0 := by
+        change (s.setReg next 1).regs next ≠ 0
+        rw [Source.State.setReg_same]
+        exact Word.one_ne_zero hw
+      have dispatch : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (.ite (.var next)
+            (.seq (lowerStmtCore layout (next + 2) resultSlot flag body)
+              (.ite (.var flag) (.assign next (.const 0)) .skip)) .skip) 2 t t :=
+        .iteFalse (c := .var next) trivial tested .skip
+      refine ⟨t, ?_, ⟨guardMatches, preservedFlag⟩, finalHeap, fun _ => guardMatches⟩
+      convert Source.LocalMeasuredExec.seq initialized
+        (Source.LocalMeasuredExec.whileTrue (c := .var next) trivial active
+          (.seq reset (.seq guardRun dispatch))
+          (.whileFalse (c := .var next) trivial tested)) using 1
+      simp only [Expr.compile, List.length_singleton]
+      omega
+  | @whileTrue Γ result depth guard body entry afterGuard afterBody finish outcome
+      test iteration rest guardSteps bodySteps restSteps guardCost bodyCost restCost
+      ihGuard ihBody ihRest =>
+      intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
+        represented flagZero
+      obtain ⟨guardTarget, guardRun, guardMatches, guardHeap, tested, preservedFlag⟩ :=
+        lowerGuard_of_core (choice := true) controlReg ihGuard
+          layout next flag s regular bounded matched avoids fresh represented flagZero
+      have bounded' : layout.Bounded (next + 2) := by
+        intro τ v i
+        exact Nat.lt_of_lt_of_le (bounded v i) (Nat.le_add_right next 2)
+      have avoidsTest : layout.Avoids next := by
+        intro τ v i
+        exact Nat.ne_of_lt (bounded v i)
+      obtain ⟨bodyTarget, bodyRun, bodyMatches, bodyHeap, _⟩ :=
+        ihBody layout (next + 2) resultSlot flag guardTarget regular bounded' guardMatches
+          avoids (Nat.lt_of_lt_of_le fresh (Nat.le_add_right next 2))
+          resultFlag copySafe guardHeap preservedFlag
+      have bodyTest : bodyTarget.regs next = 1 := by
+        have preserved := lowerStmtCore_regs_eq (r := next) bodyRun.erase
+          regular bounded' avoidsTest
+          (Nat.lt_trans (Nat.lt_succ_self next) (Nat.lt_succ_self (next + 1)))
+          (flag_not_mem_valueRegs result resultSlot next
+            (Nat.le_trans resultFlag (Nat.le_of_lt fresh))) (Nat.ne_of_gt fresh)
+        exact preserved.trans tested
+      obtain ⟨t, restRun, property, finalHeap, finalMatches⟩ :=
+        ihRest layout next resultSlot flag bodyTarget regular bounded bodyMatches.1 avoids
+          fresh resultFlag copySafe bodyHeap bodyMatches.2
+      obtain ⟨tailSteps, restCount, tailRun⟩ := drop_initialized_one restRun bodyTest
+      have initialized : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (.assign next (.const 1)) 2 s (s.setReg next 1) := .assign trivial
+      have reset : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (.assign (next + 1) (.const 0)) 2 (s.setReg next 1)
+            ((s.setReg next 1).setReg (next + 1) 0) := .assign trivial
+      have active : (s.setReg next 1).eval (.var next) ≠ 0 := by
+        change (s.setReg next 1).regs next ≠ 0
+        rw [Source.State.setReg_same]
+        exact Word.one_ne_zero hw
+      have conditionTrue : guardTarget.eval (.var next) ≠ 0 := by
+        change guardTarget.regs next ≠ 0
+        rw [tested]
+        exact Word.one_ne_zero hw
+      have returnCheck : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (.ite (.var flag) (.assign next (.const 0)) .skip) 2 bodyTarget bodyTarget :=
+        .iteFalse (c := .var flag) trivial bodyMatches.2 .skip
+      refine ⟨t, ?_, property, finalHeap, finalMatches⟩
+      convert Source.LocalMeasuredExec.seq initialized
+        (Source.LocalMeasuredExec.whileTrue (c := .var next) trivial active
+          (.seq reset (.seq guardRun
+            (.iteTrue (c := .var next) trivial conditionTrue (.seq bodyRun returnCheck))))
+          tailRun) using 1
+      simp only [Expr.compile, List.length_singleton]
+      omega
+  | @whileReturn Γ result depth guard body entry afterGuard finish value
+      test iteration guardSteps bodySteps guardCost bodyCost ihGuard ihBody =>
+      intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
+        represented flagZero
+      obtain ⟨guardTarget, guardRun, guardMatches, guardHeap, tested, preservedFlag⟩ :=
+        lowerGuard_of_core (choice := true) controlReg ihGuard
+          layout next flag s regular bounded matched avoids fresh represented flagZero
+      have bounded' : layout.Bounded (next + 2) := by
+        intro τ v i
+        exact Nat.lt_of_lt_of_le (bounded v i) (Nat.le_add_right next 2)
+      have avoidsTest : layout.Avoids next := by
+        intro τ v i
+        exact Nat.ne_of_lt (bounded v i)
+      obtain ⟨bodyTarget, bodyRun, property, bodyHeap, bodyLocals⟩ :=
+        ihBody layout (next + 2) resultSlot flag guardTarget regular bounded' guardMatches
+          avoids (Nat.lt_of_lt_of_le fresh (Nat.le_add_right next 2))
+          resultFlag copySafe guardHeap preservedFlag
+      have initialized : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (.assign next (.const 1)) 2 s (s.setReg next 1) := .assign trivial
+      have reset : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (.assign (next + 1) (.const 0)) 2 (s.setReg next 1)
+            ((s.setReg next 1).setReg (next + 1) 0) := .assign trivial
+      have active : (s.setReg next 1).eval (.var next) ≠ 0 := by
+        change (s.setReg next 1).regs next ≠ 0
+        rw [Source.State.setReg_same]
+        exact Word.one_ne_zero hw
+      have conditionTrue : guardTarget.eval (.var next) ≠ 0 := by
+        change guardTarget.regs next ≠ 0
+        rw [tested]
+        exact Word.one_ne_zero hw
+      have raised : bodyTarget.eval (.var flag) ≠ 0 := by
+        change bodyTarget.regs flag ≠ 0
+        rw [property.2]
+        exact Word.one_ne_zero hw
+      have clear : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (.assign next (.const 0)) 2 bodyTarget (bodyTarget.setReg next 0) := .assign trivial
+      have cleared : (bodyTarget.setReg next 0).eval (.var next) = 0 :=
+        Source.State.setReg_same _ _ _
+      refine ⟨bodyTarget.setReg next 0, ?_, ?_, bodyHeap.setReg next 0, ?_⟩
+      · convert Source.LocalMeasuredExec.seq initialized
+          (Source.LocalMeasuredExec.whileTrue (c := .var next) trivial active
+            (.seq reset (.seq guardRun
+              (.iteTrue (c := .var next) trivial conditionTrue
+                (.seq bodyRun (.iteTrue (c := .var flag) trivial raised clear)))))
+            (.whileFalse (c := .var next) trivial cleared)) using 1
+        simp only [Expr.compile, List.length_singleton]
+        omega
+      · refine ⟨?_, ?_⟩
+        · rw [resultExprs_setReg_eval result resultSlot next 0 bodyTarget
+            (flag_not_mem_valueRegs result resultSlot next
+              (Nat.le_trans resultFlag (Nat.le_of_lt fresh)))]
+          exact property.1
+        · exact (Source.State.setReg_ne bodyTarget next flag 0 (Nat.ne_of_lt fresh)).trans
+            property.2
+      · intro separate τ v i
+        exact RegisterMap.Matches.setReg_of_ne (bodyLocals separate) avoidsTest 0 v i
   | @ret Γ result depth value entry fits =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero

@@ -217,6 +217,70 @@ theorem seq {first second : Complexity.Language.Stmt signatures Γ result}
       firstBound
   · exact Nat.add_le_add_left (Nat.le_max_right (2 + secondBound) 3) firstBound
 
+/-- A potential bounds an effectful loop over the same existing execution.
+Every guard runs at the current state, and its actual final state starts the
+body. A normal round preserves the invariant and pays from the decrease of the
+potential; the final false guard and an early return have their own exit bounds.
+The transition premises may reuse consequences of source specifications. They
+do not require another correctness, termination or representation proof. -/
+theorem «while» {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    {invariant : Complexity.Language.State Γ → Prop}
+    {potential guardBound : Complexity.Language.State Γ → Nat}
+    {bodyBound : Complexity.Language.State Γ → Complexity.Language.State Γ → Nat}
+    (guardCost : ∀ state, invariant state →
+      StmtCostBound program guard state (guardBound state))
+    (bodyCost : ∀ state afterGuard, invariant state →
+      Complexity.Language.Exec program guard state afterGuard (.returned true) →
+      StmtCostBound program body afterGuard (bodyBound state afterGuard))
+    (preserve : ∀ state afterGuard afterBody, invariant state →
+      Complexity.Language.Exec program guard state afterGuard (.returned true) →
+      Complexity.Language.Exec program body afterGuard afterBody .normal → invariant afterBody)
+    (falseExit : ∀ state afterGuard, invariant state →
+      Complexity.Language.Exec program guard state afterGuard (.returned false) →
+      guardBound state + 11 ≤ potential state)
+    (normalStep : ∀ state afterGuard afterBody, invariant state →
+      Complexity.Language.Exec program guard state afterGuard (.returned true) →
+      Complexity.Language.Exec program body afterGuard afterBody .normal →
+      guardBound state + bodyBound state afterGuard + potential afterBody + 10 ≤ potential state)
+    (returnExit : ∀ state afterGuard finish value, invariant state →
+      Complexity.Language.Exec program guard state afterGuard (.returned true) →
+      Complexity.Language.Exec program body afterGuard finish (.returned value) →
+      guardBound state + bodyBound state afterGuard + 17 ≤ potential state)
+    (initial : invariant entry) :
+    StmtCostBound program (.while guard body) entry (potential entry) := by
+  intro w depth finish control execution steps cost
+  have loopBound : ∀ n {state finish : Complexity.Language.State Γ} {control : Control result}
+      (execution : RealizedExec program w depth (.while guard body) state finish control),
+      ExecutionCost execution n → invariant state → n ≤ potential state := by
+    intro n
+    induction n using Nat.strong_induction_on with
+    | h n ih =>
+        intro state finish control execution cost hstate
+        cases cost with
+        | @whileFalse Γ result depth guard body state finish test guardSteps testCost =>
+            have guardLe := guardCost state hstate test testCost
+            have exitLe := falseExit state finish hstate test.erase
+            omega
+        | @whileTrue Γ result depth guard body state afterGuard afterBody finish control
+            test iteration rest guardSteps bodySteps restSteps testCost iterationCost restCost =>
+            have guardLe := guardCost state hstate test testCost
+            have bodyLe := bodyCost state afterGuard hstate test.erase iteration iterationCost
+            have nextInvariant := preserve state afterGuard afterBody hstate
+              test.erase iteration.erase
+            have restLe := ih restSteps (by omega) rest restCost nextInvariant
+            have roundLe := normalStep state afterGuard afterBody hstate
+              test.erase iteration.erase
+            omega
+        | @whileReturn Γ result depth guard body state afterGuard finish value
+            test iteration guardSteps bodySteps testCost iterationCost =>
+            have guardLe := guardCost state hstate test testCost
+            have bodyLe := bodyCost state afterGuard hstate test.erase iteration iterationCost
+            have exitLe := returnExit state afterGuard finish value hstate
+              test.erase iteration.erase
+            omega
+  exact loopBound steps execution cost initial
+
 /-- Compose a separate callee bound with its actual returned-value and heap continuation.
 The result premise concerns only completed source calls: use an existing
 `FunctionTotal.postcondition`, or `True` when the bound needs no result property.

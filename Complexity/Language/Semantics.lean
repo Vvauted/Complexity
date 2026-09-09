@@ -28,6 +28,11 @@ their relative extent and bind another view of the same object, not a snapshot.
 Assignment evaluates its right-hand side in the current locals once, then updates
 the selected local without changing the heap. Scope exit preserves assignments
 to outer locals; caller restoration is lexical, not heap rollback.
+
+A loop evaluates its Boolean guard block anew before every iteration. The guard's
+returned Boolean is local to that block; its actual final locals and heap feed
+the body or the false exit. Body returns leave the enclosing loop immediately.
+Guard fallthrough is a missing-return fault, not a false condition.
 -/
 
 namespace Complexity.Language
@@ -38,7 +43,9 @@ inductive Fault where
   | heap (error : Heap.Error)
   deriving DecidableEq, Repr
 
-/-- Statement continuation, function return and failure are distinct outcomes. -/
+/-- Statement continuation, return from a value-producing block and failure are
+distinct outcomes. A function catches its body return; a loop catches only its
+Boolean guard's return, passing a body return to the enclosing computation. -/
 inductive Control (result : Ty) where
   | normal
   | returned : Value result → Control result
@@ -129,6 +136,36 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
       (test : condition.eval entry.locals = false)
       (body : Exec program no entry finish control) :
       Exec program (.ite condition yes no) entry finish control
+  | whileFalse {Γ : List Ty} {result : Ty} {guard : Stmt signatures Γ .bool}
+      {body : Stmt signatures Γ result} {entry finish : State Γ}
+      (test : Exec program guard entry finish (.returned false)) :
+      Exec program (.while guard body) entry finish .normal
+  | whileTrue {Γ : List Ty} {result : Ty} {guard : Stmt signatures Γ .bool}
+      {body : Stmt signatures Γ result} {entry afterGuard afterBody finish : State Γ}
+      {control : Control result}
+      (test : Exec program guard entry afterGuard (.returned true))
+      (iteration : Exec program body afterGuard afterBody .normal)
+      (rest : Exec program (.while guard body) afterBody finish control) :
+      Exec program (.while guard body) entry finish control
+  | whileReturn {Γ : List Ty} {result : Ty} {guard : Stmt signatures Γ .bool}
+      {body : Stmt signatures Γ result} {entry afterGuard finish : State Γ}
+      {value : Value result}
+      (test : Exec program guard entry afterGuard (.returned true))
+      (iteration : Exec program body afterGuard finish (.returned value)) :
+      Exec program (.while guard body) entry finish (.returned value)
+  | whileFault {Γ : List Ty} {result : Ty} {guard : Stmt signatures Γ .bool}
+      {body : Stmt signatures Γ result} {entry afterGuard finish : State Γ} {error : Fault}
+      (test : Exec program guard entry afterGuard (.returned true))
+      (iteration : Exec program body afterGuard finish (.fault error)) :
+      Exec program (.while guard body) entry finish (.fault error)
+  | whileGuardFault {Γ : List Ty} {result : Ty} {guard : Stmt signatures Γ .bool}
+      {body : Stmt signatures Γ result} {entry finish : State Γ} {error : Fault}
+      (test : Exec program guard entry finish (.fault error)) :
+      Exec program (.while guard body) entry finish (.fault error)
+  | whileGuardMissingReturn {Γ : List Ty} {result : Ty} {guard : Stmt signatures Γ .bool}
+      {body : Stmt signatures Γ result} {entry finish : State Γ}
+      (test : Exec program guard entry finish .normal) :
+      Exec program (.while guard body) entry finish (.fault .missingReturn)
   | ret {Γ : List Ty} {result : Ty} (value : Atom Γ result) (entry : State Γ) :
       Exec program (.ret value) entry entry (.returned (value.eval entry.locals))
   | callReturn {Γ : List Ty} {result : Ty} {fn : Fin signatures.length}
@@ -195,6 +232,18 @@ theorem locals_eq {signatures : List Signature} {program : Program signatures}
   | seqFault head ih => intro unchanged; exact ih unchanged.1
   | iteTrue test body ih => intro unchanged; exact ih unchanged.1
   | iteFalse test body ih => intro unchanged; exact ih unchanged.2
+  | whileFalse test ih => intro unchanged; exact ih unchanged.1
+  | whileTrue test iteration rest ihTest ihIteration ihRest =>
+      intro unchanged
+      exact (ihRest unchanged).trans ((ihIteration unchanged.2).trans (ihTest unchanged.1))
+  | whileReturn test iteration ihTest ihIteration =>
+      intro unchanged
+      exact (ihIteration unchanged.2).trans (ihTest unchanged.1)
+  | whileFault test iteration ihTest ihIteration =>
+      intro unchanged
+      exact (ihIteration unchanged.2).trans (ihTest unchanged.1)
+  | whileGuardFault test ih => intro unchanged; exact ih unchanged.1
+  | whileGuardMissingReturn test ih => intro unchanged; exact ih unchanged.1
   | ret => intro _; rfl
   | callReturn callee body ihCallee ihBody =>
       intro unchanged
@@ -286,6 +335,80 @@ theorem deterministic {signatures : List Signature} {program : Program signature
       cases second with
       | iteTrue test' body' => simp_all
       | iteFalse test' body' => exact ih body'
+  | whileFalse test ih =>
+      cases second with
+      | whileFalse test' =>
+          obtain ⟨rfl, _⟩ := ih test'
+          exact ⟨rfl, rfl⟩
+      | whileTrue test' iteration' rest' => cases (ih test').2
+      | whileReturn test' iteration' => cases (ih test').2
+      | whileFault test' iteration' => cases (ih test').2
+      | whileGuardFault test' => cases (ih test').2
+      | whileGuardMissingReturn test' => cases (ih test').2
+  | whileTrue test iteration rest ihTest ihIteration ihRest =>
+      cases second with
+      | whileFalse test' => cases (ihTest test').2
+      | whileTrue test' iteration' rest' =>
+          obtain ⟨rfl, _⟩ := ihTest test'
+          obtain ⟨rfl, _⟩ := ihIteration iteration'
+          exact ihRest rest'
+      | whileReturn test' iteration' =>
+          obtain ⟨rfl, _⟩ := ihTest test'
+          cases (ihIteration iteration').2
+      | whileFault test' iteration' =>
+          obtain ⟨rfl, _⟩ := ihTest test'
+          cases (ihIteration iteration').2
+      | whileGuardFault test' => cases (ihTest test').2
+      | whileGuardMissingReturn test' => cases (ihTest test').2
+  | whileReturn test iteration ihTest ihIteration =>
+      cases second with
+      | whileFalse test' => cases (ihTest test').2
+      | whileTrue test' iteration' rest' =>
+          obtain ⟨rfl, _⟩ := ihTest test'
+          cases (ihIteration iteration').2
+      | whileReturn test' iteration' =>
+          obtain ⟨rfl, _⟩ := ihTest test'
+          exact ihIteration iteration'
+      | whileFault test' iteration' =>
+          obtain ⟨rfl, _⟩ := ihTest test'
+          cases (ihIteration iteration').2
+      | whileGuardFault test' => cases (ihTest test').2
+      | whileGuardMissingReturn test' => cases (ihTest test').2
+  | whileFault test iteration ihTest ihIteration =>
+      cases second with
+      | whileFalse test' => cases (ihTest test').2
+      | whileTrue test' iteration' rest' =>
+          obtain ⟨rfl, _⟩ := ihTest test'
+          cases (ihIteration iteration').2
+      | whileReturn test' iteration' =>
+          obtain ⟨rfl, _⟩ := ihTest test'
+          cases (ihIteration iteration').2
+      | whileFault test' iteration' =>
+          obtain ⟨rfl, _⟩ := ihTest test'
+          exact ihIteration iteration'
+      | whileGuardFault test' => cases (ihTest test').2
+      | whileGuardMissingReturn test' => cases (ihTest test').2
+  | whileGuardFault test ih =>
+      cases second with
+      | whileFalse test' => cases (ih test').2
+      | whileTrue test' iteration' rest' => cases (ih test').2
+      | whileReturn test' iteration' => cases (ih test').2
+      | whileFault test' iteration' => cases (ih test').2
+      | whileGuardFault test' =>
+          obtain ⟨rfl, sameControl⟩ := ih test'
+          cases Control.fault.inj sameControl
+          exact ⟨rfl, rfl⟩
+      | whileGuardMissingReturn test' => cases (ih test').2
+  | whileGuardMissingReturn test ih =>
+      cases second with
+      | whileFalse test' => cases (ih test').2
+      | whileTrue test' iteration' rest' => cases (ih test').2
+      | whileReturn test' iteration' => cases (ih test').2
+      | whileFault test' iteration' => cases (ih test').2
+      | whileGuardFault test' => cases (ih test').2
+      | whileGuardMissingReturn test' =>
+          obtain ⟨rfl, _⟩ := ih test'
+          exact ⟨rfl, rfl⟩
   | ret =>
       cases second
       exact ⟨rfl, rfl⟩

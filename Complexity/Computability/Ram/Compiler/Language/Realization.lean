@@ -112,6 +112,27 @@ inductive RealizedExec {signatures : List Signature}
       (test : condition.eval entry.locals = false)
       (body : RealizedExec program w depth no entry finish control) :
       RealizedExec program w depth (.ite condition yes no) entry finish control
+  | whileFalse {Γ : List Ty} {result : Ty} {depth : Nat}
+      {guard : Complexity.Language.Stmt signatures Γ .bool}
+      {body : Complexity.Language.Stmt signatures Γ result}
+      {entry finish : Complexity.Language.State Γ}
+      (test : RealizedExec program w depth guard entry finish (.returned false)) :
+      RealizedExec program w depth (.while guard body) entry finish .normal
+  | whileTrue {Γ : List Ty} {result : Ty} {depth : Nat}
+      {guard : Complexity.Language.Stmt signatures Γ .bool}
+      {body : Complexity.Language.Stmt signatures Γ result}
+      {entry afterGuard afterBody finish : Complexity.Language.State Γ} {control : Control result}
+      (test : RealizedExec program w depth guard entry afterGuard (.returned true))
+      (iteration : RealizedExec program w depth body afterGuard afterBody .normal)
+      (rest : RealizedExec program w depth (.while guard body) afterBody finish control) :
+      RealizedExec program w depth (.while guard body) entry finish control
+  | whileReturn {Γ : List Ty} {result : Ty} {depth : Nat}
+      {guard : Complexity.Language.Stmt signatures Γ .bool}
+      {body : Complexity.Language.Stmt signatures Γ result}
+      {entry afterGuard finish : Complexity.Language.State Γ} {value : Value result}
+      (test : RealizedExec program w depth guard entry afterGuard (.returned true))
+      (iteration : RealizedExec program w depth body afterGuard finish (.returned value)) :
+      RealizedExec program w depth (.while guard body) entry finish (.returned value)
   | ret {Γ : List Ty} {result : Ty} {depth : Nat}
       (value : Atom Γ result) (entry : Complexity.Language.State Γ)
       (fits : ValueFits w (value.eval entry.locals)) :
@@ -160,6 +181,10 @@ theorem erase (execution : RealizedExec program w depth stmt entry finish contro
   | seqReturn head ih => exact .seqReturn ih
   | iteTrue test body ih => exact .iteTrue test ih
   | iteFalse test body ih => exact .iteFalse test ih
+  | whileFalse test ih => exact .whileFalse ih
+  | whileTrue test iteration rest ihTest ihIteration ihRest =>
+      exact .whileTrue ihTest ihIteration ihRest
+  | whileReturn test iteration ihTest ihIteration => exact .whileReturn ihTest ihIteration
   | ret value entry fits => exact .ret value entry
   | callReturn arguments callee body ihCallee ihBody => exact .callReturn ihCallee ihBody
 
@@ -184,6 +209,9 @@ theorem outcome_fits (execution : RealizedExec program w depth stmt entry finish
   | seqReturn head ih => exact ih
   | iteTrue test body ih => exact ih
   | iteFalse test body ih => exact ih
+  | whileFalse => trivial
+  | whileTrue test iteration rest ihTest ihIteration ihRest => exact ihRest
+  | whileReturn test iteration ihTest ihIteration => exact ihIteration
   | ret value entry fits => exact fits
   | callReturn arguments callee body ihCallee ihBody => exact ihBody
 
@@ -211,6 +239,11 @@ theorem mono_depth (execution : RealizedExec program w depth stmt entry finish c
   | seqReturn head ih => exact .seqReturn (ih capacity)
   | iteTrue test body ih => exact .iteTrue test (ih capacity)
   | iteFalse test body ih => exact .iteFalse test (ih capacity)
+  | whileFalse test ih => exact .whileFalse (ih capacity)
+  | whileTrue test iteration rest ihTest ihIteration ihRest =>
+      exact .whileTrue (ihTest capacity) (ihIteration capacity) (ihRest capacity)
+  | whileReturn test iteration ihTest ihIteration =>
+      exact .whileReturn (ihTest capacity) (ihIteration capacity)
   | ret value entry fits => exact .ret value entry fits
   | callReturn arguments callee body ihCallee ihBody =>
       cases depth' with
@@ -473,6 +506,92 @@ theorem slice_of_bound {kind : CellTy} {buffer : Atom Γ (.buffer kind)}
         | iteFalse truth body => cases hcondition.symm.trans truth
       · rintro ⟨finish, control, execution, post⟩
         exact ⟨finish, control, .iteTrue hcondition execution, post⟩
+
+/-- Unfold one actual loop round. The guard must return a Boolean, and its final
+state feeds either the exit postcondition or the body. A normal body continues
+the same loop from its own final state; a returned value exits the enclosing
+function. This equation is not a simplification rule for recursive unfolding. -/
+theorem while_iff (guard : Complexity.Language.Stmt signatures Γ .bool)
+    (body : Complexity.Language.Stmt signatures Γ result) :
+    RealizationWP program w depth (.while guard body) normal returned entry ↔
+      RealizationWP program w depth guard (fun _ => False)
+        (fun test afterGuard => if test then
+          RealizationWP program w depth body
+            (RealizationWP program w depth (.while guard body) normal returned)
+            returned afterGuard
+          else normal afterGuard) entry := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | whileFalse test => exact ⟨finish, .returned false, test, post⟩
+    | whileTrue test iteration rest =>
+        exact ⟨_, .returned true, test, _, .normal, iteration, finish, control, rest, post⟩
+    | whileReturn test iteration =>
+        exact ⟨_, .returned true, test, finish, _, iteration, post⟩
+  · rintro ⟨afterGuard, guardControl, test, post⟩
+    cases guardControl with
+    | normal => exact False.elim post
+    | fault error => exact False.elim post
+    | returned decision =>
+        cases decision with
+        | false => exact ⟨afterGuard, .normal, .whileFalse test, post⟩
+        | true =>
+            obtain ⟨afterBody, bodyControl, iteration, post⟩ := post
+            cases bodyControl with
+            | normal =>
+                obtain ⟨finish, control, rest, post⟩ := post
+                exact ⟨finish, control, .whileTrue test iteration rest, post⟩
+            | returned value => exact ⟨afterBody, .returned value, .whileReturn test iteration, post⟩
+            | fault error => exact False.elim post
+
+/-- Prove realizability and termination by descent across complete guard/body
+rounds. The invariant holds at the next guard entry, not necessarily after an
+effectful guard. False guards and early returns need no descent. The relation is
+mathematical termination evidence, separate from instruction costs and nesting. -/
+theorem while_wellFounded {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    {invariant : Complexity.Language.State Γ → Prop}
+    {r : Complexity.Language.State Γ → Complexity.Language.State Γ → Prop}
+    (wf : WellFounded r)
+    (step : ∀ current, invariant current →
+      RealizationWP program w depth guard (fun _ => False)
+        (fun test afterGuard => if test then
+          RealizationWP program w depth body
+            (fun afterBody => invariant afterBody ∧ r afterBody current)
+            returned afterGuard
+          else normal afterGuard) current)
+    (initial : invariant entry) :
+    RealizationWP program w depth (.while guard body) normal returned entry := by
+  revert initial
+  induction entry using wf.induction with
+  | h current ih =>
+      intro initial
+      apply (while_iff guard body).mpr
+      refine (step current initial).mono_post (fun _ impossible => impossible) ?_
+      intro test afterGuard post
+      cases test with
+      | false => exact post
+      | true =>
+          exact post.mono_post (fun afterBody property => ih afterBody property.2 property.1)
+            (fun _ _ property => property)
+
+/-- A natural-valued variant is a special case of mathematical round descent,
+not an instruction budget or execution fuel. Operation ranges and the shared
+call-nesting capacity remain in the same realization judgment. -/
+theorem while_variant {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    {invariant : Complexity.Language.State Γ → Prop}
+    (variant : Complexity.Language.State Γ → Nat)
+    (step : ∀ current, invariant current →
+      RealizationWP program w depth guard (fun _ => False)
+        (fun test afterGuard => if test then
+          RealizationWP program w depth body
+            (fun afterBody => invariant afterBody ∧ variant afterBody < variant current)
+            returned afterGuard
+          else normal afterGuard) current)
+    (initial : invariant entry) :
+    RealizationWP program w depth (.while guard body) normal returned entry :=
+  while_wellFounded (measure variant).wf step initial
 
 end RealizationWP
 

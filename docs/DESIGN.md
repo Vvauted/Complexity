@@ -4,13 +4,16 @@ The [roadmap](ROADMAP.md) sets development priorities. The
 [high-level language design](HIGH_LEVEL_LANGUAGE.md) specifies the next
 architecture: an independently interpreted typed core, source-level proofs and
 automatically checked lowering to the existing RAM backend. Its independent
-scalar core and whole-function proof transfer are implemented separately; the
-current named syntax still directly targets register IR. A private return flag
+core and whole-function proof transfer are implemented separately. The
+`source_program` frontend targets that independent core; `ram_def` remains the
+named register-IR interface. A private return flag
 avoids copying continuations; its exact static code-size formulas retain real
 callee-frame expansion. Realized scalar source costs now correspond to actual
 measured execution, with conditional source bounds and outer-call accounting.
-The new core's surface, mutable data, loops and semantic Std.Do adapter remain
-unfinished.
+Borrowed buffers, mutable locals and typed effectful-guard loops have source
+rules and compiler connections. The semantic Std.Do adapter reuses strict Part
+and native state transformers. Named loop syntax and ordinary-local invariant
+automation, richer data and allocation remain unfinished.
 
 The sections below document the existing implementation and the semantic
 boundaries that its reuse must preserve. Here, `Source` means the current

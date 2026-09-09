@@ -223,6 +223,8 @@ inductive Stmt (signatures : List Signature) : List Ty → Ty → Type where
       Stmt signatures Γ result
   | ite {Γ : List Ty} {result : Ty} (condition : Atom Γ .bool)
       (yes no : Stmt signatures Γ result) : Stmt signatures Γ result
+  | while {Γ : List Ty} {result : Ty} (guard : Stmt signatures Γ .bool)
+      (body : Stmt signatures Γ result) : Stmt signatures Γ result
   | ret {Γ : List Ty} {result : Ty} (value : Atom Γ result) : Stmt signatures Γ result
 
 /-- A sufficient structural condition for preserving the enclosing locals.
@@ -241,6 +243,7 @@ conservatively rejects assignments even to a binding that will leave scope. -/
   | .call _ _ continuation => continuation.NoLocalWrites
   | .seq first second => first.NoLocalWrites ∧ second.NoLocalWrites
   | .ite _ yes no => yes.NoLocalWrites ∧ no.NoLocalWrites
+  | .while guard body => guard.NoLocalWrites ∧ body.NoLocalWrites
   | .ret _ => True
 
 /-- A finite function table whose entries are actual typed statement bodies.

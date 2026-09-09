@@ -38,6 +38,7 @@ def NoHeapWrites {signatures : List Signature} {Γ : List Ty} {result : Ty} :
   | .write .. => False
   | .seq first second => NoHeapWrites first ∧ NoHeapWrites second
   | .ite _ yes no => NoHeapWrites yes ∧ NoHeapWrites no
+  | .while guard body => NoHeapWrites guard ∧ NoHeapWrites body
 
 /-- Ordered field materialization only changes its local destinations. -/
 theorem copyFields_noSharedWrites (dst : Reg) (fields : List Expr) :
@@ -96,6 +97,10 @@ theorem lowerStmtCore_noSharedWrites {signatures : List Signature} {Γ : List Ty
   | ite test yes no yesIH noIH =>
     intro condition
     exact ⟨yesIH _ _ _ _ condition.1, noIH _ _ _ _ condition.2⟩
+  | «while» guard body guardIH bodyIH =>
+    intro condition
+    exact ⟨trivial, trivial, guardIH _ _ _ _ condition.1,
+      ⟨bodyIH _ _ _ _ condition.2, trivial, trivial⟩, trivial⟩
   | ret value => intro _; exact ⟨lowerReturn_noSharedWrites layout resultSlot value, trivial⟩
 
 /-- A read-only source statement retains the no-shared-writes condition of its
@@ -185,6 +190,8 @@ theorem lowerStmtCore_noIOWrites {signatures : List Signature} {Γ : List Ty} {r
   | call fn args body ih => exact ⟨trivial, ih _ _ _ _⟩
   | seq first second firstIH secondIH => exact ⟨firstIH _ _ _ _, trivial, secondIH _ _ _ _⟩
   | ite test yes no yesIH noIH => exact ⟨yesIH _ _ _ _, noIH _ _ _ _⟩
+  | «while» guard body guardIH bodyIH =>
+      exact ⟨trivial, trivial, guardIH _ _ _ _, ⟨bodyIH _ _ _ _, trivial, trivial⟩, trivial⟩
   | ret value => exact ⟨lowerReturn_noIOWrites _ _ _, trivial⟩
 
 /-- The generic wrapper preserves a stream-free normal continuation. -/
@@ -309,6 +316,22 @@ theorem lowerStmtCore_not_mem_writtenRegs {signatures : List Signature} {Γ : Li
       intro regular bounded avoids before outsideResult differentFlag
       exact not_or.mpr ⟨yesIH _ _ _ _ regular bounded avoids before outsideResult differentFlag,
         noIH _ _ _ _ regular bounded avoids before outsideResult differentFlag⟩
+  | «while» guard body guardIH bodyIH =>
+      intro regular bounded avoids before outsideResult differentFlag
+      have freshBounded : layout.Bounded (next + 2) :=
+        fun v i => Nat.lt_of_lt_of_le (bounded v i) (Nat.le_add_right next 2)
+      have beforeFresh : r < next + 2 :=
+        Nat.lt_of_lt_of_le before (Nat.le_add_right next 2)
+      have differentTest : r ≠ next := Nat.ne_of_lt before
+      have differentGuardFlag : r ≠ next + 1 :=
+        Nat.ne_of_lt (Nat.lt_trans before (Nat.lt_succ_self next))
+      have guardProtected := guardIH _ _ _ _ regular freshBounded avoids beforeFresh
+        (flag_not_mem_valueRegs_of_lt .bool next r before) differentGuardFlag
+      have bodyProtected := bodyIH _ _ _ _ regular freshBounded avoids beforeFresh
+        outsideResult differentFlag
+      exact not_or.mpr ⟨differentTest, not_or.mpr ⟨differentGuardFlag,
+        not_or.mpr ⟨guardProtected, not_or.mpr ⟨not_or.mpr ⟨bodyProtected,
+          not_or.mpr ⟨differentTest, False.elim⟩⟩, False.elim⟩⟩⟩⟩
   | ret value =>
       intro regular bounded avoids before outsideResult differentFlag
       refine not_or.mpr ⟨?_, differentFlag⟩
