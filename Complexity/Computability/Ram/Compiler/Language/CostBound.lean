@@ -365,6 +365,31 @@ theorem call_uniform {fn : Fin signatures.length} {args : Args Γ signatures[fn]
   call (post := fun _ _ => True) (nextBound := fun _ _ => nextBound) callee hpre
     (fun _ => trivial) (fun value heap _ => body value heap) (fun _ _ _ => Nat.le_refl _)
 
+/-- Reuse a supplied source contract while inferring a uniform continuation
+bound. Uniformity concerns the cost bound, not the returned value, heap or
+postcondition: the continuation retains all actual callee effects. -/
+theorem call_of_spec {fn : Fin signatures.length} {args : Args Γ signatures[fn].params}
+    {continuation : Complexity.Language.Stmt signatures (signatures[fn].result :: Γ) result}
+    {costPre pre : Env signatures[fn].params → Heap → Prop}
+    {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
+    {calleeBound : Env signatures[fn].params → Heap → Nat} {nextBound : Nat}
+    (callee : FunctionCostBound program fn costPre calleeBound)
+    (specification : FunctionTotal program fn pre post)
+    (costInput : costPre (args.eval entry.locals) entry.heap)
+    (input : pre (args.eval entry.locals) entry.heap)
+    (body : ∀ value heap, post (args.eval entry.locals) entry.heap value heap →
+      StmtCostBound program continuation
+        (Complexity.Language.State.cons value ⟨entry.locals, heap⟩) nextBound) :
+    StmtCostBound program (.call fn args continuation) entry
+      (callCost program fn (calleeBound (args.eval entry.locals) entry.heap) + nextBound) := by
+  apply call (post := post (args.eval entry.locals) entry.heap)
+    (nextBound := fun _ _ => nextBound) callee costInput
+  · intro finish value executed
+    exact specification.postcondition input executed
+  · exact body
+  · intro value heap property
+    exact Nat.le_refl _
+
 /-- A standalone call resumes the next statement with the caller's locals and
 the callee's actual final heap. Its supplied contract transports contents and
 frame facts to the next cost proof, without exposing call/skip execution cases.
@@ -404,6 +429,26 @@ theorem call_seq {fn : Fin signatures.length} {args : Args Γ signatures[fn].par
   | seqReturn firstCost =>
       cases firstCost with
       | callReturn calleeCost bodyCost => cases bodyCost
+
+/-- Infer the structural bound for a standalone call and a uniformly bounded
+next statement, retaining the supplied callee's actual postcondition. This
+specializes `call_seq`; it neither assumes unchanged memory nor repeats the
+callee's correctness or instruction accounting. -/
+theorem call_seq_uniform {fn : Fin signatures.length} {args : Args Γ signatures[fn].params}
+    {second : Complexity.Language.Stmt signatures Γ result}
+    {costPre pre : Env signatures[fn].params → Heap → Prop}
+    {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
+    {calleeBound : Env signatures[fn].params → Heap → Nat} {nextBound : Nat}
+    (callee : FunctionCostBound program fn costPre calleeBound)
+    (specification : FunctionTotal program fn pre post)
+    (costInput : costPre (args.eval entry.locals) entry.heap)
+    (input : pre (args.eval entry.locals) entry.heap)
+    (body : ∀ value heap, post (args.eval entry.locals) entry.heap value heap →
+      StmtCostBound program second ⟨entry.locals, heap⟩ nextBound) :
+    StmtCostBound program (.seq (.call fn args .skip) second) entry
+      (callCost program fn (calleeBound (args.eval entry.locals) entry.heap) + 2 + nextBound) :=
+  call_seq (nextBound := fun _ _ => nextBound) callee specification costInput input body
+    (fun _ _ _ => Nat.le_refl _)
 
 end StmtCostBound
 

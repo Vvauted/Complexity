@@ -329,6 +329,11 @@ Status: in progress, not complete.
   factorial now uses the same structural pass with its supplied induction
   hypothesis. These tactics neither maintain a price table nor infer invariants,
   arbitrary callee specifications or recursive bounds.
+  Without `using`, they stop at calls. `ram_source_call using resource, specification`
+  consumes one selected pair of contracts and stops at the next call, carrying
+  the actual result and final heap. The two-buffer consumer uses separate
+  contracts for its distinct contents, with ordinary frame reasoning between
+  calls; source argument and result-scope transport remain inside the tactic.
 
 Next, alongside the lemma-transfer bridge and borrowed-buffer integration:
 
@@ -539,11 +544,15 @@ state transport and charges the actual normal dispatch. Both callee bounds,
 two levels of nested calls and the full halted invocation are composed without
 reopening either loop. Automatic contract selection and cross-program linking
 are not supplied by this same-program consumer.
-The next cost-proof automation should hide its repeated argument-environment
-opening and structural call/sequence composition while accepting separately
-supplied callee contracts. Keep real disjointness and cost inequalities visible;
-the source proof's use of each frame is an actual dependency, not boilerplate
-to erase.
+The staged `ram_source_call` interface now hides repeated argument-environment
+opening and structural call/sequence composition in this consumer's realization
+and cost proofs. Each call takes separately supplied resource and source
+contracts; the next call is left for its own contracts. Uniform numerical
+continuation bounds retain actual result/heap postconditions. Real disjointness,
+frame consequences and the final cost inequality remain visible. General
+result/state-dependent numerical bounds still use the explicit rules. Next,
+improve named-loop composition and supplied-contract selection; do not erase
+the source proof's real dependence on each frame.
 
 The [buffer consumer](../Examples/Language/Buffer.lean) uses native operation
 specifications to prove its ordinary `Array.set` result. Its

@@ -601,6 +601,10 @@ The current scalar realization API has shared `RealizationWP` rules, but its
 consumer no longer applies them one source constructor at a time.
 `ram_source_realize` opens ordinary arguments, reuses the supplied callee's
 realizability and correctness facts and simplifies environment bookkeeping.
+Without `using`, it stops at a call. `ram_source_call using resource, specification`
+then consumes just that call's supplied realizability and source contracts,
+retaining its actual returned value and final heap before stopping at the next
+call. The caller can use a frame consequence to establish that next call's input.
 The underlying intermediate-range and call-nesting facts remain genuine
 source-level obligations. General callee selection and recursive automation
 remain work for the richer language.
@@ -729,12 +733,23 @@ the existing theorems; ordinary arithmetic tactics finish the requested
 inequality. When the guard follows from source values and local facts, the
 tactic selects only that branch through the proved `ite_true`/`ite_false` rules.
 Otherwise it retains a uniform maximum; it does not guess a symbolic decision.
-The tactic's call-continuation bounds remain uniform; result-dependent costs
-use public explicit rules. `StmtCostBound.call_seq` composes a standalone call
-with the next statement using its supplied source contract and actual final
-heap. The shared rule hides call/skip execution cases and accounts only for the
-possible normal sequence dispatch. The two-buffer composition uses it twice,
-without an array-loop or register proof in its cost argument.
+The tactic's call-continuation bounds remain uniform numerical bounds;
+uniformity does not require an unchanged heap or discard the callee's result
+properties. Truly result/state-dependent numerical bounds use the general
+explicit call rules. `StmtCostBound.call_of_spec` and `call_seq_uniform` retain
+the supplied source postcondition while inferring the continuation's uniform
+bound. The latter specializes `call_seq`, which hides standalone call/skip
+execution cases and charges the actual normal sequence dispatch.
+
+For effectful composition, `ram_source_cost (xs ys limit)` stops before the
+first call. `ram_source_call using resource, specification` applies one selected
+cost contract and source contract, then continues structurally until the next
+call. The two-buffer composition uses this interface twice, with separate
+contracts for the two mathematical contents. It no longer opens argument
+environments, restores result scopes or supplies intermediate structural bounds
+by hand. Its actual intermediate-heap frame argument and final cost inequality
+remain explicit. Contract selection is not automatic; the existing single
+`using` mode still reuses its supplied contract throughout the structural pass.
 
 The function-exit optimization separately removes the redundant final dispatch.
 The actual body is three instructions shorter, its inferred register bound is

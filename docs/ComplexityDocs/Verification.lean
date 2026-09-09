@@ -302,9 +302,10 @@ Its uniform bound needs no proof of the minimum;
 result-dependent bounds can reuse an existing source contract through the call
 rule. A guard proved from source values and local facts selects only its actual
 branch through `StmtCostBound.ite_true` or `ite_false`. If neither decision can
-be proved, the tactic retains the uniform maximum of both branches. Call
-continuations still use uniform bounds; result-dependent bounds retain the
-explicit rule interface.
+be proved, the tactic retains the uniform maximum of both branches. Automated
+call continuations use uniform numerical bounds; genuinely result/state-dependent
+numerical bounds retain the explicit rule interface. A uniform bound may still
+need a callee's postcondition to establish a later call's input.
 Neither instruction prices nor mathematical correctness proofs are duplicated.
 
 `StmtCostBound.call_seq` handles a standalone call followed by another statement.
@@ -312,10 +313,33 @@ It reuses the supplied callee contract to pass the actual final heap and ordinar
 postcondition to the next bound, keeping caller-local restoration and empty
 result-scope cases inside the shared proof. The
 [compiled two-buffer composition](##Examples.Language.TraversalCompositionCompiled)
-uses it twice and reuses the original traversal's bounds. Its actual halted
-invocation retains both arrays and the outside-both frame in the same represented
-final heap. Word ranges, code capacity and space for pair/traversal/helper remain
-explicit; these are not a proposed instruction budget.
+uses its uniform specialization twice and reuses the original traversal's bounds.
+Its actual halted invocation retains both arrays and the outside-both frame in
+the same represented final heap. Word ranges, code capacity and space for
+pair/traversal/helper remain explicit; these are not a proposed instruction budget.
+
+For such composition, start with `ram_source_cost (xs ys limit)` without `using`.
+The structural pass opens ordinary parameters and stops at the first call.
+On that call goal, select its contracts explicitly:
+
+```lean
+ram_source_call using (boundedMap_costBound leftContents),
+  (boundedMap_total_frame leftContents)
+```
+
+This handles one call, retaining its actual result, final heap and postcondition,
+then stops at the next call. In the two-buffer proof, the first frame establishes
+that the second input still has `rightContents`; the next `ram_source_call` uses
+the corresponding right-side contracts. The full proof, including input facts
+and the final arithmetic inequality, is `boundedMapPair_costBound` in the linked
+example. After the calls have fixed the inferred bound, `ram_source_cost_step`
+simplifies its generated constants in the remaining inequality; ordinary
+arithmetic proves the requested budget. Argument packing, scope restoration and
+intermediate structural bounds are inferred by shared rules. The same command works after `ram_source_realize`,
+with a realizability contract in place of the cost contract.
+No contract is selected automatically. The original single `using` mode still
+reuses its supplied contract throughout the pass. Loops remain explicit proof
+boundaries in either mode, and neither mode invents an invariant or a frame fact.
 
 For typed loops, `StmtCostBound.while` uses a state-dependent potential. The
 guard and body bounds follow the actual state; normal iterations account for

@@ -25,15 +25,24 @@ mathematical proof obligations, not inferred validity or alias assumptions.
 `ram_source_cost (n limit) using calleeBound` composes the existing cost rules,
 then compares the derived returning-body bound with the requested bound. It
 selects a branch when its condition follows from source values and local facts,
-and otherwise uses a maximum for both branches. Uniform continuation bounds at
-calls need no correctness proof when the bound does not depend on returned
-contents. For result-dependent bounds use `StmtCostBound.call` directly.
+and otherwise uses a maximum for both branches. A call can omit its source
+contract only when the continuation needs no facts about the callee's result
+or final heap. Even a uniform numeric bound may need those facts to justify a
+later call's precondition. For result-dependent bounds use `StmtCostBound.call` directly.
 
 `ram_source_realize_step` and `ram_source_cost_step` run the same structural
 passes on statement-level goals, without introducing a function contract or
 unpacking function arguments. They accept the same optional callee facts.
 Loop contracts remain goals for explicit invariant and potential rules; neither
 pass unfolds a loop or a recursive callee implementation.
+
+Without `using`, the passes stop at calls. `ram_source_call using resource,
+specification` applies the supplied contracts to just the current call, then
+resumes structural reasoning until the next call. For realization, `resource`
+is the callee's realizability contract; for costs it is the callee's cost bound.
+The source specification carries actual return values and final-heap facts to
+the continuation. A standalone call followed by another statement stays intact
+until these facts are available, instead of taking a uniform sequence bound.
 
 These tactics only construct proofs with public rules. They do not introduce
 an execution semantics, unfold callee bodies or maintain an instruction-price
@@ -64,6 +73,17 @@ private def exposeStatement (position : Nat) : TacticM Lean.Expr := withMainCont
   liftMetaTactic fun goal => do
     return [← goal.replaceTargetDefEq exposed]
   return statement
+
+/-- Recognize the existing standalone-call syntax without unfolding a callee's
+implementation. Its following statement must retain the actual returned heap. -/
+private def isStandaloneCallSeq (statement : Lean.Expr) : MetaM Bool := do
+  unless statement.isAppOf ``Complexity.Language.Stmt.seq do
+    return false
+  let first ← whnf statement.getAppArgs[3]!
+  unless first.isAppOf ``Complexity.Language.Stmt.call do
+    return false
+  let continuation ← whnf first.getAppArgs[5]!
+  return continuation.isAppOf ``Complexity.Language.Stmt.skip
 
 /-- Replace a concrete typed argument environment by ordinary curried values. -/
 private partial def introduceArguments (names : List (TSyntax `ident)) : TacticM Unit :=
@@ -201,7 +221,8 @@ private partial def realize
               evalTactic (← `(tactic|
                 apply Ram.LanguageCompiler.RealizationWP.call $feasible $specification))
           | none =>
-              throwError "supply the callee's realizability and correctness contracts with 'using'"
+              normalizeValues
+              return
         else
           throwError "unsupported source statement in realization proof"
         onGoals (realize callee)
@@ -221,18 +242,29 @@ private def inferLocalBound : TacticM Unit := withMainContext do
   replaceMainGoal [proof.mvarId!]
   evalTactic (← `(tactic| constructor))
 
+/-- Apply a structural cost rule, retaining its natural bound parameters for
+inference by the continuation proof. These parameters are not ordinary goals
+that an unrelated local natural number may solve. All proposition obligations,
+other data goals and pre-existing sibling goals remain visible. -/
+private def applyCostRule (rule : TSyntax `term) : TacticM Unit :=
+  evalApplyLikeTactic (fun goal proof => do
+    let generated ← goal.apply proof
+    generated.filterM fun pending => pending.withContext do
+      let type ← whnf (← pending.getType)
+      return !type.isConstOf ``Nat) rule.raw
+
 /-- Select a known branch only after its guard proof is complete. An unresolved
 condition leaves the original uniform rule available, with no speculative
 branch choice or proof obligation retained from the failed attempt. -/
 private def costBranch : TacticM Unit := do
   let known (rule : Name) : TacticM Unit := do
-    evalTactic (← `(tactic| apply $(mkIdent rule):ident))
+    applyCostRule ⟨(mkIdent rule).raw⟩
     focusAndDone do
       normalizeValues
       evalTactic (← `(tactic| all_goals first | assumption | (norm_num; done) | omega))
   Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtCostBound.ite_true) fun _ => do
     Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtCostBound.ite_false) fun _ => do
-      evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.ite_max))
+      applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.ite_max))
 
 private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
   unless (← getGoals).isEmpty do
@@ -251,21 +283,24 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
       else if target.isAppOf ``Ram.LanguageCompiler.StmtCostBound then
         let statement ← exposeStatement 4
         if statement.isAppOf ``Complexity.Language.Stmt.skip then
-          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.skip))
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.skip))
         else if statement.isAppOf ``Complexity.Language.Stmt.assign then
-          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.assign))
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.assign))
         else if statement.isAppOf ``Complexity.Language.Stmt.ret then
-          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.ret))
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.ret))
         else if statement.isAppOf ``Complexity.Language.Stmt.letPrim then
-          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.letPrim))
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.letPrim))
         else if statement.isAppOf ``Complexity.Language.Stmt.read then
-          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.read_uniform))
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.read_uniform))
         else if statement.isAppOf ``Complexity.Language.Stmt.write then
-          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.write))
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.write))
         else if statement.isAppOf ``Complexity.Language.Stmt.slice then
-          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.slice_uniform))
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.slice_uniform))
         else if statement.isAppOf ``Complexity.Language.Stmt.seq then
-          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.seq))
+          if callee.isNone && (← isStandaloneCallSeq statement) then
+            normalizeValues
+            return
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.seq))
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
           costBranch
         else if statement.isAppOf ``Complexity.Language.Stmt.while then
@@ -273,10 +308,10 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
         else if statement.isAppOf ``Complexity.Language.Stmt.call then
           match callee with
           | some certificate =>
-              evalTactic (← `(tactic|
-                apply Ram.LanguageCompiler.StmtCostBound.call_uniform $certificate))
+              applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.call_uniform $certificate))
           | none =>
-              throwError "supply the callee's cost bound with 'using'"
+              normalizeValues
+              return
         else
           throwError "unsupported source statement in cost proof"
         onGoals (cost callee)
@@ -288,6 +323,32 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
               Ram.LanguageCompiler.readCodeSize, Ram.LanguageCompiler.writeCodeSize,
               Ram.LanguageCompiler.sliceCodeSize,
               Ram.LanguageCompiler.fieldCount]))
+
+/-- Consume one explicitly selected pair of contracts. Subsequent calls are
+left for their own contracts, even when they name the same source function. -/
+private def sourceCall (resource specification : TSyntax `term) : TacticM Unit := focus do
+  withMainContext do
+    let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
+    if target.isAppOf ``Ram.LanguageCompiler.RealizationWP then
+      let statement ← exposeStatement 6
+      unless statement.isAppOf ``Complexity.Language.Stmt.call do
+        throwError "expected a source call; use 'ram_source_realize_step' to reach the next call"
+      evalTactic (← `(tactic|
+        apply Ram.LanguageCompiler.RealizationWP.call $resource $specification))
+      onGoals (realize none)
+    else if target.isAppOf ``Ram.LanguageCompiler.StmtCostBound then
+      let statement ← exposeStatement 4
+      if ← isStandaloneCallSeq statement then
+        applyCostRule (← `(
+          Ram.LanguageCompiler.StmtCostBound.call_seq_uniform $resource $specification))
+      else if statement.isAppOf ``Complexity.Language.Stmt.call then
+        applyCostRule (← `(
+          Ram.LanguageCompiler.StmtCostBound.call_of_spec $resource $specification))
+      else
+        throwError "expected a source call; use 'ram_source_cost_step' to reach the next call"
+      onGoals (cost none)
+    else
+      throwError "expected a RealizationWP or StmtCostBound goal at a source call"
 
 private def startRealization (names : Array (TSyntax `ident))
     (callee : Option (TSyntax `term × TSyntax `term)) : TacticM Unit := focus do
@@ -325,7 +386,8 @@ elab_rules : tactic
 /-- Derive a structural cost bound from proved instruction charges and
 an optional callee bound, leaving its comparison with the requested budget.
 Known branch conditions select their actual path; otherwise branch bounds are
-uniform. Call-continuation bounds need no result theorem. -/
+uniform. A call needs no source contract only when its continuation uses no
+facts about the callee's result or final heap. -/
 syntax (name := ramSourceCost) "ram_source_cost" (" (" ident* ")")?
   (" using " term:max)? : tactic
 
@@ -363,3 +425,13 @@ elab_rules : tactic
       Ram.LanguageCompiler.Tactic.cost none
   | `(tactic| ram_source_cost_step using $certificate) => focus do
       Ram.LanguageCompiler.Tactic.cost (some certificate)
+
+/-- Apply one callee's resource and source contracts to the current call, then
+continue structurally until the next call. Its actual result and heap remain
+available there; the supplied contracts are not reused for that later call.
+Other existing goals are preserved. -/
+syntax (name := ramSourceCall) "ram_source_call" " using " term:max ", " term:max : tactic
+
+elab_rules : tactic
+  | `(tactic| ram_source_call using $resource, $specification) =>
+      Ram.LanguageCompiler.Tactic.sourceCall resource specification

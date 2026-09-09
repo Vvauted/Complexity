@@ -37,47 +37,29 @@ theorem boundedMapPair_realizable {w : Nat} (hw : 0 < w)
         args.tail.head.Contents heap rightContents ∧ args.head.Disjoint args.tail.head ∧
         args.head.length < 2 ^ w ∧ args.tail.head.length < 2 ^ w ∧
         args.tail.tail.head < 2 ^ w) := by
-  apply FunctionRealizable.of_wp
-  refine (Env.forall_cons (τ := .buffer .nat) (Γ := [.buffer .nat, .nat]) _).mpr ?_
-  intro xs
-  refine (Env.forall_cons (τ := .buffer .nat) (Γ := [.nat]) _).mpr ?_
-  intro ys
-  refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
-  intro limit
-  refine (Env.forall_nil _).mpr ?_
-  rintro heap ⟨observedLeft, observedRight, separated, leftLengthFits, rightLengthFits, limitFits⟩
-  change RealizationWP Implementation.program w 2 Implementation.boundedMapPairBody
-    (fun _ => False) (fun _ _ => True)
-    ⟨Env.cons (τ := .buffer .nat) xs
-      (Env.cons (τ := .buffer .nat) ys (Env.cons (τ := .nat) limit Env.empty)), heap⟩
-  unfold Implementation.boundedMapPairBody
-  rw [RealizationWP.seq_iff]
-  apply RealizationWP.call (boundedMap_realizable hw leftContents leftIncrementsFit)
+  ram_source_realize (xs ys limit)
+  rename_i heap input
+  rcases input with
+    ⟨observedLeft, observedRight, separated, leftLengthFits, rightLengthFits, limitFits⟩
+  ram_source_call using (boundedMap_realizable hw leftContents leftIncrementsFit),
     (boundedMap_total_frame leftContents)
-  · change EnvFits w (Env.cons (τ := .buffer .nat) xs (Env.cons (τ := .nat) limit Env.empty))
-    simpa only [EnvFits.cons_buffer_iff, EnvFits.cons_nat_iff, EnvFits.empty, and_true] using
-      And.intro leftLengthFits limitFits
-  · decide
-  · exact ⟨observedLeft, leftLengthFits, limitFits⟩
-  · exact observedLeft
-  · intro value afterLeft property _
-    have rightAfter : ys.Contents afterLeft rightContents :=
-      property.2 ys rightContents separated observedRight
-    rw [RealizationWP.skip_iff]
-    simp (config := { failIfUnchanged := false }) only [State.tail_cons]
-    rw [RealizationWP.seq_iff]
-    apply RealizationWP.call (boundedMap_realizable hw rightContents rightIncrementsFit)
-      (boundedMap_total_frame rightContents)
-    · change EnvFits w (Env.cons (τ := .buffer .nat) ys (Env.cons (τ := .nat) limit Env.empty))
-      simpa only [EnvFits.cons_buffer_iff, EnvFits.cons_nat_iff, EnvFits.empty, and_true] using
-        And.intro rightLengthFits limitFits
-    · decide
-    · exact ⟨rightAfter, rightLengthFits, limitFits⟩
-    · exact rightAfter
-    · intro value afterRight property _
-      rw [RealizationWP.skip_iff]
-      simp (config := { failIfUnchanged := false }) only [State.tail_cons]
-      ram_source_realize_step
+  all_goals
+    try
+      first
+      | assumption
+      | exact ⟨leftLengthFits, limitFits⟩
+      | exact ⟨observedLeft, leftLengthFits, limitFits⟩
+      | omega
+  obtain ⟨_, frameLeft⟩ := ‹xs.Contents _ _ ∧ xs.PreservesOutside heap _›
+  have rightAfter := frameLeft ys rightContents separated observedRight
+  ram_source_call using (boundedMap_realizable hw rightContents rightIncrementsFit),
+    (boundedMap_total_frame rightContents)
+  all_goals
+    first
+    | assumption
+    | exact ⟨rightLengthFits, limitFits⟩
+    | exact ⟨rightAfter, rightLengthFits, limitFits⟩
+    | trivial
 
 /-- Each call uses its existing traversal-body bound and the actual generated
 call overhead. The remaining instructions are the two normal sequence guards,
@@ -96,41 +78,15 @@ theorem boundedMapPair_costBound (leftContents rightContents : Array Nat) :
       (fun args heap => args.head.Contents heap leftContents ∧
         args.tail.head.Contents heap rightContents ∧ args.head.Disjoint args.tail.head)
       (fun _ _ => boundedMapPairBodyBound leftContents.size rightContents.size) := by
-  apply FunctionCostBound.of_pointwise
-  refine (Env.forall_cons (τ := .buffer .nat) (Γ := [.buffer .nat, .nat]) _).mpr ?_
-  intro xs
-  refine (Env.forall_cons (τ := .buffer .nat) (Γ := [.nat]) _).mpr ?_
-  intro ys
-  refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
-  intro limit
-  refine (Env.forall_nil _).mpr ?_
-  rintro heap ⟨observedLeft, observedRight, separated⟩
-  let leftCost := callCost Implementation.program Implementation.boundedMapId
-    ((callCost Implementation.program Implementation.incrementId 10 + 43) * leftContents.size + 29)
-  let rightCost := callCost Implementation.program Implementation.boundedMapId
-    ((callCost Implementation.program Implementation.incrementId 10 + 43) * rightContents.size + 29)
-  refine ⟨leftCost + rightCost + 6, ?_⟩
-  constructor
-  · apply StmtCostBound.call_seq (nextBound := fun _ _ => rightCost + 4)
-      (boundedMap_costBound leftContents) (boundedMap_total_frame leftContents)
-    · exact observedLeft
-    · exact observedLeft
-    · intro value afterLeft property
-      have rightAfter : ys.Contents afterLeft rightContents :=
-        property.2 ys rightContents separated observedRight
-      apply StmtCostBound.call_seq (nextBound := fun _ _ => 2)
-        (boundedMap_costBound rightContents) (boundedMap_total_frame rightContents)
-      · exact rightAfter
-      · exact rightAfter
-      · intro value afterRight property
-        apply StmtCostBound.ret
-      · intro value afterRight property
-        dsimp only [rightCost]
-        omega
-    · intro value afterLeft property
-      dsimp only [leftCost]
-      omega
-  · simp only [boundedMapPairBodyBound, leftCost, rightCost]
+  ram_source_cost (xs ys limit)
+  · rename_i heap input
+    rcases input with ⟨observedLeft, observedRight, separated⟩
+    ram_source_call using (boundedMap_costBound leftContents), (boundedMap_total_frame leftContents)
+    obtain ⟨_, frameLeft⟩ := ‹xs.Contents _ _ ∧ xs.PreservesOutside heap _›
+    have rightAfter := frameLeft ys rightContents separated observedRight
+    ram_source_call using (boundedMap_costBound rightContents), (boundedMap_total_frame rightContents)
+  · ram_source_cost_step
+    simp only [boundedMapPairBodyBound]
     omega
 
 /-- The actual compiled pair invocation returns both mapped arrays and the
