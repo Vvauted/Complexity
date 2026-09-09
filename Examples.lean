@@ -8,6 +8,7 @@ import Examples.Language.BufferCompiled
 import Examples.Language.Factorial
 import Examples.Language.FactorialCompiled
 import Examples.Language.Imports
+import Examples.Language.ImportsCompiled
 import Examples.Language.Linking
 import Examples.Language.Remainder
 import Examples.Language.Scalar

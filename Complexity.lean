@@ -103,6 +103,10 @@ import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.Heap
 import Complexity.Computability.Ram.Compiler.Language.HeapOperation
 import Complexity.Computability.Ram.Compiler.Language.Layout
+import Complexity.Computability.Ram.Compiler.Language.Linking.ExecutionCost
+import Complexity.Computability.Ram.Compiler.Language.Linking.Lowering
+import Complexity.Computability.Ram.Compiler.Language.Linking.Realization
+import Complexity.Computability.Ram.Compiler.Language.Linking.Verification
 import Complexity.Computability.Ram.Compiler.Language.Lowering
 import Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation
 import Complexity.Computability.Ram.Compiler.Language.MeasuredValues
@@ -295,6 +299,7 @@ import Complexity.Language.Linking.Eval
 import Complexity.Language.Linking.Extension
 import Complexity.Language.Linking.Reflection
 import Complexity.Language.Linking.Semantics
+import Complexity.Language.Linking.Verification
 import Complexity.Language.Semantics
 import Complexity.Language.State
 import Complexity.Language.Syntax

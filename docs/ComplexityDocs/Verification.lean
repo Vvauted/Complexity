@@ -172,10 +172,28 @@ the proved embeddings. The [named clients](##Examples.Language.Imports) therefor
 reuse the old factorial and two-buffer frame proofs without source ASTs or table
 indices; a second client imports the first with the same interface.
 
-This is source-semantic reuse. Compiled realization and cost transfer require
-their own lowering correspondence; they do not follow merely from equal source
-observations. The frontend introduces neither host callbacks nor trusted cost
-annotations to stand in for that remaining proof work.
+For each imported family, the frontend exposes `Client.imports.Library.map`
+and `Client.imports.Library.embedding`; `Library` is the spelling used in the
+`importing` clause. These source declarations do not depend on RAM. The
+[function-contract rule](##Complexity.Language.Linking.Verification)
+`FunctionTotal.renameCalls` transfers an existing library contract through the
+embedding, handling the dependent argument and return types internally.
+
+The separate [resource rules](##Complexity.Computability.Ram.Compiler.Language.Linking.Verification)
+provide `FunctionRealizable.renameCalls` and `FunctionCostBound.renameCalls`
+with the same interface. They preserve word width, call-nesting capacity and
+the original bound. Their [lowering correspondence](##Complexity.Computability.Ram.Compiler.Language.Linking.Lowering)
+retains the actual inferred function frame and call overhead; the
+[cost theorem](##Complexity.Computability.Ram.Compiler.Language.Linking.ExecutionCost)
+preserves exact counts and reflects arbitrary target executions. Source
+observation equality by itself would not establish these resource claims.
+
+The [compiled client](##Examples.Language.ImportsCompiled) reuses the imported
+factorial's three contracts and the existing structural tactics, without another
+recursive induction. Its real halted invocation includes the extra caller's
+work and call depth. Code and stack capacity still concern the complete linked
+program; an unrelated imported function may have different space requirements
+or heap effects. No host callbacks or trusted cost annotations replace these proofs.
 
 The typed core also has an effectful-guard `Stmt.while`. Its guard is an actual
 Boolean-producing block: it runs in the current state on every iteration, and

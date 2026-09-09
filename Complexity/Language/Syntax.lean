@@ -42,6 +42,9 @@ calls such as `Library.f x`. The imported programs retain their actual bodies,
 including recursive calls and transitive imports, in the combined table. The
 generated one-step equations use the original library observations through proved
 program embeddings, so callers can reuse existing mathematical specifications.
+The source handles `P.imports.Library.map` and `P.imports.Library.embedding`
+expose the checked relocation for reusable contract-transfer rules, using the
+library spelling in the importing clause.
 Lean's persistent environment records public headers across ordinary module
 imports; it does not supply an implementation or an assumed callee contract.
 Compiled realization and instruction bounds remain separate proof obligations.
@@ -1605,8 +1608,9 @@ private def programDeclarations (family : TSyntax `ident)
   let mut importFolds : Array (TSyntax `ident) := #[]
   if let some imported := imported then
     for entry in imported.embeddings do
-      let map ← freshProofName family `sourceImportMap
-      let embedded ← freshProofName family `sourceImportEmbedding
+      let importNamespace := family.getId ++ `imports ++ entry.source.name.getId
+      let map := mkIdentFrom entry.source.name (importNamespace ++ `map)
+      let embedded := mkIdentFrom entry.source.name (importNamespace ++ `embedding)
       let sourceSignatures := mkCIdent (entry.source.family ++ `signatures)
       let sourceProgram := mkCIdent (entry.source.family ++ `program)
       declarations := declarations.push (← `(command|

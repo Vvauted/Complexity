@@ -35,8 +35,10 @@ factorial tables reuses their original native proofs without unfolding either
 algorithm. The frontend now accepts `source_program P importing Library, Other where`
 and qualified calls into those libraries. Added bodies use the combined table;
 generated caller equations expose original library actions through proved
-embeddings. An imported program can itself contain imports. Transport of compiled
-resource bounds remains separate work; source action equality does not supply it.
+embeddings. An imported program can itself contain imports. Separate connection-layer
+theorems now preserve realizability and exact compiled body counts through these
+embeddings, including the actual callee frame and call overhead. Source action
+equality alone is not the justification for those resource results.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
 
@@ -186,8 +188,27 @@ Lean module imports retain their public headers through Lean's persistent
 environment. Headers select existing declarations, not arbitrary executable
 Lean primitives. The [client examples](../Examples/Language/Imports.lean) reuse
 the original factorial and two-buffer composition proofs, then import that client
-again. Source observation equality does not by itself transport compiler-derived
-realization or costs; those connection-layer rules remain to be supplied.
+again. Each imported family exposes `P.imports.Library.map` and
+`P.imports.Library.embedding`, using the family spelling in the `importing`
+clause. These are source declarations, independent of the RAM backend.
+
+`FunctionTotal.renameCalls` reuses a library's correctness contract through its
+actual-body embedding. The separate
+[resource contract rules](../Complexity/Computability/Ram/Compiler/Language/Linking/Verification.lean)
+provide `FunctionRealizable.renameCalls` and `FunctionCostBound.renameCalls`.
+They transport dependent argument predicates internally, retaining the same
+word width, call-nesting capacity and bound. Their justification proves that
+lowering commutes with call relocation, including the inferred local frame,
+and preserves exact execution counts in both directions. It does not infer
+cost equality merely from equal mathematical results.
+
+The [compiled client](../Examples/Language/ImportsCompiled.lean) applies these
+rules to the imported recursive factorial, then uses the existing structural
+tactics to prove its caller and real halted invocation. The recursive library
+proof is not reopened. The caller's additional call and nesting are counted;
+code and stack capacity still refer to the complete target program. Convenient
+selection of imported effectful contracts and their intermediate-heap/frame
+consequences remains proof-interface work, not a new linker axiom.
 
 ### Current surface and intended traversal extension
 

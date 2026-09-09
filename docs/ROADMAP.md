@@ -388,9 +388,21 @@ Before broadening the surface further, close these connected gaps:
   Their native equations expose original library actions through proved
   embeddings. [Client proofs](../Examples/Language/Imports.lean) reuse the original
   factorial and two-buffer contracts, including through a second import layer.
-  Next transfer compiler realization/cost rules through lowering and consume
-  those rules at the same generated imported calls. Source behavior equality
-  alone establishes no target realization or cost equality.
+  The separate compiler bridge now preserves and reflects realizability at the
+  same word width and call depth, and preserves exact execution counts. Lowering
+  commutes with call relocation, so actual parameter/result fields, inferred
+  local frames and call overhead remain unchanged. Stable generated
+  `P.imports.Library.map` and `.embedding` handles let generic `FunctionTotal`,
+  `FunctionRealizable` and `FunctionCostBound` rules transport existing contracts
+  without caller-written argument casts or table arithmetic. The
+  [compiled client](../Examples/Language/ImportsCompiled.lean) consumes these
+  rules at its real imported factorial call and reaches the halted runner,
+  charging the extra caller and retaining target-program code/stack conditions.
+  Source behavior equality alone establishes none of those resource results.
+  Next make the same interface convenient for imported effectful calls: reuse
+  contents/frame consequences at the actual intermediate heap and retain them
+  in a complete compiled client. Contract selection remains explicit; do not
+  turn it into body unfolding or assume the combined table is heap-pure.
   Do not substitute host callbacks or copied implementations for source linking.
 - Expose ordinary loop locals, current contents and return outcomes to invariants.
   Scope/state plumbing belongs to shared rules; the invariant, termination
