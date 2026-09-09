@@ -50,58 +50,59 @@ def program : Program signatures := Implementation.program
 
 /-- The actual named helper has the ordinary mathematical increment value. -/
 theorem increment_eval (n : Nat) :
-    Implementation.increment n = Part.some (.ok (n + 1)) := by
+    Implementation.increment n = (pure (n + 1) : ExceptT Fault (StateT Heap Part) Nat) := by
   rw [Implementation.increment_eq]
-  rfl
 
 /-- The named source function has an ordinary curried mathematical result,
 obtained from the same source correctness proof. -/
 theorem boundedIncrement_eval (n limit : Nat) :
-    Implementation.boundedIncrement n limit = Part.some (.ok (min (n + 1) limit)) := by
+    Implementation.boundedIncrement n limit =
+      (pure (min (n + 1) limit) : ExceptT Fault (StateT Heap Part) Nat) := by
   have helper : Implementation.increment n =
-      (pure (n + 1) : ExceptT Fault Part Nat) := increment_eval n
+      (pure (n + 1) : ExceptT Fault (StateT Heap Part) Nat) := increment_eval n
   rw [Implementation.boundedIncrement_eq, helper, pure_bind]
   by_cases small : n + 1 ≤ limit
   · simp only [decide_eq_true_eq, if_pos small, Nat.min_eq_left small]
-    rfl
   · simp only [decide_eq_true_eq, if_neg small,
       Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small))]
-    rfl
 
 /-- Ordinary addition specifies the actual source helper. -/
 theorem increment_total :
-    FunctionTotal program (0 : Fin 2) (fun _ => True)
-      (fun args value => value = Env.head args + 1) := by
-  apply (Implementation.increment_total_iff (fun _ => True)
-    (fun n value => value = n + 1)).mpr
-  intro n _
-  exact ⟨n + 1, increment_eval n, rfl⟩
+    FunctionTotal program (0 : Fin 2) (fun _ _ => True)
+      (fun args heap value finish => value = Env.head args + 1 ∧ finish = heap) := by
+  apply (Implementation.increment_total_iff (fun _ _ => True)
+    (fun n heap value finish => value = n + 1 ∧ finish = heap)).mpr
+  intro n heap _
+  exact ⟨n + 1, heap, congrFun (increment_eval n) heap, rfl, rfl⟩
 
 /-- The caller's source proof composes the helper contract and the actual branch. -/
 theorem boundedIncrement_total :
-    FunctionTotal program (1 : Fin 2) (fun _ => True)
-      (fun args value => value = min (Env.head args + 1) (Env.head (Env.tail args))) := by
-  apply (Implementation.boundedIncrement_total_iff (fun _ _ => True)
-    (fun n limit value => value = min (n + 1) limit)).mpr
-  intro n limit _
-  exact ⟨(min (n + 1) limit : Nat), boundedIncrement_eval n limit, rfl⟩
+    FunctionTotal program (1 : Fin 2) (fun _ _ => True)
+      (fun args heap value finish =>
+        value = min (Env.head args + 1) (Env.head (Env.tail args)) ∧ finish = heap) := by
+  apply (Implementation.boundedIncrement_total_iff (fun _ _ _ => True)
+    (fun n limit heap value finish => value = min (n + 1) limit ∧ finish = heap)).mpr
+  intro n limit heap _
+  exact ⟨(min (n + 1) limit : Nat), heap,
+    congrFun (boundedIncrement_eval n limit) heap, rfl, rfl⟩
 
 /-- A successful invocation exists for every pair of natural inputs, and its
 actual returned value is the ordinary mathematical minimum. -/
-theorem boundedIncrement_returns (n limit : Nat) :
+theorem boundedIncrement_returns (n limit : Nat) (heap : Heap) :
     ∃ finish, Exec program (program.body (1 : Fin 2))
-      (Env.cons n (Env.cons limit Env.empty)) finish (.returned (min (n + 1) limit : Nat)) := by
+      ⟨Env.cons n (Env.cons limit Env.empty), heap⟩ finish
+      (.returned (min (n + 1) limit : Nat)) ∧ finish.heap = heap := by
   obtain ⟨finish, value, execution, result⟩ :=
-    boundedIncrement_total (Env.cons n (Env.cons limit Env.empty)) trivial
-  have equal : value = min (n + 1) limit := result
-  exact ⟨finish, equal ▸ execution⟩
+    boundedIncrement_total (Env.cons n (Env.cons limit Env.empty)) heap trivial
+  have equal : value = min (n + 1) limit := result.1
+  exact ⟨finish, equal ▸ execution, result.2⟩
 
 /-- Every actual return from the caller has the proved mathematical value. -/
-theorem boundedIncrement_result (n limit value : Nat)
-    {finish : Env [.nat, .nat]}
+theorem boundedIncrement_result (n limit value : Nat) (heap : Heap)
+    {finish : State [.nat, .nat]}
     (execution : Exec program (program.body (1 : Fin 2))
-      (Env.cons n (Env.cons limit Env.empty)) finish (.returned value)) :
+      ⟨Env.cons n (Env.cons limit Env.empty), heap⟩ finish (.returned value)) :
     value = min (n + 1) limit :=
-  boundedIncrement_total.postcondition trivial execution
+  (boundedIncrement_total.postcondition trivial execution).1
 
 end Complexity.Language.Examples.Scalar

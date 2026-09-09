@@ -24,8 +24,8 @@ namespace Complexity.Language
 /-- Interpret two successful postconditions at a source control outcome.
 Faults cannot establish total correctness. -/
 def Control.Satisfies {Γ : List Ty} {result : Ty}
-    (normal : Env Γ → Prop) (returned : Value result → Env Γ → Prop)
-    (control : Control result) (finish : Env Γ) : Prop :=
+    (normal : State Γ → Prop) (returned : Value result → State Γ → Prop)
+    (control : Control result) (finish : State Γ) : Prop :=
   match control with
   | .normal => normal finish
   | .returned value => returned value finish
@@ -34,8 +34,8 @@ def Control.Satisfies {Γ : List Ty} {result : Ty}
 /-- Budget-free total correctness, retaining both normal and returning control. -/
 def TotalWP {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (program : Program signatures) (stmt : Stmt signatures Γ result)
-    (normal : Env Γ → Prop) (returned : Value result → Env Γ → Prop)
-    (entry : Env Γ) : Prop :=
+    (normal : State Γ → Prop) (returned : Value result → State Γ → Prop)
+    (entry : State Γ) : Prop :=
   ∃ finish control, Exec program stmt entry finish control ∧
     control.Satisfies normal returned finish
 
@@ -43,8 +43,8 @@ namespace TotalWP
 
 variable {signatures : List Signature} {Γ : List Ty} {result : Ty}
 variable {program : Program signatures} {stmt : Stmt signatures Γ result}
-variable {normal normal' : Env Γ → Prop}
-variable {returned returned' : Value result → Env Γ → Prop} {entry : Env Γ}
+variable {normal normal' : State Γ → Prop}
+variable {returned returned' : Value result → State Γ → Prop} {entry : State Γ}
 
 /-- Weaken either successful postcondition without admitting faults. -/
 theorem mono_post (h : TotalWP program stmt normal returned entry)
@@ -69,27 +69,27 @@ theorem mono_post (h : TotalWP program stmt normal returned entry)
 
 @[simp] theorem ret_iff (value : Atom Γ result) :
     TotalWP program (.ret value) normal returned entry ↔
-      returned (value.eval entry) entry := by
+      returned (value.eval entry.locals) entry := by
   constructor
   · rintro ⟨finish, control, execution, post⟩
     cases execution
     exact post
   · intro post
-    exact ⟨entry, .returned (value.eval entry), .ret value entry, post⟩
+    exact ⟨entry, .returned (value.eval entry.locals), .ret value entry, post⟩
 
 /-- A primitive's mathematical value is bound for its actual lexical scope. -/
 @[simp] theorem letPrim_iff {τ : Ty} (value : Prim Γ τ)
     (continuation : Stmt signatures (τ :: Γ) result) :
     TotalWP program (.letPrim value continuation) normal returned entry ↔
-      TotalWP program continuation (fun finish => normal (Env.tail finish))
-        (fun value finish => returned value (Env.tail finish))
-        (Env.cons (value.eval entry) entry) := by
+      TotalWP program continuation (fun finish => normal finish.tail)
+        (fun value finish => returned value finish.tail)
+        (State.cons (value.eval entry.locals) entry) := by
   constructor
   · rintro ⟨finish, control, execution, post⟩
     cases execution with
     | letPrim body => exact ⟨_, control, body, post⟩
   · rintro ⟨finish, control, execution, post⟩
-    exact ⟨Env.tail finish, control, .letPrim execution, post⟩
+    exact ⟨finish.tail, control, .letPrim execution, post⟩
 
 /-- Sequencing runs the tail only after normal continuation. An actual return
 passes directly to the enclosing return postcondition. -/
@@ -114,9 +114,9 @@ passes directly to the enclosing return postcondition. -/
 /-- Source branching depends on the actual Boolean value, not a machine guard. -/
 @[simp] theorem ite_iff (condition : Atom Γ .bool) (yes no : Stmt signatures Γ result) :
     TotalWP program (.ite condition yes no) normal returned entry ↔
-      if condition.eval entry then TotalWP program yes normal returned entry
+      if condition.eval entry.locals then TotalWP program yes normal returned entry
       else TotalWP program no normal returned entry := by
-  cases hcondition : condition.eval entry with
+  cases hcondition : condition.eval entry.locals with
   | false =>
       simp only [Bool.false_eq_true, ↓reduceIte]
       constructor
@@ -139,14 +139,14 @@ passes directly to the enclosing return postcondition. -/
 /-- Compose a primitive step after identifying its actual source value. -/
 theorem letPrim {τ : Ty} {value : Prim Γ τ}
     {continuation : Stmt signatures (τ :: Γ) result}
-    (body : TotalWP program continuation (fun finish => normal (Env.tail finish))
-      (fun value finish => returned value (Env.tail finish))
-      (Env.cons (value.eval entry) entry)) :
+    (body : TotalWP program continuation (fun finish => normal finish.tail)
+      (fun value finish => returned value finish.tail)
+      (State.cons (value.eval entry.locals) entry)) :
     TotalWP program (.letPrim value continuation) normal returned entry :=
   (letPrim_iff value continuation).mpr body
 
 /-- Use a mathematical intermediate condition in a source sequence. -/
-theorem seq {first second : Stmt signatures Γ result} {middle : Env Γ → Prop}
+theorem seq {first second : Stmt signatures Γ result} {middle : State Γ → Prop}
     (head : TotalWP program first middle returned entry)
     (tail : ∀ next, middle next → TotalWP program second normal returned next) :
     TotalWP program (.seq first second) normal returned entry :=
@@ -155,27 +155,30 @@ theorem seq {first second : Stmt signatures Γ result} {middle : Env Γ → Prop
 end TotalWP
 
 /-- A source function returns a value satisfying an ordinary mathematical
-relation on its arguments. Neither a fault nor body fallthrough is success. -/
+relation on its arguments and initial/final heaps. Neither a fault nor body
+fallthrough is success. The initial heap is explicit, never defaulted to empty. -/
 def FunctionTotal {signatures : List Signature} (program : Program signatures)
-    (fn : Fin signatures.length) (pre : Env signatures[fn].params → Prop)
-    (post : Env signatures[fn].params → Value signatures[fn].result → Prop) : Prop :=
-  ∀ args, pre args → ∃ finish value,
-    Exec program (program.body fn) args finish (.returned value) ∧ post args value
+    (fn : Fin signatures.length) (pre : Env signatures[fn].params → Heap → Prop)
+    (post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop) :
+    Prop :=
+  ∀ args heap, pre args heap → ∃ finish value,
+    Exec program (program.body fn) ⟨args, heap⟩ finish (.returned value) ∧
+      post args heap value finish.heap
 
 namespace FunctionTotal
 
 variable {signatures : List Signature} {program : Program signatures}
 variable {fn : Fin signatures.length}
-variable {pre pre' : Env signatures[fn].params → Prop}
-variable {post post' : Env signatures[fn].params → Value signatures[fn].result → Prop}
+variable {pre pre' : Env signatures[fn].params → Heap → Prop}
+variable {post post' : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
 
 /-- Source body verification supplies actual successful function termination. -/
-theorem of_wp (body : ∀ args, pre args →
+theorem of_wp (body : ∀ args heap, pre args heap →
     TotalWP program (program.body fn) (fun _ => False)
-      (fun value _ => post args value) args) :
+      (fun value finish => post args heap value finish.heap) ⟨args, heap⟩) :
     FunctionTotal program fn pre post := by
-  intro args hpre
-  obtain ⟨finish, control, execution, hpost⟩ := body args hpre
+  intro args heap hpre
+  obtain ⟨finish, control, execution, hpost⟩ := body args heap hpre
   cases control with
   | normal => exact False.elim hpost
   | returned value => exact ⟨finish, value, execution, hpost⟩
@@ -183,53 +186,59 @@ theorem of_wp (body : ∀ args, pre args →
 
 /-- A returned source execution is also a body WP proof. -/
 theorem wp (h : FunctionTotal program fn pre post) (args : Env signatures[fn].params)
-    (hpre : pre args) :
+    (heap : Heap) (hpre : pre args heap) :
     TotalWP program (program.body fn) (fun _ => False)
-      (fun value _ => post args value) args := by
-  obtain ⟨finish, value, execution, hpost⟩ := h args hpre
+      (fun value finish => post args heap value finish.heap) ⟨args, heap⟩ := by
+  obtain ⟨finish, value, execution, hpost⟩ := h args heap hpre
   exact ⟨finish, .returned value, execution, hpost⟩
 
 /-- Strengthen the source precondition and weaken the mathematical result relation. -/
 theorem consequence (h : FunctionTotal program fn pre post)
-    (hpre : ∀ args, pre' args → pre args)
-    (hpost : ∀ args value, pre' args → post args value → post' args value) :
+    (hpre : ∀ args heap, pre' args heap → pre args heap)
+    (hpost : ∀ args heap value finalHeap,
+      pre' args heap → post args heap value finalHeap → post' args heap value finalHeap) :
     FunctionTotal program fn pre' post' := by
-  intro args input
-  obtain ⟨finish, value, execution, output⟩ := h args (hpre args input)
-  exact ⟨finish, value, execution, hpost args value input output⟩
+  intro args heap input
+  obtain ⟨finish, value, execution, output⟩ := h args heap (hpre args heap input)
+  exact ⟨finish, value, execution, hpost args heap value finish.heap input output⟩
 
 /-- The mathematical postcondition describes any actual successful invocation,
 not just the execution witness selected by a total-correctness proof. -/
 theorem postcondition (h : FunctionTotal program fn pre post)
-    {args finish : Env signatures[fn].params} {value : Value signatures[fn].result}
-    (hpre : pre args)
-    (execution : Exec program (program.body fn) args finish (.returned value)) :
-    post args value := by
-  obtain ⟨otherFinish, otherValue, otherExec, hpost⟩ := h args hpre
-  have equal : otherValue = value := Control.returned.inj (otherExec.deterministic execution).2
-  exact equal ▸ hpost
+    {args : Env signatures[fn].params} {heap : Heap} {finish : State signatures[fn].params}
+    {value : Value signatures[fn].result} (hpre : pre args heap)
+    (execution : Exec program (program.body fn) ⟨args, heap⟩ finish (.returned value)) :
+    post args heap value finish.heap := by
+  obtain ⟨otherFinish, otherValue, otherExec, hpost⟩ := h args heap hpre
+  obtain ⟨rfl, sameControl⟩ := otherExec.deterministic execution
+  cases Control.returned.inj sameControl
+  exact hpost
 
 end FunctionTotal
 
 namespace TotalWP
 
 /-- Apply a source function's mathematical contract and bind its actual returned
-value. The caller's lexical values, rather than the callee environment, continue. -/
+value. Caller locals resume with the actual final callee heap; callee locals do
+not escape their scope. The continuation reasons only about values and heaps. -/
 theorem call {signatures : List Signature} {Γ : List Ty} {result : Ty}
     {program : Program signatures} {fn : Fin signatures.length}
     {args : Args Γ signatures[fn].params}
     {continuation : Stmt signatures (signatures[fn].result :: Γ) result}
-    {normal : Env Γ → Prop} {returned : Value result → Env Γ → Prop} {entry : Env Γ}
-    {pre : Env signatures[fn].params → Prop}
-    {post : Env signatures[fn].params → Value signatures[fn].result → Prop}
-    (callee : FunctionTotal program fn pre post) (hpre : pre (args.eval entry))
-    (body : ∀ value, post (args.eval entry) value →
-      TotalWP program continuation (fun finish => normal (Env.tail finish))
-        (fun result finish => returned result (Env.tail finish)) (Env.cons value entry)) :
+    {normal : State Γ → Prop} {returned : Value result → State Γ → Prop} {entry : State Γ}
+    {pre : Env signatures[fn].params → Heap → Prop}
+    {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
+    (callee : FunctionTotal program fn pre post)
+    (hpre : pre (args.eval entry.locals) entry.heap)
+    (body : ∀ value finalHeap, post (args.eval entry.locals) entry.heap value finalHeap →
+      TotalWP program continuation (fun finish => normal finish.tail)
+        (fun result finish => returned result finish.tail)
+        (State.cons value ⟨entry.locals, finalHeap⟩)) :
     TotalWP program (.call fn args continuation) normal returned entry := by
-  obtain ⟨calleeFinish, value, invocation, hpost⟩ := callee (args.eval entry) hpre
-  obtain ⟨finish, control, execution, result⟩ := body value hpost
-  exact ⟨Env.tail finish, control, .callReturn invocation execution, result⟩
+  obtain ⟨calleeFinish, value, invocation, hpost⟩ :=
+    callee (args.eval entry.locals) entry.heap hpre
+  obtain ⟨finish, control, execution, result⟩ := body value calleeFinish.heap hpost
+  exact ⟨finish.tail, control, .callReturn invocation execution, result⟩
 
 end TotalWP
 

@@ -16,6 +16,8 @@ and preserve the flag while receiving fresh binding fields.
 
 No source value observes the flag. Unit continues to have no result field;
 separation from a Unit result imposes no fictitious register requirement.
+Matching concerns only lexical values and control. Applying it to a source
+state's locals does not relate that state's heap to RAM memory.
 -/
 
 namespace Ram.LanguageCompiler

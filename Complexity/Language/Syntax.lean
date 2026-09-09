@@ -22,13 +22,14 @@ computation replaces the generated operations.
 
 The declaration exports `P.signatures`, `P.fId`, `P.fBody` and `P.program`,
 together with the ordinary curried observation `P.f` and its equation `P.f_eq`.
-The equation exposes one body using ordinary `ExceptT Fault Part` notation,
+The equation exposes one body using ordinary `ExceptT Fault (StateT Heap Part)` notation,
 keeping named callee observations opaque. It is not a global simp rule.
 `P.f_total_iff` connects arbitrary ordinary curried preconditions and
-postconditions to the source contract, without manual environment decomposition.
-This noncomputable
-`Part (Except Fault result)` observes the actual independent source execution;
-it is a mathematical proof interface, not a host executable for `#eval`.
+postconditions, including initial and final heaps, to the source contract without
+manual environment decomposition. The noncomputable action takes the actual
+initial heap and observes `Part (Except Fault result × Heap)`; no empty heap is
+supplied implicitly. It is a mathematical proof interface, not a host executable
+for `#eval`.
 All signatures are collected before any body is translated, so forward calls
 and mutual recursion refer to actual entries of the same program. This does
 not assert termination or accept arbitrary Lean functions as primitives.
@@ -402,7 +403,8 @@ private def observationDeclaration (family programName : TSyntax `ident)
     let parameter := param.name
     arguments ← `(Complexity.Language.Env.cons (τ := $type) $parameter:ident $arguments)
   let result ← valueTypeTerm fn.result
-  let mut type ← `(Part (Except Complexity.Language.Fault $result))
+  let mut type ← `(ExceptT Complexity.Language.Fault
+    (StateT Complexity.Language.Heap Part) $result)
   let mut value ← `(Complexity.Language.Program.eval $programName:ident $id:ident $arguments)
   for param in fn.params.reverse do
     let parameter := param.name
@@ -410,7 +412,8 @@ private def observationDeclaration (family programName : TSyntax `ident)
     type ← `(∀ ($parameter:ident : $parameterType), $type)
     value ← `(fun ($parameter:ident : $parameterType) => $value)
   let declaration ← `(command|
-    /-- The named function's actual partial source result, with ordinary typed arguments. -/
+    /-- The named function's actual partial source action, with ordinary typed arguments
+    and an explicitly supplied shared heap. -/
     noncomputable def $name:ident : $type := $value)
   return declaration.raw
 
@@ -425,7 +428,8 @@ private def equationDeclaration (family programName : TSyntax `ident)
   let fallthrough ← `(doElem| throw Complexity.Language.Fault.missingReturn)
   let body := lowered.proofSequence fallthrough
   let result ← valueTypeTerm fn.result
-  let mut type ← `($lhs = ((do $body:doSeq) : ExceptT Complexity.Language.Fault Part $result))
+  let mut type ← `($lhs = ((do $body:doSeq) : ExceptT Complexity.Language.Fault
+    (StateT Complexity.Language.Heap Part) $result))
   let mut proof ← `(by
     have body_selected : ($programName:ident).body $id:ident = $bodyName:ident := rfl
     conv =>
@@ -458,10 +462,12 @@ private def totalDeclaration (family programName : TSyntax `ident)
   let pre := mkIdent (← Macro.addMacroScope `pre)
   let post := mkIdent (← Macro.addMacroScope `post)
   let env := mkIdent (← Macro.addMacroScope `env)
+  let initialHeap := mkIdent (← Macro.addMacroScope `initialHeap)
   let value := mkIdent (← Macro.addMacroScope `value)
+  let finalHeap := mkIdent (← Macro.addMacroScope `finalHeap)
   let result ← valueTypeTerm fn.result
-  let mut preType ← `(Prop)
-  let mut postType ← `($result → Prop)
+  let mut preType ← `(Complexity.Language.Heap → Prop)
+  let mut postType ← `(Complexity.Language.Heap → $result → Complexity.Language.Heap → Prop)
   for param in fn.params.reverse do
     let type ← valueTypeTerm param.type
     preType ← `($type → $preType)
@@ -472,13 +478,16 @@ private def totalDeclaration (family programName : TSyntax `ident)
   for _ in fn.params do
     envArguments := envArguments.push (← `(Complexity.Language.Env.head $remaining))
     remaining ← `(Complexity.Language.Env.tail $remaining)
-  let sourcePre := Lean.Syntax.mkApp ⟨pre.raw⟩ envArguments
-  let sourcePost := Lean.Syntax.mkApp ⟨post.raw⟩ (envArguments.push ⟨value.raw⟩)
-  let ordinaryPre := Lean.Syntax.mkApp ⟨pre.raw⟩ arguments
-  let ordinaryPost := Lean.Syntax.mkApp ⟨post.raw⟩ (arguments.push ⟨value.raw⟩)
-  let invocation := Lean.Syntax.mkApp ⟨observation.raw⟩ arguments
-  let mut ordinary ← `($ordinaryPre → ∃ ($value:ident : $result),
-    $invocation = Part.some (.ok $value:ident) ∧ $ordinaryPost)
+  let sourcePre := Lean.Syntax.mkApp ⟨pre.raw⟩ (envArguments.push ⟨initialHeap.raw⟩)
+  let sourcePost := Lean.Syntax.mkApp ⟨post.raw⟩
+    (envArguments ++ #[⟨initialHeap.raw⟩, ⟨value.raw⟩, ⟨finalHeap.raw⟩])
+  let ordinaryPre := Lean.Syntax.mkApp ⟨pre.raw⟩ (arguments.push ⟨initialHeap.raw⟩)
+  let ordinaryPost := Lean.Syntax.mkApp ⟨post.raw⟩
+    (arguments ++ #[⟨initialHeap.raw⟩, ⟨value.raw⟩, ⟨finalHeap.raw⟩])
+  let invocation := Lean.Syntax.mkApp ⟨observation.raw⟩ (arguments.push ⟨initialHeap.raw⟩)
+  let mut ordinary ← `(∀ ($initialHeap:ident : Complexity.Language.Heap),
+    $ordinaryPre → ∃ ($value:ident : $result) ($finalHeap:ident : Complexity.Language.Heap),
+      $invocation = Part.some (.ok $value:ident, $finalHeap:ident) ∧ $ordinaryPost)
   for param in fn.params.reverse do
     let parameter := param.name
     let type ← valueTypeTerm param.type
@@ -507,10 +516,11 @@ private def totalDeclaration (family programName : TSyntax `ident)
   backward ← `(fun $hypothesis:ident => $backward)
   let declaration ← `(command|
     /-- The source contract is equivalent to ordinary curried preconditions and
-    successful result postconditions, including termination and absence of faults. -/
+    successful result/heap postconditions, including termination and absence of faults. -/
     theorem $name:ident ($pre:ident : $preType) ($post:ident : $postType) :
         Complexity.Language.FunctionTotal $programName:ident $id:ident
-          (fun $env:ident => $sourcePre) (fun $env:ident $value:ident => $sourcePost) ↔
+          (fun $env:ident $initialHeap:ident => $sourcePre)
+          (fun $env:ident $initialHeap:ident $value:ident $finalHeap:ident => $sourcePost) ↔
           $ordinary := by
       rw [Complexity.Language.FunctionTotal.iff_eval]
       exact ⟨$forward, $backward⟩)

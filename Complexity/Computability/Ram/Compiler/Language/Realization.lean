@@ -16,9 +16,9 @@ budget: a call's continuation and sequential siblings reuse the caller's depth.
 
 Erasure gives the independent `Complexity.Language.Exec`. No target execution,
 register assignment or chosen instruction count occurs in these conditions.
-The current source fragment has immutable scalar locals, so leaving a scope
-preserves the outer environment; this does not assert preservation of a future
-mutable source heap.
+The current source fragment has immutable scalar locals and no heap operations.
+It nevertheless threads the actual shared heap through each scope and call;
+caller-local restoration never resets the callee's final heap.
 -/
 
 namespace Ram.LanguageCompiler
@@ -30,55 +30,58 @@ width and whose nested calls fit a given capacity. -/
 inductive RealizedExec {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (w : Nat) :
     Nat → {Γ : List Ty} → {result : Ty} → Complexity.Language.Stmt signatures Γ result →
-      Env Γ → Env Γ → Control result → Prop where
-  | skip {Γ : List Ty} {result : Ty} {depth : Nat} (entry : Env Γ) :
+      Complexity.Language.State Γ → Complexity.Language.State Γ → Control result → Prop where
+  | skip {Γ : List Ty} {result : Ty} {depth : Nat} (entry : Complexity.Language.State Γ) :
       RealizedExec program w depth
         (.skip : Complexity.Language.Stmt signatures Γ result) entry entry .normal
   | letPrim {Γ : List Ty} {τ result : Ty} {depth : Nat} {value : Prim Γ τ}
       {continuation : Complexity.Language.Stmt signatures (τ :: Γ) result}
-      {entry : Env Γ} {finish : Env (τ :: Γ)} {control : Control result}
-      (fits : PrimFits w entry value)
+      {entry : Complexity.Language.State Γ} {finish : Complexity.Language.State (τ :: Γ)}
+      {control : Control result}
+      (fits : PrimFits w entry.locals value)
       (body : RealizedExec program w depth continuation
-        (Env.cons (value.eval entry) entry) finish control) :
+        (Complexity.Language.State.cons (value.eval entry.locals) entry) finish control) :
       RealizedExec program w depth (.letPrim value continuation) entry finish.tail control
   | seqNormal {Γ : List Ty} {result : Ty} {depth : Nat}
       {first second : Complexity.Language.Stmt signatures Γ result}
-      {entry middle finish : Env Γ} {control : Control result}
+      {entry middle finish : Complexity.Language.State Γ} {control : Control result}
       (head : RealizedExec program w depth first entry middle .normal)
       (tail : RealizedExec program w depth second middle finish control) :
       RealizedExec program w depth (.seq first second) entry finish control
   | seqReturn {Γ : List Ty} {result : Ty} {depth : Nat}
       {first second : Complexity.Language.Stmt signatures Γ result}
-      {entry finish : Env Γ} {value : Value result}
+      {entry finish : Complexity.Language.State Γ} {value : Value result}
       (head : RealizedExec program w depth first entry finish (.returned value)) :
       RealizedExec program w depth (.seq first second) entry finish (.returned value)
   | iteTrue {Γ : List Ty} {result : Ty} {depth : Nat} {condition : Atom Γ .bool}
       {yes no : Complexity.Language.Stmt signatures Γ result}
-      {entry finish : Env Γ} {control : Control result}
-      (test : condition.eval entry = true)
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      (test : condition.eval entry.locals = true)
       (body : RealizedExec program w depth yes entry finish control) :
       RealizedExec program w depth (.ite condition yes no) entry finish control
   | iteFalse {Γ : List Ty} {result : Ty} {depth : Nat} {condition : Atom Γ .bool}
       {yes no : Complexity.Language.Stmt signatures Γ result}
-      {entry finish : Env Γ} {control : Control result}
-      (test : condition.eval entry = false)
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      (test : condition.eval entry.locals = false)
       (body : RealizedExec program w depth no entry finish control) :
       RealizedExec program w depth (.ite condition yes no) entry finish control
   | ret {Γ : List Ty} {result : Ty} {depth : Nat}
-      (value : Atom Γ result) (entry : Env Γ)
-      (fits : valueToNat (value.eval entry) < 2 ^ w) :
-      RealizedExec program w depth (.ret value) entry entry (.returned (value.eval entry))
+      (value : Atom Γ result) (entry : Complexity.Language.State Γ)
+      (fits : valueToNat (value.eval entry.locals) < 2 ^ w) :
+      RealizedExec program w depth (.ret value) entry entry (.returned (value.eval entry.locals))
   | callReturn {Γ : List Ty} {result : Ty} {depth : Nat} {fn : Fin signatures.length}
       {args : Args Γ signatures[fn].params}
       {continuation : Complexity.Language.Stmt signatures (signatures[fn].result :: Γ) result}
-      {entry : Env Γ} {calleeFinish : Env signatures[fn].params}
-      {value : Value signatures[fn].result} {finish : Env (signatures[fn].result :: Γ)}
+      {entry : Complexity.Language.State Γ}
+      {calleeFinish : Complexity.Language.State signatures[fn].params}
+      {value : Value signatures[fn].result}
+      {finish : Complexity.Language.State (signatures[fn].result :: Γ)}
       {control : Control result}
-      (arguments : EnvFits w (args.eval entry))
+      (arguments : EnvFits w (args.eval entry.locals))
       (callee : RealizedExec program w depth (program.body fn)
-        (args.eval entry) calleeFinish (.returned value))
+        (entry.enter (args.eval entry.locals)) calleeFinish (.returned value))
       (body : RealizedExec program w (depth + 1) continuation
-        (Env.cons value entry) finish control) :
+        (Complexity.Language.State.cons value (entry.restore calleeFinish)) finish control) :
       RealizedExec program w (depth + 1) (.call fn args continuation) entry finish.tail control
 
 /-- A successful control outcome carries either no value or a representable
@@ -94,7 +97,7 @@ namespace RealizedExec
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
 variable {w depth : Nat} {Γ : List Ty} {result : Ty}
 variable {stmt : Complexity.Language.Stmt signatures Γ result}
-variable {entry finish : Env Γ} {control : Control result}
+variable {entry finish : Complexity.Language.State Γ} {control : Control result}
 
 /-- Realization certifies the same independent source execution. -/
 theorem erase (execution : RealizedExec program w depth stmt entry finish control) :
@@ -111,17 +114,13 @@ theorem erase (execution : RealizedExec program w depth stmt entry finish contro
 
 /-- This immutable scalar fragment preserves the enclosing lexical environment.
 New inner bindings are discarded on scope exit, including when returning. -/
-theorem env_eq (execution : RealizedExec program w depth stmt entry finish control) :
-    finish = entry := by
-  induction execution with
-  | skip => rfl
-  | letPrim fits body ih => exact congrArg Env.tail ih
-  | seqNormal head tail ihHead ihTail => exact ihTail.trans ihHead
-  | seqReturn head ih => exact ih
-  | iteTrue test body ih => exact ih
-  | iteFalse test body ih => exact ih
-  | ret => rfl
-  | callReturn arguments callee body ihCallee ihBody => exact congrArg Env.tail ihBody
+theorem locals_eq (execution : RealizedExec program w depth stmt entry finish control) :
+    finish.locals = entry.locals := execution.erase.locals_eq
+
+/-- The current scalar statement vocabulary has no heap operations. This follows
+from its execution rules, not from caller restoration or a heap representation. -/
+theorem heap_eq (execution : RealizedExec program w depth stmt entry finish control) :
+    finish.heap = entry.heap := execution.erase.heap_eq
 
 /-- Every actual returned scalar is representable; successful normal continuation
 requires no result value, and a realized execution cannot fault. -/
@@ -169,8 +168,9 @@ postconditions. The extra parameter records call capacity, not elapsed time. -/
 def RealizationWP {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (program : Complexity.Language.Program signatures) (w depth : Nat)
     (stmt : Complexity.Language.Stmt signatures Γ result)
-    (normal : Env Γ → Prop) (returned : Value result → Env Γ → Prop)
-    (entry : Env Γ) : Prop :=
+    (normal : Complexity.Language.State Γ → Prop)
+    (returned : Value result → Complexity.Language.State Γ → Prop)
+    (entry : Complexity.Language.State Γ) : Prop :=
   ∃ finish control, RealizedExec program w depth stmt entry finish control ∧
     control.Satisfies normal returned finish
 
@@ -179,8 +179,9 @@ namespace RealizationWP
 variable {signatures : List Signature} {Γ : List Ty} {result : Ty}
 variable {program : Complexity.Language.Program signatures} {w depth : Nat}
 variable {stmt : Complexity.Language.Stmt signatures Γ result}
-variable {normal normal' : Env Γ → Prop}
-variable {returned returned' : Value result → Env Γ → Prop} {entry : Env Γ}
+variable {normal normal' : Complexity.Language.State Γ → Prop}
+variable {returned returned' : Value result → Complexity.Language.State Γ → Prop}
+variable {entry : Complexity.Language.State Γ}
 
 /-- Erasing ranges and nesting gives total correctness of the same source node. -/
 theorem erase (h : RealizationWP program w depth stmt normal returned entry) :
@@ -219,28 +220,28 @@ theorem mono_depth (h : RealizationWP program w depth stmt normal returned entry
 /-- Return materialization requires the actual source result to fit. -/
 @[simp] theorem ret_iff (value : Atom Γ result) :
     RealizationWP program w depth (.ret value) normal returned entry ↔
-      valueToNat (value.eval entry) < 2 ^ w ∧ returned (value.eval entry) entry := by
+      valueToNat (value.eval entry.locals) < 2 ^ w ∧ returned (value.eval entry.locals) entry := by
   constructor
   · rintro ⟨finish, control, execution, post⟩
     cases execution with
     | ret value entry fits => exact ⟨fits, post⟩
   · rintro ⟨fits, post⟩
-    exact ⟨entry, .returned (value.eval entry), .ret value entry fits, post⟩
+    exact ⟨entry, .returned (value.eval entry.locals), .ret value entry fits, post⟩
 
 /-- The primitive's range and the scoped continuation concern its actual value. -/
 @[simp] theorem letPrim_iff {τ : Ty} (value : Prim Γ τ)
     (continuation : Complexity.Language.Stmt signatures (τ :: Γ) result) :
     RealizationWP program w depth (.letPrim value continuation) normal returned entry ↔
-      PrimFits w entry value ∧
-        RealizationWP program w depth continuation (fun finish => normal (Env.tail finish))
-          (fun value finish => returned value (Env.tail finish))
-          (Env.cons (value.eval entry) entry) := by
+      PrimFits w entry.locals value ∧
+        RealizationWP program w depth continuation (fun finish => normal finish.tail)
+          (fun value finish => returned value finish.tail)
+          (Complexity.Language.State.cons (value.eval entry.locals) entry) := by
   constructor
   · rintro ⟨finish, control, execution, post⟩
     cases execution with
     | letPrim fits body => exact ⟨fits, _, control, body, post⟩
   · rintro ⟨fits, finish, control, execution, post⟩
-    exact ⟨Env.tail finish, control, .letPrim fits execution, post⟩
+    exact ⟨finish.tail, control, .letPrim fits execution, post⟩
 
 /-- Sequential siblings reuse the same nesting capacity; returns skip the tail. -/
 @[simp] theorem seq_iff (first second : Complexity.Language.Stmt signatures Γ result) :
@@ -265,9 +266,9 @@ theorem mono_depth (h : RealizationWP program w depth stmt normal returned entry
 @[simp] theorem ite_iff (condition : Atom Γ .bool)
     (yes no : Complexity.Language.Stmt signatures Γ result) :
     RealizationWP program w depth (.ite condition yes no) normal returned entry ↔
-      if condition.eval entry then RealizationWP program w depth yes normal returned entry
+      if condition.eval entry.locals then RealizationWP program w depth yes normal returned entry
       else RealizationWP program w depth no normal returned entry := by
-  cases hcondition : condition.eval entry with
+  cases hcondition : condition.eval entry.locals with
   | false =>
       simp only [Bool.false_eq_true, ↓reduceIte]
       constructor
@@ -294,22 +295,22 @@ successful execution with the selected scalar ranges and call capacity. The
 mathematical behavior remains in the independent source `FunctionTotal`. -/
 def FunctionRealizable {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (w depth : Nat)
-    (fn : Fin signatures.length) (pre : Env signatures[fn].params → Prop) : Prop :=
-  ∀ args, pre args → ∃ finish value,
-    RealizedExec program w depth (program.body fn) args finish (.returned value)
+    (fn : Fin signatures.length) (pre : Env signatures[fn].params → Heap → Prop) : Prop :=
+  ∀ args heap, pre args heap → ∃ finish value,
+    RealizedExec program w depth (program.body fn) ⟨args, heap⟩ finish (.returned value)
 
 namespace FunctionRealizable
 
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
 variable {w depth : Nat} {fn : Fin signatures.length}
-variable {pre pre' : Env signatures[fn].params → Prop}
+variable {pre pre' : Env signatures[fn].params → Heap → Prop}
 
 /-- Structural range proofs must reach a real return, not a missing-return fault. -/
-theorem of_wp (body : ∀ args, pre args →
+theorem of_wp (body : ∀ args heap, pre args heap →
     RealizationWP program w depth (program.body fn) (fun _ => False)
-      (fun _ _ => True) args) : FunctionRealizable program w depth fn pre := by
-  intro args hpre
-  obtain ⟨finish, control, execution, post⟩ := body args hpre
+      (fun _ _ => True) ⟨args, heap⟩) : FunctionRealizable program w depth fn pre := by
+  intro args heap hpre
+  obtain ⟨finish, control, execution, post⟩ := body args heap hpre
   cases control with
   | normal => exact False.elim post
   | returned value => exact ⟨finish, value, execution⟩
@@ -317,23 +318,24 @@ theorem of_wp (body : ∀ args, pre args →
 
 /-- Existing function realizability supplies the same returned source invocation. -/
 theorem wp (h : FunctionRealizable program w depth fn pre)
-    (args : Env signatures[fn].params) (hpre : pre args) :
+    (args : Env signatures[fn].params) (heap : Heap) (hpre : pre args heap) :
     RealizationWP program w depth (program.body fn) (fun _ => False)
-      (fun _ _ => True) args := by
-  obtain ⟨finish, value, execution⟩ := h args hpre
+      (fun _ _ => True) ⟨args, heap⟩ := by
+  obtain ⟨finish, value, execution⟩ := h args heap hpre
   exact ⟨finish, .returned value, execution, trivial⟩
 
 /-- A stronger admissibility predicate preserves realizability. -/
 theorem consequence (h : FunctionRealizable program w depth fn pre)
-    (input : ∀ args, pre' args → pre args) :
-    FunctionRealizable program w depth fn pre' := fun args hpre => h args (input args hpre)
+    (input : ∀ args heap, pre' args heap → pre args heap) :
+    FunctionRealizable program w depth fn pre' :=
+  fun args heap hpre => h args heap (input args heap hpre)
 
 /-- More permitted nesting preserves the same source implementation. -/
 theorem mono_depth (h : FunctionRealizable program w depth fn pre)
     {depth' : Nat} (capacity : depth ≤ depth') :
     FunctionRealizable program w depth' fn pre := by
-  intro args hpre
-  obtain ⟨finish, value, execution⟩ := h args hpre
+  intro args heap hpre
+  obtain ⟨finish, value, execution⟩ := h args heap hpre
   exact ⟨finish, value, execution.mono_depth capacity⟩
 
 end FunctionRealizable
@@ -347,24 +349,31 @@ theorem call {signatures : List Signature} {Γ : List Ty} {result : Ty}
     {program : Complexity.Language.Program signatures} {w depth calleeDepth : Nat}
     {fn : Fin signatures.length} {args : Args Γ signatures[fn].params}
     {continuation : Complexity.Language.Stmt signatures (signatures[fn].result :: Γ) result}
-    {normal : Env Γ → Prop} {returned : Value result → Env Γ → Prop} {entry : Env Γ}
-    {feasible pre : Env signatures[fn].params → Prop}
-    {post : Env signatures[fn].params → Value signatures[fn].result → Prop}
+    {normal : Complexity.Language.State Γ → Prop}
+    {returned : Value result → Complexity.Language.State Γ → Prop}
+    {entry : Complexity.Language.State Γ}
+    {feasible pre : Env signatures[fn].params → Heap → Prop}
+    {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
     (realizable : FunctionRealizable program w calleeDepth fn feasible)
     (specification : FunctionTotal program fn pre post)
-    (arguments : EnvFits w (args.eval entry)) (nesting : calleeDepth + 1 ≤ depth)
-    (hfeasible : feasible (args.eval entry)) (hpre : pre (args.eval entry))
-    (body : ∀ value, post (args.eval entry) value → valueToNat value < 2 ^ w →
-      RealizationWP program w depth continuation (fun finish => normal (Env.tail finish))
-        (fun result finish => returned result (Env.tail finish)) (Env.cons value entry)) :
+    (arguments : EnvFits w (args.eval entry.locals)) (nesting : calleeDepth + 1 ≤ depth)
+    (hfeasible : feasible (args.eval entry.locals) entry.heap)
+    (hpre : pre (args.eval entry.locals) entry.heap)
+    (body : ∀ value finalHeap, post (args.eval entry.locals) entry.heap value finalHeap →
+      valueToNat value < 2 ^ w →
+      RealizationWP program w depth continuation (fun finish => normal finish.tail)
+        (fun result finish => returned result finish.tail)
+        (Complexity.Language.State.cons value ⟨entry.locals, finalHeap⟩)) :
     RealizationWP program w depth (.call fn args continuation) normal returned entry := by
-  obtain ⟨calleeFinish, value, invocation⟩ := realizable (args.eval entry) hfeasible
+  obtain ⟨calleeFinish, value, invocation⟩ :=
+    realizable (args.eval entry.locals) entry.heap hfeasible
   have property := specification.postcondition hpre invocation.erase
-  obtain ⟨finish, control, execution, result⟩ := body value property invocation.returned_fits
+  obtain ⟨finish, control, execution, result⟩ :=
+    body value calleeFinish.heap property invocation.returned_fits
   cases depth with
   | zero => omega
   | succ depth =>
-      exact ⟨Env.tail finish, control,
+      exact ⟨finish.tail, control,
         .callReturn arguments
           (invocation.mono_depth (Nat.le_of_succ_le_succ nesting)) execution, result⟩
 
@@ -375,25 +384,29 @@ theorem call_of_eval {signatures : List Signature} {Γ : List Ty} {result : Ty}
     {program : Complexity.Language.Program signatures} {w depth calleeDepth : Nat}
     {fn : Fin signatures.length} {args : Args Γ signatures[fn].params}
     {continuation : Complexity.Language.Stmt signatures (signatures[fn].result :: Γ) result}
-    {normal : Env Γ → Prop} {returned : Value result → Env Γ → Prop} {entry : Env Γ}
-    {feasible : Env signatures[fn].params → Prop} {value : Value signatures[fn].result}
+    {normal : Complexity.Language.State Γ → Prop}
+    {returned : Value result → Complexity.Language.State Γ → Prop}
+    {entry : Complexity.Language.State Γ}
+    {feasible : Env signatures[fn].params → Heap → Prop}
+    {value : Value signatures[fn].result} {finalHeap : Heap}
     (realizable : FunctionRealizable program w calleeDepth fn feasible)
-    (evaluated : program.eval fn (args.eval entry) = Part.some (.ok value))
-    (arguments : EnvFits w (args.eval entry)) (nesting : calleeDepth + 1 ≤ depth)
-    (hfeasible : feasible (args.eval entry))
+    (evaluated : program.eval fn (args.eval entry.locals) entry.heap =
+      Part.some (.ok value, finalHeap))
+    (arguments : EnvFits w (args.eval entry.locals)) (nesting : calleeDepth + 1 ≤ depth)
+    (hfeasible : feasible (args.eval entry.locals) entry.heap)
     (body : valueToNat value < 2 ^ w →
-      RealizationWP program w depth continuation (fun finish => normal (Env.tail finish))
-        (fun result finish => returned result (Env.tail finish)) (Env.cons value entry)) :
+      RealizationWP program w depth continuation (fun finish => normal finish.tail)
+        (fun result finish => returned result finish.tail)
+        (Complexity.Language.State.cons value ⟨entry.locals, finalHeap⟩)) :
     RealizationWP program w depth (.call fn args continuation) normal returned entry := by
   have specification : FunctionTotal program fn
-      (fun actual => actual = args.eval entry) (fun _ returned => returned = value) := by
+      (fun actual initial => actual = args.eval entry.locals ∧ initial = entry.heap)
+      (fun _ _ returned resultHeap => returned = value ∧ resultHeap = finalHeap) := by
     apply FunctionTotal.iff_eval.mpr
-    intro actual same
-    subst actual
-    exact ⟨value, evaluated, rfl⟩
-  apply call realizable specification arguments nesting hfeasible rfl
-  intro actual same fits
-  subst actual
+    rintro actual initial ⟨rfl, rfl⟩
+    exact ⟨value, finalHeap, evaluated, rfl, rfl⟩
+  apply call realizable specification arguments nesting hfeasible ⟨rfl, rfl⟩
+  rintro actual actualHeap ⟨rfl, rfl⟩ fits
   exact body fits
 
 end RealizationWP

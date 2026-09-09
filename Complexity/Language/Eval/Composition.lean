@@ -13,7 +13,8 @@ The partial-value semantics of source statements composes through mathlib's
 finite source execution relation, not a second interpreter or a lowering.
 
 Sequencing preserves early returns and faults. Lexical bindings are removed on
-exit, and calls bind the actual callee result in the caller's environment.
+exit without discarding heap changes, and calls bind the actual callee result
+in the caller's locals with the callee's final shared heap.
 `eval_call` deliberately is not a simplification rule: recursive program bodies
 must not be unfolded automatically. Missing returns remain defined faults.
 -/
@@ -24,23 +25,23 @@ variable {signatures : List Signature} {Γ : List Ty} {result : Ty}
 variable (program : Program signatures)
 
 /-- An empty statement continues normally without changing its environment. -/
-@[simp] theorem eval_skip (entry : Env Γ) :
+@[simp] theorem eval_skip (entry : State Γ) :
     (Stmt.skip : Stmt signatures Γ result).eval program entry =
       Part.some (entry, .normal) :=
   (Exec.skip entry).eval_eq_some
 
 /-- Returning an atom produces its actual source value and stops continuation. -/
-@[simp] theorem eval_ret (value : Atom Γ result) (entry : Env Γ) :
+@[simp] theorem eval_ret (value : Atom Γ result) (entry : State Γ) :
     (Stmt.ret value).eval program entry =
-      Part.some (entry, .returned (value.eval entry)) :=
+      Part.some (entry, .returned (value.eval entry.locals)) :=
   (Exec.ret value entry).eval_eq_some
 
 /-- A primitive binding evaluates its scoped body and removes only that binding
 from the final environment, preserving the body's control outcome. -/
 theorem eval_letPrim {τ : Ty} (value : Prim Γ τ)
-    (continuation : Stmt signatures (τ :: Γ) result) (entry : Env Γ) :
+    (continuation : Stmt signatures (τ :: Γ) result) (entry : State Γ) :
     (Stmt.letPrim value continuation).eval program entry =
-      (continuation.eval program (Env.cons (value.eval entry) entry)).map
+      (continuation.eval program (State.cons (value.eval entry.locals) entry)).map
         (fun outcome => (outcome.1.tail, outcome.2)) := by
   apply Part.ext
   rintro ⟨finish, control⟩
@@ -56,7 +57,7 @@ theorem eval_letPrim {τ : Ty} (value : Prim Γ τ)
 
 /-- Only normal continuation executes the second statement. A finite return or
 fault from the first statement is retained without evaluating the second. -/
-theorem eval_seq (first second : Stmt signatures Γ result) (entry : Env Γ) :
+theorem eval_seq (first second : Stmt signatures Γ result) (entry : State Γ) :
     (Stmt.seq first second).eval program entry =
       (first.eval program entry).bind (fun outcome =>
         match outcome.2 with
@@ -91,13 +92,13 @@ theorem eval_seq (first second : Stmt signatures Γ result) (entry : Env Γ) :
 
 /-- A source conditional observes only the branch selected by its actual atom. -/
 theorem eval_ite (condition : Atom Γ .bool) (yes no : Stmt signatures Γ result)
-    (entry : Env Γ) :
+    (entry : State Γ) :
     (Stmt.ite condition yes no).eval program entry =
-      if condition.eval entry = true then yes.eval program entry else no.eval program entry := by
+      if condition.eval entry.locals = true then yes.eval program entry else no.eval program entry := by
   apply Part.ext
   intro outcome
   rw [mem_eval_iff]
-  by_cases test : condition.eval entry = true
+  by_cases test : condition.eval entry.locals = true
   · rw [if_pos test, mem_eval_iff]
     constructor
     · intro execution
@@ -107,8 +108,8 @@ theorem eval_ite (condition : Atom Γ .bool) (yes no : Stmt signatures Γ result
           exact False.elim (Bool.noConfusion (test.symm.trans falseTest))
     · exact Exec.iteTrue test
   · rw [if_neg test, mem_eval_iff]
-    have falseTest : condition.eval entry = false := by
-      cases value : condition.eval entry with
+    have falseTest : condition.eval entry.locals = false := by
+      cases value : condition.eval entry.locals with
       | false => rfl
       | true => exact False.elim (test value)
     constructor
@@ -119,37 +120,38 @@ theorem eval_ite (condition : Atom Γ .bool) (yes no : Stmt signatures Γ result
     · exact Exec.iteFalse falseTest
 
 /-- A call evaluates the selected source function and binds its actual returned
-value in the caller's continuation. Faults, including missing returns, do not
-execute the continuation or expose the callee's final lexical environment. -/
+value in the caller's continuation using the callee's actual final heap. Faults,
+including missing returns, retain that heap without running the continuation
+or exposing the callee's final lexical environment. -/
 theorem eval_call (fn : Fin signatures.length) (args : Args Γ signatures[fn].params)
-    (continuation : Stmt signatures (signatures[fn].result :: Γ) result) (entry : Env Γ) :
+    (continuation : Stmt signatures (signatures[fn].result :: Γ) result) (entry : State Γ) :
     (Stmt.call fn args continuation).eval program entry =
-      (program.eval fn (args.eval entry)).bind (fun returned =>
-        match returned with
+      (program.eval fn (args.eval entry.locals) entry.heap).bind (fun returned =>
+        match returned.1 with
         | .ok value =>
-            (continuation.eval program (Env.cons value entry)).map
+            (continuation.eval program (State.cons value ⟨entry.locals, returned.2⟩)).map
               (fun outcome => (outcome.1.tail, outcome.2))
-        | .error error => Part.some (entry, .fault error)) := by
+        | .error error => Part.some (⟨entry.locals, returned.2⟩, .fault error)) := by
   apply Part.ext
   rintro ⟨finish, control⟩
   constructor
   · intro member
     cases mem_eval_iff.mp member with
     | callReturn callee body =>
-        exact Part.mem_bind (Program.mem_eval_ok_iff.mpr ⟨_, callee⟩)
+        exact Part.mem_bind (Program.mem_eval_ok_iff.mpr ⟨_, callee, rfl⟩)
           (Part.mem_map_iff _ |>.mpr ⟨(_, _), mem_eval_iff.mpr body, rfl⟩)
     | callFault callee =>
-        have fault := Program.eval_eq_error_iff.mpr (Or.inr ⟨_, callee⟩)
+        have fault := Program.eval_eq_error_iff.mpr (Or.inr ⟨_, callee, rfl⟩)
         exact Part.mem_bind (Part.eq_some_iff.mp fault) (Part.mem_some_iff.mpr rfl)
     | callMissingReturn callee =>
-        have fault := Program.eval_eq_error_iff.mpr (Or.inl ⟨rfl, _, callee⟩)
+        have fault := Program.eval_eq_error_iff.mpr (Or.inl ⟨rfl, _, callee, rfl⟩)
         exact Part.mem_bind (Part.eq_some_iff.mp fault) (Part.mem_some_iff.mpr rfl)
   · intro member
-    obtain ⟨returned, calleeMember, bodyMember⟩ := Part.mem_bind_iff.mp member
+    obtain ⟨⟨returned, finalHeap⟩, calleeMember, bodyMember⟩ := Part.mem_bind_iff.mp member
     apply mem_eval_iff.mpr
     cases returned with
     | ok value =>
-        obtain ⟨calleeFinish, callee⟩ := Program.mem_eval_ok_iff.mp calleeMember
+        obtain ⟨calleeFinish, callee, rfl⟩ := Program.mem_eval_ok_iff.mp calleeMember
         obtain ⟨⟨scopedFinish, scopedControl⟩, body, same⟩ :=
           Part.mem_map_iff _ |>.mp bodyMember
         cases same
@@ -157,7 +159,7 @@ theorem eval_call (fn : Fin signatures.length) (args : Args Γ signatures[fn].pa
     | error error =>
         cases Part.mem_some_iff.mp bodyMember
         have fault := Program.eval_eq_error_iff.mp (Part.eq_some_iff.mpr calleeMember)
-        rcases fault with ⟨rfl, calleeFinish, callee⟩ | ⟨calleeFinish, callee⟩
+        rcases fault with ⟨rfl, calleeFinish, callee, rfl⟩ | ⟨calleeFinish, callee, rfl⟩
         · exact .callMissingReturn callee
         · exact .callFault callee
 

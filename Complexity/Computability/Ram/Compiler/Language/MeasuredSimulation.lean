@@ -24,6 +24,10 @@ outer invocation and final halt remain separate.
 Register placement is a compiler detail: the canonical call-cost expression is
 valid at every reserved-register boundary. The public function theorem asks
 only for source arguments and their representation, not a register proof.
+
+Source executions retain their actual shared heap through calls and scope
+exit. This scalar simulation represents their locals and returned values; it
+does not assert a relation between the source heap and RAM memory.
 -/
 
 namespace Ram.LanguageCompiler
@@ -42,12 +46,13 @@ namespace ExecutionCost
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
 variable {w depth heapLimit steps : Nat} {Γ : List Ty} {result : Ty}
 variable {stmt : Complexity.Language.Stmt signatures Γ result}
-variable {entry finish : Env Γ} {outcome : Control result}
+variable {entry finish : Complexity.Language.State Γ} {outcome : Control result}
 variable {execution : RealizedExec program w depth stmt entry finish outcome}
 
 /-- Initialize the private flag and prepare the same fresh layout for either
 the generic statement wrapper or a complete function's core. -/
-private theorem lowerInitializedCore_of_core {value : Value result} (controlReg : Nat)
+private theorem lowerInitializedCore_of_core {entry finish : Env Γ}
+    {value : Value result} (controlReg : Nat)
     (core : ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
       layout.Bounded next → layout.Matches entry s.regs → layout.Avoids flag →
       flag < next → resultSlot + fieldCount result ≤ flag → s.regs flag = 0 →
@@ -81,7 +86,8 @@ private theorem lowerInitializedCore_of_core {value : Value result} (controlReg 
 
 /-- A returned core pays two instructions for flag initialization and three
 for the final true-flag dispatch. Its external continuation is not executed. -/
-private theorem lowerReturned_of_core {value : Value result} (controlReg : Nat) (hw : 0 < w)
+private theorem lowerReturned_of_core {entry finish : Env Γ}
+    {value : Value result} (controlReg : Nat) (hw : 0 < w)
     (core : ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
       layout.Bounded next → layout.Matches entry s.regs → layout.Avoids flag →
       flag < next → resultSlot + fieldCount result ≤ flag → s.regs flag = 0 →
@@ -144,11 +150,11 @@ to this shared theorem; the function wrapper chooses those slots automatically. 
 theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : Nat)
     (hw : 0 < w) :
     ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
-      layout.Bounded next → layout.Matches entry s.regs → layout.Avoids flag →
+      layout.Bounded next → layout.Matches entry.locals s.regs → layout.Avoids flag →
       flag < next → resultSlot + fieldCount result ≤ flag → s.regs flag = 0 →
       ∃ t, Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
         (lowerStmtCore layout next resultSlot flag stmt) steps s t ∧
-        ControlMatches layout resultSlot flag finish outcome t := by
+        ControlMatches layout resultSlot flag finish.locals outcome t := by
   induction cost with
   | skip entry =>
       intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
@@ -156,14 +162,14 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
   | @letPrim Γ τ result depth value body entry finish outcome fits execution steps cost ih =>
       intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
       have first := lowerPrim_measured (control := controlReg) (program := lowerProgram program)
-        (heapLimit := heapLimit) (depth := depth) layout next value entry s hw matched fits
+        (heapLimit := heapLimit) (depth := depth) layout next value entry.locals s hw matched fits
       have matching : RegisterMap.Matches (RegisterMap.extend layout τ next)
-          (Env.cons (value.eval entry) entry)
-          (s.setRegs (valueRegs τ next) (valueWords w (value.eval entry))).regs :=
-        lowerPrim_matches layout next value entry s hw matched fits bounded
+          (Env.cons (value.eval entry.locals) entry.locals)
+          (s.setRegs (valueRegs τ next) (valueWords w (value.eval entry.locals))).regs :=
+        lowerPrim_matches layout next value entry.locals s hw matched fits bounded
       have flagPreserved :
-          (s.setRegs (valueRegs τ next) (valueWords w (value.eval entry))).regs flag = 0 :=
-        (valueRegs_setRegs_other s τ next flag (valueWords w (value.eval entry))
+          (s.setRegs (valueRegs τ next) (valueWords w (value.eval entry.locals))).regs flag = 0 :=
+        (valueRegs_setRegs_other s τ next flag (valueWords w (value.eval entry.locals))
           (Nat.ne_of_gt fresh)).trans flagZero
       obtain ⟨t, rest, property⟩ := ih (RegisterMap.extend layout τ next)
         (next + fieldCount τ) resultSlot flag _
@@ -198,10 +204,11 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
       obtain ⟨t, body, property⟩ :=
         ih layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
-      have fits : valueToNat (condition.eval entry) < 2 ^ w := by
+      have fits : valueToNat (condition.eval entry.locals) < 2 ^ w := by
         rw [test]
         exact Nat.one_lt_two_pow (Nat.ne_of_gt hw)
-      have decoded := atomExpr_toNat layout condition .bool entry s.regs s.mem hw matched fits
+      have decoded :=
+        atomExpr_toNat layout condition .bool entry.locals s.regs s.mem hw matched fits
       have conditionTrue : s.eval (atomExpr layout condition .bool) ≠ 0 := by
         intro zero
         change (s.eval (atomExpr layout condition .bool)).toNat = _ at decoded
@@ -216,10 +223,11 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
       obtain ⟨t, body, property⟩ :=
         ih layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
-      have fits : valueToNat (condition.eval entry) < 2 ^ w := by
+      have fits : valueToNat (condition.eval entry.locals) < 2 ^ w := by
         rw [test]
         exact Nat.two_pow_pos w
-      have decoded := atomExpr_toNat layout condition .bool entry s.regs s.mem hw matched fits
+      have decoded :=
+        atomExpr_toNat layout condition .bool entry.locals s.regs s.mem hw matched fits
       have conditionFalse : s.eval (atomExpr layout condition .bool) = 0 := by
         apply (Word.toNat_eq_zero_iff _).mp
         simpa only [test, valueToNat] using decoded
@@ -230,17 +238,18 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       omega
   | @ret Γ result depth value entry fits =>
       intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
-      let received := s.setRegs (valueRegs result resultSlot) (valueWords w (value.eval entry))
+      let received :=
+        s.setRegs (valueRegs result resultSlot) (valueWords w (value.eval entry.locals))
       have writeResult := lowerReturn_measured (control := controlReg)
         (program := lowerProgram program) (heapLimit := heapLimit) (depth := depth)
-        layout resultSlot value entry s hw matched (fun _ => fits)
+        layout resultSlot value entry.locals s hw matched (fun _ => fits)
       have raiseFlag : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
           (.assign flag (.const 1)) 2 received (received.setReg flag 1) := .assign trivial
       refine ⟨received.setReg flag 1, .seq writeResult raiseFlag, ?_⟩
       refine ⟨?_, Source.State.setReg_same received flag 1⟩
       rw [resultExprs_setReg_eval result resultSlot flag 1 received
         (flag_not_mem_valueRegs result resultSlot flag resultFlag)]
-      exact resultExprs_setRegs_eval result resultSlot (value.eval entry) s
+      exact resultExprs_setRegs_eval result resultSlot (value.eval entry.locals) s
   | @callReturn Γ result depth fn args body entry calleeFinish value finish outcome
       arguments callee execution calleeSteps bodySteps calleeCost bodyCost ihCallee ihBody =>
       intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
@@ -248,7 +257,7 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
         lowerFunction_of_core controlReg ihCallee arguments s
       obtain ⟨callRun, matching, preserved⟩ := lowerCall_measured_fresh
         (τ := signatures[fn].result) (value := value)
-        layout args entry s next hw matched arguments invocation
+        layout args entry.locals s next hw matched arguments invocation
         (lowerProgram_lookup program fn)
         (by simp only [lowerFunc_results_length]) bounded (fun _ => callee.returned_fits)
       obtain ⟨t, rest, property⟩ := ihBody
@@ -268,7 +277,7 @@ theorem lowerReturnedMeasured {value : Value result}
     (cost : ExecutionCost execution steps) (controlReg : Nat) (hw : 0 < w) :
     ∀ (layout : RegisterMap Γ) (next resultSlot : Reg) (s : Source.State w)
       (continuation : Ram.Stmt),
-      layout.Bounded next → layout.Matches entry s.regs →
+      layout.Bounded next → layout.Matches entry.locals s.regs →
       ∃ t, Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
         (lowerStmt layout next resultSlot stmt continuation) (steps + 5) s t ∧
         (resultExprs result resultSlot).map t.eval = valueWords w value :=
@@ -278,8 +287,11 @@ theorem lowerReturnedMeasured {value : Value result}
 count, including its two-step private flag initialization. This does not include
 its enclosing call's argument, frame, return or halt work. -/
 theorem functionMeasuredExec {fn : Fin signatures.length}
-    {args finish : Env signatures[fn].params} {value : Value signatures[fn].result}
-    {execution : RealizedExec program w depth (program.body fn) args finish (.returned value)}
+    {args : Env signatures[fn].params} {initialHeap : Heap}
+    {finish : Complexity.Language.State signatures[fn].params}
+    {value : Value signatures[fn].result}
+    {execution : RealizedExec program w depth (program.body fn)
+      ⟨args, initialHeap⟩ finish (.returned value)}
     (cost : ExecutionCost execution steps) (controlReg : Nat) (hw : 0 < w)
     (arguments : EnvFits w args) (s : Source.State w) :
     ∃ t, Source.FunctionMeasuredExec controlReg (lowerProgram program) heapLimit depth

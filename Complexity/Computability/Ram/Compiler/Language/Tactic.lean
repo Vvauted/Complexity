@@ -16,6 +16,8 @@ arguments of a `FunctionRealizable` goal and composes the existing realization
 rules. The supplied callee contracts stay opaque. The parameter names and the
 `using` clause may be omitted. Mathematical ranges, callee preconditions and
 call-depth inequalities remain ordinary proof goals.
+The initial shared heap is quantified independently of the ordinary arguments;
+scopes and calls retain their actual heaps through the existing state rules.
 
 `ram_source_cost (n limit) using calleeBound` composes the existing cost rules,
 then compares the derived returning-body bound with the requested bound. It
@@ -127,6 +129,11 @@ private def normalizeValues : TacticM Unit := do
         Complexity.Language.Env.cons_here, Complexity.Language.Env.cons_there,
         Complexity.Language.Env.head_cons, Complexity.Language.Env.tail_cons,
         Complexity.Language.Env.get_tail,
+        Complexity.Language.State.locals_enter, Complexity.Language.State.heap_enter,
+        Complexity.Language.State.locals_restore, Complexity.Language.State.heap_restore,
+        Complexity.Language.State.locals_cons, Complexity.Language.State.heap_cons,
+        Complexity.Language.State.locals_tail, Complexity.Language.State.heap_tail,
+        Complexity.Language.State.tail_cons,
         Complexity.Language.Value, Ram.LanguageCompiler.valueToNat,
         Ram.LanguageCompiler.EnvFits.cons_nat_iff,
         Ram.LanguageCompiler.EnvFits.cons_bool_iff,

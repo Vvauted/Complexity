@@ -49,22 +49,23 @@ inductive ExecutionCost {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {w : Nat} :
     {depth : Nat} → {Γ : List Ty} → {result : Ty} →
       {stmt : Complexity.Language.Stmt signatures Γ result} →
-      {entry finish : Env Γ} → {control : Control result} →
+      {entry finish : Complexity.Language.State Γ} → {control : Control result} →
       RealizedExec program w depth stmt entry finish control → Nat → Prop where
-  | skip {Γ : List Ty} {result : Ty} {depth : Nat} (entry : Env Γ) :
+  | skip {Γ : List Ty} {result : Ty} {depth : Nat} (entry : Complexity.Language.State Γ) :
       ExecutionCost (RealizedExec.skip (program := program) (w := w)
         (result := result) (depth := depth) entry) 0
   | letPrim {Γ : List Ty} {τ result : Ty} {depth : Nat} {value : Prim Γ τ}
       {continuation : Complexity.Language.Stmt signatures (τ :: Γ) result}
-      {entry : Env Γ} {finish : Env (τ :: Γ)} {control : Control result}
-      {fits : PrimFits w entry value}
+      {entry : Complexity.Language.State Γ} {finish : Complexity.Language.State (τ :: Γ)}
+      {control : Control result} {fits : PrimFits w entry.locals value}
       {body : RealizedExec program w depth continuation
-        (Env.cons (value.eval entry) entry) finish control} {steps : Nat}
+        (Complexity.Language.State.cons (value.eval entry.locals) entry) finish control}
+      {steps : Nat}
       (tail : ExecutionCost body steps) :
       ExecutionCost (.letPrim fits body) (primCodeSize value + steps)
   | seqNormal {Γ : List Ty} {result : Ty} {depth : Nat}
       {first second : Complexity.Language.Stmt signatures Γ result}
-      {entry middle finish : Env Γ} {control : Control result}
+      {entry middle finish : Complexity.Language.State Γ} {control : Control result}
       {head : RealizedExec program w depth first entry middle .normal}
       {tail : RealizedExec program w depth second middle finish control}
       {firstSteps secondSteps : Nat}
@@ -72,39 +73,42 @@ inductive ExecutionCost {signatures : List Signature}
       ExecutionCost (.seqNormal head tail) (firstSteps + 2 + secondSteps)
   | seqReturn {Γ : List Ty} {result : Ty} {depth : Nat}
       {first second : Complexity.Language.Stmt signatures Γ result}
-      {entry finish : Env Γ} {value : Value result}
+      {entry finish : Complexity.Language.State Γ} {value : Value result}
       {head : RealizedExec program w depth first entry finish (.returned value)} {steps : Nat}
       (cost : ExecutionCost head steps) :
       ExecutionCost (.seqReturn (second := second) head) (steps + 3)
   | iteTrue {Γ : List Ty} {result : Ty} {depth : Nat} {condition : Atom Γ .bool}
       {yes no : Complexity.Language.Stmt signatures Γ result}
-      {entry finish : Env Γ} {control : Control result}
-      {test : condition.eval entry = true}
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      {test : condition.eval entry.locals = true}
       {body : RealizedExec program w depth yes entry finish control} {steps : Nat}
       (cost : ExecutionCost body steps) :
       ExecutionCost (.iteTrue (no := no) test body) (steps + 3)
   | iteFalse {Γ : List Ty} {result : Ty} {depth : Nat} {condition : Atom Γ .bool}
       {yes no : Complexity.Language.Stmt signatures Γ result}
-      {entry finish : Env Γ} {control : Control result}
-      {test : condition.eval entry = false}
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      {test : condition.eval entry.locals = false}
       {body : RealizedExec program w depth no entry finish control} {steps : Nat}
       (cost : ExecutionCost body steps) :
       ExecutionCost (.iteFalse (yes := yes) test body) (steps + 2)
   | ret {Γ : List Ty} {result : Ty} {depth : Nat}
-      (value : Atom Γ result) (entry : Env Γ)
-      {fits : valueToNat (value.eval entry) < 2 ^ w} :
+      (value : Atom Γ result) (entry : Complexity.Language.State Γ)
+      {fits : valueToNat (value.eval entry.locals) < 2 ^ w} :
       ExecutionCost (RealizedExec.ret (program := program) (depth := depth) value entry fits)
         (2 * fieldCount result + 2)
   | callReturn {Γ : List Ty} {result : Ty} {depth : Nat} {fn : Fin signatures.length}
       {args : Args Γ signatures[fn].params}
       {continuation : Complexity.Language.Stmt signatures (signatures[fn].result :: Γ) result}
-      {entry : Env Γ} {calleeFinish : Env signatures[fn].params}
-      {value : Value signatures[fn].result} {finish : Env (signatures[fn].result :: Γ)}
-      {control : Control result} {arguments : EnvFits w (args.eval entry)}
+      {entry : Complexity.Language.State Γ}
+      {calleeFinish : Complexity.Language.State signatures[fn].params}
+      {value : Value signatures[fn].result}
+      {finish : Complexity.Language.State (signatures[fn].result :: Γ)}
+      {control : Control result} {arguments : EnvFits w (args.eval entry.locals)}
       {callee : RealizedExec program w depth (program.body fn)
-        (args.eval entry) calleeFinish (.returned value)}
+        (entry.enter (args.eval entry.locals)) calleeFinish (.returned value)}
       {body : RealizedExec program w (depth + 1) continuation
-        (Env.cons value entry) finish control} {calleeSteps bodySteps : Nat}
+        (Complexity.Language.State.cons value (entry.restore calleeFinish)) finish control}
+      {calleeSteps bodySteps : Nat}
       (calleeCost : ExecutionCost callee calleeSteps) (bodyCost : ExecutionCost body bodySteps) :
       ExecutionCost (.callReturn arguments callee body)
         (callCost program fn (calleeSteps + 2) + bodySteps)
@@ -115,7 +119,7 @@ attempt to compute a natural number by inspecting a proof. -/
 theorem RealizedExec.exists_cost {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {w depth : Nat}
     {Γ : List Ty} {result : Ty} {stmt : Complexity.Language.Stmt signatures Γ result}
-    {entry finish : Env Γ} {control : Control result}
+    {entry finish : Complexity.Language.State Γ} {control : Control result}
     (execution : RealizedExec program w depth stmt entry finish control) :
     ∃ steps, ExecutionCost execution steps := by
   induction execution with
@@ -147,23 +151,25 @@ termination remain separate source contracts. The bound is uniform over word
 width and call capacity whenever the source execution is realizable. -/
 def FunctionCostBound {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (fn : Fin signatures.length)
-    (pre : Env signatures[fn].params → Prop) (bound : Env signatures[fn].params → Nat) : Prop :=
-  ∀ args, pre args → ∀ {w depth finish value}
-    (execution : RealizedExec program w depth (program.body fn) args finish (.returned value))
-    {steps}, ExecutionCost execution steps → steps + 2 ≤ bound args
+    (pre : Env signatures[fn].params → Heap → Prop)
+    (bound : Env signatures[fn].params → Heap → Nat) : Prop :=
+  ∀ args heap, pre args heap → ∀ {w depth finish value}
+    (execution : RealizedExec program w depth (program.body fn)
+      ⟨args, heap⟩ finish (.returned value))
+    {steps}, ExecutionCost execution steps → steps + 2 ≤ bound args heap
 
 namespace FunctionCostBound
 
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
-variable {fn : Fin signatures.length} {pre : Env signatures[fn].params → Prop}
-variable {bound bound' : Env signatures[fn].params → Nat}
+variable {fn : Fin signatures.length} {pre : Env signatures[fn].params → Heap → Prop}
+variable {bound bound' : Env signatures[fn].params → Heap → Nat}
 
 /-- Weaken a mathematical bound without changing the observed computation. -/
 theorem mono_bound (h : FunctionCostBound program fn pre bound)
-    (budget : ∀ args, pre args → bound args ≤ bound' args) :
+    (budget : ∀ args heap, pre args heap → bound args heap ≤ bound' args heap) :
     FunctionCostBound program fn pre bound' := by
-  intro args hpre w depth finish value execution steps cost
-  exact Nat.le_trans (h args hpre execution cost) (budget args hpre)
+  intro args heap hpre w depth finish value execution steps cost
+  exact Nat.le_trans (h args heap hpre execution cost) (budget args heap hpre)
 
 end FunctionCostBound
 

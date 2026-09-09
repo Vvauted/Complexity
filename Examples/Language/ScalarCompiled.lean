@@ -22,6 +22,10 @@ runner with the same mathematical minimum. No register layout, receiver update
 or algorithm-specific source-to-IR adapter appears in this proof. Separate
 source-execution cost bounds apply to that same invocation, including its
 internal helper call, outer calling convention and final halt.
+
+The source heap is arbitrary and the source contracts prove that these scalar
+functions preserve it. It is not identified with the RAM shared memory; the
+current compiler bridge does not claim a mutable-heap representation.
 -/
 
 namespace Complexity.Language.Examples.Scalar
@@ -31,7 +35,7 @@ open Ram.LanguageCompiler
 /-- The helper needs no nested call and its actual sum must fit the word width. -/
 theorem increment_realizable {w : Nat} :
     FunctionRealizable program w 0 (0 : Fin 2)
-      (fun args => Env.head args + 1 < 2 ^ w) := by
+      (fun args _ => Env.head args + 1 < 2 ^ w) := by
   ram_source_realize (n)
   all_goals omega
 
@@ -39,13 +43,13 @@ theorem increment_realizable {w : Nat} :
 minimum, and the compared limit must both be representable. -/
 theorem boundedIncrement_realizable {w : Nat} :
     FunctionRealizable program w 1 (1 : Fin 2)
-      (fun args => Env.head args + 1 < 2 ^ w ∧ Env.head (Env.tail args) < 2 ^ w) := by
+      (fun args _ => Env.head args + 1 < 2 ^ w ∧ Env.head (Env.tail args) < 2 ^ w) := by
   ram_source_realize (n limit) using increment_realizable, increment_total
   all_goals omega
 
 /-- The automatically lowered helper returns the same mathematical increment.
 The entry state and heap boundary are arbitrary; no manual register proof is needed. -/
-theorem increment_functionExec {w heapLimit : Nat} (hw : 0 < w) (n : Nat)
+theorem increment_functionExec {w heapLimit : Nat} (hw : 0 < w) (n : Nat) (sourceHeap : Heap)
     (fits : n + 1 < 2 ^ w) (entry : Ram.Source.State w) :
     ∃ finish, Ram.Source.FunctionExec (lowerProgram program) heapLimit 0
       (lowerFunc program (0 : Fin 2))
@@ -55,16 +59,17 @@ theorem increment_functionExec {w heapLimit : Nat} (hw : 0 < w) (n : Nat)
   have arguments : EnvFits w args := by
     simp only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
     omega
-  obtain ⟨value, finish, execution, result⟩ :=
+  obtain ⟨value, _, finish, _, execution, result⟩ :=
     increment_realizable.functionExec (heapLimit := heapLimit)
-      increment_total hw args arguments fits trivial entry
-  have actualValue : (value : Nat) = n + 1 := result
+      increment_total hw args sourceHeap arguments fits trivial entry
+  have actualValue : (value : Nat) = n + 1 := result.1
   exact ⟨finish, actualValue ▸ execution⟩
 
 /-- The same source helper-call and branch program has an actual generated
 function execution returning the mathematical minimum. This uses the shared
 compiler theorem and the unchanged source correctness proof. -/
 theorem boundedIncrement_functionExec {w heapLimit : Nat} (hw : 0 < w) (n limit : Nat)
+    (sourceHeap : Heap)
     (sumFits : n + 1 < 2 ^ w) (limitFits : limit < 2 ^ w) (entry : Ram.Source.State w) :
     ∃ finish, Ram.Source.FunctionExec (lowerProgram program) heapLimit 1
       (lowerFunc program (1 : Fin 2))
@@ -75,16 +80,17 @@ theorem boundedIncrement_functionExec {w heapLimit : Nat} (hw : 0 < w) (n limit 
   have arguments : EnvFits w args := by
     simp only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
     omega
-  obtain ⟨value, finish, execution, result⟩ :=
+  obtain ⟨value, _, finish, _, execution, result⟩ :=
     boundedIncrement_realizable.functionExec (heapLimit := heapLimit)
-      boundedIncrement_total hw args arguments ⟨sumFits, limitFits⟩ trivial entry
-  have actualValue : (value : Nat) = min (n + 1) limit := result
+      boundedIncrement_total hw args sourceHeap arguments ⟨sumFits, limitFits⟩ trivial entry
+  have actualValue : (value : Nat) = min (n + 1) limit := result.1
   exact ⟨finish, actualValue ▸ execution⟩
 
 /-- The actual compiled machine returns the source-level minimum and preserves
 the shared entry state. Its measured instruction count refers to this same
 execution, without assuming or claiming an instruction upper bound. -/
 theorem boundedIncrement_runUntil {w heapLimit : Nat} (hw : 0 < w) (n limit : Nat)
+    (sourceHeap : Heap)
     (sumFits : n + 1 < 2 ^ w) (limitFits : limit < 2 ^ w) (entry : Ram.Source.State w)
     (codeCapacity : (lowerCode program (1 : Fin 2)).length < 2 ^ w)
     (stackCapacity : heapLimit + 2 * Ram.ABI.frameSize (programControl program) < 2 ^ w) :
@@ -106,29 +112,30 @@ theorem boundedIncrement_runUntil {w heapLimit : Nat} (hw : 0 < w) (n limit : Na
   have arguments : EnvFits w args := by
     simp only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
     omega
-  obtain ⟨value, bodySteps, target, result, execution, values, observed, time⟩ :=
-    boundedIncrement_realizable.runUntil boundedIncrement_total hw args arguments
+  obtain ⟨value, _, bodySteps, target, _, result, execution, values, observed, time⟩ :=
+    boundedIncrement_realizable.runUntil boundedIncrement_total hw args sourceHeap arguments
       ⟨sumFits, limitFits⟩ trivial entry codeCapacity stackCapacity
-  have actualValue : (value : Nat) = min (n + 1) limit := result
+  have actualValue : (value : Nat) = min (n + 1) limit := result.1
   exact ⟨bodySteps, target, execution, actualValue ▸ values, observed, time⟩
 
 /-- The helper body spends four transitions on addition, four on returning its
 value and setting the flag, and two on flag initialization. -/
 theorem increment_costBound :
-    FunctionCostBound program (0 : Fin 2) (fun _ => True) (fun _ => 10) := by
+    FunctionCostBound program (0 : Fin 2) (fun _ _ => True) (fun _ _ => 10) := by
   ram_source_cost (n)
 
 /-- The caller reuses the helper's complete call bound. Its comparison, selected
 return branch and initialization add at most thirteen transitions. -/
 theorem boundedIncrement_costBound :
-    FunctionCostBound program (1 : Fin 2) (fun _ => True)
-      (fun _ => callCost program (0 : Fin 2) 10 + 13) := by
+    FunctionCostBound program (1 : Fin 2) (fun _ _ => True)
+      (fun _ _ => callCost program (0 : Fin 2) 10 + 13) := by
   ram_source_cost (n limit) using increment_costBound
   all_goals omega
 
 /-- The same halted machine invocation returns the mathematical minimum and
 satisfies the independent source cost bound, including the outer call and halt. -/
 theorem boundedIncrement_runUntil_le {w heapLimit : Nat} (hw : 0 < w) (n limit : Nat)
+    (sourceHeap : Heap)
     (sumFits : n + 1 < 2 ^ w) (limitFits : limit < 2 ^ w) (entry : Ram.Source.State w)
     (codeCapacity : (lowerCode program (1 : Fin 2)).length < 2 ^ w)
     (stackCapacity : heapLimit + 2 * Ram.ABI.frameSize (programControl program) < 2 ^ w) :
@@ -155,11 +162,12 @@ theorem boundedIncrement_runUntil_le {w heapLimit : Nat} (hw : 0 < w) (n limit :
   have arguments : EnvFits w args := by
     simp only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
     omega
-  obtain ⟨value, bodySteps, target, result, execution, values, observed, time,
+  obtain ⟨value, _, bodySteps, target, _, result, execution, values, observed, time,
       bodyBound, invocationBound⟩ :=
     boundedIncrement_realizable.runUntil_le boundedIncrement_total boundedIncrement_costBound
-      hw args arguments ⟨sumFits, limitFits⟩ trivial trivial entry codeCapacity stackCapacity
-  have actualValue : (value : Nat) = min (n + 1) limit := result
+      hw args sourceHeap arguments ⟨sumFits, limitFits⟩ trivial trivial entry
+      codeCapacity stackCapacity
+  have actualValue : (value : Nat) = min (n + 1) limit := result.1
   exact ⟨bodySteps, target, execution, actualValue ▸ values, observed, time,
     bodyBound, invocationBound⟩
 

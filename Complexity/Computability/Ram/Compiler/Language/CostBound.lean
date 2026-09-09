@@ -9,7 +9,7 @@ import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
 # Structured bounds on source execution costs
 
 `StmtCostBound` bounds the existing compiler-derived `ExecutionCost` observation
-at an actual source environment. It does not define another execution or cost
+at an actual source state. It does not define another execution or cost
 interpreter, and it supplies neither correctness nor termination. Bounds are
 uniform over word widths and call capacities whenever execution is realizable.
 
@@ -27,7 +27,8 @@ open Complexity.Language
 from the given entry. Normal continuation and early return are both covered. -/
 def StmtCostBound {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (program : Complexity.Language.Program signatures)
-    (stmt : Complexity.Language.Stmt signatures Γ result) (entry : Env Γ) (bound : Nat) : Prop :=
+    (stmt : Complexity.Language.Stmt signatures Γ result)
+    (entry : Complexity.Language.State Γ) (bound : Nat) : Prop :=
   ∀ {w depth finish control}
     (execution : RealizedExec program w depth stmt entry finish control)
     {steps}, ExecutionCost execution steps → steps ≤ bound
@@ -36,7 +37,8 @@ namespace StmtCostBound
 
 variable {signatures : List Signature} {Γ : List Ty} {result : Ty}
 variable {program : Complexity.Language.Program signatures}
-variable {stmt : Complexity.Language.Stmt signatures Γ result} {entry : Env Γ}
+variable {stmt : Complexity.Language.Stmt signatures Γ result}
+variable {entry : Complexity.Language.State Γ}
 variable {bound bound' : Nat}
 
 /-- Weaken a bound on the same observed computation. -/
@@ -46,14 +48,14 @@ theorem mono (h : StmtCostBound program stmt entry bound) (budget : bound ≤ bo
   exact Nat.le_trans (h execution cost) budget
 
 /-- An empty source statement emits no core instructions. -/
-theorem skip (entry : Env Γ) :
+theorem skip (entry : Complexity.Language.State Γ) :
     StmtCostBound program (.skip : Complexity.Language.Stmt signatures Γ result) entry 0 := by
   intro w depth finish control execution steps cost
   cases cost
   exact Nat.le_refl _
 
 /-- Return accounting includes the actual result fields and private return flag. -/
-theorem ret (value : Atom Γ result) (entry : Env Γ) :
+theorem ret (value : Atom Γ result) (entry : Complexity.Language.State Γ) :
     StmtCostBound program (.ret value) entry (2 * fieldCount result + 2) := by
   intro w depth finish control execution steps cost
   cases cost
@@ -63,7 +65,8 @@ theorem ret (value : Atom Γ result) (entry : Env Γ) :
 mathematical value. No range or termination proof is required for this bound. -/
 theorem letPrim {τ : Ty} (value : Prim Γ τ)
     {continuation : Complexity.Language.Stmt signatures (τ :: Γ) result}
-    (body : StmtCostBound program continuation (Env.cons (value.eval entry) entry) bound) :
+    (body : StmtCostBound program continuation
+      (Complexity.Language.State.cons (value.eval entry.locals) entry) bound) :
     StmtCostBound program (.letPrim value continuation) entry (primCodeSize value + bound) := by
   intro w depth finish control execution steps cost
   cases cost with
@@ -73,10 +76,10 @@ theorem letPrim {τ : Ty} (value : Prim Γ τ)
 extra jump past the unselected branch; neither path charges the other's body. -/
 theorem ite {condition : Atom Γ .bool}
     {yes no : Complexity.Language.Stmt signatures Γ result} {yesBound noBound : Nat}
-    (yesCost : condition.eval entry = true → StmtCostBound program yes entry yesBound)
-    (noCost : condition.eval entry = false → StmtCostBound program no entry noBound) :
+    (yesCost : condition.eval entry.locals = true → StmtCostBound program yes entry yesBound)
+    (noCost : condition.eval entry.locals = false → StmtCostBound program no entry noBound) :
     StmtCostBound program (.ite condition yes no) entry
-      (if condition.eval entry then yesBound + 3 else noBound + 2) := by
+      (if condition.eval entry.locals then yesBound + 3 else noBound + 2) := by
   intro w depth finish control execution steps cost
   cases cost with
   | @iteTrue Γ result depth condition yes no entry finish control test body steps bodyCost =>
@@ -120,48 +123,55 @@ theorem seq {first second : Complexity.Language.Stmt signatures Γ result}
       exact Nat.le_trans (Nat.add_le_add_right (head _ firstCost) 3)
         (Nat.add_le_add_left (Nat.le_max_right _ _) _)
 
-/-- Compose a separate callee bound with its actual returned-value continuation.
+/-- Compose a separate callee bound with its actual returned-value and heap continuation.
 The result premise concerns only completed source calls: use an existing
 `FunctionTotal.postcondition`, or `True` when the bound needs no result property.
 It does not require termination, expose a callee environment to the caller, or
 charge the callee's body wrapper twice. -/
 theorem call {fn : Fin signatures.length} {args : Args Γ signatures[fn].params}
     {continuation : Complexity.Language.Stmt signatures (signatures[fn].result :: Γ) result}
-    {pre : Env signatures[fn].params → Prop} {calleeBound : Env signatures[fn].params → Nat}
-    {post : Value signatures[fn].result → Prop} {nextBound : Value signatures[fn].result → Nat}
-    (callee : FunctionCostBound program fn pre calleeBound) (hpre : pre (args.eval entry))
+    {pre : Env signatures[fn].params → Heap → Prop}
+    {calleeBound : Env signatures[fn].params → Heap → Nat}
+    {post : Value signatures[fn].result → Heap → Prop}
+    {nextBound : Value signatures[fn].result → Heap → Nat}
+    (callee : FunctionCostBound program fn pre calleeBound)
+    (hpre : pre (args.eval entry.locals) entry.heap)
     (returned : ∀ {finish value},
-      Complexity.Language.Exec program (program.body fn) (args.eval entry) finish (.returned value) →
-        post value)
-    (body : ∀ value, post value →
-      StmtCostBound program continuation (Env.cons value entry) (nextBound value))
-    (combine : ∀ value, post value →
-      callCost program fn (calleeBound (args.eval entry)) + nextBound value ≤ bound) :
+      Complexity.Language.Exec program (program.body fn)
+        (entry.enter (args.eval entry.locals)) finish (.returned value) → post value finish.heap)
+    (body : ∀ value heap, post value heap →
+      StmtCostBound program continuation
+        (Complexity.Language.State.cons value ⟨entry.locals, heap⟩) (nextBound value heap))
+    (combine : ∀ value heap, post value heap →
+      callCost program fn (calleeBound (args.eval entry.locals) entry.heap) +
+        nextBound value heap ≤ bound) :
     StmtCostBound program (.call fn args continuation) entry bound := by
   intro w depth finish control execution steps cost
   cases cost with
   | @callReturn Γ result depth fn args continuation entry calleeFinish value finish control
       arguments calleeExec bodyExec calleeSteps bodySteps calleeCost bodyCost =>
       have property := returned calleeExec.erase
-      have calleeLe := callee _ hpre calleeExec calleeCost
-      have bodyLe := body _ property bodyExec bodyCost
+      have calleeLe := callee _ _ hpre calleeExec calleeCost
+      have bodyLe := body _ _ property bodyExec bodyCost
       exact Nat.le_trans
         (Nat.add_le_add (callCost_mono program fn calleeLe) bodyLe)
-        (combine _ property)
+        (combine _ _ property)
 
 /-- A continuation with a uniform bound needs no mathematical result contract.
 The callee's proved cost and the actual compiler-derived call charge suffice. -/
 theorem call_uniform {fn : Fin signatures.length} {args : Args Γ signatures[fn].params}
     {continuation : Complexity.Language.Stmt signatures (signatures[fn].result :: Γ) result}
-    {pre : Env signatures[fn].params → Prop} {calleeBound : Env signatures[fn].params → Nat}
+    {pre : Env signatures[fn].params → Heap → Prop}
+    {calleeBound : Env signatures[fn].params → Heap → Nat}
     {nextBound : Nat}
-    (callee : FunctionCostBound program fn pre calleeBound) (hpre : pre (args.eval entry))
-    (body : ∀ value,
-      StmtCostBound program continuation (Env.cons value entry) nextBound) :
+    (callee : FunctionCostBound program fn pre calleeBound)
+    (hpre : pre (args.eval entry.locals) entry.heap)
+    (body : ∀ value heap, StmtCostBound program continuation
+      (Complexity.Language.State.cons value ⟨entry.locals, heap⟩) nextBound) :
     StmtCostBound program (.call fn args continuation) entry
-      (callCost program fn (calleeBound (args.eval entry)) + nextBound) :=
-  call (post := fun _ => True) (nextBound := fun _ => nextBound) callee hpre
-    (fun _ => trivial) (fun value _ => body value) (fun _ _ => Nat.le_refl _)
+      (callCost program fn (calleeBound (args.eval entry.locals) entry.heap) + nextBound) :=
+  call (post := fun _ _ => True) (nextBound := fun _ _ => nextBound) callee hpre
+    (fun _ => trivial) (fun value heap _ => body value heap) (fun _ _ _ => Nat.le_refl _)
 
 end StmtCostBound
 
@@ -172,24 +182,26 @@ body, adding its return-flag initialization exactly once. This is
 still conditional on a realized returned execution, not a termination claim. -/
 theorem of_stmt {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {fn : Fin signatures.length}
-    {pre : Env signatures[fn].params → Prop} {coreBound : Env signatures[fn].params → Nat}
-    (body : ∀ args, pre args →
-      StmtCostBound program (program.body fn) args (coreBound args)) :
-    FunctionCostBound program fn pre (fun args => coreBound args + 2) := by
-  intro args hpre w depth finish value execution steps cost
-  exact Nat.add_le_add_right (body args hpre execution cost) 2
+    {pre : Env signatures[fn].params → Heap → Prop}
+    {coreBound : Env signatures[fn].params → Heap → Nat}
+    (body : ∀ args heap, pre args heap →
+      StmtCostBound program (program.body fn) ⟨args, heap⟩ (coreBound args heap)) :
+    FunctionCostBound program fn pre (fun args heap => coreBound args heap + 2) := by
+  intro args heap hpre w depth finish value execution steps cost
+  exact Nat.add_le_add_right (body args heap hpre execution cost) 2
 
 /-- Infer a core bound after introducing ordinary arguments, then compare its
 complete returning-body charge with the requested function bound. This avoids
 asking the author to choose a separate bound function for every source scope. -/
 theorem of_pointwise {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {fn : Fin signatures.length}
-    {pre : Env signatures[fn].params → Prop} {bound : Env signatures[fn].params → Nat}
-    (body : ∀ args, pre args → ∃ core,
-      StmtCostBound program (program.body fn) args core ∧ core + 2 ≤ bound args) :
+    {pre : Env signatures[fn].params → Heap → Prop}
+    {bound : Env signatures[fn].params → Heap → Nat}
+    (body : ∀ args heap, pre args heap → ∃ core,
+      StmtCostBound program (program.body fn) ⟨args, heap⟩ core ∧ core + 2 ≤ bound args heap) :
     FunctionCostBound program fn pre bound := by
-  intro args hpre w depth finish value execution steps cost
-  obtain ⟨core, certificate, budget⟩ := body args hpre
+  intro args heap hpre w depth finish value execution steps cost
+  obtain ⟨core, certificate, budget⟩ := body args heap hpre
   exact (Nat.add_le_add_right (certificate execution cost) 2).trans budget
 
 end FunctionCostBound

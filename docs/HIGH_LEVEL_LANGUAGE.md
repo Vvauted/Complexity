@@ -13,6 +13,8 @@ proofs; shared structural rules compose separate cost bounds. The generated
 curried functions are noncomputable semantic observations, not `#eval` runtimes.
 Generated contract equivalences hide argument-environment packing;
 focused scalar tactics compose realization and uniform structural cost rules.
+Source execution and function contracts carry typed locals and a shared heap;
+their native monadic view retains the final heap on success and failure.
 Full source proof automation, mutable data and loops are not yet supported. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
@@ -173,13 +175,18 @@ The [existing scalar consumer](../Examples/Language/Scalar.lean) uses this
 declaration and retains its previous typed core definitionally. The declaration
 exports signatures, function identifiers and bodies, the shared program, and
 curried mathematical observations. In particular,
-`Implementation.boundedIncrement n limit` has type `Part (Except Fault Nat)`.
+`Implementation.boundedIncrement n limit` has type
+`ExceptT Fault (StateT Heap Part) Nat`.
 The generated `Implementation.boundedIncrement_eq` unfolds one source body into
-ordinary `ExceptT Fault Part` `do` notation, retaining the named `increment`
+ordinary monadic `do` notation, retaining the named `increment`
 call. It is not a simp rule: recursive callees are not expanded automatically.
 The user proves the minimum result from this equation and the helper's proved
 result, not from a second implementation. The observation is noncomputable,
 not an executable replacement for the compiled runner.
+The scalar equation `Implementation.increment n = pure (n + 1)` describes the
+whole action: it returns that value and preserves every initial heap. No empty
+heap or separate pure evaluator is chosen. This equation describes behavior,
+not zero execution cost or absence of intermediate work.
 All function signatures are collected before lowering the bodies, so named
 calls refer to the same source program rather than arbitrary host callbacks.
 The available surface is Nat/Bool/Unit, immutable `let`, calls, `if` and `return`;
@@ -230,10 +237,12 @@ execution nor source total correctness takes a proposed time budget.
 
 The implemented scalar observations make this distinction explicit.
 [`Stmt.eval`](../Complexity/Language/Eval/Basic.lean) has result
-`Part (Env Γ × Control result)`, preserving the final lexical environment and
-finite control outcome. `Program.eval` has result
-`Part (Except Fault (Value result))`: fallthrough becomes `.missingReturn`,
-including for Unit, while an actual return becomes `.ok value`.
+`Part (State Γ × Control result)`, preserving the final locals, shared heap and
+finite control outcome. `Program.eval program fn args` is an action of type
+`ExceptT Fault (StateT Heap Part) (Value result)`. Applying its initial heap gives
+`Part (Except Fault (Value result) × Heap)`: fallthrough becomes `.missingReturn`,
+including for Unit, while an actual return becomes `.ok value`. Both outcomes
+retain the actual final heap; failure does not roll back earlier effects.
 `Part.none` means there is no finite outcome; a finite fault is a defined error,
 not divergence. Successful result equations are equivalent to finite returned
 source execution and therefore include termination.
@@ -249,7 +258,7 @@ mathematical interface to the same source program, not a second algorithm.
 The [continuation interface](../Complexity/Language/Eval/Continuation.lean)
 composes these observations through `Stmt.evalWith`. A normal outcome runs the
 supplied continuation; a return or fault bypasses it. The call equation uses
-the actual `Program.eval` action in the existing `ExceptT Fault Part` monad.
+the actual `Program.eval` action in the existing `ExceptT Fault (StateT Heap Part)` monad.
 At a function boundary, falling through produces `.missingReturn`. The frontend
 uses these proved rules to generate `P.f_eq`, rather than assuming a host `do`
 block agrees with the typed source.
@@ -261,6 +270,12 @@ result and proves the two minimum cases using ordinary Nat facts.
 the budget-free source contracts. `Env.forall_cons` and `Env.forall_nil` open
 the typed arguments for that generic bridge. The mathematical argument is not
 repeated in the contract or compiled-execution proof.
+
+The function contract's precondition takes arguments and the initial heap;
+its postcondition takes those same inputs, the returned value and final heap.
+An observation equation fixes both the returned value and final heap. This
+supports ordinary mathematical contents as ghost specifications when buffer
+operations are added, without turning those ghosts into runtime snapshots.
 
 Prove determinism of source outcomes and final state. Mathematical result and
 cost observations must not depend on which proof of execution or termination
@@ -308,10 +323,13 @@ postcondition; `Part.none` has false weakest precondition. The existing monad's
 
 The [source adequacy interface](../Complexity/Language/Eval/Verification.lean)
 connects source total correctness to the semantic result and native
-`Std.Do.Triple`. Functions reuse `ExceptT Fault Part` with a false exceptional
+`Std.Do.Triple`. Functions reuse `ExceptT Fault (StateT Heap Part)` with a false exceptional
 postcondition: divergence fails the strict Part obligation, and finite faults
 fail that exceptional postcondition. A generic strict Part WP alone need not
 reject an error value; the source function specification supplies that policy.
+The triple fixes the initial heap as a ghost and tests its equality in the
+precondition, so a relational postcondition cannot confuse initial and final
+contents. Existing transformer instances supply this composition.
 
 Next connect the compositional equations and shared operation specifications to
 `@[spec]`, `mvcgen` and focused source proof automation. The current scalar
@@ -357,8 +375,20 @@ The independent [heap foundation](../Complexity/Language/Heap.lean) now supplies
 typed native-array objects, offset/length views, checked read/write/slice
 operations and read-after-write/alias/frame laws. A successful write is proved
 to be an actual native `Array.set` at the object and cell levels. This foundation
-is not yet connected to source statement execution or RAM representation; it
-does not establish that the language can already run mutable programs.
+is carried by the source execution state, including across calls and faults.
+Read/write statements and the heap-to-RAM representation are not implemented
+yet; transporting the heap alone does not make mutable programs available.
+
+The first borrowed-buffer bridge will fix an object-to-base placement as proof
+data, represent each complete object with the existing `Source.ArrayAt`, and
+pass views through the existing two-field `ArrayRef` convention. Placement is
+not a runtime object table. Reuse `ArrayAt.slice`, native-array store rules and
+indexed frames; separate actual cells of different objects, not overlapping
+views of one object. Extend the existing register layout to typed fields rather
+than adding an unrelated buffer layout. A view encoding need not recover source
+handle identity: empty views of different objects can share an encoded endpoint.
+Do not infer handle equality from descriptor equality or assume that a successful
+access simulation also implements and charges fault checks.
 
 Use relations when abstraction forgets storage details; do not require a
 bijection between an entire RAM heap and an observed list. Update related views

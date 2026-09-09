@@ -26,8 +26,11 @@ open Complexity.Language
 
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
 variable {w depth heapLimit controlReg steps : Nat} {fn : Fin signatures.length}
-variable {args finish : Env signatures[fn].params} {value : Value signatures[fn].result}
-variable {execution : RealizedExec program w depth (program.body fn) args finish (.returned value)}
+variable {args : Env signatures[fn].params} {initialHeap : Heap}
+variable {finish : Complexity.Language.State signatures[fn].params}
+variable {value : Value signatures[fn].result}
+variable {execution : RealizedExec program w depth (program.body fn)
+  ⟨args, initialHeap⟩ finish (.returned value)}
 variable {P : List (Word w) → Source.State w → Prop}
 variable {bound : List (Word w) → Source.State w → Nat}
 
@@ -52,12 +55,13 @@ theorem le_of_functionTimeBound_of_le (cost : ExecutionCost execution steps)
     (time : Source.FunctionTimeBound controlReg (lowerProgram program) heapLimit depth
       (lowerFunc program fn) P bound)
     (hw : 0 < w) (arguments : EnvFits w args) (entry : Source.State w)
-    {sourcePre : Env signatures[fn].params → Prop}
-    {sourceBound : Env signatures[fn].params → Nat}
-    (hpre : sourcePre args)
-    (precondition : sourcePre args → P (envWords w args) entry)
-    (budget : sourcePre args → bound (envWords w args) entry ≤ sourceBound args) :
-    steps + 2 ≤ sourceBound args :=
+    {sourcePre : Env signatures[fn].params → Heap → Prop}
+    {sourceBound : Env signatures[fn].params → Heap → Nat}
+    (hpre : sourcePre args initialHeap)
+    (precondition : sourcePre args initialHeap → P (envWords w args) entry)
+    (budget : sourcePre args initialHeap →
+      bound (envWords w args) entry ≤ sourceBound args initialHeap) :
+    steps + 2 ≤ sourceBound args initialHeap :=
   Nat.le_trans (cost.le_of_functionTimeBound time hw arguments entry (precondition hpre))
     (budget hpre)
 

@@ -23,6 +23,10 @@ The final function theorem combines this generic simulation with an independent
 mathematical source contract. Algorithm-specific register layouts or lowering
 proofs are not premises. Word ranges and call nesting remain explicit source
 realization conditions; an instruction-time bound is not required.
+
+The source observation includes its explicit initial and final shared heaps.
+This scalar bridge does not yet relate the source heap to RAM memory; its
+register matching and target execution must not be read as a heap representation.
 -/
 
 namespace Ram.LanguageCompiler
@@ -34,12 +38,12 @@ namespace RealizedExec
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
 variable {w depth heapLimit : Nat} {Γ : List Ty} {result : Ty}
 variable {stmt : Complexity.Language.Stmt signatures Γ result}
-variable {entry finish : Env Γ} {control : Control result}
+variable {entry finish : Complexity.Language.State Γ} {control : Control result}
 
 /-- Initialize the private flag, run the core simulation, and dispatch an
 arbitrary normal continuation. The continuation's own budget-free contract
 supplies the final postcondition; returned paths bypass that continuation. -/
-private theorem lower_of_core (hw : 0 < w)
+private theorem lower_of_core {entry finish : Env Γ} (hw : 0 < w)
     (core : ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
       layout.Bounded next → layout.Matches entry s.regs → layout.Avoids flag →
       flag < next → resultSlot + fieldCount result ≤ flag → s.regs flag = 0 →
@@ -92,11 +96,11 @@ slots and discharges these conditions for callers automatically. -/
 theorem lowerCore (execution : RealizedExec program w depth stmt entry finish control)
     (hw : 0 < w) :
     ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
-      layout.Bounded next → layout.Matches entry s.regs → layout.Avoids flag →
+      layout.Bounded next → layout.Matches entry.locals s.regs → layout.Avoids flag →
       flag < next → resultSlot + fieldCount result ≤ flag → s.regs flag = 0 →
       ∃ t, Source.SafeExec (lowerProgram program) heapLimit depth
         (lowerStmtCore layout next resultSlot flag stmt) s t ∧
-        ControlMatches layout resultSlot flag finish control t := by
+        ControlMatches layout resultSlot flag finish.locals control t := by
   obtain ⟨steps, cost⟩ := execution.exists_cost
   intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
   obtain ⟨t, measured, property⟩ := cost.lowerCoreMeasured (heapLimit := heapLimit) 0 hw
@@ -111,8 +115,8 @@ theorem lower (execution : RealizedExec program w depth stmt entry finish contro
     (hw : 0 < w) :
     ∀ (layout : RegisterMap Γ) (next resultSlot : Reg) (s : Source.State w)
       (continuation : Ram.Stmt) (post : Source.State w → Prop),
-      layout.Bounded next → layout.Matches entry s.regs →
-      (control = .normal → ∀ t, layout.Matches finish t.regs →
+      layout.Bounded next → layout.Matches entry.locals s.regs →
+      (control = .normal → ∀ t, layout.Matches finish.locals t.regs →
         Source.Verification.TotalWP (lowerProgram program) heapLimit depth
           continuation post t) →
       (∀ value, control = .returned value → ∀ t,
@@ -125,8 +129,11 @@ theorem lower (execution : RealizedExec program w depth stmt entry finish contro
 function. Argument fields initialize its compact frame, and its declared result
 expressions evaluate to the actual returned source value. -/
 theorem functionExec {fn : Fin signatures.length}
-    {args finish : Env signatures[fn].params} {value : Value signatures[fn].result}
-    (execution : RealizedExec program w depth (program.body fn) args finish (.returned value))
+    {args : Env signatures[fn].params} {initialHeap : Heap}
+    {finish : Complexity.Language.State signatures[fn].params}
+    {value : Value signatures[fn].result}
+    (execution : RealizedExec program w depth (program.body fn)
+      ⟨args, initialHeap⟩ finish (.returned value))
     (hw : 0 < w) (arguments : EnvFits w args) (s : Source.State w) :
     ∃ t, Source.FunctionExec (lowerProgram program) heapLimit depth (lowerFunc program fn)
       (envWords w args) s (valueWords w value) t := by
@@ -141,20 +148,28 @@ namespace FunctionRealizable
 
 /-- Transfer a separately proved mathematical contract to the generated function.
 Realization supplies ranges and nesting; source determinism supplies the same
-actual returned value to the existing mathematical postcondition. -/
+actual returned value and final heap to the existing mathematical postcondition.
+The source observation is retained without asserting a source-heap/RAM-memory
+representation. -/
 theorem functionExec {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {w depth heapLimit : Nat}
-    {fn : Fin signatures.length} {feasible pre : Env signatures[fn].params → Prop}
-    {post : Env signatures[fn].params → Value signatures[fn].result → Prop}
+    {fn : Fin signatures.length} {feasible pre : Env signatures[fn].params → Heap → Prop}
+    {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
     (realizable : FunctionRealizable program w depth fn feasible)
     (specification : FunctionTotal program fn pre post)
-    (hw : 0 < w) (args : Env signatures[fn].params) (arguments : EnvFits w args)
-    (hfeasible : feasible args) (hpre : pre args) (s : Source.State w) :
-    ∃ value t, Source.FunctionExec (lowerProgram program) heapLimit depth
-      (lowerFunc program fn) (envWords w args) s (valueWords w value) t ∧ post args value := by
-  obtain ⟨finish, value, execution⟩ := realizable args hfeasible
+    (hw : 0 < w) (args : Env signatures[fn].params) (initialHeap : Heap)
+    (arguments : EnvFits w args) (hfeasible : feasible args initialHeap)
+    (hpre : pre args initialHeap) (s : Source.State w) :
+    ∃ value finalHeap t,
+      program.eval fn args initialHeap = Part.some (.ok value, finalHeap) ∧
+      Source.FunctionExec (lowerProgram program) heapLimit depth
+        (lowerFunc program fn) (envWords w args) s (valueWords w value) t ∧
+      post args initialHeap value finalHeap := by
+  obtain ⟨finish, value, execution⟩ := realizable args initialHeap hfeasible
   obtain ⟨t, invocation⟩ := execution.functionExec hw arguments s
-  exact ⟨value, t, invocation, specification.postcondition hpre execution.erase⟩
+  exact ⟨value, finish.heap, t,
+    Complexity.Language.Program.eval_eq_ok_iff.mpr ⟨finish, execution.erase, rfl⟩,
+    invocation, specification.postcondition hpre execution.erase⟩
 
 end FunctionRealizable
 

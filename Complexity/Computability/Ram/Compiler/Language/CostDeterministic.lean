@@ -8,10 +8,10 @@ import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
 /-!
 # Determinism of scalar source execution costs
 
-The same source statement and entry values determine its backend-derived count.
+The same source statement and entry state determine its backend-derived count.
 Word width, call capacity and the proofs used to realize the execution do not
-affect that count. Source execution determinism aligns intermediate values and
-the actual callee returns before the structural cost rules are compared.
+affect that count. Source execution determinism aligns intermediate states and
+the actual callee final state and return before the structural cost rules are compared.
 
 This result requires neither a machine representation nor positive word width.
 It compares existing cost observations and does not assert source termination.
@@ -26,7 +26,7 @@ namespace ExecutionCost
 private theorem observations_eq {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {w w' depth depth' : Nat}
     {Γ : List Ty} {result : Ty} {stmt : Complexity.Language.Stmt signatures Γ result}
-    {entry finish finish' : Env Γ} {control control' : Control result}
+    {entry finish finish' : Complexity.Language.State Γ} {control control' : Control result}
     {execution : RealizedExec program w depth stmt entry finish control}
     {execution' : RealizedExec program w' depth' stmt entry finish' control'}
     {steps steps' : Nat} (_ : ExecutionCost execution steps)
@@ -38,10 +38,10 @@ word width, call capacity, final-state witnesses and realization proofs. -/
 theorem deterministic {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {w depth : Nat}
     {Γ : List Ty} {result : Ty} {stmt : Complexity.Language.Stmt signatures Γ result}
-    {entry finish : Env Γ} {control : Control result}
+    {entry finish : Complexity.Language.State Γ} {control : Control result}
     {execution : RealizedExec program w depth stmt entry finish control} {steps : Nat}
     (first : ExecutionCost execution steps) :
-    ∀ {w' depth' : Nat} {finish' : Env Γ} {control' : Control result}
+    ∀ {w' depth' : Nat} {finish' : Complexity.Language.State Γ} {control' : Control result}
       {execution' : RealizedExec program w' depth' stmt entry finish' control'} {steps' : Nat},
       ExecutionCost execution' steps' → steps = steps' := by
   induction first with
@@ -83,7 +83,8 @@ theorem deterministic {signatures : List Signature}
       intro w' depth' finish' control' execution' steps' second
       cases second with
       | callReturn calleeCost' bodyCost' =>
-          cases Control.returned.inj (observations_eq calleeCost calleeCost').2
+          obtain ⟨rfl, sameControl⟩ := observations_eq calleeCost calleeCost'
+          cases Control.returned.inj sameControl
           rw [ihCallee calleeCost', ihBody bodyCost']
 
 end ExecutionCost

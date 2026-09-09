@@ -39,12 +39,14 @@ source_program Bounded where
 
 It generates typed source bodies, ordinary curried semantic functions and one-step
 equations such as `Bounded.boundedIncrement_eq`. Each equation exposes that function's
-body in native `ExceptT Fault Part` `do` notation, retaining named callee actions.
+body in native `ExceptT Fault (StateT Heap Part)` `do` notation, retaining named callee actions.
 It is deliberately not a simp rule: unfold one body explicitly, then reuse a
 callee's specification instead of recursively expanding its implementation.
 A result statement can be written as
-`Bounded.boundedIncrement n limit = Part.some (.ok (min (n + 1) limit))`.
+`Bounded.boundedIncrement n limit = pure (min (n + 1) limit)`.
 This is the actual source program's result, not a separately implemented answer.
+The action equation quantifies over every initial heap and preserves its value;
+it does not select an empty heap or assert zero execution cost.
 These `Part` functions are noncomputable mathematical observations, not host
 executables for `#eval`; execution still uses the compiled RAM runner.
 
@@ -62,9 +64,8 @@ For example, the helper proof begins directly at its generated equation:
 
 ```lean
 theorem increment_eval (n : Nat) :
-    Bounded.increment n = Part.some (.ok (n + 1)) := by
+    Bounded.increment n = pure (n + 1) := by
   rw [Bounded.increment_eq]
-  rfl
 ```
 
 For native `Std.Do` reasoning, `open scoped Part.TotalCorrectness` activates the
@@ -74,6 +75,12 @@ returned value: divergence cannot establish a postcondition vacuously. The
 `FunctionTotal` equivalent to ordinary result equations and to native `ExceptT`
 Hoare triples with false fault postconditions. It reuses the standard transformer
 instances; it does not make `mvcgen` prove source termination automatically.
+Function preconditions take the initial heap, and postconditions relate it to
+the returned value and final heap. The native triple fixes the initial heap as
+a ghost rather than identifying it with the post-state. Calls retain the
+callee's actual heap even on failure. Buffer statements and their RAM
+representation remain unfinished; this state interface alone does not enable
+array programs.
 
 The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
 branches on its returned value and proves the result equals `min (n + 1) limit`

@@ -206,7 +206,9 @@ Status: in progress, not complete.
 
 - [Typed scalar syntax](../Complexity/Language/Basic.lean) and
   [independent finite execution](../Complexity/Language/Semantics.lean) now cover
-  lexical bindings, actual calls, sequences, branches and returns. Determinism
+  lexical bindings, actual calls, sequences, branches and returns over typed
+  locals and a shared heap. Calls restore caller locals but retain the callee's
+  actual final heap, including on failure. Determinism
   includes the control outcome; missing returns fault, including for Unit.
 - [Source total-WP rules](../Complexity/Language/Verification.lean) support
   budget-free mathematical contracts. The
@@ -220,7 +222,9 @@ Status: in progress, not complete.
   Direct source-WP rules remain available as a compositional proof interface.
 - [Independent partial observations](../Complexity/Language/Eval/Basic.lean)
   retain finite normal continuation, return and fault. At a function boundary,
-  `Program.eval` returns `Part (Except Fault result)`: finite faults, including
+  `Program.eval` returns `ExceptT Fault (StateT Heap Part) result`: applying an
+  initial heap observes both the result or error and the actual final heap.
+  Finite faults, including
   missing returns for Unit, are defined errors, while `Part.none` means no finite
   outcome. Successful result equations include termination and observe source
   execution, not a result chosen from a specification or a lowered RAM run.
@@ -228,7 +232,7 @@ Status: in progress, not complete.
   equations for skip, return, primitive binding, sequencing, conditionals and
   actual calls. [Continuation equations](../Complexity/Language/Eval/Continuation.lean)
   express the same observation through `Stmt.evalWith`: only normal continuation
-  runs the remaining block, and calls use native `ExceptT Fault Part` bind.
+  runs the remaining block, and calls use native `ExceptT Fault (StateT Heap Part)` bind.
   This is composition of the existing semantics, not another interpreter.
   The [strict Part adapter](../Complexity/Control/Part.lean) reuses
   mathlib's lawful monad with `open scoped Part.TotalCorrectness`: its native
@@ -242,12 +246,16 @@ Status: in progress, not complete.
   `let`, named calls, conditionals and returns. Nested arithmetic and comparisons
   are normalized left to right into actual primitive bindings, including within
   call arguments and guards. Its generated curried
-  `P.f` is a noncomputable `Part (Except Fault result)` observation, not a
+  `P.f` is a noncomputable `ExceptT Fault (StateT Heap Part) result` observation, not a
   `#eval` runtime. The generated `P.f_eq` exposes one body in ordinary monadic
   notation using the proved continuation equations. Named callees remain
   opaque, and the equation is deliberately not a simp rule: users unfold one
   body explicitly and reuse a callee's specification. The scalar consumer uses
   this frontend while retaining its typed AST definitionally and its public API.
+  Pure scalar results are equations between whole actions, such as
+  `P.increment n = pure (n + 1)`, valid for every initial heap without a default
+  empty heap. Function contracts relate initial and final heaps; their native
+  triples retain the initial heap as a ghost.
   Mutable bindings, heap operations, loops and automatic source proofs are not
   supplied by this surface.
 - [Scalar lowering](../Complexity/Computability/Ram/Compiler/Language/Scalar.lean)
@@ -438,14 +446,18 @@ Directly reuse mathlib mathematics when no machine correspondence is needed.
 Status: the independent shared-object foundation is implemented in
 [`Language/Heap`](../Complexity/Language/Heap.lean). Typed native arrays,
 checked views, reads/writes/slices, different-object preservation and overlapping
-alias observations are proved. Source statements, execution and the RAM bridge
-do not yet consume it, so mutable programming remains an open milestone.
+alias observations are proved. The same source execution and function contracts
+now carry this heap, but read/write statements and the RAM representation bridge
+do not yet consume its operations, so mutable programming remains an open milestone.
 
-The next closed migration uses one source state with typed locals and the
+The source state contains typed locals and the
 shared heap. Calls restore caller locals while retaining the actual callee
 heap; scope exit preserves updates to outer locals and the current heap.
 This state feeds the existing execution and proof interfaces, not a parallel
-language. Direct source assignment precedes any optional SSA normalization.
+language. The present scalar instructions preserve arbitrary heaps; that fact
+must not become an assumed frame rule for future effectful instructions.
+Next connect actual buffer operations and their representations. Direct source
+assignment precedes any optional SSA normalization.
 
 1. Give borrowed objects/views independent heap semantics with actual aliasing.
    Prove read/write/slice and local-frame rules using ordinary contents.
