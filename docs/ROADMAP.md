@@ -26,6 +26,12 @@ algorithm-specific adapter. The second makes those compiler theorems practical
 to develop and maintain. Register-level proof support is active library work,
 not merely compatibility maintenance, and does not wait for the language to finish.
 
+The connection layer must also make old-DSL lemmas reusable in high-level
+proofs. The old DSL remains an implementation interface for library and compiler
+authors, not a second proof obligation for every caller. Reusing its contracts,
+representation rules and cost results is distinct from merely allowing foreign
+calls or sharing an IR; it should not require changing source semantics.
+
 Source-cursor extensions belong to the backend proof track. They are worth
 building where they improve actual proofs, but cannot substitute for the first
 track's independent semantics and automatic proof transfer.
@@ -205,9 +211,10 @@ Status: in progress, not complete.
   [scalar consumer](../Examples/Language/Scalar.lean) now starts with
   `increment_eval` and `boundedIncrement_eval`: generated function equations,
   the helper's result and ordinary Nat reasoning establish the actual result
-  `min (n + 1) limit`. `FunctionTotal.iff_eval`, `Env.forall_cons` and
-  `Env.forall_nil` then recover the contracts used by lowering, without another
-  algorithm proof.
+  `min (n + 1) limit`. The generated `P.f_total_iff` accepts ordinary curried
+  preconditions and postconditions and recovers the contract used by lowering.
+  Its proof reuses `FunctionTotal.iff_eval` and the generic environment rules;
+  the consumer no longer decomposes `Env` or repeats the algorithm proof.
   Direct source-WP rules remain available as a compositional proof interface.
 - [Independent partial observations](../Complexity/Language/Eval/Basic.lean)
   retain finite normal continuation, return and fault. At a function boundary,
@@ -294,14 +301,14 @@ Status: in progress, not complete.
   needs it, but do not require re-proving the mathematical minimum. Applying
   these rules and proving their inequalities are still explicit source work.
 
-Next, before broadening the frontend:
+Next, in a bounded scalar-interface pass alongside the lemma-transfer bridge
+and the first borrowed-buffer implementation:
 
 1. Build shared-specification and source proof automation on the generated
    one-step equations and strict Std.Do adapter. The scalar correctness proof
-   now uses named arguments, actual call results and ordinary mathematics;
-   its conversion to `FunctionTotal` still explicitly opens the typed argument
-   environment. Reduce that routine contract plumbing and support reusable
-   operation specifications, without making recursive unfolding a global simp
+   now uses named arguments, actual call results and ordinary mathematics, and
+   generated contract conversion hides typed argument packing. Support reusable
+   operation specifications without making recursive unfolding a global simp
    rule or claiming automatic discovery of mathematical proofs.
 2. Generate structured realization and cost obligations from the same source
    constructors and shared callee contracts. Shared cost rules now hide execution
@@ -322,7 +329,8 @@ through proved optimizations and revised costs. The current size-safe lowering
 can add instructions and enlarge frames compared with small CPS examples;
 smaller code on branching families is not a claim of universally faster runs.
 
-Mutable data and loops remain subsequent milestones. M1 is not complete merely
+Do not postpone the first buffer operation until scalar automation is perfect:
+real calls, heap effects and loop invariants must guide that automation. M1 is not complete merely
 because the scalar surface, semantic observations, static compilation and
 functional transfer now exist; shared proof and realization/cost automation
 remain part of its completion gate.
@@ -362,6 +370,44 @@ rules are proved before the consumer is discharged.
 
 A `body_eq := rfl`, successful parser expansion, or a source correctness
 predicate defined through the target evaluator does not complete M1.
+
+## Reusing old-DSL lemmas in the connection layer — alongside M1 and M2
+
+Status: in progress. The existing old-DSL function contracts, measured calls and
+call-renaming theorems are reusable. `Compiler.Valid.link_of_callsValid` supplies
+static composition when a new front table calls an appended old module; unlike
+sequential component composition, it does not run the old module's entry block.
+Static linking alone does not transfer a mathematical theorem.
+
+1. Put transfer rules under `Compiler/Language`, importing both independent
+   source semantics and old-DSL proofs. Keep RAM imports and implementation
+   selection out of `Language`'s mathematical semantics. Do not add source
+   external-function forms solely to reuse existing lemmas.
+2. Transfer existing result contracts, representation/frame facts and conditional
+   time bounds through a proved correspondence with the actual implementation.
+   Encode/decode, routine framing and source-to-target bookkeeping belong in
+   reusable bridge rules, not in a new adapter for each algorithm.
+3. Distinguish transfer directions. Existing forward simulation can transport a
+   realized source execution to the target, where an old contract supplies its
+   result property. It does not infer source termination from target termination.
+   Removing the source existence premise requires a separate reverse/progress
+   theorem, not an implication used backwards.
+4. Keep correctness independent of time. Old bounds apply to the same actual
+   code or through a proved costed transformation, not merely equal results.
+   Preserve real word-range, heap, aliasing and capacity premises; caller-local
+   restoration does not imply unchanged shared state.
+
+**First completion evidence:** a real high-level consumer uses a generic bridge
+to obtain a result property or a cost bound from existing old-DSL lemmas, without
+re-proving that fact through source constructors or writing a register adapter.
+The source behavior remains independent and the transferred theorem concerns
+the actual implementation, not an assumed whole-function equality.
+
+Apply the same bridge to M2's helper-call/branch/store loop and existing array
+representations. Selecting an old implementation for a high-level library call
+is additional connection-layer work: it requires a verified implementation and
+cost correspondence, not an arbitrary host callback or a dummy source body.
+Directly reuse mathlib mathematics when no machine correspondence is needed.
 
 ## M2 — Abstract mutable data and arbitrary traversal bodies
 

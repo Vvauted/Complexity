@@ -72,24 +72,18 @@ theorem boundedIncrement_eval (n limit : Nat) :
 theorem increment_total :
     FunctionTotal program (0 : Fin 2) (fun _ => True)
       (fun args value => value = Env.head args + 1) := by
-  rw [FunctionTotal.iff_eval]
-  refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
-  intro n
-  refine (Env.forall_nil _).mpr ?_
-  intro _
+  apply (Implementation.increment_total_iff (fun _ => True)
+    (fun n value => value = n + 1)).mpr
+  intro n _
   exact ⟨n + 1, increment_eval n, rfl⟩
 
 /-- The caller's source proof composes the helper contract and the actual branch. -/
 theorem boundedIncrement_total :
     FunctionTotal program (1 : Fin 2) (fun _ => True)
       (fun args value => value = min (Env.head args + 1) (Env.head (Env.tail args))) := by
-  rw [FunctionTotal.iff_eval]
-  refine (Env.forall_cons (τ := .nat) (Γ := [.nat]) _).mpr ?_
-  intro n
-  refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
-  intro limit
-  refine (Env.forall_nil _).mpr ?_
-  intro _
+  apply (Implementation.boundedIncrement_total_iff (fun _ _ => True)
+    (fun n limit value => value = min (n + 1) limit)).mpr
+  intro n limit _
   exact ⟨(min (n + 1) limit : Nat), boundedIncrement_eval n limit, rfl⟩
 
 /-- A successful invocation exists for every pair of natural inputs, and its

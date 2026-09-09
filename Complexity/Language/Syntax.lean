@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Eval.Continuation
+import Complexity.Language.Eval.Verification
 import Lean.Elab.Command
 import Lean.Elab.Do
 import Lean.Parser.Do
@@ -22,6 +23,8 @@ The declaration exports `P.signatures`, `P.fId`, `P.fBody` and `P.program`,
 together with the ordinary curried observation `P.f` and its equation `P.f_eq`.
 The equation exposes one body using ordinary `ExceptT Fault Part` notation,
 keeping named callee observations opaque. It is not a global simp rule.
+`P.f_total_iff` connects arbitrary ordinary curried preconditions and
+postconditions to the source contract, without manual environment decomposition.
 This noncomputable
 `Part (Except Fault result)` observes the actual independent source execution;
 it is a mathematical proof interface, not a host executable for `#eval`.
@@ -368,6 +371,72 @@ private def equationDeclaration (family programName : TSyntax `ident)
     theorem $name:ident : $type := $proof)
   return declaration.raw
 
+private def totalDeclaration (family programName : TSyntax `ident)
+    (fn : Function) : MacroM Syntax := do
+  let name := generatedName family fn.name "_total_iff"
+  let observation := generatedName family fn.name ""
+  let id := generatedName family fn.name "Id"
+  let pre := mkIdent (← Macro.addMacroScope `pre)
+  let post := mkIdent (← Macro.addMacroScope `post)
+  let env := mkIdent (← Macro.addMacroScope `env)
+  let value := mkIdent (← Macro.addMacroScope `value)
+  let result ← valueTypeTerm fn.result
+  let mut preType ← `(Prop)
+  let mut postType ← `($result → Prop)
+  for param in fn.params.reverse do
+    let type ← valueTypeTerm param.type
+    preType ← `($type → $preType)
+    postType ← `($type → $postType)
+  let arguments : Array (TSyntax `term) := fn.params.map fun param => ⟨param.name.raw⟩
+  let mut envArguments : Array (TSyntax `term) := #[]
+  let mut remaining ← `($env:ident)
+  for _ in fn.params do
+    envArguments := envArguments.push (← `(Complexity.Language.Env.head $remaining))
+    remaining ← `(Complexity.Language.Env.tail $remaining)
+  let sourcePre := Lean.Syntax.mkApp ⟨pre.raw⟩ envArguments
+  let sourcePost := Lean.Syntax.mkApp ⟨post.raw⟩ (envArguments.push ⟨value.raw⟩)
+  let ordinaryPre := Lean.Syntax.mkApp ⟨pre.raw⟩ arguments
+  let ordinaryPost := Lean.Syntax.mkApp ⟨post.raw⟩ (arguments.push ⟨value.raw⟩)
+  let invocation := Lean.Syntax.mkApp ⟨observation.raw⟩ arguments
+  let mut ordinary ← `($ordinaryPre → ∃ ($value:ident : $result),
+    $invocation = Part.some (.ok $value:ident) ∧ $ordinaryPost)
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let type ← valueTypeTerm param.type
+    ordinary ← `(∀ ($parameter:ident : $type), $ordinary)
+  let hypothesis := mkIdent (← Macro.addMacroScope `specification)
+  let mut encodedArgs ← `(Complexity.Language.Env.empty)
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let type ← typeTerm param.type
+    encodedArgs ← `(Complexity.Language.Env.cons (τ := $type) $parameter:ident $encodedArgs)
+  let mut forward ← `($hypothesis:ident $encodedArgs)
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let type ← valueTypeTerm param.type
+    forward ← `(fun ($parameter:ident : $type) => $forward)
+  forward ← `(fun $hypothesis:ident => $forward)
+  let mut backward := Lean.Syntax.mkApp ⟨hypothesis.raw⟩ arguments
+  backward ← `((Complexity.Language.Env.forall_nil _).mpr $backward)
+  for (param, index) in fn.params.zipIdx.reverse do
+    let parameter := param.name
+    let type ← valueTypeTerm param.type
+    let sourceType ← typeTerm param.type
+    let remainingTypes ← parameterTypes (fn.params.extract (index + 1) fn.params.size)
+    backward ← `((Complexity.Language.Env.forall_cons (τ := $sourceType)
+      (Γ := $remainingTypes) _).mpr (fun ($parameter:ident : $type) => $backward))
+  backward ← `(fun $hypothesis:ident => $backward)
+  let declaration ← `(command|
+    /-- The source contract is equivalent to ordinary curried preconditions and
+    successful result postconditions, including termination and absence of faults. -/
+    theorem $name:ident ($pre:ident : $preType) ($post:ident : $postType) :
+        Complexity.Language.FunctionTotal $programName:ident $id:ident
+          (fun $env:ident => $sourcePre) (fun $env:ident $value:ident => $sourcePost) ↔
+          $ordinary := by
+      rw [Complexity.Language.FunctionTotal.iff_eval]
+      exact ⟨$forward, $backward⟩)
+  return declaration.raw
+
 private def programDeclarations (family : TSyntax `ident)
     (sources : Array (TSyntax `sourceFunction)) : MacroM Syntax := do
   let mut functions : Array Function := #[]
@@ -416,6 +485,8 @@ private def programDeclarations (family : TSyntax `ident)
     declarations := declarations.push (← observationDeclaration family programName fn)
   for fn in functions, body in loweredBodies do
     declarations := declarations.push (← equationDeclaration family programName fn body)
+  for fn in functions do
+    declarations := declarations.push (← totalDeclaration family programName fn)
   return mkNullNode declarations
 
 elab_rules : command

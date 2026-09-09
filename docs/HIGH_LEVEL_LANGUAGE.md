@@ -11,7 +11,8 @@ evaluation equations and a scoped strict Std.Do interpretation are now present.
 Generated one-step function equations support ordinary mathematical correctness
 proofs; shared structural rules compose separate cost bounds. The generated
 curried functions are noncomputable semantic observations, not `#eval` runtimes.
-Contract plumbing and realization/cost rule application are still explicit;
+Generated contract equivalences hide argument-environment packing;
+realization/cost rule application is still explicit.
 full source proof automation, mutable data and loops are not yet supported. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
@@ -553,6 +554,33 @@ are introduced separately. Do not silently change old word semantics, input
 domains or measured programs. The independent high-level semantics is new work;
 existing StateM postcondition wrappers do not count as its implementation.
 
+### Lemma reuse through the connection layer
+
+Old-DSL contracts, representation/frame lemmas and cost results should reduce
+high-level proof work through `Compiler/Language`. This layer imports both sides
+and proves reusable transport rules; the independent source semantics does not
+import RAM or gain external-function forms merely to reuse a theorem. Ordinary
+mathematics already in mathlib should be reused directly.
+
+An algorithm author should apply a source-facing theorem whose proof reuses the
+old library. The connection layer handles value representation, routine frame
+transport and invocation correspondence once for a supported construction, not
+through one hand-written register adapter per algorithm. Genuine range, aliasing
+and storage conditions remain visible in source terms.
+
+Transfer must respect its logical direction. The existing forward simulation
+can map a realized source execution to the target and recover its result
+property using an old contract and target determinism. It cannot derive source
+termination from target termination alone. Such an API needs a separate proved
+reverse/progress connection. Similarly, behavior equality alone cannot transport
+an exact instruction count or justify replacing one implementation by another.
+
+Selecting a verified old implementation for a high-level library call belongs
+in this connection layer too. Its actual code, dependencies, behavior and cost
+must be linked by proved correspondence. That capability is distinct from the
+immediate goal of reusing lemmas; adding a foreign-call node by itself does not
+reduce high-level correctness proofs.
+
 A new lowering can produce different code. For migration, record whether it is
 definitionally the old program or prove the new behavior and cost bounds.
 Behavioral correspondence does not preserve old exact constants automatically.
@@ -577,10 +605,11 @@ costs and preservation of real safety conditions.
 The scalar implementation now fixes typed lexical contexts, the `source_program`
 spelling, one-step monadic equations and a strict scoped Part/Std.Do interpretation.
 Shared cost rules remove execution case analysis from the scalar consumer.
-M1 remains open: contract conversion, structural realization and cost-rule
-application still need source-facing automation and reusable specifications.
-Make that complete author proof convenient before broadening the language to
-the first buffer operation. No choice may define high-level meaning through
+M1 remains open: structural realization and cost-rule application still need
+source-facing automation and reusable specifications. Improve these alongside
+the lemma-transfer bridge and the first complete borrowed-buffer path; do not
+require perfect scalar automation before heap effects and loops can inform the
+proof interface. No choice may define high-level meaning through
 lowering, accept manually entered instruction prices or expose register proofs
 to algorithm authors.
 

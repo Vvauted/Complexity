@@ -151,6 +151,29 @@ theorem CallsValid.renameCalls {source target : Program} {ρ : Nat → Nat} {stm
       obtain ⟨f, hf, ha, hresults⟩ := CallsValid.call_iff.mp h
       exact CallsValid.call_iff.mpr ⟨f.renameCalls ρ, embedding hf, ha, hresults⟩
 
+/-- Link a prefix whose calls already use the final table with an independently
+valid module. The prefix may call the appended functions; it need not be valid
+against its own table alone. Only the old module's calls are relocated, and its
+old entry statement is not appended to the new main statement. -/
+theorem Valid.link_of_callsValid {control oldControl : Nat} {front old : Program}
+    {main oldMain : Stmt}
+    (oldValid : Valid oldControl old oldMain) (bound : oldControl ≤ control)
+    (mainWF : main.WellFormed control)
+    (mainCalls : CallsValid (Program.link front old) main)
+    (prefixValid : ∀ f ∈ front, f.WellFormed ∧ f.locals ≤ control ∧
+      CallsValid (Program.link front old) f.body ∧ f.results.length - 1 ≤ control) :
+    Valid control (Program.link front old) main := by
+  refine ⟨mainWF, mainCalls, ?_⟩
+  intro f member
+  change f ∈ front ++ old.map (Func.renameCalls (fun i => front.length + i)) at member
+  rcases List.mem_append.mp member with inPrefix | imported
+  · exact prefixValid f inPrefix
+  · obtain ⟨g, inOld, rfl⟩ := List.mem_map.mp imported
+    obtain ⟨formed, locals, calls, results⟩ := oldValid.2.2 g inOld
+    refine ⟨?_, Nat.le_trans locals bound, ?_, Nat.le_trans results bound⟩
+    · simpa only [Func.wellFormed_renameCalls] using formed
+    · exact calls.renameCalls (Program.embeds_link_right front old)
+
 /-- Two independently valid modules become a valid sequential component under
 the maximum register boundary. No recursive function body is rechecked by an
 execution proof; static call validity transports through the embeddings. -/

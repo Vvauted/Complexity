@@ -79,10 +79,11 @@ The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
 branches on its returned value and proves the result equals `min (n + 1) limit`
 using ordinary Nat facts. Its primary `increment_eval` and `boundedIncrement_eval`
 proofs rewrite the generated equations; the latter reuses the helper result and
-splits the mathematical comparison. `FunctionTotal.iff_eval` then derives the
-contracts required by compilation from these result equations. The generic
-`Env.forall_cons` and `Env.forall_nil` rules open their typed arguments, without
-another correctness proof. Direct source-WP rules remain available when a
+splits the mathematical comparison. The generated `P.f_total_iff` accepts ordinary
+curried preconditions and postconditions and derives the contract required by
+compilation. It uses `FunctionTotal.iff_eval` and the generic environment rules
+internally; the caller does not manually open `Env` or repeat the correctness
+proof. Direct source-WP rules remain available when a
 compositional contract is the preferred starting point. The
 [compiled invocation](##Examples.Language.ScalarCompiled) supplies only source-level
 range and call-nesting facts, then reuses that mathematical proof. In particular,
