@@ -1,6 +1,7 @@
 # Design
 
-The [roadmap](ROADMAP.md) sets development priorities. The
+The [roadmap](ROADMAP.md) sets development priorities, including the unresolved
+total-function interface and memory-lifetime decisions. The
 [high-level language design](HIGH_LEVEL_LANGUAGE.md) specifies the next
 architecture: an independently interpreted typed core, source-level proofs and
 automatically checked lowering to the existing RAM backend. Its independent
@@ -12,8 +13,9 @@ callee-frame expansion. Realized scalar source costs now correspond to actual
 measured execution, with conditional source bounds and outer-call accounting.
 Borrowed buffers, mutable locals and typed effectful-guard loops have source
 rules and compiler connections. The semantic Std.Do adapter reuses strict Part
-and native state transformers. Named loop syntax and ordinary-local invariant
-automation, richer data and allocation remain unfinished.
+and native state transformers. Named while syntax and ordinary-local variant
+rules exist; complete loop-proof automation, native total-function generation,
+richer data and allocation remain unfinished.
 
 The sections below document the existing implementation and the semantic
 boundaries that its reuse must preserve. Here, `Source` means the current

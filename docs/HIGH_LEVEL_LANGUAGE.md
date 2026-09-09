@@ -1,6 +1,15 @@
 # High-level language design
 
-Status: architecture under implementation. The independent scalar core now has
+Status: the independent core and backend connection are implemented for the
+subset described below; the intended high-level programming/proof experience
+is not complete. In particular, the current generated functions expose partial
+heap actions, not native total Lean definitions, and programs cannot yet
+allocate returned containers. The [roadmap](ROADMAP.md) reopens the public
+function and lifetime decisions on that evidence. Existing core semantics and
+compiler proofs remain foundations, not a commitment to their current public
+presentation.
+
+The independent scalar core now has
 source correctness rules, generic whole-function lowering and proof transfer to
 the existing executable RAM runner. Return-flag lowering avoids continuation
 duplication and has exact static code-size formulas. A separate cost observation
@@ -455,6 +464,61 @@ A result specification need not be an independently implemented reference
 function. For pure computations, determinism and termination yield ordinary
 value equations; for mutation, they yield result/state relations and frames.
 
+### Public functions, effects and successful termination
+
+The current action type is a general semantic representation, not the desired
+mandatory type of every public function. Recursion does not imply a partial
+interface, internal mutation does not require exposing the whole heap, and
+backend memory faults need not become ordinary algorithm results. Keep general
+execution available internally while distinguishing the public cases:
+
+- A pure function, successfully terminating on its declared domain, should have
+  ordinary Lean values and equations. Its result must be independent of hidden
+  initial state, not merely leave that state unchanged.
+- A borrowed mutable operation should have a mathematical contents/result
+  contract that preserves actual sharing and frames. Read-only operations may
+  still depend on the supplied contents; `NoHeapWrites` alone is not purity.
+- A function using private mutable storage may have a functional interface only
+  through a proved isolation and result-lifetime boundary. Freezing, ownership
+  transfer and copying have different requirements and costs.
+- An intended domain error may be an explicit tagged result. Invalid source
+  memory access and backend capacity failure are different issues. The present
+  compiler proves successful execution under its premises; it does not thereby
+  implement every source fault as a checked runtime exception.
+
+For the pure frontend, the preferred direction is to generate a native total
+Lean definition and its typed-core implementation from one supported source
+body. Reuse Lean's structural/well-founded recursion infrastructure. An author
+may supply a mathematical decreasing argument, but should not supply a second
+induction to establish the generated correspondence. A shared construction must
+relate those native equations to actual core execution; generating two terms
+with similar printed syntax is not a proof. This design is not implemented yet.
+
+This does not accept arbitrary Lean definitions as runtime primitives. The
+frontend still controls the executable subset, supported operations and actual
+lowering. Specifications remain free to use mathlib. Native Lean evaluation
+would have its host runtime; the certified complexity remains that of the
+corresponding RAM artifact, not Lean's wall-clock execution.
+
+A successful-termination certificate plus a result projection from the same
+partial action can be useful shared proof infrastructure. It is not an adequate
+replacement for the total frontend: a `Part.get` view is generally
+noncomputable, and requiring the full desired correctness theorem before
+publishing that view moves rather than removes the proof burden. Termination
+may use algorithmic invariants, but no proposed time budget or reference answer
+is allowed to define the implementation's result.
+
+The generated native function and program identity have different roles.
+Correctness may use ordinary function equality; cost and compilation theorems
+remain indexed by the declared program/artifact. A cost function on extensional
+Lean functions alone cannot distinguish two implementations with equal results.
+
+The immediate design comparison uses the existing Factorial, Scalar and
+Remainder declarations. Judge the complete author proof, including termination
+and compilation transport. In parallel, Traversal must lose its manual
+`Control`/local-tuple/guard-body transport through shared loop contracts. The
+pure path cannot be used to declare the mutable proof interface finished.
+
 ### Verification-condition generation
 
 Generate source-level conditions from the typed program and prove, schematically:
@@ -603,11 +667,39 @@ Use relations when abstraction forgets storage details; do not require a
 bijection between an entire RAM heap and an observed list. Update related views
 through the current heap and operation effects, not through obsolete snapshots.
 
-Allocation is an explicit later milestone: source freshness, a concrete allocator,
-initialization, actual capacity and charged stores. Start with a simple arena,
-not a garbage collector. Returning a freshly allocated container requires that
-its region remain live. Reclamation needs its own lifetime rules. A host-created
-`Array` is not a free RAM allocation.
+Allocation is unimplemented. Its design is needed now because it constrains
+collection interfaces and encapsulated local mutation. A stable-address
+monotone arena is the first candidate, not a settled solution for all lifetimes.
+Caller-supplied scratch remains useful but does not replace construction of
+fresh results. Scoped scratch reclamation and longer-lived output regions are
+a different, stronger capability; GC/reference counting is not selected.
+
+One representation candidate extends placement while preserving the addresses
+of existing live objects. Single allocation preserves their contents; general
+executions may still write them. Growth transport must also cover live values,
+environments, frames and actual call results. Keep fixed-placement results for
+the existing no-allocation subset. The public `Buffer` type permits nonexistent
+IDs even though the frontend has no ID constructor: an old descriptor for a
+future object must not become a stale address when that object is allocated.
+The allocation-aware validity/transport boundary needs a proof, not an implicit
+global no-alias or valid-input restriction on old theorems.
+
+Allocation progress must be carried by actual runtime state across calls,
+whether shared or explicitly threaded through arguments/results. An arena cursor
+is distinct from the fixed `heapLimit` heap/stack boundary. Returning from an
+allocating call cannot silently restore an old cursor along with caller locals.
+New cells require actual initialization
+and charged stores. Capacity failure must have a declared interpretation:
+intended source failure or an unmet backend realization condition. A host-created
+`Array` supplies neither an allocator nor initialized RAM cells.
+
+Returning a fresh container requires that its region survive the caller's
+subsequent uses. Reclamation additionally requires non-escape on all relevant
+exits and a representation of live/dead objects; the current `HeapRep` represents
+all objects. Dynamic resizing must specify what happens to aliases before
+selecting copying or indirection. Peak retained storage, cumulative allocation
+and peak reachable data are distinct. See [M4](ROADMAP.md#m4--allocation-lifetime-and-encapsulated-local-mutation)
+for the outstanding decisions and the allocating-callee/using-caller criterion.
 
 ### Nat is mathematical, Word is modular
 
@@ -623,7 +715,7 @@ not accepted as an uncharged host operation.
 
 | Operation | Source meaning | Initial word-backend policy |
 | --- | --- | --- |
-| Nat literals, addition and comparison | Lean Nat and Bool operations | Scalar encoding and addition-range obligations; M1 subset |
+| Nat literals, addition and comparison | Lean Nat and Bool operations | Scalar encoding and addition-range obligations; current scalar backend |
 | Nat multiplication | Exact natural multiplication | Proved lowering with an actual intermediate-product range condition |
 | Nat subtraction | Saturation at zero | Proved comparison mask applied to the wrapping word difference; no subtrahend-order premise |
 | Nat division and modulo | Lean semantics, including `n / 0 = 0` and `n % 0 = n` | Existing word operations already match these zero cases; proved lowering requires representable operands, not a nonzero divisor |
@@ -734,6 +826,13 @@ source-visible budget. Require:
   independently of proof terms used to establish execution or termination;
 - noninterference: source branch selection, effects and termination do not
   inspect the count or the proposed bound.
+
+These are the intended interface obligations. Current `ExecutionCost` is
+indexed by successful `RealizedExec`, and every such execution admits a count;
+this is not yet instrumentation of every unrestricted source execution.
+Conditional `FunctionCostBound` alone can be vacuous when execution is not
+realizable. Publication must continue to combine independently established
+source totality, realizability and the bound, as the existing runner bridge does.
 
 The RAM interpretation comes from the actual lowering/layout. Its charges
 include operand evaluation, copies, descriptor fields, guard/jumps, traversal
@@ -889,18 +988,20 @@ store compose without any algorithm-specific register proof. Search then
 exercises a different loop shape; recursive sort exercises recursion and
 multiple buffers. Their compiled bounds concern these same declarations.
 
-Fixed decisions: independent typed core, explicit executable operations,
-shared mutable heap, budget-free behavior, checked lowering, backend-derived
-costs and preservation of real safety conditions.
+Fixed semantic boundaries: independent typed core, explicit executable
+operations, actual shared-state behavior where used, budget-free correctness,
+checked lowering, backend-derived costs and preservation of real safety
+conditions. These do not fix every public function to the current heap-action
+type. The total frontend and the abstraction of local mutable storage require
+the additional design and correspondence work above.
 
 The scalar implementation now fixes typed lexical contexts, the `source_program`
 spelling, one-step monadic equations and a strict scoped Part/Std.Do interpretation.
-Shared cost rules and focused tactics remove structural bookkeeping from the
-scalar consumers. M1 remains open: richer source specifications, general callee
-selection and recursive/data-dependent automation are unfinished. Improve these alongside
-the lemma-transfer bridge and the first complete borrowed-buffer path; do not
-require perfect scalar automation before heap effects and loops can inform the
-proof interface. No choice may define high-level meaning through
+Shared cost rules and focused tactics remove some structural bookkeeping from
+scalar consumers. The roadmap now separates function-definition experience,
+mutable proof contracts, structured values, memory management and public resource
+claims. Scalar simplification or another imported-call variant cannot finish
+those capabilities. No choice may define high-level meaning through
 lowering, accept manually entered instruction prices or expose register proofs
 to algorithm authors.
 

@@ -69,6 +69,14 @@ Our first-order calling convention still requires actual machine operations for
 arguments, saved state, frame access, and return. A cost theorem for expressions
 alone cannot establish those obligations.
 
+Rechecking Sections 5.2–5.4 makes the lifetime issue concrete: Example 32
+disposes a region before its continuation uses a returned tuple, and the type
+and effect rules exclude such uses. Our design inference is to settle returned
+container lifetime and non-escape before promising scoped reclamation. This
+does not select the paper's region representation or pricing assumptions for
+our RAM. A non-reclaiming arena is a possible first implementation, not proof
+that temporary storage is reclaimed or that a returned buffer survives a reset.
+
 ## 4. Use time credits as proof resources, not cost definitions
 
 Arthur Charguéraud and François Pottier, **Verifying the Correctness and Amortized
@@ -166,6 +174,12 @@ making each continuation rebuild descriptor-length facts. The same three-word
 call executes. This is a contract view, not an implementation of Sepref's synthesis
 or an adoption of its abstract primitive costs.
 
+The current high-level review uses the same distinction to evaluate the whole
+author proof. A short result theorem is insufficient if a private adapter still
+reconstructs locals, intermediate heaps and compiler fields. Sections 3.2 and
+4.2 motivate shared relation transport and structured obligations; they do not
+justify hiding the relation between a pure data view and aliased mutable storage.
+
 The same Section 4.2 distinction guides general loop-body support: a structural
 rule should handle iteration mechanics while concrete operation contracts retain
 their side conditions. Our `forIn` rules therefore separate real loads and cursor
@@ -195,6 +209,15 @@ not inspect its count. Typed arguments, returned values and effects should drive
 both proof views. Behavioral equality alone must never transport a cost bound.
 For recursion we retain independent termination proofs rather than requiring a
 cost clock to publish correctness. Target adequacy remains the compiler's job.
+
+Section 1.6 also discusses accessibility-based total definitions. General
+recursive algorithms do not force a partial public function type. Our renewed
+frontend direction is to reuse ordinary structural/well-founded recursion,
+with one source body and proved correspondence to the core. A projection from
+`Part` may help proofs but does not by itself deliver native execution or avoid
+a duplicated termination argument. Sections 1.2–1.3 also reinforce retaining
+implementation identity when exposing ordinary behavior: extensionally equal
+Lean functions cannot, on that equality alone, distinguish execution costs.
 
 The sample review gives concrete uses: factorial exposes its cost recurrence
 without a second register-level induction, and typed calls compose results and
@@ -315,13 +338,21 @@ instances. These are useful foundations for a semantic interpretation of the
 new core and its source-level `Std.Do.Triple`/`mvcgen` interface, not evidence
 that an arbitrary typed syntax tree already has those laws.
 
-The new partial source semantics still needs its own total-WP adequacy bridge.
-Existing StateM adapters which consume an already proved RAM refinement do not
-provide that independent source semantics. Nor does a native fixed-list iterator
-specify traversal over mutable storage: a source buffer loop must load from the
-current heap at the actual iteration. Reuse the standard index-range and bind
-infrastructure while proving the heap-operation and termination rules needed by
-this language. No dependency upgrade or CSLib dependency is required.
+The independent source semantics now has a
+[strict partial-value adapter](../Complexity/Control/Part.lean) and
+[source total-correctness adequacy](../Complexity/Language/Eval/Verification.lean).
+Those are working foundations, not a native total-function frontend. Existing
+StateM adapters that consume RAM refinement serve a different layer.
+
+The pinned [Array implementation](https://github.com/leanprover/lean4/blob/v4.28.0-rc1/src/Init/Data/Array/Basic.lean)
+already uses mathematical decreasing measures in recursive definitions, for
+example `firstM` with `termination_by as.size - i`. Reuse Lean's recursion
+infrastructure rather than build another termination checker. This does not
+make the arbitrary callback in that native operation a compiled source primitive.
+Likewise, a native fixed-list iterator does not specify mutable-buffer traversal:
+each iteration must read the actual current heap. Reuse the range, bind and
+collection lemmas after proving the required correspondence. No dependency
+upgrade or CSLib dependency is required.
 
 ## Reading discipline
 
