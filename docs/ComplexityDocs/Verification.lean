@@ -120,8 +120,26 @@ not on a false exit or early return. These are source rules, without a time budg
 The [native loop interface](##Complexity.Language.Eval.Loop) gives a one-step
 equation for the same `Stmt.action` and `Stmt.while_spec` for strict `Std.Do`
 reasoning. Its guard and body are actual source blocks, not a second host loop.
-Named loop syntax and an invariant interface over ordinary named locals are
-still unfinished; this core support is not yet the ordinary-loop author experience.
+The [ordinary-local view](##Complexity.Language.Eval.Locals) represents the complete
+lexical environment by ordinary values, retaining the final locals on every
+exit. Its [loop rules](##Complexity.Language.Eval.Locals.Verification) take an
+invariant and well-founded relation, or a natural-valued variant, on those values
+and the current heap. The [continuation bridge](##Complexity.Language.Eval.Locals.Continuation)
+runs the remaining function only on normal completion. These are proved changes
+of view of the same source execution, not another implementation.
+Named `while` syntax now generates actual guard/body/loop observations, one-step
+equations and normal-continuation proofs. The
+[read/helper/branch/write traversal](##Examples.Language.Traversal) checks this
+frontend and its mathematical prefix lemmas. Its whole-loop array-map proof and
+automatically generated invariant bindings remain unfinished; accepting the
+syntax alone does not complete that author interface.
+
+For recursion, the [source contract rule](##Complexity.Language.Verification.Recursion)
+supplies complete callable specifications at smaller mathematical indices through
+ordinary well-founded induction. It supports a fixed function or a family of
+mutually recursive functions without imposing a runtime budget or stack depth.
+Convenient generated recursive hypotheses over named parameters remain separate
+frontend work.
 
 The [compiled buffer invocation](##Examples.Language.BufferCompiled) reuses this
 source proof and derives the read cell's range from the input heap representation.

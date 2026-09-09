@@ -5,8 +5,13 @@ Authors: vvauted
 -/
 import Complexity.Language.Eval.Continuation
 import Complexity.Language.Eval.Verification
+import Complexity.Language.Eval.Locals.Composition
+import Complexity.Language.Eval.Locals.Continuation
+import Complexity.Language.Eval.Locals.Effects
+import Complexity.Language.Eval.Locals.Verification
 import Lean.Elab.Command
 import Lean.Elab.Do
+import Lean.Meta.Closure
 import Lean.Parser.Do
 
 /-!
@@ -15,7 +20,7 @@ import Lean.Parser.Do
 `source_program P where` declares an independent typed source program from
 Lean-style function headers and `do` blocks. The supported types are
 `Nat`, `Bool`, `Unit`, `Buffer Nat` and `Buffer Bool`, with lexical `let` and
-`let mut`, assignment, named first-order calls, `if`/`then`/`else` and `return`.
+`let mut`, assignment, named first-order calls, `if`/`then`/`else`, `while` and `return`.
 Only the nearest mutable binding may be assigned; ordinary `let` bindings and
 parameters are immutable. `x ← action` rebinds a mutable local to the actual
 result of a supported named call, buffer read or slice. Natural arithmetic and
@@ -23,6 +28,12 @@ comparisons may be nested in bindings, assignments, return values, conditions
 and call arguments. Their operands are normalized left to right into actual
 lexical primitive bindings; no host
 computation replaces the generated operations.
+
+Each `while` has an actual source guard block, including for compound Boolean
+conditions and parenthesized effectful `do` guards. The guard is reevaluated in
+the current state; returning its Boolean leaves only the guard. Named loop,
+guard and body observations retain complete lexical coordinates and actual
+heap effects, and their equations follow from the source semantic rules.
 
 Borrowed buffers expose `xs.length`, `let x ← xs.get i`, `xs.set i value` and
 `let ys ← xs.slice offset length`. Reads and writes observe the current shared
@@ -66,6 +77,34 @@ syntax "def " ident sourceParameter* " : " term " := " term : sourceFunction
 syntax (name := sourceProgram) "source_program " ident " where" ppLine
   many1Indent(sourceFunction) : command
 
+-- Internal emission point: infer an equation from its checked proof instead of
+-- inventing an unresolved right-hand side in a theorem header.
+syntax (name := inferredSourceEquation) "source_equation% " ident " := " term : command
+
+elab_rules : command
+  | `(command| source_equation% $name:ident := $proof:term) => do
+      let rawName := name.getId
+      let currentNamespace ← getCurrNamespace
+      let declName := if (`_root_).isPrefixOf rawName then
+          rawName.replacePrefix `_root_ Name.anonymous
+        else currentNamespace ++ rawName
+      Lean.Elab.Command.liftTermElabM do
+        let value ← Lean.Elab.Term.elabTerm proof none
+        Lean.Elab.Term.synthesizeSyntheticMVarsNoPostponing
+        if (← Lean.Elab.Term.logUnassignedUsingErrorInfos (← Lean.Meta.getMVars value)) then
+          Lean.Elab.throwAbortTerm
+        let value ← Lean.instantiateMVars value
+        let type ← Lean.instantiateMVars (← Lean.Meta.inferType value)
+        let closed ← Lean.Meta.Closure.mkValueTypeClosure type value false
+        Lean.addDecl (.thmDecl {
+          name := declName
+          levelParams := closed.levelParams.toList
+          type := closed.type
+          value := closed.value
+        })
+        Lean.addDocStringCore declName
+          "One source-block observation equation derived from the proved semantic composition rules."
+
 private structure Parameter where
   name : TSyntax `ident
   type : Ty
@@ -78,6 +117,7 @@ private structure Function where
 
 private structure Binding where
   name : Option Name
+  proofName : TSyntax `ident
   type : Ty
   isMutable : Bool
 
@@ -94,10 +134,18 @@ private structure Primitive where
   atom : Option (TSyntax `term)
   value : TSyntax `term
 
+private structure LoopSite where
+  name : TSyntax `ident
+  scope : Scope
+  result : Ty
+  guard : TSyntax `term
+  body : TSyntax `term
+
 private structure LoweredBlock where
   term : TSyntax `term
   proofBody : Array (TSyntax `doElem)
   fallsThrough : Bool
+  loops : Array LoopSite
 
 private structure NormalizedValue where
   bindings : Array (TSyntax `doElem)
@@ -117,7 +165,7 @@ private instance : Nonempty Primitive :=
     ⟨(mkCIdent ``Unit.unit).raw⟩⟩⟩
 
 private instance : Nonempty LoweredBlock :=
-  ⟨⟨⟨(mkCIdent ``Complexity.Language.Stmt.skip).raw⟩, #[], true⟩⟩
+  ⟨⟨⟨(mkCIdent ``Complexity.Language.Stmt.skip).raw⟩, #[], true, #[]⟩⟩
 
 private instance : Nonempty NormalizedValue :=
   ⟨⟨#[], ⟨(mkCIdent ``Unit.unit).raw⟩, true⟩⟩
@@ -164,6 +212,87 @@ private def generatedName (family : TSyntax `ident) (fn : TSyntax `ident)
     (suffix : String) : TSyntax `ident :=
   mkIdentFrom fn (family.getId ++ Name.mkSimple (fn.getId.toString ++ suffix))
 
+private def freshProofName (ref : Syntax) (name : Name) : MacroM (TSyntax `ident) :=
+  withFreshMacroScope do
+    return mkIdentFrom ref (← Macro.addMacroScope name)
+
+private def loopMember (site : LoopSite) (name : String) : TSyntax `ident :=
+  mkIdentFrom site.name (site.name.getId ++ Name.mkSimple name)
+
+private def namedSimpArgs (names : Array (TSyntax `ident)) :
+    MacroM (Array (TSyntax ``Lean.Parser.Tactic.simpLemma)) :=
+  names.mapM fun name => `(Lean.Parser.Tactic.simpLemma| $name:ident)
+
+private def constantSimpArgs (names : Array Name) :
+    MacroM (Array (TSyntax ``Lean.Parser.Tactic.simpLemma)) :=
+  namedSimpArgs (names.map mkCIdent)
+
+private def viewSimpArgs : MacroM (Array (TSyntax ``Lean.Parser.Tactic.simpLemma)) :=
+  constantSimpArgs #[``Equiv.trans_apply, ``Equiv.symm_trans_apply, ``Equiv.prodCongr_apply,
+    ``Equiv.prodCongr_symm, ``Equiv.refl_apply, ``Equiv.refl_symm, ``Equiv.symm_symm, ``Prod.map,
+    ``Equiv.coe_fn_mk, ``Equiv.toFun_as_coe, ``Equiv.invFun_as_coe,
+    ``Complexity.Language.Env.equivProd_apply, ``Complexity.Language.Env.equivProd_symm_apply,
+    ``Complexity.Language.Env.equivUnit_apply, ``Complexity.Language.Env.equivUnit_symm_apply,
+    ``Complexity.Language.Env.head, ``Complexity.Language.Env.get_tail]
+
+private def valueSimpArgs : MacroM (Array (TSyntax ``Lean.Parser.Tactic.simpLemma)) :=
+  constantSimpArgs #[``Complexity.Language.Atom.eval, ``Complexity.Language.Prim.eval,
+    ``Complexity.Language.Args.eval, ``Complexity.Language.CellTy.toValue,
+    ``Complexity.Language.CellTy.ofValue, ``Complexity.Language.Env.cons_here,
+    ``Complexity.Language.Env.cons_there, ``Complexity.Language.Env.head_cons,
+    ``Complexity.Language.Env.tail_cons, ``Complexity.Language.Env.get_tail,
+    ``Complexity.Language.Env.set_here, ``Complexity.Language.Env.set_there, ``pure_bind]
+
+private def scopeTypes (scope : Scope) : MacroM (TSyntax `term) := do
+  let types ← scope.toArray.mapM fun binding => typeTerm binding.type
+  `([$types,*])
+
+private def scopeTuple (scope : Scope) : MacroM (TSyntax `term) := do
+  let mut values ← `(())
+  for binding in scope.reverse do
+    values ← `(($(binding.proofName):ident, $values))
+  return values
+
+private def scopeValueTypes (scope : Scope) : MacroM (TSyntax `term) := do
+  let mut values ← `(Unit)
+  for binding in scope.reverse do
+    values ← `($(← valueTypeTerm binding.type) × $values)
+  return values
+
+private def scopeView (scope : Scope) : MacroM (TSyntax `term) := do
+  let mut view ← `(Complexity.Language.Env.equivUnit)
+  for _ in scope.reverse do
+    view ← `(Complexity.Language.Env.equivProd.trans
+      (Equiv.prodCongr (Equiv.refl _) $view))
+  return view
+
+private def tupleFields (scope : Scope) (tuple : TSyntax `term) : MacroM (Array (TSyntax `term)) := do
+  let mut current := tuple
+  let mut fields := #[]
+  for _ in scope do
+    fields := fields.push (← `(($current).1))
+    current ← `(($current).2)
+  return fields
+
+private def curryScope (scope : Scope) (body : TSyntax `term) : MacroM (TSyntax `term) := do
+  let mut result := body
+  for binding in scope.reverse do
+    result ← `(fun ($(binding.proofName):ident : $(← valueTypeTerm binding.type)) => $result)
+  return result
+
+private def quantifyScope (scope : Scope) (body : TSyntax `term) : MacroM (TSyntax `term) := do
+  let mut result := body
+  for binding in scope.reverse do
+    result ← `(∀ ($(binding.proofName):ident : $(← valueTypeTerm binding.type)), $result)
+  return result
+
+private def scopeApplication (scope : Scope) (name : TSyntax `ident) : TSyntax `term :=
+  Lean.Syntax.mkApp ⟨name.raw⟩ (scope.toArray.map fun binding => ⟨binding.proofName.raw⟩)
+
+private def tupleApplication (scope : Scope) (name : TSyntax `ident) (tuple : TSyntax `term) :
+    MacroM (TSyntax `term) := do
+  return Lean.Syntax.mkApp ⟨name.raw⟩ (← tupleFields scope tuple)
+
 private def parseFunction (stx : TSyntax `sourceFunction) : MacroM Function := do
   match stx with
   | `(sourceFunction| def $name:ident $parameters:sourceParameter* : $result:term := $body:term) =>
@@ -193,7 +322,7 @@ private def lookupBinding (scope : Scope) (name : TSyntax `ident) : MacroM (Bind
 private def lookupVariable (scope : Scope) (name : TSyntax `ident) : MacroM Atomic := do
   let (binding, index) ← lookupBinding scope name
   return ⟨binding.type, ← `(Complexity.Language.Atom.var $(← variableTerm index)),
-    ← `($name:ident)⟩
+    ← `($(binding.proofName):ident)⟩
 
 private partial def parseAtom (scope : Scope) (stx : TSyntax `term) : MacroM Atomic := do
   match stx with
@@ -333,7 +462,7 @@ private def writeCode (scope : Scope) (stx : TSyntax `term) : MacroM LoweredBloc
   expectType operands[1]! value.type kind.toTy
   return ⟨← `(Complexity.Language.Stmt.write $(buffer.term) $(index.term) $(value.term)),
     #[← `(doElem| Complexity.Language.Buffer.writeM $(buffer.value) $(index.value) $(value.value))],
-    true⟩
+    true, #[]⟩
 
 private def assignCode (scope : Scope) (name : TSyntax `ident) (value : TSyntax `term) :
     MacroM LoweredBlock := do
@@ -345,7 +474,7 @@ private def assignCode (scope : Scope) (name : TSyntax `ident) (value : TSyntax 
   let parsed ← parsePrimitive scope value
   expectType value parsed.type binding.type
   return ⟨← `(Complexity.Language.Stmt.assign $(← variableTerm index) $(parsed.term)),
-    #[← `(doElem| $name:ident := $(parsed.value))], true⟩
+    #[← `(doElem| $(binding.proofName):ident := $(parsed.value))], true, #[]⟩
 
 private def assignBindingCode (family : TSyntax `ident) (functions : Array Function)
     (scope : Scope) (name : TSyntax `ident) (action : TSyntax `term) : MacroM LoweredBlock := do
@@ -359,7 +488,8 @@ private def assignBindingCode (family : TSyntax `ident) (functions : Array Funct
   let assignment ← `(Complexity.Language.Stmt.assign
     (Complexity.Language.Var.there $(← variableTerm index))
     (Complexity.Language.Prim.atom (Complexity.Language.Atom.var Complexity.Language.Var.here)))
-  return ⟨← `($statement $assignment), #[← `(doElem| $name:ident ← $invocation:term)], true⟩
+  return ⟨← `($statement $assignment),
+    #[← `(doElem| $(binding.proofName):ident ← $invocation:term)], true, #[]⟩
 
 private def returnCode (scope : Scope) (result : Ty) (value : TSyntax `term) :
     MacroM LoweredBlock := do
@@ -370,7 +500,7 @@ private def returnCode (scope : Scope) (result : Ty) (value : TSyntax `term) :
     | none =>
         `(Complexity.Language.Stmt.letPrim $(parsed.term)
           (Complexity.Language.Stmt.ret (Complexity.Language.Atom.var Complexity.Language.Var.here)))
-  return ⟨term, #[← `(doElem| return $(parsed.value))], false⟩
+  return ⟨term, #[← `(doElem| return $(parsed.value))], false, #[]⟩
 
 private def doSequence (elements : Array (TSyntax `doElem)) : TSyntax ``doSeq :=
   ⟨Lean.Elab.Term.Do.mkDoSeq (elements.map (·.raw))⟩
@@ -378,6 +508,30 @@ private def doSequence (elements : Array (TSyntax `doElem)) : TSyntax ``doSeq :=
 private def LoweredBlock.proofSequence (block : LoweredBlock) (normal : TSyntax `doElem) :
     TSyntax ``doSeq :=
   doSequence (if block.fallsThrough then block.proofBody.push normal else block.proofBody)
+
+private def loopProofBody (site : LoopSite) : MacroM (Array (TSyntax `doElem)) := do
+  let control ← freshProofName site.name `loopControl
+  let locals ← freshProofName site.name `loopLocals
+  let value ← freshProofName site.name `returned
+  let error ← freshProofName site.name `error
+  let invocation := scopeApplication site.scope site.name
+  let mut elements := #[← `(doElem|
+    let ($control:ident, $locals:ident) ← ExceptT.lift $invocation),
+    ← `(doElem| match $control:ident with
+      | .normal => pure ()
+      | .returned $value:ident => return $value:ident
+      | .fault $error:ident => throw $error:ident)]
+  let fields ← tupleFields site.scope ⟨locals.raw⟩
+  for binding in site.scope, field in fields do
+    if binding.isMutable then
+      elements := elements.push (← `(doElem| $(binding.proofName):ident := $field))
+  return elements
+
+private partial def guardElements (condition : TSyntax `term) : MacroM (List (TSyntax `doElem)) :=
+  match condition with
+  | `(($inner:term)) => guardElements inner
+  | `(do $body:doSeq) => pure (getDoElems body).toList
+  | _ => do return [← `(doElem| return $condition)]
 
 -- Normalize only the supported expression vocabulary. Fresh lexical names are
 -- consumed by the ordinary typed translator and cannot capture user bindings.
@@ -402,7 +556,7 @@ private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool) :
     | `($left <= $right) => binary left right fun a b => `($a <= $b)
     | _ => pure ⟨#[], stx, !(fieldAccess? stx).any (fun access => access.2 == `length)⟩)
   if atomize && !normalized.atomic then
-    let name := mkIdentFrom stx (← Macro.addMacroScope `operand)
+    let name ← freshProofName stx `operand
     let binding ← `(doElem| let $name:ident := $(normalized.value))
     return ⟨normalized.bindings.push binding, ⟨name.raw⟩, true⟩
   else
@@ -451,105 +605,322 @@ private def normalizeElement (element : TSyntax `doElem) :
       let normalized ← normalizeValue condition false
       return (normalized.bindings,
         ← `(doElem| if $(normalized.value) then $yes:doSeq else $no:doSeq))
+  | `(doElem| while $_condition do $_body) => return (#[], element)
   | `(doElem| $action:term) =>
       let (bindings, action) ← normalizeCall action
       return (bindings, ← `(doElem| $action:term))
   | _ => return (#[], element)
 
+private def statementCode (family : TSyntax `ident) (functions : Array Function)
+    (owner : TSyntax `ident)
+    (recurse : Scope → Ty → List (TSyntax `doElem) → Nat → MacroM LoweredBlock)
+    (scope : Scope) (result : Ty) (element : TSyntax `doElem) (nextIndex : Nat) :
+    MacroM LoweredBlock := withRef element do
+  match element with
+  | `(doElem| $name:ident := $value:term) => assignCode scope name value
+  | `(doElem| $name:ident ← $action:term) => assignBindingCode family functions scope name action
+  | `(doElem| return $value:term) => returnCode scope result value
+  | `(doElem| return) => returnCode scope result (← `(()))
+  | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) =>
+      let parsed ← parsePrimitive scope condition
+      expectType condition parsed.type .bool
+      let saved ← freshProofName condition `condition
+      let inner := if parsed.atom.isSome then scope
+        else ⟨none, saved, Ty.bool, false⟩ :: scope
+      let yesCode ← recurse inner result (getDoElems yes).toList nextIndex
+      let noCode ← recurse inner result (getDoElems no).toList (nextIndex + yesCode.loops.size)
+      let term ← match parsed.atom with
+        | some atom =>
+            `(Complexity.Language.Stmt.ite $atom $(yesCode.term) $(noCode.term))
+        | none =>
+            `(Complexity.Language.Stmt.letPrim $(parsed.term)
+              (Complexity.Language.Stmt.ite
+                (Complexity.Language.Atom.var Complexity.Language.Var.here)
+                $(yesCode.term) $(noCode.term)))
+      let normal ← `(doElem| pure ())
+      let yesBody := yesCode.proofSequence normal
+      let noBody := noCode.proofSequence normal
+      let conditionValue ← if parsed.atom.isSome then pure parsed.value else `($saved:ident)
+      let branch ← `(doElem| if $conditionValue then $yesBody:doSeq else $noBody:doSeq)
+      let proofBody ← if parsed.atom.isSome then pure #[branch] else do
+        let capture ← `(doElem| let $saved:ident : Bool := $(parsed.value))
+        pure #[capture, branch]
+      return ⟨term, proofBody, yesCode.fallsThrough || noCode.fallsThrough,
+        yesCode.loops ++ noCode.loops⟩
+  | `(doElem| while $condition do $body) =>
+      let name := generatedName family owner s!"_loop{nextIndex}"
+      let guardCode ← recurse scope .bool (← guardElements condition) (nextIndex + 1)
+      let bodyCode ← recurse scope result (getDoElems body).toList
+        (nextIndex + 1 + guardCode.loops.size)
+      let site : LoopSite := ⟨name, scope, result, guardCode.term, bodyCode.term⟩
+      let code := loopMember site "Code"
+      return ⟨⟨code.raw⟩, ← loopProofBody site, true,
+        guardCode.loops ++ bodyCode.loops |>.push site⟩
+  | `(doElem| $action:term) => writeCode scope action
+  | _ =>
+      Macro.throwErrorAt element
+        "unsupported source statement; use let, let mut, assignment, a named call, buffer access, if/then/else, while, or return"
+
 private partial def blockCode (family : TSyntax `ident) (functions : Array Function)
-    (scope : Scope) (result : Ty) (elements : List (TSyntax `doElem)) :
-    MacroM LoweredBlock := do
+    (owner : TSyntax `ident) (scope : Scope) (result : Ty)
+    (elements : List (TSyntax `doElem)) (nextIndex : Nat) : MacroM LoweredBlock := do
   match elements with
-  | [] => return ⟨← `(Complexity.Language.Stmt.skip), #[], true⟩
+  | [] => return ⟨← `(Complexity.Language.Stmt.skip), #[], true, #[]⟩
   | element :: rest => withRef element do
       let (bindings, element) ← normalizeElement element
       if !bindings.isEmpty then
-        return ← blockCode family functions scope result (bindings.toList ++ element :: rest)
+        return ← blockCode family functions owner scope result
+          (bindings.toList ++ element :: rest) nextIndex
       match element with
       | `(doElem| let mut $name:ident $[: $annotation:term]? := $value:term) =>
           let parsed ← parsePrimitive scope value
           checkAnnotation annotation parsed.type
-          let body ← blockCode family functions
-            (⟨some name.getId, parsed.type, true⟩ :: scope) result rest
+          let proofName ← freshProofName name name.getId
+          let body ← blockCode family functions owner
+            (⟨some name.getId, proofName, parsed.type, true⟩ :: scope) result rest nextIndex
           let type ← valueTypeTerm parsed.type
-          let binding ← `(doElem| let mut $name:ident : $type := $(parsed.value))
+          let binding ← `(doElem| let mut $proofName:ident : $type := $(parsed.value))
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
-            #[binding] ++ body.proofBody, body.fallsThrough⟩
+            #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
       | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
           let parsed ← parsePrimitive scope value
           checkAnnotation annotation parsed.type
-          let body ← blockCode family functions
-            (⟨some name.getId, parsed.type, false⟩ :: scope) result rest
+          let proofName ← freshProofName name name.getId
+          let body ← blockCode family functions owner
+            (⟨some name.getId, proofName, parsed.type, false⟩ :: scope) result rest nextIndex
           let type ← valueTypeTerm parsed.type
-          let binding ← `(doElem| let $name:ident : $type := $(parsed.value))
+          let binding ← `(doElem| let $proofName:ident : $type := $(parsed.value))
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
-            #[binding] ++ body.proofBody, body.fallsThrough⟩
+            #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
       | `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term) =>
           let (bindingType, statement, invocation) ← parseBinding family functions scope action
           checkAnnotation annotation bindingType
-          let body ← blockCode family functions
-            (⟨some name.getId, bindingType, true⟩ :: scope) result rest
+          let proofName ← freshProofName name name.getId
+          let body ← blockCode family functions owner
+            (⟨some name.getId, proofName, bindingType, true⟩ :: scope) result rest nextIndex
           let type ← valueTypeTerm bindingType
-          let binding ← `(doElem| let mut $name:ident : $type ← $invocation:term)
+          let binding ← `(doElem| let mut $proofName:ident : $type ← $invocation:term)
           return ⟨← `($statement $(body.term)),
-            #[binding] ++ body.proofBody, body.fallsThrough⟩
+            #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
       | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
           let (bindingType, statement, invocation) ← parseBinding family functions scope action
           checkAnnotation annotation bindingType
-          let body ← blockCode family functions
-            (⟨some name.getId, bindingType, false⟩ :: scope) result rest
+          let proofName ← freshProofName name name.getId
+          let body ← blockCode family functions owner
+            (⟨some name.getId, proofName, bindingType, false⟩ :: scope) result rest nextIndex
           let type ← valueTypeTerm bindingType
-          let binding ← `(doElem| let $name:ident : $type ← $invocation:term)
+          let binding ← `(doElem| let $proofName:ident : $type ← $invocation:term)
           return ⟨← `($statement $(body.term)),
-            #[binding] ++ body.proofBody, body.fallsThrough⟩
+            #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
       | _ =>
-          -- A term-valued match keeps its local `return` from exiting this block's translation.
-          let statement ← (match element with
-            | `(doElem| $name:ident := $value:term) => assignCode scope name value
-            | `(doElem| $name:ident ← $action:term) =>
-                assignBindingCode family functions scope name action
-            | `(doElem| return $value:term) => returnCode scope result value
-            | `(doElem| return) => do returnCode scope result (← `(()))
-            | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) => do
-                let parsed ← parsePrimitive scope condition
-                expectType condition parsed.type .bool
-                let inner := if parsed.atom.isSome then scope else ⟨none, Ty.bool, false⟩ :: scope
-                let yesCode ← blockCode family functions inner result (getDoElems yes).toList
-                let noCode ← blockCode family functions inner result (getDoElems no).toList
-                let term ← match parsed.atom with
-                  | some atom =>
-                      `(Complexity.Language.Stmt.ite $atom $(yesCode.term) $(noCode.term))
-                  | none =>
-                      `(Complexity.Language.Stmt.letPrim $(parsed.term)
-                        (Complexity.Language.Stmt.ite
-                          (Complexity.Language.Atom.var Complexity.Language.Var.here)
-                          $(yesCode.term) $(noCode.term)))
-                let normal ← `(doElem| pure ())
-                let yesBody := yesCode.proofSequence normal
-                let noBody := noCode.proofSequence normal
-                let branch ← `(doElem|
-                  if $(parsed.value) then $yesBody:doSeq else $noBody:doSeq)
-                return ⟨term, #[branch], yesCode.fallsThrough || noCode.fallsThrough⟩
-            | `(doElem| $action:term) => writeCode scope action
-            | _ =>
-                Macro.throwErrorAt element
-                  "unsupported source statement; use let, let mut, assignment, a named call, buffer access, if/then/else, or return")
+          let statement ← statementCode family functions owner (blockCode family functions owner)
+            scope result element nextIndex
           if rest.isEmpty then
             return statement
           else
-            let continuation ← blockCode family functions scope result rest
+            let continuation ← blockCode family functions owner scope result rest
+              (nextIndex + statement.loops.size)
             return ⟨← `(Complexity.Language.Stmt.seq $(statement.term) $(continuation.term)),
               if statement.fallsThrough then statement.proofBody ++ continuation.proofBody
                 else statement.proofBody,
-              statement.fallsThrough && continuation.fallsThrough⟩
+              statement.fallsThrough && continuation.fallsThrough,
+              statement.loops ++ continuation.loops⟩
 
 private def functionCode (family : TSyntax `ident) (functions : Array Function)
     (fn : Function) : MacroM LoweredBlock := do
   match fn.body with
   | `(do $body:doSeq) =>
-      let scope : Scope := fn.params.toList.map fun param => ⟨some param.name.getId, param.type, false⟩
-      blockCode family functions scope fn.result (getDoElems body).toList
+      let scope : Scope := fn.params.toList.map fun param =>
+        ⟨some param.name.getId, param.name, param.type, false⟩
+      blockCode family functions fn.name scope fn.result (getDoElems body).toList 1
   | _ => Macro.throwErrorAt fn.body "source function bodies must be supported 'do' blocks"
+
+private def loopCodeDeclarations (signatures : TSyntax `ident) (site : LoopSite) :
+    MacroM (Array Syntax) := do
+  let locals := loopMember site "Locals"
+  let view := loopMember site "View"
+  let guard := loopMember site "Guard"
+  let body := loopMember site "Body"
+  let code := loopMember site "Code"
+  let types ← scopeTypes site.scope
+  let result ← typeTerm site.result
+  let localsType ← scopeValueTypes site.scope
+  let viewTerm ← scopeView site.scope
+  let viewApply := loopMember site "view_apply"
+  let viewSymmApply := loopMember site "view_symm_apply"
+  let entry ← freshProofName site.name `entry
+  let values ← freshProofName site.name `values
+  let fields ← tupleFields site.scope ⟨values.raw⟩
+  let mut projected ← `(())
+  let mut restored ← `(Complexity.Language.Env.empty)
+  for (binding, index) in site.scope.zipIdx.reverse do
+    let sourceVar ← variableTerm index
+    projected ← `((Complexity.Language.Env.get $entry:ident $sourceVar, $projected))
+    let type ← typeTerm binding.type
+    restored ← `(Complexity.Language.Env.cons (τ := $type) $(fields[index]!) $restored)
+  return #[
+    (← `(command| /-- Complete lexical coordinates for this source loop. -/
+      abbrev $locals:ident := $localsType)).raw,
+    (← `(command| /-- Lossless proof coordinates, including fixed and shadowed captures. -/
+      def $view:ident : Complexity.Language.Env $types ≃ $locals:ident := $viewTerm)).raw,
+    (← `(command| /-- Observe lexical coordinates without unfolding the equivalence structure. -/
+      theorem $viewApply:ident ($entry:ident : Complexity.Language.Env $types) :
+          $view:ident $entry:ident = $projected := rfl)).raw,
+    (← `(command| /-- Restore complete lexical coordinates without unfolding proof fields. -/
+      theorem $viewSymmApply:ident ($values:ident : $locals:ident) :
+          ($view:ident).symm $values:ident = $restored := rfl)).raw,
+    (← `(command| /-- The actual value-producing guard, reevaluated on every iteration. -/
+      def $guard:ident : Complexity.Language.Stmt $signatures:ident $types .bool := $(site.guard))).raw,
+    (← `(command| /-- The actual parsed loop body, with its enclosing return type. -/
+      def $body:ident : Complexity.Language.Stmt $signatures:ident $types $result := $(site.body))).raw,
+    (← `(command| /-- This source loop, not a host-language looping algorithm. -/
+      def $code:ident : Complexity.Language.Stmt $signatures:ident $types $result :=
+        .while $guard:ident $body:ident)).raw]
+
+private def loopObservationDeclarations (program : TSyntax `ident) (site : LoopSite) :
+    MacroM (Array Syntax) := do
+  let localsType := loopMember site "Locals"
+  let view := loopMember site "View"
+  let tuple ← scopeTuple site.scope
+  let mut declarations := #[]
+  for (suffix, codeSuffix, result) in
+      [("guard", "Guard", Ty.bool), ("body", "Body", site.result), ("", "Code", site.result)] do
+    let name := if suffix.isEmpty then site.name else loopMember site suffix
+    let code := loopMember site codeSuffix
+    let result ← typeTerm result
+    let type ← quantifyScope site.scope
+      (← `(StateT Complexity.Language.Heap Part
+        (Complexity.Language.Control $result × $localsType:ident)))
+    let value ← curryScope site.scope
+      (← `(Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident $tuple))
+    declarations := declarations.push (← `(command|
+      /-- The actual source block observed with ordinary named local inputs. -/
+      noncomputable def $name:ident : $type := $value)).raw
+    let foldName := loopMember site (if suffix.isEmpty then "observe" else suffix ++ "_observe")
+    let current ← freshProofName site.name `locals
+    let applied ← tupleApplication site.scope name ⟨current.raw⟩
+    declarations := declarations.push (← `(command|
+      /-- Coordinate conversion for composing this named observation. -/
+      theorem $foldName:ident ($current:ident : $localsType:ident) :
+          Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident $current:ident =
+            $applied := rfl)).raw
+  return declarations
+
+private def loopEquationDeclarations (site : LoopSite) (sites : Array LoopSite)
+    (calleeFolds : Array (TSyntax `ident)) : MacroM (Array Syntax) := do
+  let loopCode := loopMember site "Code"
+  let foldNames ← namedSimpArgs (sites.flatMap fun other =>
+    #[loopMember other "guard_observe", loopMember other "body_observe", loopMember other "observe"])
+  let nestedLoops ← namedSimpArgs (sites.map fun other => loopMember other "observe")
+  let viewNames ← namedSimpArgs (sites.flatMap fun other =>
+    #[loopMember other "view_apply", loopMember other "view_symm_apply"])
+  let calleeFolds ← namedSimpArgs calleeFolds
+  let compositionArgs ← constantSimpArgs #[``Complexity.Language.Stmt.observe_skip,
+    ``Complexity.Language.Stmt.observe_assign, ``Complexity.Language.Stmt.observe_ret,
+    ``Complexity.Language.Stmt.observe_seq, ``Complexity.Language.Stmt.observe_ite,
+    ``Complexity.Language.Stmt.observe_letPrim, ``Complexity.Language.Stmt.observe_read,
+    ``Complexity.Language.Stmt.observe_write, ``Complexity.Language.Stmt.observe_slice,
+    ``Complexity.Language.Stmt.observe_call]
+  let sharedArgs := compositionArgs ++ nestedLoops ++ viewNames ++ calleeFolds ++
+    (← viewSimpArgs) ++ (← valueSimpArgs)
+  let mut declarations := #[]
+  for (suffix, codeSuffix) in [("guard", "Guard"), ("body", "Body")] do
+    let name := loopMember site suffix
+    let equation := loopMember site (suffix ++ "_eq")
+    let code := loopMember site codeSuffix
+    let applied := scopeApplication site.scope name
+    let allArgs := (← namedSimpArgs #[code]) ++ sharedArgs
+    let proof ← curryScope site.scope (← `(by
+      have equation : $applied = $applied := rfl
+      conv at equation =>
+        lhs
+        unfold $name:ident
+        simp only [$allArgs,*]
+      exact equation.symm))
+    declarations := declarations.push (← `(command| source_equation% $equation:ident := $proof)).raw
+  let name := site.name
+  let equation := loopMember site "eq"
+  let applied := scopeApplication site.scope name
+  let proof ← curryScope site.scope (← `(by
+    have equation : $applied = $applied := rfl
+    conv at equation =>
+      lhs
+      unfold $name:ident
+      rw [$loopCode:ident, Complexity.Language.Stmt.observe_while]
+      simp only [$foldNames,*]
+    exact equation.symm))
+  declarations := declarations.push (← `(command| source_equation% $equation:ident := $proof)).raw
+  return declarations
+
+private def loopContinuationDeclaration (program : TSyntax `ident) (site : LoopSite)
+    (sites : Array LoopSite) : MacroM Syntax := do
+  let name := loopMember site "continue_eq"
+  let view := loopMember site "View"
+  let code := loopMember site "Code"
+  let types ← scopeTypes site.scope
+  let result ← valueTypeTerm site.result
+  let entry ← freshProofName site.name `entry
+  let next ← freshProofName site.name `next
+  let control ← freshProofName site.name `control
+  let locals ← freshProofName site.name `locals
+  let value ← freshProofName site.name `value
+  let error ← freshProofName site.name `error
+  let execution ← freshProofName site.name `execution
+  let initialHeap ← freshProofName site.name `initialHeap
+  let finalHeap ← freshProofName site.name `finalHeap
+  let input ← `($view:ident $entry:ident)
+  let invocation ← tupleApplication site.scope site.name input
+  let fields ← tupleFields site.scope ⟨locals.raw⟩
+  let mut restored ← `(Complexity.Language.Env.empty)
+  let mut captures : Array (TSyntax `ident × TSyntax `term) := #[]
+  for (binding, index) in site.scope.zipIdx.reverse do
+    let sourceVar ← variableTerm index
+    let field ← if binding.isMutable then pure fields[index]! else
+      `(Complexity.Language.Env.get $entry:ident $sourceVar)
+    let type ← typeTerm binding.type
+    restored ← `(Complexity.Language.Env.cons (τ := $type) $field $restored)
+    unless binding.isMutable do
+      captures := captures.push (← freshProofName site.name `capture, sourceVar)
+  let captureNames ← namedSimpArgs (captures.map (·.1))
+  let viewNames ← namedSimpArgs (sites.flatMap fun other =>
+    #[loopMember other "view_apply", loopMember other "view_symm_apply"])
+  let codeNames ← namedSimpArgs (sites.flatMap fun other =>
+    #[loopMember other "Code", loopMember other "Guard", loopMember other "Body"])
+  let viewArgs := viewNames ++ (← viewSimpArgs)
+  let normalArgs := viewArgs ++ captureNames
+  let preservedArgs := codeNames ++
+    (← constantSimpArgs #[``Complexity.Language.Stmt.PreservesLocal,
+      ``Complexity.Language.Var.index])
+  let captureArgs := (← constantSimpArgs #[``Equiv.symm_apply_apply]) ++ viewArgs ++
+    (← constantSimpArgs #[``Complexity.Language.Env.cons_here, ``Complexity.Language.Env.cons_there])
+  let mut normalProof ← `(by
+    simp only [$normalArgs,*])
+  for (capture, sourceVar) in captures.reverse do
+    normalProof ← `(by
+      have $capture:ident := Complexity.Language.Exec.get_eq $execution:ident $sourceVar
+        (by simp [$preservedArgs,*])
+      simp only [$captureArgs,*] at $capture:ident
+      exact $normalProof)
+  let declaration ← `(command|
+    /-- Resume from actual mutable locals; immutable captures are preserved by the source frame. -/
+    theorem $name:ident ($entry:ident : Complexity.Language.Env $types)
+        ($next:ident : Complexity.Language.Env $types →
+          ExceptT Complexity.Language.Fault (StateT Complexity.Language.Heap Part) $result) :
+        Complexity.Language.Stmt.evalWith $code:ident $program:ident $entry:ident $next:ident = (do
+          let ($control:ident, $locals:ident) ← ExceptT.lift $invocation
+          match $control:ident with
+          | .normal => $next:ident $restored
+          | .returned $value:ident => pure $value:ident
+          | .fault $error:ident => throw $error:ident) := by
+      rw [Complexity.Language.Stmt.evalWith_eq_observe $view:ident]
+      apply Complexity.Language.Stmt.observe_bind_congr_except
+        $view:ident $code:ident $program:ident ($view:ident $entry:ident)
+      intro $initialHeap:ident $finalHeap:ident $control:ident $locals:ident $execution:ident
+      cases $control:ident with
+      | normal => exact $normalProof
+      | returned value => rfl
+      | fault error => rfl)
+  return declaration.raw
 
 private def observationDeclaration (family programName : TSyntax `ident)
     (fn : Function) : MacroM Syntax := do
@@ -575,6 +946,32 @@ private def observationDeclaration (family programName : TSyntax `ident)
     noncomputable def $name:ident : $type := $value)
   return declaration.raw
 
+private def calleeObservationDeclaration (family program : TSyntax `ident)
+    (fn : Function) : MacroM Syntax := do
+  let name := generatedName family fn.name "_observe"
+  let observation := generatedName family fn.name ""
+  let id := generatedName family fn.name "Id"
+  let params ← parameterTypes fn.params
+  let env ← freshProofName fn.name `arguments
+  let mut remaining ← `($env:ident)
+  let mut values := #[]
+  for _ in fn.params do
+    values := values.push (← `(Complexity.Language.Env.head $remaining))
+    remaining ← `(Complexity.Language.Env.tail $remaining)
+  let applied := Lean.Syntax.mkApp ⟨observation.raw⟩ values
+  let type ← `(∀ ($env:ident : Complexity.Language.Env $params),
+    Complexity.Language.Program.eval $program:ident $id:ident $env:ident = $applied)
+  let mut proof ← `((Complexity.Language.Env.forall_nil _).mpr (by rfl))
+  for (param, index) in fn.params.zipIdx.reverse do
+    let sourceType ← typeTerm param.type
+    let valueType ← valueTypeTerm param.type
+    let rest ← parameterTypes (fn.params.extract (index + 1) fn.params.size)
+    proof ← `((Complexity.Language.Env.forall_cons (τ := $sourceType) (Γ := $rest) _).mpr
+      (fun ($(param.name):ident : $valueType) => $proof))
+  return (← `(command|
+    /-- Fold an actual source invocation back to its named ordinary-argument observation. -/
+    theorem $name:ident : $type := $proof)).raw
+
 private def equationDeclaration (family programName : TSyntax `ident)
     (fn : Function) (lowered : LoweredBlock) : MacroM Syntax := do
   let name := generatedName family fn.name "_eq"
@@ -586,6 +983,19 @@ private def equationDeclaration (family programName : TSyntax `ident)
   let fallthrough ← `(doElem| throw Complexity.Language.Fault.missingReturn)
   let body := lowered.proofSequence fallthrough
   let result ← valueTypeTerm fn.result
+  let loopContinuations ← namedSimpArgs (lowered.loops.map fun site => loopMember site "continue_eq")
+  let loopViews ← namedSimpArgs (lowered.loops.flatMap fun site =>
+    #[loopMember site "view_apply", loopMember site "view_symm_apply"])
+  let compositionArgs ← constantSimpArgs #[``Complexity.Language.Stmt.evalWith_skip,
+    ``Complexity.Language.Stmt.evalWith_ret, ``Complexity.Language.Stmt.evalWith_assign,
+    ``Complexity.Language.Stmt.evalWith_letPrim, ``Complexity.Language.Stmt.evalWith_seq,
+    ``Complexity.Language.Stmt.evalWith_ite, ``Complexity.Language.Stmt.evalWith_call,
+    ``Complexity.Language.Stmt.evalWith_read, ``Complexity.Language.Stmt.evalWith_write,
+    ``Complexity.Language.Stmt.evalWith_slice]
+  let allArgs := (← namedSimpArgs #[bodyName]) ++ loopContinuations ++ loopViews ++
+    (← viewSimpArgs) ++ compositionArgs ++ (← valueSimpArgs) ++
+    (← constantSimpArgs #[``Complexity.Language.Env.tail_set_here,
+      ``Complexity.Language.Env.tail_set_there, ``ExceptT.bind_throw])
   let mut type ← `($lhs = ((do $body:doSeq) : ExceptT Complexity.Language.Fault
     (StateT Complexity.Language.Heap Part) $result))
   let mut proof ← `(by
@@ -594,20 +1004,7 @@ private def equationDeclaration (family programName : TSyntax `ident)
       lhs
       unfold $observation:ident
       rw [Complexity.Language.Program.eval_eq_evalWith, body_selected]
-    simp only [$bodyName:ident,
-      Complexity.Language.Stmt.evalWith_skip, Complexity.Language.Stmt.evalWith_ret,
-      Complexity.Language.Stmt.evalWith_assign,
-      Complexity.Language.Stmt.evalWith_letPrim, Complexity.Language.Stmt.evalWith_seq,
-      Complexity.Language.Stmt.evalWith_ite, Complexity.Language.Stmt.evalWith_call,
-      Complexity.Language.Stmt.evalWith_read, Complexity.Language.Stmt.evalWith_write,
-      Complexity.Language.Stmt.evalWith_slice,
-      Complexity.Language.Atom.eval, Complexity.Language.Prim.eval, Complexity.Language.Args.eval,
-      Complexity.Language.CellTy.toValue, Complexity.Language.CellTy.ofValue,
-      Complexity.Language.Env.cons_here, Complexity.Language.Env.cons_there,
-      Complexity.Language.Env.head_cons, Complexity.Language.Env.tail_cons,
-      Complexity.Language.Env.get_tail, Complexity.Language.Env.set_here,
-      Complexity.Language.Env.set_there, Complexity.Language.Env.tail_set_here,
-      Complexity.Language.Env.tail_set_there, pure_bind]
+    simp only [$allArgs,*]
     all_goals rfl)
   for param in fn.params.reverse do
     let parameter := param.name
@@ -722,6 +1119,8 @@ private def programDeclarations (family : TSyntax `ident)
     let result ← typeTerm fn.result
     let body ← functionCode family functions fn
     loweredBodies := loweredBodies.push body
+    for site in body.loops do
+      declarations := declarations ++ (← loopCodeDeclarations signaturesName site)
     let declaration ← `(command|
       /-- The named function's actual independently interpreted source body. -/
       def $name:ident : Complexity.Language.Stmt $signaturesName:ident $params $result := $(body.term))
@@ -737,6 +1136,15 @@ private def programDeclarations (family : TSyntax `ident)
   declarations := declarations.push programDeclaration.raw
   for fn in functions do
     declarations := declarations.push (← observationDeclaration family programName fn)
+  for fn in functions do
+    declarations := declarations.push (← calleeObservationDeclaration family programName fn)
+  let calleeFolds := functions.map fun fn => generatedName family fn.name "_observe"
+  let loopSites := loweredBodies.flatMap (·.loops)
+  for site in loopSites do
+    declarations := declarations ++ (← loopObservationDeclarations programName site)
+  for site in loopSites do
+    declarations := declarations ++ (← loopEquationDeclarations site loopSites calleeFolds)
+    declarations := declarations.push (← loopContinuationDeclaration programName site loopSites)
   for fn in functions, body in loweredBodies do
     declarations := declarations.push (← equationDeclaration family programName fn body)
   for fn in functions do

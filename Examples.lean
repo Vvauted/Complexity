@@ -8,6 +8,7 @@ import Examples.Language.BufferCompiled
 import Examples.Language.Remainder
 import Examples.Language.Scalar
 import Examples.Language.ScalarCompiled
+import Examples.Language.Traversal
 import Examples.Ram.AmortizedClear
 import Examples.Ram.Arithmetic
 import Examples.Ram.ArrayArguments

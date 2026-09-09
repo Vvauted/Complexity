@@ -19,7 +19,8 @@ Borrowed-buffer length, reads, writes and slices now have source syntax and
 semantics and checked whole-compiler behavior/cost connections. Mutable local
 bindings and assignments use the same source state, native equations and lowering.
 The typed core now includes effectful-guard loops and well-founded source rules.
-Loop surface syntax and named-local proof automation are not yet supported. The
+The surface accepts `while` and generates named guard/body/loop equations and
+normal-continuation proofs. Automatic named invariant bindings remain open. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -147,8 +148,8 @@ from the start. A return crosses nested blocks and loops and is caught by the
 function boundary; sequencing executes its tail only on normal continuation.
 The scalar compiler already handles returns through nested bindings, branches
 and sequences using a private flag, without duplicating the remaining code.
-Loop lowering propagates the same control outcome; the named loop frontend
-and its ordinary-local invariant interface remain separate unfinished work.
+Loop lowering and the named loop frontend propagate the same control outcome;
+the automatically generated ordinary-local invariant interface remains unfinished.
 `break/continue` and tagged
 `Option/Sum` values are subsequent supported constructs, with real control and
 tag/payload lowering, not dummy returned words.
@@ -203,7 +204,8 @@ and `x ← action` update existing typed locals; the latter reuses the same real
 calls, reads and slices. An immutable nearest binding cannot be bypassed to
 assign an outer mutable binding with the same name. The native equation uses
 Lean's own mutable `do` and branch joins, not a second environment monad.
-Surface loops and general proof automation remain unimplemented. The buffer consumer separately
+Surface `while` now generates observations and equations for the actual parsed
+guard and body. General proof automation remains unfinished. The buffer consumer separately
 checks its source specification and the compiled invocation of that declaration.
 
 Assignments also cover borrowed descriptors: changing a local handle does not
@@ -213,8 +215,11 @@ shared update correspondence. Buffer self-assignment is a safe sequential copy,
 not an implicit snapshot or an extra no-alias requirement. Its real moves are
 still charged. Ordinary source proofs never supply these layout arguments.
 
-The traversal program below remains a design sketch: its loop is not accepted
-source syntax yet.
+The indexed `for` notation below remains a design sketch. The checked
+[while traversal](../Examples/Language/Traversal.lean) already expresses the
+read/helper/branch/write body with an explicit mutable index. Its generated
+equations and mathematical prefix lemmas are checked; the complete array-map
+correctness proof and generated invariant bindings are still being connected.
 
 The core's `Stmt.while guard body` uses a Boolean-producing statement block as
 its guard. Every iteration runs that block in the current state and passes its
@@ -223,7 +228,7 @@ state. Guard fallthrough is a missing-return fault, not a false Boolean; a body
 return exits the enclosing function. The source `while_wellFounded` rule asks
 for descent only after a complete normally returning guard/body cycle.
 
-The frontend must expose this through observations of the actual parsed blocks,
+The frontend exposes this through observations of the actual parsed blocks,
 with ordinary named locals and proved equations for the guard and body. A
 lossless change from typed environments to ordinary tuples is a proof view,
 not a second algorithm or a source-level product implementation. Merely adding

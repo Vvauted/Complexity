@@ -560,13 +560,32 @@ iteration and early return, including the final guard. `StmtCostBound.while`
 composes state-dependent guard/body bounds with a remaining potential, without
 using that potential as execution fuel or a source termination premise.
 
-This is not the named-loop completion gate. The surface still lacks loops and
-ordinary-local invariant bindings. Its existing function `evalWith` observation
-discards locals on return, which is appropriate at a function boundary but
-insufficient for a Boolean-producing guard block. Generate lossless named block
-observations and their composition equations from `Stmt.action`, then connect
-the invariant/variant rule and continuation to those same blocks. Do not hide
-an opaque native `while` or require a user-maintained host implementation.
+The surface now accepts `while` and emits actual named guard/body/loop
+observations, their one-step equations and a normal-continuation theorem.
+Pointwise coordinate equations keep equivalence proof fields opaque, and a
+lexical-position frame preserves immutable captures automatically. The checked
+read/helper/branch/write traversal consumes this frontend. This does not complete
+the named-loop gate: its full array-map proof and automatically generated
+invariant/variant bindings still need to use these same observations. Do not
+substitute an opaque native loop or a user-maintained host implementation.
+
+The shared ordinary-local observation now retains all lexical values and the
+actual heap on every exit. Its well-founded and natural-variant specifications
+reuse the same source loop rule, and its continuation bridge distinguishes
+normal continuation from return and fault. Generated observations use these
+same shared composition equations. The fixed-capture variant
+rule now keeps immutable values out of the author's invariant, using a proved
+local frame. Connecting it to the named frontend remains open; a hidden saved condition
+cannot be recomputed after a mutable operand changes, and the proof view cannot
+simply drop lexical slots.
+
+`FunctionTotal.verify_wellFounded` supplies complete callable contracts at
+smaller mathematical indices, reusing ordinary well-founded induction and the
+existing source body rule. The index may select one function or mutually
+recursive functions with different signatures. Named function equations already
+allow ordinary parameter induction; generating convenient recursive hypotheses
+and demonstrating the whole named recursive proof path remain open. Neither
+correctness route requires a proposed instruction budget or call-stack depth.
 
 1. Provide well-founded source `while` and recursive-call rules; user invariants
    and recursive hypotheses concern source values, not backend state.
