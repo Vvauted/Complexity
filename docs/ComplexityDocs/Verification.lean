@@ -183,11 +183,16 @@ compose actual guard/body bounds and the source invariant. Their fixed-capture
 rules reuse generated lexical preservation, leaving only mutable locals and the
 heap in the author's invariant and potential. One native `round_spec` records
 the guard's mathematical decision and the body contract at its actual final
-locals and heap. Source correctness and resource proofs reuse that same contract
-through `Part.TotalCorrectness.stateT_post_of_eq`, without repeated index/heap
-substitutions or dedicated result-uniqueness proofs. There is no additional
-round-specification framework. Selecting the generated loop views and supplied
-contracts remains explicit.
+locals and heap. The source loop proof combines this contract with the actual
+guard result and body frame using the native `Std.Do.Triple.and` rule. The
+[consequence rule](##Complexity.Control.Triple), `Std.Do.Triple.mono`, strengthens
+the input and weakens the combined postcondition through the existing WP
+monotonicity. It applies to any native postcondition shape, including exceptions;
+it does not introduce a separate partial-state or loop framework. Neither loop
+proof needs to extract and reconstruct an execution witness to combine these
+facts. Mathematical invariants, frame composition and variant descent remain
+explicit. Resource proofs still reuse the same round contract through
+`Part.TotalCorrectness.stateT_post_of_eq`.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every
@@ -210,9 +215,15 @@ the ordinary-induction route instead: rewriting the generated one-step equation
 and using `Nat` induction proves the real recursive action equals
 `pure (Nat.factorial n)` for every input, with every initial heap preserved.
 The [compiled factorial](##Examples.Language.FactorialCompiled) reuses that same
-source theorem. Its separate realization proof bounds intermediate values by
-the representable factorial result and bounds nested calls by `n`. Its independent
-cost induction uses the structural tactic and actual generated call overhead.
+source theorem. Its separate realization proof uses `ram_source_realize (input)`
+with the recursive realizability and source contracts. It bounds intermediate
+values by the representable factorial result and bounds nested calls by `n`;
+parameter environments and statement-level target conversion are internal.
+Its independent
+cost induction uses `ram_source_cost (input)` and, in the successor case,
+`ram_source_cost (input) using ih`, with actual generated call overhead. Argument
+environments are opened internally; ordinary induction, recursive-input facts
+and the final arithmetic inequality remain the author's proof.
 The resulting halted-runner theorem returns factorial, preserves shared entry
 memory and retains the generated code and stack-capacity premises. The linear
 word-RAM instruction bound is in the numeric argument `n`, not its binary bit

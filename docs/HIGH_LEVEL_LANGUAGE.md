@@ -251,8 +251,8 @@ decreasing measure, and cost composition reuses the source array invariant.
 Fixed-capture realization and cost rules now reuse the generated lexical frame,
 so their invariants and potentials need only the mutable index and heap. A single
 native `round_spec` retains the mathematical guard result and the body contract
-at that guard's actual final locals and heap. Both source correctness and the
-separate resource proofs reuse it through the existing
+at that guard's actual final locals and heap. Source correctness composes its
+native triple; the separate resource proofs extract its facts through
 `Part.TotalCorrectness.stateT_post_of_eq`. This removes repeated index/heap
 substitutions and guard-to-array-bound reasoning from the compiled consumer;
 no additional specification wrapper or execution relation is needed. Choosing
@@ -263,15 +263,27 @@ of the same object. The strengthened compiled theorem retains this property at
 the same represented final heap without changing the program or its cost bound.
 Further named-loop automation remains separate work.
 
+The shared [native consequence rule](../Complexity/Control/Triple.lean),
+`Std.Do.Triple.mono`, directly reuses WP monotonicity. Combined with Std's
+`Triple.and`, it lets `loop_spec` and `loop_frame_spec` compose result and frame
+facts about the same guard/body action without unpacking `Part` execution
+witnesses. Their public statements, `round_spec`, source program and costs are
+unchanged; invariants, descent and genuine frame consequences remain explicit.
+
 The [recursive factorial](../Examples/Language/Factorial.lean) makes a real
 source self-call on `n - 1`. Rewriting its generated one-step equation and using
 ordinary `Nat` induction proves the same action equals `pure (Nat.factorial n)`:
 finite success with the expected result and preservation of every initial heap.
 The [compiled factorial](../Examples/Language/FactorialCompiled.lean) reuses that
-source theorem unchanged. Separate induction proves that `n! < 2^w` suffices
-for its intermediate value ranges and that `n` nested calls suffice. A second,
-independent induction composes the actual primitive and recursive-call charges;
-the structural tactic selects the known base/successor branch. The resulting
+source theorem unchanged. Separate induction uses `ram_source_realize (input)`
+with the recursive contracts to prove that `n! < 2^w` bounds intermediate values
+and that `n` nested calls suffice, without manual argument-environment or
+statement-goal conversion. A second,
+independent induction composes the actual primitive and recursive-call charges.
+`ram_source_cost (input)` opens ordinary parameters instead of manual `Env`
+unpacking; its supplied induction hypothesis handles the recursive call and the
+structural pass selects the known base/successor branch. The author still supplies
+the induction and arithmetic proof, not an inferred recurrence. The resulting
 runner theorem retains code capacity and stack space for the outer call plus
 those `n` recursive levels. Its bound is linear in the numeric argument `n`
 in the word-RAM instruction model, not in binary input length or arbitrary-precision

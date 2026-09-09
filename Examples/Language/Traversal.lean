@@ -7,6 +7,7 @@ import Complexity.Language.Syntax
 import Complexity.Language.Eval.Locals.Verification
 import Complexity.Data.Array.MapIdx
 import Complexity.Control.Part.StateT
+import Complexity.Control.Triple
 import Std.Tactic.Do
 
 /-!
@@ -104,6 +105,21 @@ theorem guard_eval (xs : Buffer .nat) (limit i : Nat) :
       (pure (.returned (decide (i < xs.length)), i, xs, limit, ()) :
         StateT Heap Part (Control .bool × Implementation.boundedMap_loop1.Locals)) :=
   Implementation.boundedMap_loop1.guard_eq i xs limit
+
+/-- The actual guard returns its full local tuple and the unchanged heap.
+This contract retains the fixed captures when another native specification
+describes the following body through its returned local values. -/
+theorem guard_result_spec (xs : Buffer .nat) (limit i : Nat) (heap : Heap) :
+    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+      (Implementation.boundedMap_loop1.guard i xs limit)
+      (fun entry => ⟨entry = heap⟩)
+      (fun outcome finish =>
+        ⟨outcome = (.returned (decide (i < xs.length)), i, xs, limit, ()) ∧ finish = heap⟩,
+        ⟨⟩) := by
+  rw [guard_eval]
+  apply Std.Do.Triple.pure
+  intro finish same
+  exact ⟨rfl, same⟩
 
 /-- The guard's native contract exposes its mathematical decision and unchanged
 index and heap, for reuse by correctness and separate resource proofs. -/
@@ -243,8 +259,7 @@ theorem round_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
   · by_cases fits : i < contents.size
     · have active : i < xs.length := by simpa only [size] using fits
       simp only [decide_eq_true_eq, if_pos active]
-      apply Std.Do.SPred.entails.trans (body_spec xs limit contents current fits)
-      apply (Std.Do.WP.wp _).mono
+      refine (body_spec xs limit contents current fits).mono (fun _ same => same) ?_
       constructor
       · rintro outcome finish ⟨rfl, updated⟩
         exact ⟨rfl, updated⟩
@@ -268,40 +283,35 @@ theorem loop_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat) (i : N
     (fun _ _ _ => False) ?_ i
   intro j entry current
   have round := round_spec xs limit contents current
-  -- Align the actual native body entry with the generated fixed-capture interface.
-  rw [Implementation.boundedMap_loop1.guard_observe, guard_eval] at round
-  rw [guard_eval]
-  apply Std.Do.Triple.pure
-  intro heap same
-  subst heap
-  have guardPost := Part.TotalCorrectness.stateT_post_of_eq round
-    (entry := entry) (finish := entry)
-    (value := (Control.returned (result := .bool) (decide (j < xs.length)), j, xs, limit, ()))
-    rfl rfl
-  rcases guardPost with ⟨⟨guardInvariant, guardTest⟩, body⟩
-  simp only [decide_eq_true_eq] at guardTest
-  by_cases fits : j < xs.length
-  · simp only [decide_eq_true_eq, if_pos fits] at body ⊢
-    have available : j < contents.size := guardTest.mp fits
-    apply Std.Do.SPred.entails.trans body
-    apply (Std.Do.WP.wp _).mono
-    constructor
-    · rintro ⟨control, locals⟩ finish property
-      cases control with
-      | normal =>
-          rcases property with ⟨next, updated⟩
-          exact ⟨updated, by
-            change contents.size - locals.1 < contents.size - j
-            rw [next]
-            omega⟩
-      | returned value => exact property
-      | fault error => exact property
-    · trivial
-  · simp only [decide_eq_true_eq, if_neg fits]
-    have finished : ¬j < contents.size := fun bound => fits (guardTest.mpr bound)
-    exact invariant_done xs limit contents guardInvariant (by
-      change contents.size ≤ j
-      omega)
+  rw [Implementation.boundedMap_loop1.guard_observe] at round
+  refine (Std.Do.Triple.and _ round (guard_result_spec xs limit j entry)).mono
+    (fun _ same => ⟨same, same⟩) ?_
+  constructor
+  · rintro outcome heap ⟨guardPost, rfl, rfl⟩
+    rcases guardPost with ⟨⟨guardInvariant, guardTest⟩, body⟩
+    simp only [decide_eq_true_eq] at guardTest
+    by_cases fits : j < xs.length
+    · simp only [decide_eq_true_eq, if_pos fits] at body ⊢
+      have available : j < contents.size := guardTest.mp fits
+      refine body.mono (fun _ same => same) ?_
+      constructor
+      · rintro ⟨control, locals⟩ finish property
+        cases control with
+        | normal =>
+            rcases property with ⟨next, updated⟩
+            exact ⟨updated, by
+              change contents.size - locals.1 < contents.size - j
+              rw [next]
+              omega⟩
+        | returned value => exact property
+        | fault error => exact property
+      · trivial
+    · simp only [decide_eq_true_eq, if_neg fits]
+      have finished : ¬j < contents.size := fun bound => fits (guardTest.mpr bound)
+      exact invariant_done xs limit contents guardInvariant (by
+        change contents.size ≤ j
+        omega)
+  · trivial
 
 /-- The same mathematical round also accumulates preservation outside the
 borrowed buffer, relative to the initial heap. Disjoint views may share its
@@ -324,42 +334,38 @@ theorem loop_frame_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     (fun _ _ _ => False) ?_ i
   intro j entry current
   have round := round_spec xs limit contents current.1
-  rw [Implementation.boundedMap_loop1.guard_observe, guard_eval] at round
-  rw [guard_eval]
-  apply Std.Do.Triple.pure
-  intro heap same
-  subst heap
-  have guardPost := Part.TotalCorrectness.stateT_post_of_eq round
-    (entry := entry) (finish := entry)
-    (value := (Control.returned (result := .bool) (decide (j < xs.length)), j, xs, limit, ()))
-    rfl rfl
-  rcases guardPost with ⟨⟨guardInvariant, guardTest⟩, body⟩
-  simp only [decide_eq_true_eq] at guardTest
-  by_cases fits : j < xs.length
-  · simp only [decide_eq_true_eq, if_pos fits] at body ⊢
-    have available : j < contents.size := guardTest.mp fits
-    obtain ⟨⟨control, locals⟩, finish, executed, property⟩ :=
-      (Part.TotalCorrectness.stateT_triple_iff _ _ _).mp body entry rfl
-    have preserved : xs.PreservesOutside entry finish := by
-      exact Part.TotalCorrectness.stateT_post_of_eq
-        (body_frame_spec xs limit contents guardInvariant available)
-        (value := (control, locals)) (finish := finish) rfl
-        (by simpa only [Implementation.boundedMap_loop1.body_observe] using executed)
-    refine Part.TotalCorrectness.stateT_triple_of_eq executed ?_
-    cases control with
-    | normal =>
-        rcases property with ⟨next, updated⟩
-        refine ⟨⟨updated, Buffer.PreservesOutside.trans current.2 preserved⟩, ?_⟩
-        change contents.size - locals.1 < contents.size - j
-        rw [next]
-        omega
-    | returned value => exact property
-    | fault error => exact property
-  · simp only [decide_eq_true_eq, if_neg fits]
-    have finished : ¬j < contents.size := fun bound => fits (guardTest.mpr bound)
-    exact ⟨invariant_done xs limit contents guardInvariant (by
-      change contents.size ≤ j
-      omega), current.2⟩
+  rw [Implementation.boundedMap_loop1.guard_observe] at round
+  refine (Std.Do.Triple.and _ round (guard_result_spec xs limit j entry)).mono
+    (fun _ same => ⟨same, same⟩) ?_
+  constructor
+  · rintro outcome heap ⟨guardPost, rfl, rfl⟩
+    rcases guardPost with ⟨⟨guardInvariant, guardTest⟩, body⟩
+    simp only [decide_eq_true_eq] at guardTest
+    by_cases fits : j < xs.length
+    · simp only [decide_eq_true_eq, if_pos fits] at body ⊢
+      have available : j < contents.size := guardTest.mp fits
+      rw [Implementation.boundedMap_loop1.body_observe] at body
+      refine (Std.Do.Triple.and _ body
+        (body_frame_spec xs limit contents guardInvariant available)).mono
+        (fun _ same => ⟨same, same⟩) ?_
+      constructor
+      · rintro ⟨control, locals⟩ finish ⟨property, preserved⟩
+        cases control with
+        | normal =>
+            rcases property with ⟨next, updated⟩
+            refine ⟨⟨updated, Buffer.PreservesOutside.trans current.2 preserved⟩, ?_⟩
+            change contents.size - locals.1 < contents.size - j
+            rw [next]
+            omega
+        | returned value => exact property
+        | fault error => exact property
+      · trivial
+    · simp only [decide_eq_true_eq, if_neg fits]
+      have finished : ¬j < contents.size := fun bound => fits (guardTest.mpr bound)
+      exact ⟨invariant_done xs limit contents guardInvariant (by
+        change contents.size ≤ j
+        omega), current.2⟩
+  · trivial
 
 /-- The traversal's ordinary array result and its outside-buffer frame hold at
 the same actual final heap. This includes disjoint slices of the same object. -/

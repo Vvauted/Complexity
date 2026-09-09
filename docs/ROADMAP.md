@@ -660,10 +660,17 @@ shared strict `StateT` postcondition rule.
 The traversal now proves one native `round_spec`: it records the mathematical
 guard decision, then the body contract at the actual post-guard locals and heap.
 Its source loop proof and separate resource proofs reuse this same statement.
-The existing strict `StateT` postcondition rule extracts the facts directly;
-the compiled proof no longer repeats post-guard index/heap substitutions and
-array-bound reconstruction in five obligations. No special round-specification
-framework or second execution relation is introduced.
+The resource proofs use the existing strict `StateT` postcondition rule to
+extract its facts; the compiled proof no longer repeats post-guard index/heap
+substitutions and array-bound reconstruction in five obligations. No special
+round-specification framework or second execution relation is introduced.
+
+The shared [native consequence rule](../Complexity/Control/Triple.lean),
+`Std.Do.Triple.mono`, reuses WP monotonicity and composes with Std's `Triple.and`.
+The traversal's `loop_spec` and `loop_frame_spec` now combine result and frame
+facts for the same action without unpacking `Part` execution witnesses. Their
+public statements, `round_spec`, source program and costs are unchanged. This
+removes proof plumbing, not the author's invariant, descent or frame argument.
 
 Named function contracts can now be passed to `mvcgen` through generated
 `P.f_spec` rules, including sequential mutating callees. The next step is
@@ -694,9 +701,15 @@ ordinary parameter-induction path: its real self-call returns mathlib's
 proof and the shared lowering to establish the actual halted invocation, returned
 factorial and a separate linear instruction bound. Representable factorial
 results bound the intermediate values; `n` nested calls and space for the outer
-call remain distinct from the instruction budget. Known base/successor guards
-are selected automatically by the structural cost tactic, and `callCost_eq_add`
-keeps compiler-derived call overhead separate from the recursive body count.
+call remain distinct from the instruction budget. The realization induction
+uses `ram_source_realize (input)` with the recursive contracts, leaving the
+same mathematical range argument without manual argument-environment or
+statement-goal conversion. The cost induction uses
+`ram_source_cost (input)` to open ordinary parameters without manual `Env`
+unpacking; the author still supplies the induction hypothesis and arithmetic.
+Known base/successor guards are selected by the structural cost tactic, and
+`callCost_eq_add` keeps compiler-derived call overhead separate from the
+recursive body count.
 The bound is linear in numeric `n` in the word-RAM model, not binary input length
 or arbitrary-precision multiplication cost; this does not complete M5.
 The example does not consume the generic contract rule or demonstrate mutual

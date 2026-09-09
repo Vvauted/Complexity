@@ -50,34 +50,20 @@ theorem factorial_realizable {w : Nat} (n : Nat) :
       (fun args _ => Env.head args = n ∧ Nat.factorial n < 2 ^ w) := by
   induction n with
   | zero =>
-      apply FunctionRealizable.of_wp
-      refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
-      intro input
-      refine (Env.forall_nil _).mpr ?_
-      rintro heap ⟨rfl, fits⟩
-      simp_all [Implementation.program, Implementation.signatures,
-        Implementation.factorialBody, PrimFits, ValueFits]
-      change 1 < 2 ^ w
-      exact Nat.one_lt_two_pow (by omega)
+      ram_source_realize (input)
+      all_goals simp_all [Nat.factorial_zero]
   | succ n ih =>
-      apply FunctionRealizable.of_wp
-      refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
-      intro input
-      refine (Env.forall_nil _).mpr ?_
-      rintro heap ⟨rfl, fits⟩
-      have inputFits : n + 1 < 2 ^ w :=
-        Nat.lt_of_le_of_lt (Nat.self_le_factorial (n + 1)) fits
-      have smallerFits : Nat.factorial n < 2 ^ w :=
-        Nat.lt_of_le_of_lt (Nat.factorial_le (Nat.le_succ n)) fits
-      have productFits : (n + 1) * Nat.factorial n < 2 ^ w :=
-        (Nat.factorial_succ n) ▸ fits
-      have oneFits : 1 < 2 ^ w :=
-        Nat.lt_of_le_of_lt (Nat.succ_le_of_lt (Nat.factorial_pos n)) smallerFits
-      change RealizationWP Implementation.program w (n + 1) Implementation.factorialBody
-        (fun _ => False) (fun _ _ => True)
-        ⟨Env.cons (τ := .nat) (n + 1) Env.empty, heap⟩
-      ram_source_realize_step using ih, factorial_total
+      ram_source_realize (input) using ih, factorial_total
       all_goals
+        have fits : Nat.factorial (n + 1) < 2 ^ w := by omega
+        have inputFits : n + 1 < 2 ^ w :=
+          Nat.lt_of_le_of_lt (Nat.self_le_factorial (n + 1)) fits
+        have smallerFits : Nat.factorial n < 2 ^ w :=
+          Nat.lt_of_le_of_lt (Nat.factorial_le (Nat.le_succ n)) fits
+        have productFits : (n + 1) * Nat.factorial n < 2 ^ w :=
+          (Nat.factorial_succ n) ▸ fits
+        have oneFits : 1 < 2 ^ w :=
+          Nat.lt_of_le_of_lt (Nat.succ_le_of_lt (Nat.factorial_pos n)) smallerFits
         simp_all only [Nat.add_sub_cancel, Nat.factorial_succ, true_and, and_true] <;> omega
 
 /-- A proposed linear bound whose fixed call overhead is derived from the
@@ -93,24 +79,16 @@ theorem factorial_costBound_at (n : Nat) :
       (fun args _ => Env.head args = n) (fun _ _ => factorialBodyBound n) := by
   induction n with
   | zero =>
-      apply FunctionCostBound.of_pointwise
-      refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
-      intro input
-      refine (Env.forall_nil _).mpr ?_
-      rintro heap rfl
-      ram_source_cost_step
+      ram_source_cost (input)
       all_goals norm_num [factorialBodyBound]
   | succ n ih =>
-      apply FunctionCostBound.of_pointwise
-      refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
-      intro input
-      refine (Env.forall_nil _).mpr ?_
-      rintro heap rfl
-      ram_source_cost_step using ih
+      ram_source_cost (input) using ih
       all_goals
-        simp (config := { failIfUnchanged := false }) only [Nat.add_sub_cancel] <;>
-          (try rw [callCost_eq_add]) <;>
-          simp only [factorialBodyBound, Nat.mul_add, Nat.mul_one] <;> omega
+        first
+        | omega
+        | rw [callCost_eq_add]
+          simp only [factorialBodyBound, Nat.mul_add, Nat.mul_one]
+          omega
 
 /-- The independent linear body bound applies to every realized successful
 invocation, uniformly in word width and permitted call nesting. -/
