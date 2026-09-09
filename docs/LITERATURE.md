@@ -7,6 +7,15 @@ implementation. The completion obligations remain proofs about this repository's
 source language, compiler, and fixed target machine. Published results about a
 different language or cost model are not substitutes for that connection.
 
+For the comparative assessment of actual programming/proof interfaces, see
+[High-Level Verified Programming and Cost Semantics](DESIGN_RESEARCH.md).
+It distinguishes Isabelle's native timing from timed refinement, historical
+CFML timing from current CFML2, CakeML behavior from machine-connected space
+safety, F*/Pulse contracts from termination, and CALF's logical framework from
+RAM compilation. The resulting design uses shared mathematical contracts and
+complementary pure/effectful proof modes, not a universal native-total-first
+pipeline.
+
 ## 1. RAM is a specified model, not a cost-free abstraction
 
 Stephen A. Cook and Robert A. Reckhow, **Time Bounded Random Access Machines**,
@@ -218,6 +227,11 @@ with one source body and proved correspondence to the core. A projection from
 a duplicated termination argument. Sections 1.2–1.3 also reinforce retaining
 implementation identity when exposing ordinary behavior: extensionally equal
 Lean functions cannot, on that equality alone, distinguish execution costs.
+This is the supported pure path, not a prerequisite for proving mutable
+algorithms. The actual Agda embedding uses postulates and rewrite rules for the
+logical framework; its laws are not imported as Lean axioms. The report's
+source-level examples distinguish comparison instrumentation from actual
+traversal/allocation costs.
 
 The sample review gives concrete uses: factorial exposes its cost recurrence
 without a second register-level induction, and typed calls compose results and
@@ -353,6 +367,14 @@ Likewise, a native fixed-list iterator does not specify mutable-buffer traversal
 each iteration must read the actual current heap. Reuse the range, bind and
 collection lemmas after proving the required correspondence. No dependency
 upgrade or CSLib dependency is required.
+
+Newer upstream interfaces are relevant design evidence, not available-at-pin
+assumptions. The pinned source already has distinct `WP` and `WPMonad` classes.
+The [4.33 release notes](https://lean-lang.org/doc/reference/latest/releases/v4.33.0/)
+describe non-monadic embedded-program support in the newer proof infrastructure
+and a `vcgen` frame facility. Keep the adapter boundary small enough to reuse
+such upstream work if a future dependency change is separately approved; this
+research does not change the pin.
 
 ## Reading discipline
 

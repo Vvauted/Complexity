@@ -9,6 +9,12 @@ function and lifetime decisions on that evidence. Existing core semantics and
 compiler proofs remain foundations, not a commitment to their current public
 presentation.
 
+The [cross-prover research report](DESIGN_RESEARCH.md) supplies the rationale
+for the next interface: one supported implementation, a common mathematical
+contract layer, and complementary pure-equation and mutable-VCG proof modes.
+An executable pure function remains a goal where its abstraction is justified;
+it is not required before verifying every effectful algorithm.
+
 The independent scalar core now has
 source correctness rules, generic whole-function lowering and proof transfer to
 the existing executable RAM runner. Return-flag lowering avoids continuation
@@ -486,13 +492,24 @@ execution available internally while distinguishing the public cases:
   compiler proves successful execution under its premises; it does not thereby
   implement every source fault as a checked runtime exception.
 
-For the pure frontend, the preferred direction is to generate a native total
+The shared user-facing foundation is a mathematical contract over the actual
+implementation: typed inputs/results, contents relations, permitted effects,
+frames and successful termination. Pure and mutable calls must compose through
+these same rules. Mutable programs may use mathematical specifications and
+invariants directly, without first constructing another pure algorithm.
+
+For the pure frontend, the direction is to generate a native total
 Lean definition and its typed-core implementation from one supported source
 body. Reuse Lean's structural/well-founded recursion infrastructure. An author
 may supply a mathematical decreasing argument, but should not supply a second
 induction to establish the generated correspondence. A shared construction must
 relate those native equations to actual core execution; generating two terms
 with similar printed syntax is not a proof. This design is not implemented yet.
+The correspondence must preserve termination, not merely identify results of
+successful executions. The author supplies one descent argument; the library
+still proves its transport through the generated code. A domain-restricted
+total view needs explicit domain arguments or an implemented error result;
+neither backend range premises nor an invented default value replaces this.
 
 This does not accept arbitrary Lean definitions as runtime primitives. The
 frontend still controls the executable subset, supported operations and actual
@@ -518,6 +535,15 @@ Remainder declarations. Judge the complete author proof, including termination
 and compilation transport. In parallel, Traversal must lose its manual
 `Control`/local-tuple/guard-body transport through shared loop contracts. The
 pure path cannot be used to declare the mutable proof interface finished.
+Conversely, a concise contents contract does not finish the executable pure
+interface. For a supported private-state fragment, an ordinary total mathematical
+state interpretation can be generated from the same body and related to its
+mutable realization. Representation independence, permitted aliasing and result
+lifetime remain necessary. A mutable return promises contents at return time;
+a pure persistent result needs an immutable representation or proved,
+appropriately charged copying/update discipline. Such a bridge is not
+implemented, and does not automatically optimize arbitrary persistent updates
+into destructive ones.
 
 ### Verification-condition generation
 
@@ -669,7 +695,11 @@ through the current heap and operation effects, not through obsolete snapshots.
 
 Allocation is unimplemented. Its design is needed now because it constrains
 collection interfaces and encapsulated local mutation. A stable-address
-monotone arena is the first candidate, not a settled solution for all lifetimes.
+monotone arena is the selected first implementation target, not a settled
+solution for all lifetimes. The caller/session owns the live arena; nested calls
+share allocation progress and returned containers stay valid in it. Function
+return does not reset it. The first fragment may omit reset entirely, with
+capacity bounded by cumulative allocation across calls.
 Caller-supplied scratch remains useful but does not replace construction of
 fresh results. Scoped scratch reclamation and longer-lived output regions are
 a different, stronger capability; GC/reference counting is not selected.
@@ -690,7 +720,10 @@ is distinct from the fixed `heapLimit` heap/stack boundary. Returning from an
 allocating call cannot silently restore an old cursor along with caller locals.
 New cells require actual initialization
 and charged stores. Capacity failure must have a declared interpretation:
-intended source failure or an unmet backend realization condition. A host-created
+initially, abstract source allocation creates fresh storage and target success
+requires a sufficient-capacity realization condition. An actual fallible
+allocation operation needs its own source/result semantics and compiled failure
+behavior, including ownership after failure. A host-created
 `Array` supplies neither an allocator nor initialized RAM cells.
 
 Returning a fresh container requires that its region survive the caller's

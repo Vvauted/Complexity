@@ -2,6 +2,9 @@
 
 The [roadmap](ROADMAP.md) sets development priorities, including the unresolved
 total-function interface and memory-lifetime decisions. The
+[cross-prover research report](DESIGN_RESEARCH.md) motivates complementary pure
+and mutable proof interfaces over shared contracts, with explicit termination,
+allocation and target-cost boundaries. The
 [high-level language design](HIGH_LEVEL_LANGUAGE.md) specifies the next
 architecture: an independently interpreted typed core, source-level proofs and
 automatically checked lowering to the existing RAM backend. Its independent

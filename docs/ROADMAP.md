@@ -12,6 +12,13 @@ A checked backend theorem does not by itself establish a usable high-level
 interface. The milestones below are capabilities, not a serial queue that puts
 memory design after all scalar automation.
 
+The cross-prover [design research](DESIGN_RESEARCH.md) compares actual Isabelle,
+Rocq, HOL4, F*, Agda and Lean implementations. Its recommendation is a shared
+mathematical contract layer with complementary pure-equation and mutable-VCG
+interfaces. No surveyed framework supplies all of this repository's guarantees
+by import, and a native total function is not a prerequisite for every
+effectful proof.
+
 ## What the current programs actually show
 
 The review baseline is commit `89479f7`. The source-to-RAM path already handles
@@ -60,18 +67,26 @@ and its usual mathematical equations. An effectful implementation should expose
 mathematical data contracts, not require every caller to unpack the heap monad.
 This is stronger than renaming `ExceptT Fault (StateT Heap Part)`.
 
-Two approaches need an explicit comparison:
+Two complementary approaches share the same contract and compilation layer:
 
 | Approach | What it can genuinely improve | What it does not establish |
 | --- | --- | --- |
 | Generate success/result contracts, induction rules and proof views over the existing core | Removes repeated environment, outcome and contract conversion; reuses current semantics and compiler immediately | A `Part.get` projection is normally still noncomputable. If obtaining it requires the old complete correctness proof, the difficult proof has only moved. |
 | Generate a total Lean definition and corresponding core from one supported source declaration | Ordinary recursion equations and mathematical proofs can become the primary interface; Lean checks the supplied structural/well-founded recursion | Requires a shared correspondence construction, including recursion. It is not permission to compile arbitrary Lean terms or hand-maintain two function bodies. |
 
-The second is the preferred direction for the pure frontend. The first supplies
-useful common infrastructure, but is not an adequate substitute for that goal.
+The second remains the pure-function goal; the first is also the primary proof
+route for genuinely mutable operations, not merely a temporary workaround.
+Their shared contracts carry mathematical results, actual intermediate contents,
+frames and successful termination. Generate both views from one supported
+declaration where applicable; do not require independently written pure and
+mutable algorithms. An in-place implementation is not obtained from a persistent
+one merely by identifying their results.
+
 Before broad implementation, establish how one supplied termination argument
-feeds the generated definition and core correspondence without another manual
-induction. Surface spelling and new record names are not the decision.
+feeds the generated definition and terminating core correspondence without
+another author-written induction. This promises proof transport, not the absence
+of internal compiler proof obligations. Pure equations and mutable invariants
+must both compose with existing imports and backend proofs.
 
 Purity also needs a real boundary. Not writing memory is insufficient: a
 read-only function can return a value depending on its initial heap. Borrowed
@@ -136,6 +151,9 @@ confuse an old contents observation with the state after a mutating call.
 3. Share invariant and shape consequences with realizability and cost proofs.
    A different resource proof should not repeat the array-correctness argument
    merely to recover a length or unchanged region.
+   Abstract callees may export a callable upper-bound function with an `IsBigO`
+   theorem. Its useful monotonicity is a property of the selected bound, not an
+   assumption that exact runtime must be monotone.
 4. Provide captured-index traversal using existing range/iterator infrastructure
    after proving its correspondence. Each iteration reads current contents;
    a fixed-list snapshot is not the semantics of a mutable loop.
@@ -190,15 +208,17 @@ already exist. `Buffer` is an object/offset/length view; copying it or slicing
 does not allocate. `heapLimit` separates data from the call stack. These are
 sound borrowed-storage foundations, not a memory manager.
 
-### Candidates and their consequences
+### Initial protocol and later lifetime extensions
 
 - **Explicit caller-supplied output/scratch buffers:** retain as a useful
   low-level library interface. It does not satisfy construction of a fresh
   returned container and must not replace that requirement.
-- **Stable-address monotone arena:** the first allocator candidate. It gives
-  deterministic fresh objects and a straightforward capacity argument, but
-  retains all allocations. Total allocated words and peak reserved storage are
-  not a theorem about reclamation or peak reachable data.
+- **Stable-address monotone arena:** selected as the first implementation
+  target, not implemented or a complete lifetime solution. The caller/session
+  owns a still-live arena; nested calls share allocation progress, and returned
+  containers remain there. Return does not reset the arena. Capacity accounts
+  for retained input and cumulative fresh allocation across calls, not only one
+  isolated callee. Initially omit reset rather than claim reclamation.
 - **Scoped scratch regions plus longer-lived results:** a candidate for
   reusable workspace and externally functional APIs. Region reset needs a
   non-escape/lifetime argument; a returned object must remain live or be moved
@@ -208,6 +228,14 @@ GC, reference counting and a new general ownership calculus are not selected.
 Indirection/movable objects would require a real object table and additional
 access costs; reconsider it if the desired sharing/resize API requires moving
 objects. The choice must follow observable sharing and lifetime behavior.
+
+Initially keep abstract source allocation separate from finite target capacity:
+the source creates fresh initialized storage, and the target-success theorem
+requires sufficient capacity. Do not claim a compiled out-of-memory exception
+without implementing it. A future fallible API must specify ownership and
+effects on failure. A pure facade over private mutation also needs representation
+independence and persistent result semantics: a mutable buffer's contents
+contract describes return-time contents, not an immutable value forever.
 
 ### Questions to resolve before adding an allocation statement
 
@@ -265,6 +293,10 @@ function equality belongs to the first, not a way to recover the other two.
    resource contracts. Authors should not reconstruct the runner's large
    witness tuple, argument encoding or output decoding for each program.
    Remaining conditions must be meaningful source ranges and storage bounds.
+   Preserve the algorithm's own precondition as well as representation and
+   capacity assumptions. Domain-restricted total interfaces should use explicit
+   domain arguments or an implemented error result, not an arbitrary default
+   value extracted from a partial computation.
 3. Reuse mathlib `IsBigO`, sums and recurrence results and the library's existing
    potential/composition tools. Derived asymptotic interfaces should hide exact
    implementation constants without hiding actual work or the admitted domain.
@@ -308,11 +340,13 @@ and should be reused, not confused with completing this different bridge.
 
 ## Next work and when to change direction
 
-1. Settle M1's total-definition/correspondence proof shape against Factorial,
-   Scalar and Remainder, including where the single termination argument lives.
-2. In parallel, redesign Traversal's public loop/call proof obligations (M2)
-   and resolve the allocator/lifetime questions above (M4). The two-call client
-   exposes abstraction failures that a pure scalar example cannot.
+1. Settle the shared typed contract and terminating correspondence rules.
+   Exercise their pure-equation mode against Factorial, Scalar and Remainder
+   (M1), including where the one author-supplied termination argument lives.
+2. In parallel, exercise their mutable/VCG mode against Traversal and its
+   two-call/imported clients (M2). Resolve the arena/return protocol and the
+   allocation-aware representation obligations (M4); a pure scalar example
+   cannot settle these abstraction questions.
 3. Implement the shared interfaces justified by those exercises, then add the
    required structured values and container operations. Frame automation and
    dependent-call cost syntax are supporting tasks, not substitutes for them.
@@ -326,9 +360,11 @@ revise the interface. If a memory choice prevents a required sharing or returned
 value pattern, revisit that choice before expanding its API. If a generic rule
 has no consumer beyond its own demonstration, do not expand a theorem catalog.
 
-The [literature notes](LITERATURE.md) record useful distinctions from CALF,
-timed refinement and region-based compilation. They inform these decisions;
-their cost models and guarantees are not inherited by this repository.
+The [research report](DESIGN_RESEARCH.md) records the cross-prover evidence and
+decision boundaries; the [literature notes](LITERATURE.md) connect individual
+results to existing mechanisms. Neither transfers another system's cost model
+or guarantees to this repository. Further research should answer a concrete
+open obligation, not delay the shared interface work indefinitely.
 
 Use existing Lean consumers for implementation checks on 0v0; no local
 compilation, checksum machinery or unrelated test framework. Design-only changes
