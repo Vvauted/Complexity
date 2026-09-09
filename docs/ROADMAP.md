@@ -378,10 +378,16 @@ Before broadening the surface further, close these connected gaps:
 - Automate selecting supplied effectful-call contracts and their contents/frame
   consequences in nested traversals. Sequential calls now compose these facts,
   but the caller still chooses the contract and its mathematical contents.
-- Link independently declared source programs with proved signature/call
-  embeddings and contract transfer. Current named calls are confined to one
-  source function table; Lean imports do not yet link those tables. Do not
-  substitute host callbacks or copied implementations for source linking.
+- Complete named calls across independently declared source programs. Typed
+  signature maps, call renaming, actual-body embeddings and closed-table linking
+  now preserve finite execution in both directions and therefore the complete
+  partial observation. The [linked consumers](../Examples/Language/Linking.lean)
+  reuse the existing recursive factorial and mutable traversal proofs, including
+  their actual final heaps. Next resolve imported functions in the frontend's
+  combined signature table, generate caller equations and transfer compiler
+  realization/cost rules through lowering. A closed-table append creates no new
+  call edges; source behavior equality alone establishes no target cost equality.
+  Do not substitute host callbacks or copied implementations for source linking.
 - Expose ordinary loop locals, current contents and return outcomes to invariants.
   Scope/state plumbing belongs to shared rules; the invariant, termination
   argument and algorithm-dependent inequalities belong to the author.
@@ -542,8 +548,10 @@ reuses the first callee's frame to establish the second callee's input at the
 actual intermediate heap. `StmtCostBound.call_seq` hides routine call/skip
 state transport and charges the actual normal dispatch. Both callee bounds,
 two levels of nested calls and the full halted invocation are composed without
-reopening either loop. Automatic contract selection and cross-program linking
-are not supplied by this same-program consumer.
+reopening either loop. Automatic contract selection and named cross-program calls
+are not supplied by this same-program consumer. The separate source linker now
+transfers this traversal's complete native action and frame to a combined table;
+compiled resource transport through that embedding remains open.
 The staged `ram_source_call` interface now hides repeated argument-environment
 opening and structural call/sequence composition in this consumer's realization
 and cost proofs. Each call takes separately supplied resource and source

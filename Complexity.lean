@@ -290,6 +290,10 @@ import Complexity.Language.Eval.Locals.Verification
 import Complexity.Language.Eval.Loop
 import Complexity.Language.Eval.Verification
 import Complexity.Language.Heap
+import Complexity.Language.Linking.Basic
+import Complexity.Language.Linking.Eval
+import Complexity.Language.Linking.Reflection
+import Complexity.Language.Linking.Semantics
 import Complexity.Language.Semantics
 import Complexity.Language.State
 import Complexity.Language.Syntax

@@ -29,6 +29,11 @@ A self-recursive factorial proof uses ordinary induction and mathlib's
 `Nat.factorial`; its compiled invocation now has a separate linear instruction
 bound, subject to word-range and code/stack-capacity conditions. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
+Typed program embeddings now preserve complete source observations, including
+divergence and finite faults. Linking the existing traversal and recursive
+factorial tables reuses their original native proofs without unfolding either
+algorithm. Named cross-program calls and transport of compiled resource bounds
+remain separate work; combining two closed tables does not create new call edges.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
 
@@ -167,8 +172,14 @@ First-order functions are sufficient for the initial recursive algorithms.
 Static specialization may later support generic combinators; dynamic closures,
 arbitrary dependent runtime types and a general effect-handler system are not
 prerequisites. Contracts are reusable by callers within the current source
-program. Reuse across independently declared programs also needs verified
-signature/call embedding and linking; a Lean `import` alone does not supply it.
+program. The [source linker](../Complexity/Language/Linking/Basic.lean) now
+provides signature-preserving call renaming and checked embeddings of actual
+bodies. Its [observation theorem](../Complexity/Language/Linking/Eval.lean)
+preserves the entire partial action, so existing mathematical contracts transfer
+without re-proving recursion, loops or heap effects. The frontend still needs
+to resolve imported declarations against a combined table and generate native
+caller equations. A Lean `import` alone does not supply that interface. Source
+observation equality also does not by itself transport compiler-derived costs.
 
 ### Current surface and intended traversal extension
 

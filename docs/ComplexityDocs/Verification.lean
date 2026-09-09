@@ -139,8 +139,23 @@ call's current input; the second preserves the first result. The resulting
 contract retains both `Array.map` results and all initially valid views disjoint
 from both buffers. Disjoint slices of the same object are allowed. Neither
 callee body nor its array invariant is unfolded in the caller proof.
-Calls currently name functions in the same `source_program`; linking separately
-declared source programs and transferring their contracts remains future work.
+Calls in the frontend currently name functions in the same `source_program`.
+The [typed source linker](##Complexity.Language.Linking.Basic) can now combine
+separately declared tables while renaming their actual internal calls. An
+embedding preserves every selected signature and body, not just an assumed
+callee contract. The [observation theorem](##Complexity.Language.Linking.Eval)
+equates each mapped native action with its original action, including divergence,
+finite faults and their final heaps. `SignatureMap.eval` hides only the proved
+parameter/result-type transport; it observes the actual target function.
+
+The [linked examples](##Examples.Language.Linking) place the existing recursive
+factorial after the traversal table, relocating its self-call, and reuse the old
+factorial and array-map/frame proofs directly. Neither algorithm is reimplemented
+or unfolded again. This is source-semantic reuse: the frontend does not yet
+resolve calls into separately declared programs, and appending two closed tables
+does not create new calls between them. Compiled realization and cost transfer
+require their own lowering correspondence; they do not follow merely from equal
+source observations.
 
 The typed core also has an effectful-guard `Stmt.while`. Its guard is an actual
 Boolean-producing block: it runs in the current state on every iteration, and
