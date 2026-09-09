@@ -20,6 +20,10 @@ These are noncomputable semantic observations using mathlib's `Part`, not an
 additional executable interpreter. The observed value is fixed by source
 determinism, not selected from a mathematical specification. Neither the
 definition nor its adequacy lemmas import RAM, a word width or a proposed budget.
+
+`Stmt.action` only reorders that same observation into native `StateT` form.
+It retains the complete final state for normal continuation, return and fault;
+it neither recursively interprets statements nor describes a second algorithm.
 -/
 
 namespace Complexity.Language
@@ -34,6 +38,14 @@ noncomputable def eval {signatures : List Signature} {Γ : List Ty} {result : Ty
   Dom := ∃ outcome : State Γ × Control result,
     Exec program stmt entry outcome.1 outcome.2
   get := fun h => h.choose
+
+/-- The same statement observation in native state-action order. Only the pair
+is reordered; returned and faulting outcomes retain their actual final locals
+and shared heap as well as their control result. -/
+noncomputable def action {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    (stmt : Stmt signatures Γ result) (program : Program signatures) :
+    StateT (State Γ) Part (Control result) := fun entry =>
+  (stmt.eval program entry).map Prod.swap
 
 variable {signatures : List Signature} {Γ : List Ty} {result : Ty}
 variable {stmt : Stmt signatures Γ result} {program : Program signatures} {entry : State Γ}
@@ -55,6 +67,44 @@ about what a terminating statement might return. -/
 theorem eval_eq_some_iff {outcome : State Γ × Control result} :
     stmt.eval program entry = Part.some outcome ↔ Exec program stmt entry outcome.1 outcome.2 :=
   Part.eq_some_iff.trans mem_eval_iff
+
+/-- Native action membership is exactly the same finite source execution,
+including returned and faulting outcomes with their complete final state. -/
+theorem mem_action_iff {control : Control result} {finish : State Γ} :
+    (control, finish) ∈ stmt.action program entry ↔ Exec program stmt entry finish control := by
+  constructor
+  · intro member
+    obtain ⟨⟨actualFinish, actualControl⟩, execution, same⟩ :=
+      Part.mem_map_iff _ |>.mp member
+    cases same
+    exact mem_eval_iff.mp execution
+  · intro execution
+    exact Part.mem_map_iff _ |>.mpr
+      ⟨(finish, control), mem_eval_iff.mpr execution, rfl⟩
+
+/-- A native action result equation certifies actual finite execution, not
+merely a property conditional on termination. -/
+theorem action_eq_some_iff {control : Control result} {finish : State Γ} :
+    stmt.action program entry = Part.some (control, finish) ↔
+      Exec program stmt entry finish control :=
+  Part.eq_some_iff.trans mem_action_iff
+
+/-- Reordering the native action result recovers the original observation
+without losing state or identifying faults with divergence. -/
+theorem eval_eq_action (stmt : Stmt signatures Γ result) (program : Program signatures)
+    (entry : State Γ) :
+    stmt.eval program entry = (stmt.action program entry).map Prod.swap := by
+  apply Part.ext
+  rintro ⟨finish, control⟩
+  constructor
+  · intro member
+    exact Part.mem_map_iff _ |>.mpr
+      ⟨(control, finish), mem_action_iff.mpr (mem_eval_iff.mp member), rfl⟩
+  · intro member
+    obtain ⟨⟨actualControl, actualFinish⟩, execution, same⟩ :=
+      Part.mem_map_iff _ |>.mp member
+    cases same
+    exact mem_eval_iff.mpr (mem_action_iff.mp execution)
 
 /-- Undefinedness means there is no finite source outcome, including no fault. -/
 theorem eval_eq_none_iff :

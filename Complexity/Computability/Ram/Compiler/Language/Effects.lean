@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Lowering
+import Complexity.Computability.Ram.Compiler.Language.Control
 import Complexity.Computability.Ram.Source.Effects
 
 /-!
@@ -209,5 +210,125 @@ theorem lowerProgram_noIOWrites {signatures : List Signature}
   intro f member
   obtain ⟨index, rfl⟩ := List.mem_ofFn.mp member
   exact lowerBody_noIOWrites program index
+
+/-- Sequential copying writes exactly its consecutive destination fields.
+This concerns local destinations, not the expressions' possible heap reads. -/
+theorem copyFields_writtenRegs (dst : Reg) (fields : List Expr) :
+    (copyFields dst fields).writtenRegs = {r | r ∈ List.range' dst fields.length} := by
+  induction fields generalizing dst with
+  | nil =>
+      ext r
+      simp [copyFields, Ram.Stmt.writtenRegs]
+  | cons expr rest ih =>
+      cases rest with
+      | nil =>
+          ext r
+          simp [copyFields, Ram.Stmt.writtenRegs, List.range'_succ]
+      | cons next rest =>
+          rw [copyFields, Ram.Stmt.writtenRegs, ih]
+          ext r
+          simp [Ram.Stmt.writtenRegs, List.range'_succ]
+
+/-- A primitive writes only its actual destination tuple, including the empty
+tuple for Unit. Register effects do not require a value-range premise. -/
+theorem lowerPrim_writtenRegs (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ) :
+    (lowerPrim layout dst prim).writtenRegs = {r | r ∈ valueRegs τ dst} := by
+  cases τ with
+  | nat | bool | unit =>
+      ext r
+      simp [lowerPrim, Ram.Stmt.writtenRegs, valueRegs, List.range'_succ]
+  | buffer kind =>
+      cases prim with
+      | atom atom =>
+          simp only [lowerPrim, copyFields_writtenRegs, atomExprs_length, valueRegs]
+
+/-- Returning a value writes its result region, without touching any other
+caller-local register. The return flag is assigned separately by the core. -/
+theorem lowerReturn_writtenRegs (layout : RegisterMap Γ) (resultSlot : Reg)
+    (atom : Atom Γ τ) :
+    (lowerReturn layout resultSlot atom).writtenRegs = {r | r ∈ valueRegs τ resultSlot} := by
+  simp only [lowerReturn, copyFields_writtenRegs, atomExprs_length, valueRegs]
+
+/-- A private register below fresh allocation is outside every possible local
+write of the lowered core. Existing-variable assignment uses the regular layout;
+calls only receive their result fields after restoring caller locals. Neither
+heap preservation nor extra reset instructions are needed. -/
+theorem lowerStmtCore_not_mem_writtenRegs {signatures : List Signature} {Γ : List Ty}
+    {result : Ty} (layout : RegisterMap Γ) (next resultSlot flag : Reg)
+    (stmt : Complexity.Language.Stmt signatures Γ result) {r : Reg}
+    (regular : RegisterMap.Regular layout) (bounded : layout.Bounded next)
+    (avoids : layout.Avoids r) (before : r < next)
+    (outsideResult : r ∉ valueRegs result resultSlot) (differentFlag : r ≠ flag) :
+    r ∉ (lowerStmtCore layout next resultSlot flag stmt).writtenRegs := by
+  revert regular bounded avoids before outsideResult differentFlag
+  induction stmt generalizing next resultSlot flag with
+  | skip =>
+      intros
+      simp [lowerStmtCore, Ram.Stmt.writtenRegs]
+  | assign target value =>
+      intro regular bounded avoids before outsideResult differentFlag
+      rw [lowerStmtCore, lowerAssign, lowerPrim_writtenRegs]
+      exact regular.not_mem_valueRegs_of_avoids avoids target
+  | letPrim value body ih =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨?_, ?_⟩
+      · rw [lowerPrim_writtenRegs]
+        exact flag_not_mem_valueRegs_of_lt _ next r before
+      · exact ih _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
+          (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
+          outsideResult differentFlag
+  | read buffer index body ih =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨Nat.ne_of_lt before, ?_⟩
+      exact ih _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
+        (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
+        outsideResult differentFlag
+  | write buffer index value =>
+      intros
+      simp [lowerStmtCore, lowerWrite, Ram.Stmt.writtenRegs]
+  | slice buffer offset length body ih =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨not_or.mpr ⟨Nat.ne_of_lt before,
+        Nat.ne_of_lt (Nat.lt_trans before (Nat.lt_succ_self next))⟩, ?_⟩
+      exact ih _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
+        (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
+        outsideResult differentFlag
+  | call fn args body ih =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨flag_not_mem_valueRegs_of_lt _ next r before, ?_⟩
+      exact ih _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
+        (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
+        outsideResult differentFlag
+  | seq first second firstIH secondIH =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨firstIH _ _ _ _ regular bounded avoids before
+        outsideResult differentFlag, not_or.mpr ⟨?_, ?_⟩⟩
+      · exact fun impossible => impossible
+      · exact secondIH _ _ _ _ regular bounded avoids before outsideResult differentFlag
+  | ite test yes no yesIH noIH =>
+      intro regular bounded avoids before outsideResult differentFlag
+      exact not_or.mpr ⟨yesIH _ _ _ _ regular bounded avoids before outsideResult differentFlag,
+        noIH _ _ _ _ regular bounded avoids before outsideResult differentFlag⟩
+  | ret value =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨?_, differentFlag⟩
+      simpa only [lowerReturn_writtenRegs] using outsideResult
+
+/-- A completed lowered core preserves the same private register by the
+existing safe-execution frame theorem. This also applies to an erased measured
+execution; the proof adds no runtime work or cost premise. -/
+theorem lowerStmtCore_regs_eq {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    {program : Ram.Program} {heapLimit depth : Nat} {layout : RegisterMap Γ}
+    {next resultSlot flag r : Reg} {stmt : Complexity.Language.Stmt signatures Γ result}
+    {entry finish : Source.State w}
+    (execution : Source.SafeExec program heapLimit depth
+      (lowerStmtCore layout next resultSlot flag stmt) entry finish)
+    (regular : RegisterMap.Regular layout) (bounded : layout.Bounded next)
+    (avoids : layout.Avoids r) (before : r < next)
+    (outsideResult : r ∉ valueRegs result resultSlot) (differentFlag : r ≠ flag) :
+    finish.regs r = entry.regs r :=
+  execution.regs_eq_of_not_mem_writtenRegs
+    (lowerStmtCore_not_mem_writtenRegs layout next resultSlot flag stmt
+      regular bounded avoids before outsideResult differentFlag)
 
 end Ram.LanguageCompiler

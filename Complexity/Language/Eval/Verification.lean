@@ -21,6 +21,10 @@ These adequacy theorems connect existing source proofs to ordinary result
 equations and native `Std.Do.Triple`; they do not execute a lowered program or
 replace its source implementation with a mathematical answer.
 
+The native `Stmt.action` triple retains the complete final source state even
+when control returns or faults. Its postcondition is the existing source
+`Control.Satisfies`; hence faults and divergence cannot establish `TotalWP`.
+
 The buffer actions have native `@[spec]` rules for `mvcgen`. Reads and slices
 retain their actual current heap. Writes automatically establish success from
 ordinary contents and an index bound; their continuation receives both the
@@ -124,6 +128,26 @@ theorem TotalWP.iff_wp_eval {signatures : List Signature} {Γ : List Ty} {result
       ((Std.Do.WP.wp (stmt.eval program entry)).apply
         (fun outcome => ⟨outcome.2.Satisfies normal returned outcome.1⟩, ⟨⟩)).down :=
   TotalWP.iff_eval
+
+/-- Total correctness is the native triple of the same statement action from
+the specified initial state. Normal and returned outcomes expose their actual
+final locals and heap; the source postcondition rejects every fault. -/
+theorem TotalWP.iff_triple_action {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    {program : Program signatures} {stmt : Stmt signatures Γ result}
+    {normal : State Γ → Prop} {returned : Value result → State Γ → Prop} {entry : State Γ} :
+    TotalWP program stmt normal returned entry ↔
+      Std.Do.Triple (m := StateT (State Γ) Part) (ps := .arg (State Γ) .pure)
+        (stmt.action program) (fun current => ⟨current = entry⟩)
+        (fun control finish => ⟨control.Satisfies normal returned finish⟩, ⟨⟩) := by
+  rw [TotalWP.iff_eval]
+  simp only [Std.Do.Triple, Std.Do.WP.wp, Std.Do.PredTrans.pushArg,
+    Part.TotalCorrectness.wp]
+  constructor
+  · rintro ⟨⟨finish, control⟩, execution, post⟩ current rfl
+    exact ⟨(control, finish), Stmt.mem_action_iff.mpr (Stmt.mem_eval_iff.mp execution), post⟩
+  · intro specification
+    obtain ⟨⟨control, finish⟩, execution, post⟩ := specification entry rfl
+    exact ⟨(finish, control), Stmt.mem_eval_iff.mpr (Stmt.mem_action_iff.mp execution), post⟩
 
 /-- A mathematical source contract gives an ordinary equation for its actual
 partial function value, without reproving the implementation. -/

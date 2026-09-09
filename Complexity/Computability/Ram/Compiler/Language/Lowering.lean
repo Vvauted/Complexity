@@ -136,6 +136,16 @@ def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
         (lowerStmtCore layout next resultSlot flag no)
   | .ret value => .seq (lowerReturn layout resultSlot value) (.assign flag (.const 1))
 
+/-- Evaluate a value-producing block without leaving the surrounding function.
+Its result fields and private return flag follow the current live layout. A
+block return ends this block only; its actual outer-local and heap updates remain
+available to the enclosing computation. Successful evaluation must be proved. -/
+def lowerBlock {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    (layout : RegisterMap Γ) (next : Reg)
+    (block : Complexity.Language.Stmt signatures Γ result) : Ram.Stmt :=
+  let flag := next + fieldCount result
+  .seq (.assign flag (.const 0)) (lowerStmtCore layout (flag + 1) next flag block)
+
 /-- Reserve the flag above live source slots and actual result fields. Unit
 reserves no result word; the flag itself always performs real control work. -/
 def returnFlag (result : Ty) (next resultSlot : Reg) : Reg :=

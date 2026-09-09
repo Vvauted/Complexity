@@ -181,9 +181,10 @@ private theorem lowerFunction_of_core {fn : Fin signatures.length}
   exact ⟨by simp, (lowerFunc_wellFormed program fn).1, callee, measured,
     resultExprs_readsBelow _ _ callee, property.1.symm, rfl⟩
 
-/-- The same cost observation yields the exact RAM execution and its actual
-shared-heap representation. Register separation is a compiler obligation. -/
-theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : Nat)
+/-- The same execution also retains its actual final locals when the result
+region avoids them. Scalar return aliases remain supported by the original
+control contract; the extra representation is conditional, not a new premise. -/
+theorem lowerCoreMeasuredWithLocals (cost : ExecutionCost execution steps) (controlReg : Nat)
     (hw : 0 < w) :
     ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
       RegisterMap.Regular layout → layout.Bounded next → layout.Matches placement entry.locals s.regs → layout.Avoids flag →
@@ -193,12 +194,14 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       ∃ t, Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
         (lowerStmtCore layout next resultSlot flag stmt) steps s t ∧
         ControlMatches layout placement resultSlot flag finish.locals outcome t ∧
-        HeapRep placement heapLimit finish.heap t := by
+        HeapRep placement heapLimit finish.heap t ∧
+        (layout.AvoidsRange resultSlot (fieldCount result) →
+          layout.Matches placement finish.locals t.regs) := by
   induction cost with
   | skip entry =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero
-      exact ⟨s, .skip, ⟨matched, flagZero⟩, represented⟩
+      exact ⟨s, .skip, ⟨matched, flagZero⟩, represented, fun _ => matched⟩
   | @assign Γ τ result depth target value entry fits =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero
@@ -213,7 +216,7 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       have flagPreserved := (valueRegs_setRegs_other s τ (RegisterMap.base layout target) flag
         (valueWords placement (value.eval entry.locals))
         (regular.not_mem_valueRegs_of_avoids avoids target)).trans flagZero
-      exact ⟨_, assigned, ⟨matching, flagPreserved⟩, represented.setRegs _ _⟩
+      exact ⟨_, assigned, ⟨matching, flagPreserved⟩, represented.setRegs _ _, fun _ => matching⟩
   | @letPrim Γ τ result depth value body entry finish outcome fits execution steps cost ih =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero
@@ -227,13 +230,16 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       have flagPreserved := (valueRegs_setRegs_other s τ next flag
         (valueWords placement (value.eval entry.locals))
         (flag_not_mem_valueRegs_of_lt τ next flag fresh)).trans flagZero
-      obtain ⟨t, rest, property, finalHeap⟩ := ih (RegisterMap.extend layout τ next)
+      obtain ⟨t, rest, property, finalHeap, finalMatches⟩ := ih (RegisterMap.extend layout τ next)
         (next + fieldCount τ) resultSlot flag _
         (regular.extend bounded) (RegisterMap.extend_bounded bounded) matching (RegisterMap.Avoids.extend avoids fresh)
         (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag
         (copySafe_extend copySafe (Nat.le_trans resultFlag (Nat.le_of_lt fresh)))
         (represented.setRegs _ _) flagPreserved
-      exact ⟨t, .seq first rest, ControlMatches.tail property, finalHeap⟩
+      refine ⟨t, .seq first rest, ControlMatches.tail property, finalHeap, ?_⟩
+      intro separate
+      exact RegisterMap.Matches.tail (finalMatches (separate.extend
+        (Nat.le_trans resultFlag (Nat.le_of_lt fresh))))
   | @read Γ result kind depth buffer index body entry finish outcome value bufferFits indexFits
       loaded valueFits execution steps cost ih =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
@@ -250,13 +256,16 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       have flagPreserved := (valueRegs_setRegs_other s kind.toTy next flag
         (valueWords placement (kind.toValue value))
         (flag_not_mem_valueRegs_of_lt kind.toTy next flag fresh)).trans flagZero
-      obtain ⟨t, rest, property, finalHeap⟩ := ih (RegisterMap.extend layout kind.toTy next)
+      obtain ⟨t, rest, property, finalHeap, finalMatches⟩ := ih (RegisterMap.extend layout kind.toTy next)
         (next + fieldCount kind.toTy) resultSlot flag _
         (regular.extend bounded) (RegisterMap.extend_bounded bounded) matching (RegisterMap.Avoids.extend avoids fresh)
         (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag
         (copySafe_extend copySafe (Nat.le_trans resultFlag (Nat.le_of_lt fresh)))
         preservedHeap flagPreserved
-      exact ⟨t, .seq first rest, ControlMatches.tail property, finalHeap⟩
+      refine ⟨t, .seq first rest, ControlMatches.tail property, finalHeap, ?_⟩
+      intro separate
+      exact RegisterMap.Matches.tail (finalMatches (separate.extend
+        (Nat.le_trans resultFlag (Nat.le_of_lt fresh))))
   | @write Γ result kind depth buffer index value entry heap bufferFits indexFits valueFits written =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero
@@ -265,7 +274,7 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
         layout buffer index value entry.locals s hw matched represented
         bufferFits indexFits valueFits written
       rw [lowerWrite_stmtSize] at first
-      exact ⟨_, first, ⟨matched, flagZero⟩, finalHeap⟩
+      exact ⟨_, first, ⟨matched, flagZero⟩, finalHeap, fun _ => matched⟩
   | @slice Γ result kind depth buffer offset length body entry finish outcome view bufferFits
       offsetFits lengthFits sliced viewFits execution steps cost ih =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
@@ -283,24 +292,27 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       have flagPreserved := (valueRegs_setRegs_other s (.buffer kind) next flag
         (valueWords placement (τ := .buffer kind) view)
         (flag_not_mem_valueRegs_of_lt (.buffer kind) next flag fresh)).trans flagZero
-      obtain ⟨t, rest, property, finalHeap⟩ := ih (RegisterMap.extend layout (.buffer kind) next)
+      obtain ⟨t, rest, property, finalHeap, finalMatches⟩ := ih (RegisterMap.extend layout (.buffer kind) next)
         (next + fieldCount (.buffer kind)) resultSlot flag _
         (regular.extend bounded) (RegisterMap.extend_bounded bounded) matching (RegisterMap.Avoids.extend avoids fresh)
         (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag
         (copySafe_extend copySafe (Nat.le_trans resultFlag (Nat.le_of_lt fresh)))
         preservedHeap flagPreserved
-      exact ⟨t, .seq first rest, ControlMatches.tail property, finalHeap⟩
+      refine ⟨t, .seq first rest, ControlMatches.tail property, finalHeap, ?_⟩
+      intro separate
+      exact RegisterMap.Matches.tail (finalMatches (separate.extend
+        (Nat.le_trans resultFlag (Nat.le_of_lt fresh))))
   | @seqNormal Γ result depth first second entry middle finish outcome head tail
       firstSteps secondSteps firstCost secondCost ihHead ihTail =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero
-      obtain ⟨middleTarget, firstRun, middleMatches, middleHeap⟩ :=
+      obtain ⟨middleTarget, firstRun, middleMatches, middleHeap, _⟩ :=
         ihHead layout next resultSlot flag s regular bounded matched avoids fresh resultFlag
           copySafe represented flagZero
-      obtain ⟨t, secondRun, property, finalHeap⟩ :=
+      obtain ⟨t, secondRun, property, finalHeap, finalMatches⟩ :=
         ihTail layout next resultSlot flag middleTarget regular bounded middleMatches.1 avoids
           fresh resultFlag copySafe middleHeap middleMatches.2
-      refine ⟨t, ?_, property, finalHeap⟩
+      refine ⟨t, ?_, property, finalHeap, finalMatches⟩
       convert Source.LocalMeasuredExec.seq firstRun
         (Source.LocalMeasuredExec.iteFalse (c := .var flag) (yes := .skip)
           trivial middleMatches.2 secondRun) using 1
@@ -309,18 +321,19 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
   | seqReturn cost ih =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero
-      obtain ⟨t, firstRun, property, finalHeap⟩ :=
+      obtain ⟨t, firstRun, property, finalHeap, finalMatches⟩ :=
         ih layout next resultSlot flag s regular bounded matched avoids fresh resultFlag
           copySafe represented flagZero
       have raised : t.eval (.var flag) ≠ 0 := by
         change t.regs flag ≠ 0
         rw [property.2]
         exact Word.one_ne_zero hw
-      exact ⟨t, .seq firstRun (.iteTrue (c := .var flag) trivial raised .skip), property, finalHeap⟩
+      exact ⟨t, .seq firstRun (.iteTrue (c := .var flag) trivial raised .skip),
+        property, finalHeap, finalMatches⟩
   | @iteTrue Γ result depth condition yes no entry finish outcome test execution steps cost ih =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero
-      obtain ⟨t, body, property, finalHeap⟩ :=
+      obtain ⟨t, body, property, finalHeap, finalMatches⟩ :=
         ih layout next resultSlot flag s regular bounded matched avoids fresh resultFlag
           copySafe represented flagZero
       have fits : Scalar.toNat .bool (condition.eval entry.locals) < 2 ^ w := by
@@ -333,7 +346,7 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
         change (s.eval (atomExpr layout condition .bool)).toNat = _ at decoded
         rw [zero, test] at decoded
         exact Nat.zero_ne_one decoded
-      refine ⟨t, ?_, property, finalHeap⟩
+      refine ⟨t, ?_, property, finalHeap, finalMatches⟩
       convert Source.LocalMeasuredExec.iteTrue
         (atomExpr_readsBelow layout condition .bool s) conditionTrue body using 1
       simp only [atomExpr_compile_length]
@@ -341,7 +354,7 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
   | @iteFalse Γ result depth condition yes no entry finish outcome test execution steps cost ih =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero
-      obtain ⟨t, body, property, finalHeap⟩ :=
+      obtain ⟨t, body, property, finalHeap, finalMatches⟩ :=
         ih layout next resultSlot flag s regular bounded matched avoids fresh resultFlag
           copySafe represented flagZero
       have fits : Scalar.toNat .bool (condition.eval entry.locals) < 2 ^ w := by
@@ -352,7 +365,7 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       have conditionFalse : s.eval (atomExpr layout condition .bool) = 0 := by
         apply (Word.toNat_eq_zero_iff _).mp
         simpa only [test, Scalar.toNat] using decoded
-      refine ⟨t, ?_, property, finalHeap⟩
+      refine ⟨t, ?_, property, finalHeap, finalMatches⟩
       convert Source.LocalMeasuredExec.iteFalse
         (atomExpr_readsBelow layout condition .bool s) conditionFalse body using 1
       simp only [atomExpr_compile_length]
@@ -368,23 +381,35 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       have raiseFlag : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
           (.assign flag (.const 1)) 2 received (received.setReg flag 1) := .assign trivial
       refine ⟨received.setReg flag 1, .seq writeResult raiseFlag, ?_,
-        (represented.setRegs _ _).setReg flag 1⟩
-      refine ⟨?_, Source.State.setReg_same received flag 1⟩
-      rw [resultExprs_setReg_eval result resultSlot flag 1 received
-        (flag_not_mem_valueRegs result resultSlot flag resultFlag)]
-      exact resultExprs_setRegs_eval result resultSlot (value.eval entry.locals) s
+        (represented.setRegs _ _).setReg flag 1, ?_⟩
+      · refine ⟨?_, Source.State.setReg_same received flag 1⟩
+        rw [resultExprs_setReg_eval result resultSlot flag 1 received
+          (flag_not_mem_valueRegs result resultSlot flag resultFlag)]
+        exact resultExprs_setRegs_eval result resultSlot (value.eval entry.locals) s
+      · intro separate
+        have copied : layout.Matches placement entry.locals received.regs :=
+          lowerReturn_matches layout resultSlot value entry.locals s matched separate
+        intro τ v i
+        exact RegisterMap.Matches.setReg_of_ne (entry := received) copied avoids 1 v i
   | @callReturn Γ result depth fn args body entry calleeFinish value finish outcome
       arguments callee execution calleeSteps bodySteps calleeCost bodyCost ihCallee ihBody =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero
       obtain ⟨calleeTarget, invocation, calleeHeap⟩ :=
-        lowerFunction_of_core controlReg ihCallee arguments s represented
+        lowerFunction_of_core (fn := fn) (args := args.eval entry.locals)
+          (initialHeap := entry.heap) (calleeFinish := calleeFinish) (value := value)
+          controlReg (fun calleeLayout calleeNext calleeResult calleeFlag
+            calleeEntry regular bounded matched avoids fresh resultFlag copySafe represented zero => by
+          obtain ⟨target, measured, property, finalHeap, _⟩ :=
+            ihCallee calleeLayout calleeNext calleeResult calleeFlag calleeEntry
+              regular bounded matched avoids fresh resultFlag copySafe represented zero
+          exact ⟨target, measured, property, finalHeap⟩) arguments s represented
       obtain ⟨callRun, matching, preserved⟩ := lowerCall_measured_fresh
         (τ := signatures[fn].result) (value := value)
         layout args entry.locals s next hw matched arguments invocation
         (lowerProgram_lookup program fn)
         (by simp only [lowerFunc_results_length]) bounded callee.returned_fits
-      obtain ⟨t, rest, property, finalHeap⟩ := ihBody
+      obtain ⟨t, rest, property, finalHeap, finalMatches⟩ := ihBody
         (RegisterMap.extend layout signatures[fn].result next)
         (next + fieldCount signatures[fn].result) resultSlot flag _
         (regular.extend bounded) (RegisterMap.extend_bounded bounded) matching (RegisterMap.Avoids.extend avoids fresh)
@@ -393,7 +418,30 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
         (calleeHeap.setRegs _ _)
         ((preserved flag
           (flag_not_mem_valueRegs_of_lt signatures[fn].result next flag fresh)).trans flagZero)
-      exact ⟨t, .seq callRun rest, ControlMatches.tail property, finalHeap⟩
+      refine ⟨t, .seq callRun rest, ControlMatches.tail property, finalHeap, ?_⟩
+      intro separate
+      exact RegisterMap.Matches.tail (finalMatches (separate.extend
+        (Nat.le_trans resultFlag (Nat.le_of_lt fresh))))
+
+/-- Forget the conditional final-local correspondence without restricting
+scalar result aliases or changing the original compiler interface. -/
+theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : Nat)
+    (hw : 0 < w) :
+    ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
+      RegisterMap.Regular layout → layout.Bounded next → layout.Matches placement entry.locals s.regs → layout.Avoids flag →
+      flag < next → resultSlot + fieldCount result ≤ flag →
+      (fieldCount result ≤ 1 ∨ layout.AvoidsRange resultSlot (fieldCount result)) →
+      HeapRep placement heapLimit entry.heap s → s.regs flag = 0 →
+      ∃ t, Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+        (lowerStmtCore layout next resultSlot flag stmt) steps s t ∧
+        ControlMatches layout placement resultSlot flag finish.locals outcome t ∧
+        HeapRep placement heapLimit finish.heap t := by
+  intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
+    represented flagZero
+  obtain ⟨t, measured, property, finalHeap, _⟩ := cost.lowerCoreMeasuredWithLocals controlReg hw
+    layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
+      represented flagZero
+  exact ⟨t, measured, property, finalHeap⟩
 
 /-- A returned generic statement pays five wrapper steps and retains its real
 final heap. A supplied normal continuation is bypassed. -/

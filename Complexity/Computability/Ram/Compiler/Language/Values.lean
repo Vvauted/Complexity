@@ -318,6 +318,20 @@ theorem lowerReturn_safe (layout : RegisterMap Γ) (resultSlot : Reg) (atom : At
       (entry.setRegs (valueRegs τ resultSlot) (valueWords placement (atom.eval env))) :=
   copyAtom_safe layout resultSlot atom env entry hw matched fits copySafe
 
+/-- Returning into a separate result interval preserves the actual local
+environment. This conditional frame fact adds no restriction to ordinary
+return execution, whose scalar result is allowed to overlap source fields. -/
+theorem lowerReturn_matches (layout : RegisterMap Γ) (resultSlot : Reg) (atom : Atom Γ τ)
+    (env : Env Γ) (entry : Source.State w)
+    (matched : layout.Matches placement env entry.regs)
+    (separated : layout.AvoidsRange resultSlot (fieldCount τ)) :
+    RegisterMap.Matches layout placement env
+      (entry.setRegs (valueRegs τ resultSlot) (valueWords placement (atom.eval env))).regs := by
+  intro σ v i
+  rw [Source.State.setRegs_ne entry (valueRegs τ resultSlot)
+    (valueWords placement (atom.eval env)) (layout v i) (separated.not_mem v i)]
+  exact matched v i
+
 /-- Reading the result tuple after receiving its fields recovers those actual
 fields, not a value selected from a specification. -/
 theorem resultExprs_setRegs_eval (τ : Ty) (resultSlot : Reg) (value : Value τ)
