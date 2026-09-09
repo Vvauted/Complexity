@@ -352,17 +352,25 @@ surface syntax or a short scalar equation. The native buffer specifications in
 `Language/Eval/Verification` preserve the current heap for reads/slices and give
 both the actual write equation and updated `Array.set` contents for writes.
 This lets existing alias/frame lemmas remain usable without assuming all views
-are disjoint. The buffer consumer and the generic helper-contract adapter are checked;
-they are not yet evidence of an ergonomic arbitrary-loop proof.
+are disjoint. Generated `P.f_spec contract` now applies a supplied contract to a
+named function's ordinary parameters through native `mvcgen`. The buffer consumer
+reuses `clamp_total` without unfolding its helper; initial/final heaps and actual
+results remain in the rule. This pure-helper consumer is not yet evidence of
+ergonomic arbitrary effectful-call composition.
+
+`Buffer.PreservesOutside` now exports preservation of initially valid disjoint
+views, including disjoint intervals of one object. Its write and composition
+rules feed the traversal's total source contract and the same represented final
+heap of its compiled invocation. The existing array result and instruction bound
+are unchanged; no ownership/no-alias restriction or second backend proof is added.
 
 Before broadening the surface further, close these connected gaps:
 
-- Carry a named helper's mathematical postcondition and actual heap effects
-  into a caller using the existing native specification interface, without
-  unfolding the helper or regenerating a register proof.
-- Make preserved objects/intervals available in reusable function contracts.
-  Having heap-level frame lemmas alone does not give callers a frame theorem;
-  a contract that mentions only changed contents can discard that information.
+- Exercise named contract application on a helper that actually modifies the
+  shared heap, retaining relational postconditions without unfolding its body.
+- Compose supplied frame contracts through effectful calls and nested traversal
+  without repeating write-level reasoning. Heap-level lemmas alone are not
+  sufficient: callers must receive preserved contents in the function contract.
 - Expose ordinary loop locals, current contents and return outcomes to invariants.
   Scope/state plumbing belongs to shared rules; the invariant, termination
   argument and algorithm-dependent inequalities belong to the author.
@@ -510,8 +518,10 @@ result and retains its array-update specification. Layout regularity and update
 preservation are compiler lemmas, automatically supplied by generated functions;
 buffer self-assignment remains allowed. The named while traversal now has source
 correctness and termination proofs, a compiled invocation theorem and an
-independent linear instruction bound. The general indexed-traversal interface
-and exported outside-buffer frame remain open.
+independent linear instruction bound. Its strengthened source and compiled
+contracts also retain preservation of disjoint borrowed views. The general
+indexed-traversal interface and automatic composition of effectful helper
+contracts remain open.
 
 The [buffer consumer](../Examples/Language/Buffer.lean) uses native operation
 specifications to prove its ordinary `Array.set` result. Its
@@ -561,9 +571,12 @@ generated variant rule with fixed captures. Compiled realizability reuses the
 source termination proof; cost composition reuses its array invariant, without
 a second array-correctness proof. Native operation specifications and strict
 `StateT` adequacy remove routine WP/bind unfolding from the source proof.
-The remaining gate includes a reusable outside-buffer frame and an indexed
-traversal interface. Fixed-capture transport is shared, and one native round
-contract now supplies the same guard/body facts to all three proofs. Selecting
+The outside-buffer frame is now public: it preserves initially valid disjoint
+views, including slices of the same object, at the same actual final heap. Its
+proof reuses the existing mathematical round and the actual write equation;
+the old result-only theorems project from the stronger source/compiled contracts.
+An indexed traversal interface remains open. Fixed-capture transport is shared,
+and one native round contract supplies the same guard/body facts to all three proofs. Selecting
 and composing supplied contracts still need better automation.
 This first complete invocation does not finish M2.
 
@@ -621,8 +634,9 @@ the compiled proof no longer repeats post-guard index/heap substitutions and
 array-bound reconstruction in five obligations. No special round-specification
 framework or second execution relation is introduced.
 
-The next proof-interface step is automatic application of supplied contracts
-and selection of generated named views/frames, which remain explicit. Preserve
+Named function contracts can now be passed to `mvcgen` through generated
+`P.f_spec` rules. The next step is effectful-call composition and selection of
+generated loop views/frames, which remain explicit. Preserve
 the actual heap, source range conditions and cost inequalities. Keep
 RAM-specific rules out of source semantics and syntax; simplify existing proofs
 rather than introducing another implementation or whole-loop template.

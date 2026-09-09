@@ -11,7 +11,8 @@ evaluation equations and a scoped strict Std.Do interpretation are now present.
 Generated one-step function equations support ordinary mathematical correctness
 proofs; shared structural rules compose separate cost bounds. The generated
 curried functions are noncomputable semantic observations, not `#eval` runtimes.
-Generated contract equivalences hide argument-environment packing;
+Generated contract equivalences hide argument-environment packing, and named
+specification rules apply supplied contracts in native `mvcgen` proofs;
 focused scalar tactics compose realization and uniform structural cost rules.
 Source execution and function contracts carry typed locals and a shared heap;
 their native monadic view retains the final heap on success and failure.
@@ -22,7 +23,8 @@ The typed core now includes effectful-guard loops and well-founded source rules.
 The surface accepts `while` and generates named guard/body/loop equations,
 normal-continuation proofs and a variant rule over named mutable locals.
 The complete buffer traversal proof now gives its ordinary `Array.map` result,
-termination, compiled invocation and independent linear instruction bound.
+preservation of disjoint views, termination, compiled invocation and independent
+linear instruction bound.
 A self-recursive factorial proof uses ordinary induction and mathlib's
 `Nat.factorial`; its compiled invocation now has a separate linear instruction
 bound, subject to word-range and code/stack-capacity conditions. The
@@ -249,7 +251,11 @@ separate resource proofs reuse it through the existing
 substitutions and guard-to-array-bound reasoning from the compiled consumer;
 no additional specification wrapper or execution relation is needed. Choosing
 the generated views/frames and applying the supplied contract remain explicit.
-Further named automation and an exported outside-buffer frame remain separate work.
+The source function contract also exports `xs.PreservesOutside initial final`:
+every initially valid disjoint view retains its contents, including another slice
+of the same object. The strengthened compiled theorem retains this property at
+the same represented final heap without changing the program or its cost bound.
+Further named-loop automation remains separate work.
 
 The [recursive factorial](../Examples/Language/Factorial.lean) makes a real
 source self-call on `n - 1`. Rewriting its generated one-step equation and using
@@ -423,10 +429,16 @@ The buffer actions now have native `@[spec]` rules. Reads and slices preserve
 the actual heap; writes provide both their real write equation and updated
 native contents, so alias/frame facts are not lost at the operation boundary.
 `FunctionTotal.triple_spec` converts a supplied source contract into a native
-continuation rule, including its actual final heap. It does not make automation
-guess the callee's mathematical contract. The current scalar consumer proves
+continuation rule, including its actual final heap. Generated `P.f_spec contract`
+specializes it to the named function's ordinary arguments. For example, the
+buffer consumer uses `have clampSpec := Implementation.clamp_spec clamp_total`
+and `mvcgen [clampSpec]`, without unfolding the helper. The supplied contract
+retains its initial heap, actual returned value and final heap; no unchanged-heap
+condition is imposed by the rule. This consumer's helper is pure, so general
+effectful-helper proof ergonomics still need a consumer. The rule does not guess
+the callee's mathematical contract or register it globally. The scalar consumer proves
 ordinary function equations by rewriting and Nat reasoning, and generated
-contract conversion hides the typed argument packing. Mutable helper/loop
+contract conversion hides the typed argument packing. General mutable helper/loop
 composition and elimination of routine ghost-witness packaging remain work
 for the author-facing proof interface.
 The backend's scalar tactics now compose realization and uniform cost rules;
@@ -473,9 +485,14 @@ is carried by the source execution state, including across calls and faults.
 `Buffer.Contents` observes a valid view as an ordinary native array and transfers
 reads and writes to `getElem` and `Array.set`, including updates through aliases.
 Read/write/slice statements now invoke these same operations; calls retain their
-actual updated heap. The named while traversal now proves its complete array
-update, termination and a linear bound for its compiled invocation. General
-indexed-traversal automation and exported outside-buffer frames remain unfinished.
+actual updated heap. `Buffer.Disjoint` uses different objects or disjoint mathlib
+`Set.Ico` intervals within one object. `Buffer.PreservesOutside` preserves the
+contents of initially valid disjoint views; successful writes establish it, and
+it composes through intermediate heaps and permits interval enlargement. This
+is not ownership of handles, whole-heap equality or a ban on overlapping aliases.
+The named traversal exports this relation with its array result through the
+source function contract and the same actual compiled invocation. General
+indexed-traversal and effectful-call frame automation remain unfinished.
 
 The [borrowed-buffer representation](../Complexity/Computability/Ram/Compiler/Language/Heap.lean)
 fixes an object-to-base placement as proof data, represents each complete object

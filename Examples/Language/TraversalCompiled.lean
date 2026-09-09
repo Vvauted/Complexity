@@ -256,6 +256,67 @@ theorem boundedMap_costBound (contents : Array Nat) :
     exact @bound
   · omega
 
+/-- The compiled traversal halts with its ordinary array-map result and preserves
+every initially observed disjoint view in the same represented final heap.
+Its independent linear instruction bound describes that very invocation.
+Preloaded objects, intermediate increments, code and stack capacity are explicit;
+no operational time budget or algorithm-specific register proof is assumed. -/
+theorem boundedMap_runUntil_le_frame {w heapLimit : Nat} (hw : 0 < w)
+    (placement : Nat → Ram.Word w) (xs : Buffer .nat) (limit : Nat)
+    (sourceHeap : Heap) (contents : Array Nat) (observed : xs.Contents sourceHeap contents)
+    (lengthFits : xs.length < 2 ^ w) (limitFits : limit < 2 ^ w)
+    (incrementsFit : ∀ j (hj : j < contents.size), contents[j] + 1 < 2 ^ w)
+    (entry : Ram.Source.State w) (represented : HeapRep placement heapLimit sourceHeap entry)
+    (codeCapacity : (lowerCode Implementation.program Implementation.boundedMapId).length < 2 ^ w)
+    (stackCapacity :
+      heapLimit + 2 * Ram.ABI.frameSize (programControl Implementation.program) < 2 ^ w) :
+    ∃ (finalHeap : Heap) (targetFinish : Ram.Source.State w)
+        (bodySteps : Nat) (target : Ram.State w),
+      Implementation.boundedMap xs limit sourceHeap = Part.some (.ok (), finalHeap) ∧
+      xs.Contents finalHeap (contents.map fun x => min (x + 1) limit) ∧
+      xs.PreservesOutside sourceHeap finalHeap ∧
+      Ram.Source.FunctionExec (lowerProgram Implementation.program) heapLimit 1
+        (lowerFunc Implementation.program Implementation.boundedMapId)
+        (envWords placement (Env.cons (τ := .buffer .nat) xs
+          (Env.cons (τ := .nat) limit Env.empty))) entry [] targetFinish ∧
+      HeapRep placement heapLimit finalHeap targetFinish ∧
+      Ram.LocalCompiler.Function.runUntil (programControl Implementation.program)
+          (lowerProgram Implementation.program) Implementation.boundedMapId.val 3 heapLimit
+          (envWords placement (Env.cons (τ := .buffer .nat) xs
+            (Env.cons (τ := .nat) limit Env.empty))) entry =
+        some ⟨target,
+          Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
+            (lowerFunc Implementation.program Implementation.boundedMapId) bodySteps + 1, .halted⟩ ∧
+      Ram.LocalCompiler.Function.returnedValues 0 target = [] ∧
+      Ram.Source.State.Observes heapLimit 0 targetFinish target ∧
+      (lowerFunc Implementation.program Implementation.boundedMapId).bodyTime
+          (lowerProgram Implementation.program) heapLimit
+          (envWords placement (Env.cons (τ := .buffer .nat) xs
+            (Env.cons (τ := .nat) limit Env.empty))) entry = Part.some bodySteps ∧
+      bodySteps ≤
+        (callCost Implementation.program Implementation.incrementId 10 + 43) * contents.size + 29 ∧
+      Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
+          (lowerFunc Implementation.program Implementation.boundedMapId) bodySteps + 1 ≤
+        Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
+          (lowerFunc Implementation.program Implementation.boundedMapId)
+          ((callCost Implementation.program Implementation.incrementId 10 + 43) *
+            contents.size + 29) + 1 := by
+  let args : Env [.buffer .nat, .nat] :=
+    Env.cons (τ := .buffer .nat) xs (Env.cons (τ := .nat) limit Env.empty)
+  have arguments : EnvFits w args := by
+    simpa only [args, EnvFits.cons_buffer_iff, EnvFits.cons_nat_iff, EnvFits.empty, and_true] using
+      And.intro lengthFits limitFits
+  obtain ⟨value, finalHeap, targetFinish, bodySteps, target, sourceEval, property, invocation,
+      representedFinal, run, values, targetObserved, time, bodyBound, invocationBound⟩ :=
+    (boundedMap_realizable hw contents incrementsFit).runUntil_le
+      (boundedMap_total_frame contents) (boundedMap_costBound contents) hw args sourceHeap arguments
+      ⟨observed, lengthFits, limitFits⟩ observed observed entry represented
+      codeCapacity stackCapacity
+  cases value
+  simp only [valueWords_unit] at invocation values
+  exact ⟨finalHeap, targetFinish, bodySteps, target, sourceEval, property.1, property.2, invocation,
+    representedFinal, run, values, targetObserved, time, bodyBound, invocationBound⟩
+
 /-- The same compiled traversal halts, realizes the ordinary array-map result
 in its actual final heap, and satisfies the independent linear body bound.
 Preloaded objects, intermediate increments, code and stack capacity are explicit;
@@ -299,20 +360,9 @@ theorem boundedMap_runUntil_le {w heapLimit : Nat} (hw : 0 < w)
           (lowerFunc Implementation.program Implementation.boundedMapId)
           ((callCost Implementation.program Implementation.incrementId 10 + 43) *
             contents.size + 29) + 1 := by
-  let args : Env [.buffer .nat, .nat] :=
-    Env.cons (τ := .buffer .nat) xs (Env.cons (τ := .nat) limit Env.empty)
-  have arguments : EnvFits w args := by
-    simpa only [args, EnvFits.cons_buffer_iff, EnvFits.cons_nat_iff, EnvFits.empty, and_true] using
-      And.intro lengthFits limitFits
-  obtain ⟨value, finalHeap, targetFinish, bodySteps, target, sourceEval, property, invocation,
-      representedFinal, run, values, targetObserved, time, bodyBound, invocationBound⟩ :=
-    (boundedMap_realizable hw contents incrementsFit).runUntil_le
-      (boundedMap_total contents) (boundedMap_costBound contents) hw args sourceHeap arguments
-      ⟨observed, lengthFits, limitFits⟩ observed observed entry represented
-      codeCapacity stackCapacity
-  cases value
-  simp only [valueWords_unit] at invocation values
-  exact ⟨finalHeap, targetFinish, bodySteps, target, sourceEval, property, invocation,
-    representedFinal, run, values, targetObserved, time, bodyBound, invocationBound⟩
+  obtain ⟨finalHeap, targetFinish, bodySteps, target, executed, updated, _, rest⟩ :=
+    boundedMap_runUntil_le_frame hw placement xs limit sourceHeap contents observed
+      lengthFits limitFits incrementsFit entry represented codeCapacity stackCapacity
+  exact ⟨finalHeap, targetFinish, bodySteps, target, executed, updated, rest⟩
 
 end Complexity.Language.Examples.Traversal

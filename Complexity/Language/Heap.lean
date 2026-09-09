@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Init.Data.Array.Lemmas
 import Lean.Elab.Tactic.Omega
+import Mathlib.Order.Interval.Set.Disjoint
 
 /-!
 # Shared source objects and borrowed buffers
@@ -462,6 +463,83 @@ theorem Contents.write_of_outside {τ : CellTy} {buffer other : Buffer τ}
     rw [Heap.read_write_of_ne_cell written sameObject differentCell]
     exact observed.read bound
   · exact observed.write_of_ne written sameObject
+
+/-- Two borrowed views share no physical cell. Their objects may coincide;
+empty views are disjoint through the ordinary empty-interval rules. -/
+def Disjoint {τ σ : CellTy} (buffer : Buffer τ) (other : Buffer σ) : Prop :=
+  buffer.object ≠ other.object ∨
+    _root_.Disjoint (Set.Ico buffer.offset (buffer.offset + buffer.length))
+      (Set.Ico other.offset (other.offset + other.length))
+
+/-- A successful write preserves the contents of any disjoint view, including
+another slice of the same object. Object tags, not an assumption about handles,
+resolve the element types when the objects coincide. -/
+theorem Contents.write_of_disjoint {τ σ : CellTy} {buffer : Buffer τ} {other : Buffer σ}
+    {heap finish : Heap} {contents : Array (CellValue σ)}
+    (observed : other.Contents heap contents) {index : Nat} {value : CellValue τ}
+    (written : heap.write buffer index value = .ok finish)
+    (separated : buffer.Disjoint other) : other.Contents finish contents := by
+  by_cases sameObject : buffer.object = other.object
+  · have intervals := separated.resolve_left (fun different => different sameObject)
+    obtain ⟨values, found, _, bound, _⟩ := Heap.write_eq_ok_iff.mp written
+    obtain ⟨otherValues, otherFound, _⟩ := observed.valid
+    have sameStored : (⟨τ, values⟩ : HeapObject) = ⟨σ, otherValues⟩ := by
+      apply Option.some.inj
+      exact (Heap.object?_eq_some_iff.mp found).symm.trans
+        (by simpa only [← sameObject] using Heap.object?_eq_some_iff.mp otherFound)
+    have sameType : τ = σ := congrArg Sigma.fst sameStored
+    subst σ
+    have writtenCell : buffer.offset + index ∈
+        Set.Ico buffer.offset (buffer.offset + buffer.length) := ⟨by omega, by omega⟩
+    have outside := Set.disjoint_left.mp intervals writtenCell
+    change ¬(other.offset ≤ buffer.offset + index ∧
+      buffer.offset + index < other.offset + other.length) at outside
+    exact observed.write_of_outside written (by omega)
+  · exact observed.write_of_ne written sameObject
+
+/-- Every initially observed view outside the permitted region retains its
+ordinary contents in the final heap. This is a relation on actual heaps, not
+ownership of handles or a restriction on aliases inside the region. -/
+def PreservesOutside {τ : CellTy} (buffer : Buffer τ) (initial finish : Heap) : Prop :=
+  ∀ {σ : CellTy} (other : Buffer σ) (contents : Array (CellValue σ)),
+    buffer.Disjoint other → other.Contents initial contents → other.Contents finish contents
+
+/-- An unchanged heap preserves every outside observation. -/
+theorem PreservesOutside.refl {τ : CellTy} (buffer : Buffer τ) (heap : Heap) :
+    buffer.PreservesOutside heap heap := by
+  intro σ other contents separated observed
+  exact observed
+
+/-- Preservation composes through the actual intermediate shared heap. -/
+theorem PreservesOutside.trans {τ : CellTy} {buffer : Buffer τ}
+    {initial middle finish : Heap}
+    (first : buffer.PreservesOutside initial middle)
+    (second : buffer.PreservesOutside middle finish) :
+    buffer.PreservesOutside initial finish := by
+  intro σ other contents separated observed
+  exact second other contents separated (first other contents separated observed)
+
+/-- A successful write changes no observation outside its borrowed view. -/
+theorem PreservesOutside.write {τ : CellTy} {buffer : Buffer τ}
+    {heap finish : Heap} {index : Nat} {value : CellValue τ}
+    (written : heap.write buffer index value = .ok finish) :
+    buffer.PreservesOutside heap finish := by
+  intro σ other contents separated observed
+  exact observed.write_of_disjoint written separated
+
+/-- A frame for a smaller interval also permits changes within a containing
+interval of the same object. The inclusion is ordinary mathlib set inclusion. -/
+theorem PreservesOutside.mono {τ σ : CellTy} {buffer : Buffer τ} {larger : Buffer σ}
+    {initial finish : Heap} (preserved : buffer.PreservesOutside initial finish)
+    (sameObject : buffer.object = larger.object)
+    (included : Set.Ico buffer.offset (buffer.offset + buffer.length) ⊆
+      Set.Ico larger.offset (larger.offset + larger.length)) :
+    larger.PreservesOutside initial finish := by
+  intro κ other contents separated observed
+  refine preserved other contents ?_ observed
+  rcases separated with different | intervals
+  · exact Or.inl (fun same => different (sameObject.symm.trans same))
+  · exact Or.inr (intervals.mono_left included)
 
 end Buffer
 

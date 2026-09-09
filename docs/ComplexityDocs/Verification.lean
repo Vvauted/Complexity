@@ -107,8 +107,21 @@ function equation, native `mvcgen` composes the public `readM_spec`, `writeM_spe
 and `sliceM_spec`; the author supplies contents and bounds, not monad implementation
 equations. The write rule also retains its real write equation for alias/frame
 reasoning. `FunctionTotal.triple_spec` turns a supplied source function contract
-into a native continuation rule without unfolding the callee. This does not yet
-automatically synthesize a whole function's frame contract or a loop invariant.
+into a native continuation rule without unfolding the callee. The frontend
+generates `P.f_spec` to apply it with ordinary named arguments. The buffer proof
+uses:
+
+```lean
+have clampSpec := Implementation.clamp_spec clamp_total
+rw [Implementation.clipHead_eq]
+mvcgen [clampSpec]
+```
+
+The author still supplies read/write contents and bounds. The helper's full
+contract carries its initial heap, actual result and final heap; the rule does
+not require that heap to be unchanged. This example's helper is pure, so it does
+not establish general effectful-call ergonomics. No contract is guessed or
+registered globally, and no loop invariant is automatically synthesized.
 
 The typed core also has an effectful-guard `Stmt.while`. Its guard is an actual
 Boolean-producing block: it runs in the current state on every iteration, and
@@ -154,8 +167,19 @@ the guard's mathematical decision and the body contract at its actual final
 locals and heap. Source correctness and resource proofs reuse that same contract
 through `Part.TotalCorrectness.stateT_post_of_eq`, without repeated index/heap
 substitutions or dedicated result-uniqueness proofs. There is no additional
-round-specification framework. Selecting the generated views and supplied
-contracts remains explicit; exported outside-buffer frames also remain work.
+round-specification framework. Selecting the generated loop views and supplied
+contracts remains explicit.
+
+`Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
+the same object. `Buffer.PreservesOutside xs initial finish` says that every
+initially valid disjoint view retains its ordinary contents. Its `write`, `trans`
+and `mono` rules derive and compose this fact from actual successful writes;
+overlapping aliases remain allowed and observe their real updates. This is a
+contents-preservation relation, not whole-heap equality or handle ownership.
+The traversal's `boundedMap_total_frame` returns both the array-map result and
+this frame at the same final heap. Its compiled `boundedMap_runUntil_le_frame`
+retains that frame, the final heap representation and the unchanged instruction
+bound. Neither array correctness nor register-level simulation is proved again.
 
 For recursion, the [source contract rule](##Complexity.Language.Verification.Recursion)
 supplies complete callable specifications at smaller mathematical indices through

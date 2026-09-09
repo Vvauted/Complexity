@@ -54,7 +54,11 @@ The equation exposes one body using ordinary `ExceptT Fault (StateT Heap Part)` 
 keeping named callee observations opaque. It is not a global simp rule.
 `P.f_total_iff` connects arbitrary ordinary curried preconditions and
 postconditions, including initial and final heaps, to the source contract without
-manual environment decomposition. The noncomputable action takes the actual
+manual environment decomposition. `P.f_spec contract` applies a supplied source
+contract with the function's ordinary named arguments in a native `Std.Do` proof.
+The caller can pass this specialized theorem to `mvcgen`; no callee body is
+unfolded and no contract is selected or invented automatically.
+The noncomputable action takes the actual
 initial heap and observes `Part (Except Fault result × Heap)`; no empty heap is
 supplied implicitly. It is a mathematical proof interface, not a host executable
 for `#eval`.
@@ -1392,6 +1396,55 @@ private def totalDeclaration (family programName : TSyntax `ident)
       exact ⟨$forward, $backward⟩)
   return declaration.raw
 
+private def specificationDeclaration (family programName : TSyntax `ident)
+    (fn : Function) : MacroM Syntax := do
+  let name := generatedName family fn.name "_spec"
+  let observation := generatedName family fn.name ""
+  let id := generatedName family fn.name "Id"
+  let params ← parameterTypes fn.params
+  let result ← valueTypeTerm fn.result
+  let pre := mkIdent (← Macro.addMacroScope `pre)
+  let post := mkIdent (← Macro.addMacroScope `post)
+  let contract := mkIdent (← Macro.addMacroScope `contract)
+  let continuation := mkIdent (← Macro.addMacroScope `continuation)
+  let initialHeap := mkIdent (← Macro.addMacroScope `initialHeap)
+  let value := mkIdent (← Macro.addMacroScope `value)
+  let finalHeap := mkIdent (← Macro.addMacroScope `finalHeap)
+  let arguments : Array (TSyntax `term) := fn.params.map fun param => ⟨param.name.raw⟩
+  let invocation := Lean.Syntax.mkApp ⟨observation.raw⟩ arguments
+  let mut encodedArgs ← `(Complexity.Language.Env.empty)
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let type ← typeTerm param.type
+    encodedArgs ← `(Complexity.Language.Env.cons (τ := $type) $parameter:ident $encodedArgs)
+  let mut type ← `(∀ ($continuation:ident : Std.Do.PostCond $result
+      (.except Complexity.Language.Fault (.arg Complexity.Language.Heap .pure))),
+    Std.Do.Triple (m := ExceptT Complexity.Language.Fault (StateT Complexity.Language.Heap Part))
+      (ps := .except Complexity.Language.Fault (.arg Complexity.Language.Heap .pure))
+      $invocation
+      (fun $initialHeap:ident => ⟨$pre:ident $encodedArgs $initialHeap:ident ∧
+        ∀ $value:ident $finalHeap:ident,
+          $post:ident $encodedArgs $initialHeap:ident $value:ident $finalHeap:ident →
+            (($continuation:ident).1 $value:ident $finalHeap:ident).down⟩)
+      $continuation:ident)
+  let mut proof ← `(fun $continuation:ident =>
+    Complexity.Language.FunctionTotal.triple_spec $contract:ident $encodedArgs $continuation:ident)
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let parameterType ← valueTypeTerm param.type
+    type ← `(∀ ($parameter:ident : $parameterType), $type)
+    proof ← `(fun ($parameter:ident : $parameterType) => $proof)
+  return (← `(command|
+    open scoped Part.TotalCorrectness in
+    /-- Apply a supplied source contract with ordinary named arguments and its
+    actual returned value and final heap. No callee body or new contract is inferred. -/
+    theorem $name:ident
+        {$pre:ident : Complexity.Language.Env $params → Complexity.Language.Heap → Prop}
+        {$post:ident : Complexity.Language.Env $params → Complexity.Language.Heap →
+          $result → Complexity.Language.Heap → Prop}
+        ($contract:ident : Complexity.Language.FunctionTotal $programName:ident $id:ident
+          $pre:ident $post:ident) : $type := $proof)).raw
+
 private def programDeclarations (family : TSyntax `ident)
     (sources : Array (TSyntax `sourceFunction)) : MacroM Syntax := do
   let mut functions : Array Function := #[]
@@ -1456,6 +1509,7 @@ private def programDeclarations (family : TSyntax `ident)
     declarations := declarations.push (← equationDeclaration family programName fn body)
   for fn in functions do
     declarations := declarations.push (← totalDeclaration family programName fn)
+    declarations := declarations.push (← specificationDeclaration family programName fn)
   return mkNullNode declarations
 
 elab_rules : command

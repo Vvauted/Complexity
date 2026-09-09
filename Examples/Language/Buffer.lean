@@ -71,11 +71,14 @@ theorem clipHead_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
       (fun view finish => ⟨view = xs ∧
         view.Contents finish (contents.set 0 (min contents[0] limit) nonempty)⟩,
         (fun _ _ => ⟨False⟩, ⟨⟩)) := by
+  have clampSpec := Implementation.clamp_spec clamp_total
   rw [Implementation.clipHead_eq]
-  simp only [clamp_eval, pure_bind]
-  mvcgen
+  mvcgen [clampSpec]
   rename_i heap observed
   refine ⟨contents, nonempty, observed, ?_⟩
+  mvcgen [clampSpec]
+  simp only [true_and]
+  intro value finish rfl rfl
   mvcgen
   refine ⟨contents, nonempty, observed, ?_⟩
   intro finish _ updated
