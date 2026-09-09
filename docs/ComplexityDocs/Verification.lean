@@ -137,8 +137,14 @@ rule. These applications are still explicit, not generated cost proofs. Neither
 the instruction prices nor the mathematical correctness argument is duplicated.
 
 The frontend currently supports `Nat`, `Bool`, `Unit`, lexical bindings, actual
-named calls, branches and returns. Addition/comparison operands must be atomic;
-name deeper expressions with `let`. Mutable data and loop syntax remain future
+named calls, branches and returns. Nested addition, multiplication, saturating
+subtraction, division, remainder and comparisons are normalized left to right
+into actual primitive bindings. This also applies to guards and call arguments.
+The [remainder example](##Examples.Language.Remainder) implements
+`n - (n / d) * d`, reuses the ordinary Nat identity, and derives the actual
+compiled result with a separate instruction bound. Divisor zero is included;
+no artificial subtraction-order condition is required.
+Mutable data and loop syntax remain future
 work; automatic contract plumbing and range/cost obligation generation remain
 unfinished. Costs are currently derived
 for successfully realized scalar executions, not an instrumentation theorem for

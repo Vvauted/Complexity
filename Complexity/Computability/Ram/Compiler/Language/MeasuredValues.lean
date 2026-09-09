@@ -101,4 +101,33 @@ theorem lowerCall_measured (layout : RegisterMap Γ) (args : Args Γ params) (en
     at execution
   exact execution
 
+/-- A measured call receiving a fresh lexical value extends the caller's
+layout and preserves every register outside its actual receivers. The endpoint
+retains the invocation's shared effects; only caller registers are restored.
+Unit extends the lexical environment without allocating a result register. -/
+theorem lowerCall_measured_fresh (layout : RegisterMap Γ) (args : Args Γ params) (env : Env Γ)
+    (entry : Source.State w) (dst : Reg) (hw : 0 < w)
+    (matched : layout.Matches env entry.regs) (fits : EnvFits w (args.eval env))
+    {value : Value τ}
+    (invocation : Source.FunctionMeasuredExec control program heapLimit depth f
+      (envWords w (args.eval env)) bodySteps entry (valueWords w value) finish)
+    (lookup : program[fn]? = some f) (resultCount : fieldCount τ = f.results.length)
+    (bounded : layout.Bounded dst)
+    (resultFits : ∀ _scalar : Scalar τ, valueToNat value < 2 ^ w) :
+    let received := finish.setRegs (valueRegs τ dst) (valueWords w value)
+    Source.LocalMeasuredExec control program heapLimit (depth + 1)
+        (.call (valueRegs τ dst) fn (argsExprs layout args))
+        (LocalCompiler.Function.callSteps 0 f bodySteps) entry received ∧
+      RegisterMap.Matches (RegisterMap.extend layout τ dst) (Env.cons value env) received.regs ∧
+      ∀ r, r ∉ valueRegs τ dst → received.regs r = entry.regs r := by
+  dsimp only
+  have registers : finish.regs = entry.regs := invocation.erase.regs_eq
+  have restored : layout.Matches env finish.regs := by
+    rw [registers]
+    exact matched
+  refine ⟨lowerCall_measured layout args env entry dst hw matched fits invocation lookup resultCount,
+    restored.setRegs bounded value resultFits, ?_⟩
+  intro r outside
+  exact (Source.State.setRegs_ne finish _ _ r outside).trans (congrFun registers r)
+
 end Ram.LanguageCompiler

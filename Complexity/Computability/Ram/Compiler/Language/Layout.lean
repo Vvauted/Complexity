@@ -81,6 +81,11 @@ def EnvFits (w : Nat) (env : Env Γ) : Prop :=
 
 namespace EnvFits
 
+/-- An empty parameter environment has no scalar range obligations. -/
+@[simp] theorem empty (w : Nat) : EnvFits w Env.empty := by
+  intro τ scalar v
+  cases v
+
 /-- Extend the source range facts by an actual newly computed value. -/
 theorem cons {env : Env Γ} (fits : EnvFits w env) (value : Value τ)
     (fitsValue : ∀ _scalar : Scalar τ, valueToNat value < 2 ^ w) :
@@ -93,6 +98,46 @@ theorem cons {env : Env Γ} (fits : EnvFits w env) (value : Value τ)
 /-- Leaving a lexical scope retains all outer range facts. -/
 theorem tail {env : Env (τ :: Γ)} (fits : EnvFits w env) : EnvFits w env.tail :=
   fun scalar v => fits scalar (.there v)
+
+/-- Parameter ranges decompose into the actual head value and outer environment. -/
+@[simp] theorem cons_iff (value : Value τ) (env : Env Γ) :
+    EnvFits w (Env.cons value env) ↔
+      (∀ _scalar : Scalar τ, valueToNat value < 2 ^ w) ∧ EnvFits w env := by
+  constructor
+  · intro fits
+    exact ⟨fun scalar => fits scalar .here, fits.tail⟩
+  · rintro ⟨fitsValue, fits⟩
+    exact fits.cons value fitsValue
+
+/-- A natural parameter contributes its ordinary unsigned range condition. -/
+@[simp] theorem cons_nat_iff (value : Nat) (env : Env Γ) :
+    EnvFits w (Env.cons (τ := .nat) value env) ↔ value < 2 ^ w ∧ EnvFits w env := by
+  rw [cons_iff]
+  constructor
+  · intro fits
+    exact ⟨fits.1 .nat, fits.2⟩
+  · intro fits
+    exact ⟨fun _ => fits.1, fits.2⟩
+
+/-- A Boolean parameter contributes the range of its actual zero-or-one encoding. -/
+@[simp] theorem cons_bool_iff (value : Bool) (env : Env Γ) :
+    EnvFits w (Env.cons (τ := .bool) value env) ↔
+      (if value then 1 else 0) < 2 ^ w ∧ EnvFits w env := by
+  rw [cons_iff]
+  constructor
+  · intro fits
+    exact ⟨fits.1 .bool, fits.2⟩
+  · intro fits
+    exact ⟨fun _ => fits.1, fits.2⟩
+
+/-- A Unit parameter occupies no word and adds no range condition. -/
+@[simp] theorem cons_unit_iff (value : Unit) (env : Env Γ) :
+    EnvFits w (Env.cons (τ := .unit) value env) ↔ EnvFits w env := by
+  rw [cons_iff]
+  constructor
+  · exact fun fits => fits.2
+  · intro fits
+    exact ⟨(fun scalar => nomatch scalar), fits⟩
 
 end EnvFits
 

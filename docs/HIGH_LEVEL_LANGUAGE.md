@@ -13,7 +13,7 @@ proofs; shared structural rules compose separate cost bounds. The generated
 curried functions are noncomputable semantic observations, not `#eval` runtimes.
 Generated contract equivalences hide argument-environment packing;
 realization/cost rule application is still explicit.
-full source proof automation, mutable data and loops are not yet supported. The
+Full source proof automation, mutable data and loops are not yet supported. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -106,11 +106,10 @@ are retained for diagnostics and proof display.
 
 Use an administrative-normal-form core: variables and literal values are atoms;
 arithmetic, comparisons, reads, writes, calls and other operations are explicit
-nodes whose results are bound before use. The current scalar surface accepts
-addition and comparisons with atomic operands; a compound return or guard
-introduces an actual primitive binding. Deeper expressions must first be named
-with `let`. More general nested-expression support must preserve a specified
-left-to-right order. Atom materialization, moves and returns can still require
+nodes whose results are bound before use. The scalar surface accepts nested
+arithmetic and comparisons, normalizing them left to right into actual primitive
+bindings in lets, returns, guards and call arguments. Fresh intermediate names
+are hygienic and do not capture user variables. Atom materialization, moves and returns can still require
 target instructions and are included in backend accounting.
 
 There is no runtime `pure arbitraryLeanTerm` escape hatch. A mathematical
@@ -372,9 +371,9 @@ not accepted as an uncharged host operation.
 | Operation | Source meaning | Initial word-backend policy |
 | --- | --- | --- |
 | Nat literals, addition and comparison | Lean Nat and Bool operations | Scalar encoding and addition-range obligations; M1 subset |
-| Nat multiplication | Exact natural multiplication | Intermediate product must fit; supported when its lowering is proved |
-| Nat subtraction | Saturation at zero | Proved compare/branch implementation, not unchecked word subtraction |
-| Nat division and modulo | Lean semantics, including `n / 0 = 0` and `n % 0 = n` | Proved zero-case control and ordinary operation, with all instructions charged |
+| Nat multiplication | Exact natural multiplication | Proved lowering with an actual intermediate-product range condition |
+| Nat subtraction | Saturation at zero | Proved comparison mask applied to the wrapping word difference; no subtrahend-order premise |
+| Nat division and modulo | Lean semantics, including `n / 0 = 0` and `n % 0 = n` | Existing word operations already match these zero cases; proved lowering requires representable operands, not a nonzero divisor |
 | Explicit BitVec operations | Their specified modular/word semantics | Matching word operations and proved representation |
 
 The first lowering is syntax-directed, not selected by a user's proof.
@@ -386,6 +385,12 @@ silently narrowing a published theorem's input domain.
 Existing modular Word examples retain that meaning when migrated. No claim is
 made that every unbounded-Nat program runs at arbitrary word width or that
 arbitrary-precision arithmetic costs one RAM transition.
+
+The current nested-expression consumer implements `n - (n / d) * d`. Its source
+result follows from the ordinary Nat remainder identity, and the shared compiler
+transfers that result to the actual callable implementation. Its range and cost
+proofs remain separate; the bound counts division, multiplication and saturating
+subtraction, not a different implementation using one remainder instruction.
 
 ### Three kinds of obligation
 

@@ -81,19 +81,35 @@ theorem atomExpr_bounded (layout : RegisterMap Γ) (atom : Atom Γ τ) (scalar :
   | bool => trivial
   | unit => cases scalar
 
-/-- Scalar operations reuse the fixed word instruction vocabulary. -/
+/-- Scalar operations reuse the fixed word instruction vocabulary. A comparison
+mask turns wrapping word subtraction into saturating natural subtraction. -/
 def primExpr (layout : RegisterMap Γ) : {τ : Ty} → Prim Γ τ → Scalar τ → Expr
   | _, .atom a, scalar => atomExpr layout a scalar
   | _, .add a b, _ => .bin .add (atomExpr layout a .nat) (atomExpr layout b .nat)
+  | _, .mul a b, _ => .bin .mul (atomExpr layout a .nat) (atomExpr layout b .nat)
+  | _, .sub a b, _ =>
+      .bin .mul (.bin .sub (atomExpr layout a .nat) (atomExpr layout b .nat))
+        (.bin .ule (atomExpr layout b .nat) (atomExpr layout a .nat))
+  | _, .div a b, _ => .bin .udiv (atomExpr layout a .nat) (atomExpr layout b .nat)
+  | _, .mod a b, _ => .bin .umod (atomExpr layout a .nat) (atomExpr layout b .nat)
+  | _, .eq a b, _ => .bin .eq (atomExpr layout a .nat) (atomExpr layout b .nat)
   | _, .lt a b, _ => .bin .ult (atomExpr layout a .nat) (atomExpr layout b .nat)
   | _, .le a b, _ => .bin .ule (atomExpr layout a .nat) (atomExpr layout b .nat)
 
-/-- Source-level sufficient ranges for an operation. Addition includes its
-actual intermediate sum, even if later code returns a smaller value. -/
+/-- Source-level sufficient ranges for an operation. Addition and multiplication
+include their actual results, even if later code returns a smaller value. Other
+natural operations only require their operands to fit; subtraction and division
+retain their entire mathematical domains, including underflow and zero divisors. -/
 def PrimFits (w : Nat) (env : Env Γ) : {τ : Ty} → Prim Γ τ → Prop
   | _, .atom a => valueToNat (a.eval env) < 2 ^ w
   | _, .add a b =>
       a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w ∧ a.eval env + b.eval env < 2 ^ w
+  | _, .mul a b =>
+      a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w ∧ a.eval env * b.eval env < 2 ^ w
+  | _, .sub a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
+  | _, .div a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
+  | _, .mod a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
+  | _, .eq a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
   | _, .lt a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
   | _, .le a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
 
@@ -111,6 +127,44 @@ theorem primExpr_toNat (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar : S
         atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
         atomExpr_toNat layout b .nat env regs mem hw matched fits.2.1]
       exact Nat.mod_eq_of_lt fits.2.2
+  | mul a b =>
+      change (BinOp.eval .mul _ _).toNat = a.eval env * b.eval env
+      rw [BinOp.eval_mul_toNat,
+        atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
+        atomExpr_toNat layout b .nat env regs mem hw matched fits.2.1]
+      exact Nat.mod_eq_of_lt fits.2.2
+  | sub a b =>
+      have saturated (x y : Word w) :
+          (BinOp.eval .mul (BinOp.eval .sub x y) (BinOp.eval .ule y x)).toNat =
+            x.toNat - y.toNat := by
+        by_cases h : y.toNat ≤ x.toNat
+        · simpa only [BinOp.eval_ule, if_pos h, BinOp.eval_mul,
+            BitVec.ofNat_eq_ofNat, BitVec.mul_one] using
+            BinOp.eval_sub_toNat_of_le x y h
+        · simp only [BinOp.eval_ule, if_neg h, BinOp.eval_mul,
+            BitVec.ofNat_eq_ofNat, BitVec.mul_zero,
+            BitVec.toNat_zero, Nat.sub_eq_zero_of_le (Nat.le_of_not_le h)]
+      change (BinOp.eval .mul (BinOp.eval .sub _ _) (BinOp.eval .ule _ _)).toNat =
+        a.eval env - b.eval env
+      simp only [saturated,
+        atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
+        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, valueToNat]
+  | div a b =>
+      change (BinOp.eval .udiv _ _).toNat = a.eval env / b.eval env
+      simp only [BinOp.eval_udiv_toNat,
+        atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
+        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, valueToNat]
+  | mod a b =>
+      change (BinOp.eval .umod _ _).toNat = a.eval env % b.eval env
+      simp only [BinOp.eval_umod_toNat,
+        atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
+        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, valueToNat]
+  | eq a b =>
+      change (BinOp.eval .eq _ _).toNat = valueToNat (Prim.eval (.eq a b) env)
+      rw [BinOp.eval_eq_toNat hw]
+      simp [BitVec.toNat_eq,
+        atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
+        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, Prim.eval, valueToNat]
   | lt a b =>
       change (BinOp.eval .ult _ _).toNat = valueToNat (Prim.eval (.lt a b) env)
       rw [BinOp.eval_ult_toNat hw,
@@ -129,8 +183,11 @@ theorem primExpr_bounded (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar :
     (bounded : layout.Bounded dst) : (primExpr layout prim scalar).Bounded dst := by
   cases prim with
   | atom atom => exact atomExpr_bounded layout atom scalar bounded
-  | add a b | lt a b | le a b =>
+  | add a b | mul a b | div a b | mod a b | eq a b | lt a b | le a b =>
       exact ⟨atomExpr_bounded layout a .nat bounded, atomExpr_bounded layout b .nat bounded⟩
+  | sub a b =>
+      exact ⟨⟨atomExpr_bounded layout a .nat bounded, atomExpr_bounded layout b .nat bounded⟩,
+        ⟨atomExpr_bounded layout b .nat bounded, atomExpr_bounded layout a .nat bounded⟩⟩
 
 /-- Atom materialization executes one emitted instruction, including variables. -/
 @[simp] theorem atomExpr_compile_length (layout : RegisterMap Γ) (atom : Atom Γ τ)
@@ -148,7 +205,8 @@ theorem primExpr_compile_length (layout : RegisterMap Γ) (prim : Prim Γ τ)
     ((primExpr layout prim scalar).compile dst).length =
       match prim with
       | .atom _ => 1
-      | .add _ _ | .lt _ _ | .le _ _ => 3 := by
+      | .add _ _ | .mul _ _ | .div _ _ | .mod _ _ | .eq _ _ | .lt _ _ | .le _ _ => 3
+      | .sub _ _ => 7 := by
   cases prim <;> simp [primExpr, Expr.compile]
 
 /-- A high-level scalar operation refines an actual, counted RAM execution.

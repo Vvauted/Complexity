@@ -4,7 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Layout
-import Complexity.Language.Verification
+import Complexity.Language.Eval.Verification
 
 /-!
 # Source-level realization conditions for the word backend
@@ -367,6 +367,34 @@ theorem call {signatures : List Signature} {Γ : List Ty} {result : Ty}
       exact ⟨Env.tail finish, control,
         .callReturn arguments
           (invocation.mono_depth (Nat.le_of_succ_le_succ nesting)) execution, result⟩
+
+/-- Reuse an ordinary equation for this callee invocation directly. The existing
+call rule transports the proved value; the caller only establishes realization
+of its continuation using the actual returned value's range. -/
+theorem call_of_eval {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    {program : Complexity.Language.Program signatures} {w depth calleeDepth : Nat}
+    {fn : Fin signatures.length} {args : Args Γ signatures[fn].params}
+    {continuation : Complexity.Language.Stmt signatures (signatures[fn].result :: Γ) result}
+    {normal : Env Γ → Prop} {returned : Value result → Env Γ → Prop} {entry : Env Γ}
+    {feasible : Env signatures[fn].params → Prop} {value : Value signatures[fn].result}
+    (realizable : FunctionRealizable program w calleeDepth fn feasible)
+    (evaluated : program.eval fn (args.eval entry) = Part.some (.ok value))
+    (arguments : EnvFits w (args.eval entry)) (nesting : calleeDepth + 1 ≤ depth)
+    (hfeasible : feasible (args.eval entry))
+    (body : valueToNat value < 2 ^ w →
+      RealizationWP program w depth continuation (fun finish => normal (Env.tail finish))
+        (fun result finish => returned result (Env.tail finish)) (Env.cons value entry)) :
+    RealizationWP program w depth (.call fn args continuation) normal returned entry := by
+  have specification : FunctionTotal program fn
+      (fun actual => actual = args.eval entry) (fun _ returned => returned = value) := by
+    apply FunctionTotal.iff_eval.mpr
+    intro actual same
+    subst actual
+    exact ⟨value, evaluated, rfl⟩
+  apply call realizable specification arguments nesting hfeasible rfl
+  intro actual same fits
+  subst actual
+  exact body fits
 
 end RealizationWP
 

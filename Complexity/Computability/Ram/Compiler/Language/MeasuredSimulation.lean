@@ -204,28 +204,19 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
           (valueWords w value) (s.restore calleeTarget) := by
         exact ⟨by simp, (lowerFunc_wellFormed program fn).1, calleeTarget, calleeRun,
           resultExprs_readsBelow _ _ calleeTarget, calleeResult.symm, rfl⟩
-      have callRun := lowerCall_measured (τ := signatures[fn].result)
+      obtain ⟨callRun, matching, preserved⟩ := lowerCall_measured_fresh
+        (τ := signatures[fn].result) (value := value)
         layout args entry s next hw matched arguments invocation
         (lowerProgram_lookup program fn)
-        (by simp only [lowerFunc_results_length])
-      have restored : layout.Matches entry (s.restore calleeTarget).regs :=
-        matched.restore calleeTarget
-      have matching : RegisterMap.Matches
-          (RegisterMap.extend layout signatures[fn].result next) (Env.cons value entry)
-          ((s.restore calleeTarget).setRegs (valueRegs signatures[fn].result next)
-            (valueWords w value)).regs :=
-        restored.setRegs bounded value (fun _ => callee.returned_fits)
-      have flagPreserved :
-          ((s.restore calleeTarget).setRegs (valueRegs signatures[fn].result next)
-            (valueWords w value)).regs flag = 0 :=
-        (valueRegs_setRegs_other (s.restore calleeTarget) signatures[fn].result next flag
-          (valueWords w value) (Nat.ne_of_gt fresh)).trans flagZero
+        (by simp only [lowerFunc_results_length]) bounded (fun _ => callee.returned_fits)
       obtain ⟨t, rest, property⟩ := ihBody
         (RegisterMap.extend layout signatures[fn].result next)
         (next + fieldCount signatures[fn].result) resultSlot flag _
         (RegisterMap.extend_bounded bounded) matching
         (RegisterMap.Avoids.extend avoids (Nat.ne_of_gt fresh))
-        (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag flagPreserved
+        (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag
+        ((preserved flag (by
+          cases signatures[fn].result <;> simp [valueRegs, Nat.ne_of_lt fresh])).trans flagZero)
       exact ⟨t, .seq callRun rest, ControlMatches.tail property⟩
 
 /-- A returned source statement executes its wrapper for exactly five further

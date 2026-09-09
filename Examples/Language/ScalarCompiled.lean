@@ -54,16 +54,12 @@ theorem boundedIncrement_realizable {w : Nat} :
     (Env.head (Env.tail args) : Nat) < 2 ^ w at range
   change RealizationWP program w 1 boundedIncrement (fun _ => False) (fun _ _ => True) args
   unfold boundedIncrement
-  refine RealizationWP.call increment_realizable increment_total ?_ (by decide) ?_ trivial ?_
+  refine RealizationWP.call_of_eval increment_realizable (increment_eval (Env.head args))
+    ?_ (by decide) range.1 ?_
   · change EnvFits w (Env.cons (τ := .nat) (Env.head args) Env.empty)
-    intro τ scalar v
-    cases v with
-    | here => exact Nat.lt_trans (Nat.lt_succ_self _) range.1
-    | there v => cases v
-  · exact range.1
-  · intro value returned valueFits
-    have actualValue : (value : Nat) = Env.head args + 1 := returned
-    subst value
+    simp only [EnvFits.cons_nat_iff, EnvFits.empty, and_true]
+    exact Nat.lt_trans (Nat.lt_succ_self _) range.1
+  · intro valueFits
     rw [RealizationWP.letPrim_iff]
     refine ⟨⟨valueFits, range.2⟩, ?_⟩
     simp only [RealizationWP.ite_iff, RealizationWP.ret_iff,
@@ -81,10 +77,9 @@ theorem increment_functionExec {w heapLimit : Nat} (hw : 0 < w) (n : Nat)
       (envWords w (Env.cons (τ := .nat) n Env.empty)) entry
       (valueWords w (τ := .nat) (n + 1)) finish := by
   let args : Env [.nat] := Env.cons (τ := .nat) n Env.empty
-  have emptyFits : EnvFits w Env.empty := by intro τ scalar v; cases v
-  have arguments : EnvFits w args := emptyFits.cons (τ := .nat) n (fun _ => by
-    change n < 2 ^ w
-    omega)
+  have arguments : EnvFits w args := by
+    simp only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
+    omega
   obtain ⟨value, finish, execution, result⟩ :=
     increment_realizable.functionExec (heapLimit := heapLimit)
       increment_total hw args arguments fits trivial entry
@@ -102,11 +97,9 @@ theorem boundedIncrement_functionExec {w heapLimit : Nat} (hw : 0 < w) (n limit 
       (valueWords w (τ := .nat) (min (n + 1) limit)) finish := by
   let args : Env [.nat, .nat] :=
     Env.cons (τ := .nat) n (Env.cons (τ := .nat) limit Env.empty)
-  have emptyFits : EnvFits w Env.empty := by intro τ scalar v; cases v
-  have limitEnv : EnvFits w (Env.cons (τ := .nat) limit Env.empty) :=
-    emptyFits.cons (τ := .nat) limit (fun _ => limitFits)
-  have arguments : EnvFits w args :=
-    limitEnv.cons (τ := .nat) n (fun _ => by change n < 2 ^ w; omega)
+  have arguments : EnvFits w args := by
+    simp only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
+    omega
   obtain ⟨value, finish, execution, result⟩ :=
     boundedIncrement_realizable.functionExec (heapLimit := heapLimit)
       boundedIncrement_total hw args arguments ⟨sumFits, limitFits⟩ trivial entry
@@ -135,11 +128,9 @@ theorem boundedIncrement_runUntil {w heapLimit : Nat} (hw : 0 < w) (n limit : Na
         Part.some bodySteps := by
   let args : Env [.nat, .nat] :=
     Env.cons (τ := .nat) n (Env.cons (τ := .nat) limit Env.empty)
-  have emptyFits : EnvFits w Env.empty := by intro τ scalar v; cases v
-  have limitEnv : EnvFits w (Env.cons (τ := .nat) limit Env.empty) :=
-    emptyFits.cons (τ := .nat) limit (fun _ => limitFits)
-  have arguments : EnvFits w args :=
-    limitEnv.cons (τ := .nat) n (fun _ => by change n < 2 ^ w; omega)
+  have arguments : EnvFits w args := by
+    simp only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
+    omega
   obtain ⟨value, bodySteps, target, result, execution, values, observed, time⟩ :=
     boundedIncrement_realizable.runUntil boundedIncrement_total hw args arguments
       ⟨sumFits, limitFits⟩ trivial entry codeCapacity stackCapacity
@@ -195,11 +186,9 @@ theorem boundedIncrement_runUntil_le {w heapLimit : Nat} (hw : 0 < w) (n limit :
           (lowerFunc program (1 : Fin 2)) (callCost program (0 : Fin 2) 13 + 16) + 1 := by
   let args : Env [.nat, .nat] :=
     Env.cons (τ := .nat) n (Env.cons (τ := .nat) limit Env.empty)
-  have emptyFits : EnvFits w Env.empty := by intro τ scalar v; cases v
-  have limitEnv : EnvFits w (Env.cons (τ := .nat) limit Env.empty) :=
-    emptyFits.cons (τ := .nat) limit (fun _ => limitFits)
-  have arguments : EnvFits w args :=
-    limitEnv.cons (τ := .nat) n (fun _ => by change n < 2 ^ w; omega)
+  have arguments : EnvFits w args := by
+    simp only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
+    omega
   obtain ⟨value, bodySteps, target, result, execution, values, observed, time,
       bodyBound, invocationBound⟩ :=
     boundedIncrement_realizable.runUntil_le boundedIncrement_total boundedIncrement_costBound

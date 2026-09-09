@@ -29,7 +29,8 @@ open Complexity.Language
 `lowerPrim_stmtSize` derives this formula from the existing expression compiler. -/
 def primCodeSize {Γ : List Ty} {τ : Ty} : Prim Γ τ → Nat
   | .atom _ => 2 * fieldCount τ
-  | .add .. | .lt .. | .le .. => 4
+  | .add .. | .mul .. | .div .. | .mod .. | .eq .. | .lt .. | .le .. => 4
+  | .sub .. => 8
 
 /-- Exact static size after lowering, with each child counted once. The locals
 table is the existing backend's actual callee-frame table, not a price chosen

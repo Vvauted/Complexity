@@ -123,11 +123,17 @@ inductive Atom (Γ : List Ty) : Ty → Type where
   | .bool value => value
   | .unit => ()
 
-/-- Explicit scalar operations in administrative normal form. Natural addition
-is mathematical addition, not wrapping machine arithmetic. -/
+/-- Explicit scalar operations in administrative normal form. Natural arithmetic
+has Lean's mathematical meaning: subtraction saturates at zero, division by zero
+returns zero, and reduction modulo zero returns the dividend. -/
 inductive Prim (Γ : List Ty) : Ty → Type where
   | atom {τ : Ty} : Atom Γ τ → Prim Γ τ
   | add : Atom Γ .nat → Atom Γ .nat → Prim Γ .nat
+  | mul : Atom Γ .nat → Atom Γ .nat → Prim Γ .nat
+  | sub : Atom Γ .nat → Atom Γ .nat → Prim Γ .nat
+  | div : Atom Γ .nat → Atom Γ .nat → Prim Γ .nat
+  | mod : Atom Γ .nat → Atom Γ .nat → Prim Γ .nat
+  | eq : Atom Γ .nat → Atom Γ .nat → Prim Γ .bool
   | lt : Atom Γ .nat → Atom Γ .nat → Prim Γ .bool
   | le : Atom Γ .nat → Atom Γ .nat → Prim Γ .bool
 
@@ -136,6 +142,11 @@ inductive Prim (Γ : List Ty) : Ty → Type where
   match prim with
   | .atom a => a.eval env
   | .add left right => left.eval env + right.eval env
+  | .mul left right => left.eval env * right.eval env
+  | .sub left right => left.eval env - right.eval env
+  | .div left right => left.eval env / right.eval env
+  | .mod left right => left.eval env % right.eval env
+  | .eq left right => decide (left.eval env = right.eval env)
   | .lt left right => decide (left.eval env < right.eval env)
   | .le left right => decide (left.eval env ≤ right.eval env)
 

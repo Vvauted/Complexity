@@ -37,9 +37,17 @@ theorem primExpr_readsBelow (layout : RegisterMap Γ) (prim : Prim Γ τ)
     (primExpr layout prim scalar).ReadsBelow heapLimit entry.regs entry.mem := by
   cases prim with
   | atom atom => exact atomExpr_readsBelow layout atom scalar entry
-  | add left right | lt left right | le left right =>
+  | add left right | mul left right | div left right | mod left right =>
       exact ⟨atomExpr_readsBelow layout left .nat entry,
         atomExpr_readsBelow layout right .nat entry⟩
+  | eq left right | lt left right | le left right =>
+      exact ⟨atomExpr_readsBelow layout left .nat entry,
+        atomExpr_readsBelow layout right .nat entry⟩
+  | sub left right =>
+      exact ⟨⟨atomExpr_readsBelow layout left .nat entry,
+        atomExpr_readsBelow layout right .nat entry⟩,
+        ⟨atomExpr_readsBelow layout right .nat entry,
+          atomExpr_readsBelow layout left .nat entry⟩⟩
 
 /-- Every actual field of an atomic argument is free of memory reads. -/
 theorem atomExprs_readsBelow (layout : RegisterMap Γ) (atom : Atom Γ τ)

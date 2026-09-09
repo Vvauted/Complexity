@@ -15,9 +15,10 @@ import Lean.Parser.Do
 `source_program P where` declares an independent typed source program from
 Lean-style function headers and `do` blocks. The scalar subset supports
 `Nat`, `Bool`, `Unit`, immutable lexical `let`, named first-order calls,
-`if`/`then`/`else` and `return`. Addition and comparisons accept atomic
-operands; a compound return or condition introduces an actual core primitive
-binding. More deeply nested expressions must first be named with `let`.
+`if`/`then`/`else` and `return`. Natural arithmetic and comparisons may be nested
+in bindings, return values, conditions and call arguments. Their operands are
+normalized left to right into actual lexical primitive bindings; no host
+computation replaces the generated operations.
 
 The declaration exports `P.signatures`, `P.fId`, `P.fBody` and `P.program`,
 together with the ordinary curried observation `P.f` and its equation `P.f_eq`.
@@ -82,6 +83,11 @@ private structure LoweredBlock where
   proofBody : Array (TSyntax `doElem)
   fallsThrough : Bool
 
+private structure NormalizedValue where
+  bindings : Array (TSyntax `doElem)
+  value : TSyntax `term
+  atomic : Bool
+
 -- These witnesses justify the partial elaborator definitions; no translation
 -- branch uses them as a default source expression.
 private instance : Nonempty Atomic :=
@@ -96,6 +102,9 @@ private instance : Nonempty Primitive :=
 
 private instance : Nonempty LoweredBlock :=
   ⟨⟨⟨(mkCIdent ``Complexity.Language.Stmt.skip).raw⟩, #[], true⟩⟩
+
+private instance : Nonempty NormalizedValue :=
+  ⟨⟨#[], ⟨(mkCIdent ``Unit.unit).raw⟩, true⟩⟩
 
 private def typeName : Ty → String
   | .nat => "Nat"
@@ -186,6 +195,12 @@ private partial def parsePrimitive (scope : Scope) (stx : TSyntax `term) : Macro
   match stx with
   | `(($value:term)) => parsePrimitive scope value
   | `($left + $right) => binaryPrimitive scope left right .nat ``Prim.add ``Nat.add
+  | `($left * $right) => binaryPrimitive scope left right .nat ``Prim.mul ``Nat.mul
+  | `($left - $right) => binaryPrimitive scope left right .nat ``Prim.sub ``Nat.sub
+  | `($left / $right) => binaryPrimitive scope left right .nat ``Prim.div ``Nat.div
+  | `($left % $right) => binaryPrimitive scope left right .nat ``Prim.mod ``Nat.mod
+  | `($left == $right) => binaryPrimitive scope left right .bool ``Prim.eq ``Eq
+  | `($left = $right) => binaryPrimitive scope left right .bool ``Prim.eq ``Eq
   | `($left < $right) => binaryPrimitive scope left right .bool ``Prim.lt ``LT.lt
   | `($left ≤ $right) => binaryPrimitive scope left right .bool ``Prim.le ``LE.le
   | `($left <= $right) => binaryPrimitive scope left right .bool ``Prim.le ``LE.le
@@ -244,12 +259,76 @@ private def LoweredBlock.proofSequence (block : LoweredBlock) (normal : TSyntax 
     TSyntax ``doSeq :=
   doSequence (if block.fallsThrough then block.proofBody.push normal else block.proofBody)
 
+-- Normalize only the supported expression vocabulary. Fresh lexical names are
+-- consumed by the ordinary typed translator and cannot capture user bindings.
+private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool) :
+    MacroM NormalizedValue := withRef stx do
+  let binary (left right : TSyntax `term)
+      (rebuild : TSyntax `term → TSyntax `term → MacroM (TSyntax `term)) := do
+    let lhs ← normalizeValue left true
+    let rhs ← normalizeValue right true
+    return (⟨lhs.bindings ++ rhs.bindings, ← rebuild lhs.value rhs.value, false⟩ : NormalizedValue)
+  let normalized ← (match stx with
+    | `(($value:term)) => normalizeValue value false
+    | `($left + $right) => binary left right fun a b => `($a + $b)
+    | `($left * $right) => binary left right fun a b => `($a * $b)
+    | `($left - $right) => binary left right fun a b => `($a - $b)
+    | `($left / $right) => binary left right fun a b => `($a / $b)
+    | `($left % $right) => binary left right fun a b => `($a % $b)
+    | `($left == $right) => binary left right fun a b => `($a == $b)
+    | `($left = $right) => binary left right fun a b => `($a = $b)
+    | `($left < $right) => binary left right fun a b => `($a < $b)
+    | `($left ≤ $right) => binary left right fun a b => `($a ≤ $b)
+    | `($left <= $right) => binary left right fun a b => `($a <= $b)
+    | _ => pure ⟨#[], stx, true⟩)
+  if atomize && !normalized.atomic then
+    let name := mkIdentFrom stx (← Macro.addMacroScope `operand)
+    let binding ← `(doElem| let $name:ident := $(normalized.value))
+    return ⟨normalized.bindings.push binding, ⟨name.raw⟩, true⟩
+  else
+    return normalized
+
+private def normalizeCall (stx : TSyntax `term) :
+    MacroM (Array (TSyntax `doElem) × TSyntax `term) := withRef stx do
+  match stx with
+  | `($name:ident $operands:term*) =>
+      let mut bindings := #[]
+      let mut arguments := #[]
+      for operand in operands do
+        let normalized ← normalizeValue operand true
+        bindings := bindings ++ normalized.bindings
+        arguments := arguments.push normalized.value
+      return (bindings, Lean.Syntax.mkApp ⟨name.raw⟩ arguments)
+  | _ => return (#[], stx)
+
+private def normalizeElement (element : TSyntax `doElem) :
+    MacroM (Array (TSyntax `doElem) × TSyntax `doElem) := withRef element do
+  match element with
+  | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
+      let normalized ← normalizeValue value false
+      return (normalized.bindings,
+        ← `(doElem| let $name:ident $[: $annotation:term]? := $(normalized.value)))
+  | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
+      let (bindings, action) ← normalizeCall action
+      return (bindings, ← `(doElem| let $name:ident $[: $annotation:term]? ← $action:term))
+  | `(doElem| return $value:term) =>
+      let normalized ← normalizeValue value false
+      return (normalized.bindings, ← `(doElem| return $(normalized.value)))
+  | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) =>
+      let normalized ← normalizeValue condition false
+      return (normalized.bindings,
+        ← `(doElem| if $(normalized.value) then $yes:doSeq else $no:doSeq))
+  | _ => return (#[], element)
+
 private partial def blockCode (family : TSyntax `ident) (functions : Array Function)
     (scope : Scope) (result : Ty) (elements : List (TSyntax `doElem)) :
     MacroM LoweredBlock := do
   match elements with
   | [] => return ⟨← `(Complexity.Language.Stmt.skip), #[], true⟩
   | element :: rest => withRef element do
+      let (bindings, element) ← normalizeElement element
+      if !bindings.isEmpty then
+        return ← blockCode family functions scope result (bindings.toList ++ element :: rest)
       match element with
       | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
           let parsed ← parsePrimitive scope value

@@ -157,11 +157,13 @@ the execution model, public call theorems and costs are unchanged.
    invariants and actual effects. Keep budget-free correctness distinct from
    cost composition, while sharing routine structural bookkeeping. Costs of
    emitted code, frames and jumps remain proved, not entered by the tactic user.
-4. **Arithmetic fragments, starting with M1.** Package supported addition and
+4. **Arithmetic fragments, starting with M1.** Package supported arithmetic and
    comparison lowering with mathematical results, intermediate range conditions,
    frame preservation and actual instruction bounds, reusing word arithmetic
-   and atomic simulation. Add saturating subtraction and zero-divisor branches
-   when their source operations are implemented, not as an unused catalog.
+   and atomic simulation. Multiplication, saturating subtraction, division,
+   remainder and equality now have actual lowering and counted primitive proofs.
+   Subtraction masks the wrapping difference with a comparison; division and
+   remainder reuse the backend operations' existing zero-divisor semantics.
 
 Immediate existing consumers are the real return-stage proof in
 `Compiler/Local/Call/Results.lean` and Map's call → store → loop continuation.
@@ -237,8 +239,9 @@ Status: in progress, not complete.
   their false exceptional postcondition also rejects finite faults.
 - [Named scalar syntax](../Complexity/Language/Syntax.lean),
   `source_program P where`, now supports Nat/Bool/Unit functions, immutable
-  `let`, named calls, conditionals and returns. Operations use atomic operands;
-  deeper expressions must first be named with `let`. Its generated curried
+  `let`, named calls, conditionals and returns. Nested arithmetic and comparisons
+  are normalized left to right into actual primitive bindings, including within
+  call arguments and guards. Its generated curried
   `P.f` is a noncomputable `Part (Except Fault result)` observation, not a
   `#eval` runtime. The generated `P.f_eq` exposes one body in ordinary monadic
   notation using the proved continuation equations. Named callees remain
@@ -251,6 +254,11 @@ Status: in progress, not complete.
   connects Nat/Bool atoms and operations to the existing expression compiler,
   with source range conditions, preserved state and counted machine execution.
   Unit is not represented by a dummy scalar word.
+  The [remainder consumer](../Examples/Language/Remainder.lean) implements
+  `n - (n / d) * d` and reuses the ordinary Nat remainder identity, including
+  divisor zero. Its intermediate-range proof and actual compiled invocation
+  need only representable inputs; its separate bound counts this implementation,
+  not a hypothetical single remainder instruction.
 - [Whole-function lowering](../Complexity/Computability/Ram/Compiler/Language/Lowering.lean)
   and [generic simulation](../Complexity/Computability/Ram/Compiler/Language/Simulation.lean)
   compose lexical binding, sequences, branches, real calls and early returns.
@@ -378,6 +386,11 @@ call-renaming theorems are reusable. `Compiler.Valid.link_of_callsValid` supplie
 static composition when a new front table calls an appended old module; unlike
 sequential component composition, it does not run the old module's entry block.
 Static linking alone does not transfer a mathematical theorem.
+
+The initial `Contract` and `TimeBound` bridge modules now transport result
+properties and fixed-width time bounds for the actual `lowerFunc` invocation.
+They retain source realization and input representation premises. They do not
+yet transfer arbitrary old implementations or establish the consumer gate below.
 
 1. Put transfer rules under `Compiler/Language`, importing both independent
    source semantics and old-DSL proofs. Keep RAM imports and implementation
