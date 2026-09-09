@@ -65,11 +65,11 @@ private theorem lower_of_core {entry finish : Env Γ} (hw : 0 < w)
   have nextFlag : next ≤ flag := Nat.le_max_left _ _
   have resultFlag : resultSlot + fieldCount result ≤ flag := Nat.le_max_right _ _
   have avoids : layout.Avoids flag := by
-    intro τ scalar v
-    exact Nat.ne_of_lt (Nat.lt_of_lt_of_le (bounded scalar v) nextFlag)
+    intro τ v i
+    exact Nat.ne_of_lt (Nat.lt_of_lt_of_le (bounded v i) nextFlag)
   have bounded' : layout.Bounded (flag + 1) := by
-    intro τ scalar v
-    exact Nat.lt_of_lt_of_le (bounded scalar v) (Nat.le_trans nextFlag (Nat.le_succ flag))
+    intro τ v i
+    exact Nat.lt_of_lt_of_le (bounded v i) (Nat.le_trans nextFlag (Nat.le_succ flag))
   have matched' : layout.Matches entry (s.setReg flag 0).regs :=
     RegisterMap.Matches.setReg_of_ne matched avoids 0
   obtain ⟨t, body, property⟩ := core layout (flag + 1) resultSlot flag (s.setReg flag 0)

@@ -77,7 +77,9 @@ theorem argsExprs_readsBelow (layout : RegisterMap Γ) (args : Args Γ params)
 /-- The function result tuple only observes its actual result registers. -/
 theorem resultExprs_readsBelow (τ : Ty) (resultSlot : Reg) (entry : Source.State w) :
     ∀ expr ∈ resultExprs τ resultSlot, expr.ReadsBelow heapLimit entry.regs entry.mem := by
-  cases τ <;> simp [resultExprs, Expr.ReadsBelow]
+  intro expr member
+  obtain ⟨register, _, rfl⟩ := List.mem_map.mp member
+  trivial
 
 /-- An in-range atom evaluates to the exact word encoding of its source value. -/
 theorem atomExpr_eval (layout : RegisterMap Γ) (atom : Atom Γ τ) (scalar : Scalar τ)
@@ -106,18 +108,20 @@ theorem primExpr_eval (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar : Sc
 empty Unit tuple. -/
 theorem atomExprs_eval (layout : RegisterMap Γ) (atom : Atom Γ τ) (env : Env Γ)
     (entry : Source.State w) (hw : 0 < w) (matched : layout.Matches env entry.regs)
-    (fits : ∀ _scalar : Scalar τ, valueToNat (atom.eval env) < 2 ^ w) :
+    (fits : ∀ i : Fin (fieldCount τ), valueField (atom.eval env) i < 2 ^ w) :
     (atomExprs layout atom).map entry.eval = valueWords w (atom.eval env) := by
   cases τ with
   | nat =>
-      simpa only [atomExprs, List.map_cons, List.map_nil, valueWords, valueToNat] using
+      simpa only [atomExprs, List.map_cons, List.map_nil, valueWords_nat, valueToNat] using
         congrArg (fun value => [value])
-          (atomExpr_eval layout atom .nat env entry hw matched (fits .nat))
+          (atomExpr_eval layout atom .nat env entry hw matched
+            ((Scalar.fits_iff .nat (atom.eval env)).mp fits))
   | bool =>
-      simpa only [atomExprs, List.map_cons, List.map_nil, valueWords, valueToNat] using
+      simpa only [atomExprs, List.map_cons, List.map_nil, valueWords_bool, valueToNat] using
         congrArg (fun value => [value])
-          (atomExpr_eval layout atom .bool env entry hw matched (fits .bool))
-  | unit => rfl
+          (atomExpr_eval layout atom .bool env entry hw matched
+            ((Scalar.fits_iff .bool (atom.eval env)).mp fits))
+  | unit => simp only [atomExprs, List.map_nil, valueWords_unit]
 
 /-- Actual call operands initialize exactly the independent callee environment. -/
 theorem argsExprs_eval (layout : RegisterMap Γ) (args : Args Γ params) (env : Env Γ)
@@ -128,8 +132,8 @@ theorem argsExprs_eval (layout : RegisterMap Γ) (args : Args Γ params) (env : 
   | nil => rfl
   | cons atom rest ih =>
       simp only [argsExprs, List.map_append, Args.eval, envWords_cons]
-      rw [atomExprs_eval layout atom env entry hw matched (fun scalar => fits scalar .here),
-        ih (fun scalar v => fits scalar (.there v))]
+      rw [atomExprs_eval layout atom env entry hw matched (fun i => fits .here i),
+        ih (fun v i => fits (.there v) i)]
 
 /-- A primitive executes the existing assignment or skip rule and produces its
 actual encoded fields. This theorem does not assume a time budget. -/
@@ -159,27 +163,33 @@ theorem lowerPrim_matches (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ 
     RegisterMap.Matches (RegisterMap.extend layout τ dst) (Env.cons (prim.eval env) env)
       (entry.setRegs (valueRegs τ dst) (valueWords w (prim.eval env))).regs := by
   apply matched.setRegs bounded
-  intro scalar
-  have observed := primExpr_toNat layout prim scalar env entry.regs entry.mem hw matched fits
-  exact observed ▸ (entry.eval (primExpr layout prim scalar)).isLt
+  have scalarFits (scalar : Scalar τ) : valueToNat (prim.eval env) < 2 ^ w := by
+    have observed := primExpr_toNat layout prim scalar env entry.regs entry.mem hw matched fits
+    exact observed ▸ (entry.eval (primExpr layout prim scalar)).isLt
+  cases τ with
+  | nat => exact (Scalar.fits_iff .nat (prim.eval env)).mpr (scalarFits .nat)
+  | bool => exact (Scalar.fits_iff .bool (prim.eval env)).mpr (scalarFits .bool)
+  | unit => exact fun i => Fin.elim0 i
 
 /-- Return materialization writes only the source result's actual fields. -/
 theorem lowerReturn_safe (layout : RegisterMap Γ) (resultSlot : Reg) (atom : Atom Γ τ)
     (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
     (matched : layout.Matches env entry.regs)
-    (fits : ∀ _scalar : Scalar τ, valueToNat (atom.eval env) < 2 ^ w) :
+    (fits : ∀ i : Fin (fieldCount τ), valueField (atom.eval env) i < 2 ^ w) :
     Source.SafeExec program heapLimit depth (lowerReturn layout resultSlot atom) entry
       (entry.setRegs (valueRegs τ resultSlot) (valueWords w (atom.eval env))) := by
   cases τ with
   | nat =>
       change Source.SafeExec _ _ _ (.assign resultSlot (atomExpr layout atom .nat)) entry
         (entry.setReg resultSlot (BitVec.ofNat w (valueToNat (atom.eval env))))
-      rw [← atomExpr_eval layout atom .nat env entry hw matched (fits .nat)]
+      rw [← atomExpr_eval layout atom .nat env entry hw matched
+        ((Scalar.fits_iff .nat (atom.eval env)).mp fits)]
       exact .assign (atomExpr_readsBelow layout atom .nat entry)
   | bool =>
       change Source.SafeExec _ _ _ (.assign resultSlot (atomExpr layout atom .bool)) entry
         (entry.setReg resultSlot (BitVec.ofNat w (valueToNat (atom.eval env))))
-      rw [← atomExpr_eval layout atom .bool env entry hw matched (fits .bool)]
+      rw [← atomExpr_eval layout atom .bool env entry hw matched
+        ((Scalar.fits_iff .bool (atom.eval env)).mp fits)]
       exact .assign (atomExpr_readsBelow layout atom .bool entry)
   | unit => exact .skip
 
@@ -190,8 +200,18 @@ theorem resultExprs_setRegs_eval (τ : Ty) (resultSlot : Reg) (value : Value τ)
     (resultExprs τ resultSlot).map
         (entry.setRegs (valueRegs τ resultSlot) (valueWords w value)).eval =
       valueWords w value := by
-  cases τ <;>
-    simp only [resultExprs, valueRegs, valueWords, List.map_cons, List.map_nil,
-      Source.State.setRegs_singleton, Source.State.eval, Expr.eval, Source.State.setReg_same]
+  apply List.ext_getElem
+  · simp only [List.length_map, resultExprs_length, valueWords_length]
+  · intro i hi _
+    have distinct : (valueRegs τ resultSlot).Nodup := by
+      simpa only [valueRegs] using
+        (List.nodup_range' (s := resultSlot) (n := fieldCount τ))
+    have lengths : (valueRegs τ resultSlot).length = (valueWords w value).length := by
+      simp only [valueRegs_length, valueWords_length]
+    have index : i < (valueRegs τ resultSlot).length := by
+      simpa only [resultExprs, List.length_map] using hi
+    simpa only [resultExprs, List.getElem_map, Source.State.eval, Expr.eval] using
+      Source.State.setRegs_getElem entry (valueRegs τ resultSlot) (valueWords w value)
+        distinct lengths i index
 
 end Ram.LanguageCompiler

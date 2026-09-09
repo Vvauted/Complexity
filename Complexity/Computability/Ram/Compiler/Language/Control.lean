@@ -49,17 +49,19 @@ theorem ControlMatches.tail {layout : RegisterMap Γ} {finish : Env (τ :: Γ)}
 
 namespace RegisterMap
 
-/-- A compiler-private register is not assigned to any scalar source binding. -/
+/-- A compiler-private register is not assigned to any field of a source binding. -/
 def Avoids (layout : RegisterMap Γ) (r : Reg) : Prop :=
-  ∀ {τ} (scalar : Scalar τ) (v : Var Γ τ), layout scalar v ≠ r
+  ∀ {τ} (v : Var Γ τ) (i : Fin (fieldCount τ)), layout v i ≠ r
 
-/-- Allocating a binding away from the private register preserves separation. -/
+/-- Allocating every field after the private register preserves separation. -/
 theorem Avoids.extend {layout : RegisterMap Γ} (avoids : layout.Avoids flag)
-    (fresh : dst ≠ flag) : Avoids (RegisterMap.extend layout τ dst) flag := by
-  intro σ scalar v
+    (fresh : flag < dst) : Avoids (RegisterMap.extend layout τ dst) flag := by
+  intro σ v i
   cases v with
-  | here => exact fresh
-  | there v => exact avoids scalar v
+  | here =>
+      change dst + i.val ≠ flag
+      exact Nat.ne_of_gt (Nat.lt_of_lt_of_le fresh (Nat.le_add_right dst i.val))
+  | there v => exact avoids v i
 
 /-- Initializing or updating a private register preserves every represented
 source value. This applies equally to the initial zero and the returned flag. -/
@@ -67,9 +69,9 @@ theorem Matches.setReg_of_ne {layout : RegisterMap Γ} {env : Env Γ}
     {entry : Source.State w} (matched : layout.Matches env entry.regs)
     (avoids : layout.Avoids r) (value : Word w) :
     layout.Matches env (entry.setReg r value).regs := by
-  intro τ scalar v
-  rw [Source.State.setReg_ne entry r (layout scalar v) value (avoids scalar v)]
-  exact matched scalar v
+  intro τ v i
+  rw [Source.State.setReg_ne entry r (layout v i) value (avoids v i)]
+  exact matched v i
 
 end RegisterMap
 
@@ -77,24 +79,22 @@ end RegisterMap
 The fields are the actual assigned list; no length or default-value assumption
 is required for preservation outside the destinations. -/
 theorem valueRegs_setRegs_other (entry : Source.State w) (τ : Ty) (dst flag : Reg)
-    (values : List (Word w)) (separate : dst ≠ flag) :
+    (values : List (Word w)) (separate : flag ∉ valueRegs τ dst) :
     (entry.setRegs (valueRegs τ dst) values).regs flag = entry.regs flag := by
-  apply Source.State.setRegs_ne
-  cases τ with
-  | nat | bool =>
-      simpa only [valueRegs, List.mem_singleton] using Ne.symm separate
-  | unit => exact List.not_mem_nil
+  exact Source.State.setRegs_ne entry _ _ flag separate
+
+/-- A private flag before a fresh tuple is outside every allocated field. -/
+theorem flag_not_mem_valueRegs_of_lt (τ : Ty) (dst flag : Reg)
+    (separate : flag < dst) : flag ∉ valueRegs τ dst := by
+  intro member
+  exact Nat.not_le_of_gt separate (mem_valueRegs.mp member).1
 
 /-- A flag following the result tuple lies outside all actual result fields. -/
 theorem flag_not_mem_valueRegs (τ : Ty) (resultSlot flag : Reg)
     (separate : resultSlot + fieldCount τ ≤ flag) :
     flag ∉ valueRegs τ resultSlot := by
-  cases τ with
-  | nat | bool =>
-      have greater : resultSlot < flag :=
-        Nat.lt_of_lt_of_le (Nat.lt_succ_self resultSlot) separate
-      simpa only [valueRegs, List.mem_singleton] using Nat.ne_of_gt greater
-  | unit => exact List.not_mem_nil
+  intro member
+  exact Nat.not_le_of_gt (mem_valueRegs.mp member).2 separate
 
 /-- Setting the private flag leaves the already-computed return tuple intact. -/
 theorem resultExprs_setReg_eval (τ : Ty) (resultSlot flag : Reg) (value : Word w)

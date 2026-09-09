@@ -36,10 +36,20 @@ open Complexity.Language
 
 private theorem parameterMap_bodyBound (Γ : List Ty) (result : Ty) :
     RegisterMap.Bounded (parameterMap Γ) (contextSize Γ + fieldCount result) := by
-  intro τ scalar v
-  have bound : parameterMap Γ 0 scalar v < contextSize Γ := by
-    simpa only [Nat.zero_add] using (parameterMap_bounded Γ 0 scalar v)
+  intro τ v i
+  have bound : parameterMap Γ 0 v i < contextSize Γ := by
+    simpa only [Nat.zero_add] using (parameterMap_bounded Γ 0 v i)
   exact Nat.lt_of_lt_of_le bound (Nat.le_add_right _ _)
+
+/-- The current source types have only scalar fields. This explicit case split
+connects their scalar realization condition to the fieldwise value interface. -/
+private theorem fieldsFit_of_scalarRange {τ : Ty} {value : Value τ}
+    (fits : valueToNat value < 2 ^ w) :
+    ∀ i : Fin (fieldCount τ), valueField value i < 2 ^ w := by
+  cases τ with
+  | nat => exact (Scalar.fits_iff .nat value).mpr fits
+  | bool => exact (Scalar.fits_iff .bool value).mpr fits
+  | unit => exact fun i => Fin.elim0 i
 
 namespace ExecutionCost
 
@@ -72,11 +82,11 @@ private theorem lowerInitializedCore_of_core {entry finish : Env Γ}
   have nextFlag : next ≤ flag := Nat.le_max_left _ _
   have resultFlag : resultSlot + fieldCount result ≤ flag := Nat.le_max_right _ _
   have avoids : layout.Avoids flag := by
-    intro τ scalar v
-    exact Nat.ne_of_lt (Nat.lt_of_lt_of_le (bounded scalar v) nextFlag)
+    intro τ v i
+    exact Nat.ne_of_lt (Nat.lt_of_lt_of_le (bounded v i) nextFlag)
   have bounded' : layout.Bounded (flag + 1) := by
-    intro τ scalar v
-    exact Nat.lt_of_lt_of_le (bounded scalar v) (Nat.le_trans nextFlag (Nat.le_succ flag))
+    intro τ v i
+    exact Nat.lt_of_lt_of_le (bounded v i) (Nat.le_trans nextFlag (Nat.le_succ flag))
   have matched' : layout.Matches entry (s.setReg flag 0).regs :=
     RegisterMap.Matches.setReg_of_ne matched avoids 0
   obtain ⟨t, body, property⟩ := core layout (flag + 1) resultSlot flag (s.setReg flag 0)
@@ -170,11 +180,11 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
       have flagPreserved :
           (s.setRegs (valueRegs τ next) (valueWords w (value.eval entry.locals))).regs flag = 0 :=
         (valueRegs_setRegs_other s τ next flag (valueWords w (value.eval entry.locals))
-          (Nat.ne_of_gt fresh)).trans flagZero
+          (flag_not_mem_valueRegs_of_lt τ next flag fresh)).trans flagZero
       obtain ⟨t, rest, property⟩ := ih (RegisterMap.extend layout τ next)
         (next + fieldCount τ) resultSlot flag _
         (RegisterMap.extend_bounded bounded) matching
-        (RegisterMap.Avoids.extend avoids (Nat.ne_of_gt fresh))
+        (RegisterMap.Avoids.extend avoids fresh)
         (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag flagPreserved
       exact ⟨t, .seq first rest, ControlMatches.tail property⟩
   | @seqNormal Γ result depth first second entry middle finish outcome head tail
@@ -242,7 +252,7 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
         s.setRegs (valueRegs result resultSlot) (valueWords w (value.eval entry.locals))
       have writeResult := lowerReturn_measured (control := controlReg)
         (program := lowerProgram program) (heapLimit := heapLimit) (depth := depth)
-        layout resultSlot value entry.locals s hw matched (fun _ => fits)
+        layout resultSlot value entry.locals s hw matched (fieldsFit_of_scalarRange fits)
       have raiseFlag : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
           (.assign flag (.const 1)) 2 received (received.setReg flag 1) := .assign trivial
       refine ⟨received.setReg flag 1, .seq writeResult raiseFlag, ?_⟩
@@ -259,15 +269,16 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
         (τ := signatures[fn].result) (value := value)
         layout args entry.locals s next hw matched arguments invocation
         (lowerProgram_lookup program fn)
-        (by simp only [lowerFunc_results_length]) bounded (fun _ => callee.returned_fits)
+        (by simp only [lowerFunc_results_length]) bounded
+        (fieldsFit_of_scalarRange callee.returned_fits)
       obtain ⟨t, rest, property⟩ := ihBody
         (RegisterMap.extend layout signatures[fn].result next)
         (next + fieldCount signatures[fn].result) resultSlot flag _
         (RegisterMap.extend_bounded bounded) matching
-        (RegisterMap.Avoids.extend avoids (Nat.ne_of_gt fresh))
+        (RegisterMap.Avoids.extend avoids fresh)
         (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag
-        ((preserved flag (by
-          cases signatures[fn].result <;> simp [valueRegs, Nat.ne_of_lt fresh])).trans flagZero)
+        ((preserved flag
+          (flag_not_mem_valueRegs_of_lt signatures[fn].result next flag fresh)).trans flagZero)
       exact ⟨t, .seq callRun rest, ControlMatches.tail property⟩
 
 /-- A returned source statement executes its wrapper for exactly five further

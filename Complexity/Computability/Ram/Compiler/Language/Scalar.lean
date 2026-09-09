@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Language.Basic
+import Complexity.Computability.Ram.Compiler.Language.Encoding
 import Complexity.Computability.Ram.Compiler.Expr.Basic
 
 /-!
@@ -14,8 +14,9 @@ module lowers their Nat/Bool fragment to existing RAM expressions and reuses the
 verified expression compiler. Range conditions concern the actual operands and
 intermediate result, not only a function's eventual output.
 
-The register map belongs to the backend. Unit bindings require no scalar slot
-and are not accepted as one-word operands. The final theorem supplies actual
+The register map belongs to the backend and indexes every actual value field.
+Scalar operations select their sole field; Unit bindings have no field and are
+not accepted as one-word operands. The final theorem supplies actual
 machine execution, its emitted-code length, the mathematical result and the
 existing frame guarantee; no source cost table is assumed.
 -/
@@ -29,32 +30,71 @@ inductive Scalar : Ty → Prop where
   | nat : Scalar .nat
   | bool : Scalar .bool
 
-/-- The mathematical unsigned observation used by the scalar representation.
-The Unit case is only a total definition of the observation, not a word encoding. -/
-def valueToNat : {τ : Ty} → Value τ → Nat
-  | .nat, n => n
-  | .bool, b => if b then 1 else 0
-  | .unit, _ => 0
+namespace Scalar
 
-/-- A backend assignment for scalar lexical bindings; Unit has no entry. -/
-abbrev RegisterMap (Γ : List Ty) := ∀ {τ}, Scalar τ → Var Γ τ → Reg
+/-- A scalar operation selects the sole actual field of its operand. -/
+def index {τ : Ty} (scalar : Scalar τ) : Fin (fieldCount τ) :=
+  ⟨0, by cases scalar <;> decide⟩
+
+@[simp] theorem index_val {τ : Ty} (scalar : Scalar τ) : scalar.index.val = 0 := rfl
+
+/-- Scalar qualifications identify one-word types, not a second layout. -/
+theorem fieldCount_eq_one {τ : Ty} (scalar : Scalar τ) : fieldCount τ = 1 := by
+  cases scalar <;> rfl
+
+/-- Every field of a scalar is its usual unsigned observation. -/
+theorem valueField {τ : Ty} (scalar : Scalar τ) (value : Value τ)
+    (i : Fin (fieldCount τ)) :
+    LanguageCompiler.valueField value i = valueToNat value := by
+  cases scalar <;> rfl
+
+/-- The scalar range condition is exactly its field range condition. -/
+theorem fits_iff {τ : Ty} (scalar : Scalar τ) (value : Value τ) :
+    (∀ i : Fin (fieldCount τ), LanguageCompiler.valueField value i < 2 ^ w) ↔
+      valueToNat value < 2 ^ w := by
+  constructor
+  · intro fits
+    simpa only [scalar.valueField] using fits scalar.index
+  · intro fits i
+    simpa only [scalar.valueField] using fits
+
+end Scalar
+
+/-- A represented scalar occupies an actual word. -/
+theorem fieldCount_pos (scalar : Scalar τ) : 0 < fieldCount τ := by
+  rw [scalar.fieldCount_eq_one]
+  decide
+
+/-- A backend assignment for every field of each lexical binding. -/
+abbrev RegisterMap (Γ : List Ty) := ∀ {τ}, Var Γ τ → Fin (fieldCount τ) → Reg
 
 namespace RegisterMap
 
-/-- Every represented source scalar has its exact mathematical value. -/
+/-- Every actual field has its exact mathematical value. -/
 def Matches (layout : RegisterMap Γ) (env : Env Γ) (regs : Reg → Word w) : Prop :=
-  ∀ {τ} (scalar : Scalar τ) (v : Var Γ τ),
-    (regs (layout scalar v)).toNat = valueToNat (env.get v)
+  ∀ {τ} (v : Var Γ τ) (i : Fin (fieldCount τ)),
+    (regs (layout v i)).toNat = valueField (env.get v) i
 
 /-- Source slots lie below the expression compiler's scratch register. -/
 def Bounded (layout : RegisterMap Γ) (bound : Reg) : Prop :=
-  ∀ {τ} (scalar : Scalar τ) (v : Var Γ τ), layout scalar v < bound
+  ∀ {τ} (v : Var Γ τ) (i : Fin (fieldCount τ)), layout v i < bound
+
+/-- Scalar expression proofs project the one field from the common relation. -/
+theorem Matches.scalar {layout : RegisterMap Γ} {env : Env Γ} {regs : Reg → Word w}
+    (matched : layout.Matches env regs) (scalar : Scalar τ) (v : Var Γ τ) :
+    (regs (layout v scalar.index)).toNat = valueToNat (env.get v) :=
+  (matched v scalar.index).trans (scalar.valueField (env.get v) scalar.index)
+
+/-- Scalar expressions use the same inferred register bound as other fields. -/
+theorem Bounded.scalar {layout : RegisterMap Γ} (bounded : layout.Bounded bound)
+    (scalar : Scalar τ) (v : Var Γ τ) : layout v scalar.index < bound :=
+  bounded v scalar.index
 
 end RegisterMap
 
 /-- Lower an atom without adding computations to its source meaning. -/
 def atomExpr (layout : RegisterMap Γ) : {τ : Ty} → Atom Γ τ → Scalar τ → Expr
-  | _, .var v, scalar => .var (layout scalar v)
+  | _, .var v, scalar => .var (layout v scalar.index)
   | _, .nat n, _ => .const n
   | _, .bool b, _ => .const (if b then 1 else 0)
   | _, .unit, impossible => nomatch impossible
@@ -66,7 +106,7 @@ theorem atomExpr_toNat (layout : RegisterMap Γ) (atom : Atom Γ τ) (scalar : S
     (fits : valueToNat (atom.eval env) < 2 ^ w) :
     ((atomExpr layout atom scalar).eval regs mem).toNat = valueToNat (atom.eval env) := by
   cases atom with
-  | var v => exact matched scalar v
+  | var v => exact matched.scalar scalar v
   | nat n => exact Word.ofNat_toNat_of_lt fits
   | bool b =>
       cases b <;> simp [atomExpr, Expr.eval, Atom.eval, valueToNat, BitVec.toNat_one hw]
@@ -76,7 +116,7 @@ theorem atomExpr_toNat (layout : RegisterMap Γ) (atom : Atom Γ τ) (scalar : S
 theorem atomExpr_bounded (layout : RegisterMap Γ) (atom : Atom Γ τ) (scalar : Scalar τ)
     (bounded : layout.Bounded dst) : (atomExpr layout atom scalar).Bounded dst := by
   cases atom with
-  | var v => exact bounded scalar v
+  | var v => exact bounded.scalar scalar v
   | nat => trivial
   | bool => trivial
   | unit => cases scalar

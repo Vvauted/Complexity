@@ -96,6 +96,7 @@ private def normalizeTypeIndices (expression : Lean.Expr) : MetaM Lean.Expr := d
       return .done (← whnf expression)
     if expression.isAppOf ``Complexity.Language.Value ||
         expression.isAppOf ``Ram.LanguageCompiler.valueToNat ||
+        expression.isAppOf ``Ram.LanguageCompiler.valueField ||
         expression.isAppOf ``Ram.LanguageCompiler.fieldCount then
       let arguments := expression.getAppArgs
       unless arguments.isEmpty do
@@ -135,6 +136,7 @@ private def normalizeValues : TacticM Unit := do
         Complexity.Language.State.locals_tail, Complexity.Language.State.heap_tail,
         Complexity.Language.State.tail_cons,
         Complexity.Language.Value, Ram.LanguageCompiler.valueToNat,
+        Ram.LanguageCompiler.valueField_nat, Ram.LanguageCompiler.valueField_bool,
         Ram.LanguageCompiler.EnvFits.cons_nat_iff,
         Ram.LanguageCompiler.EnvFits.cons_bool_iff,
         Ram.LanguageCompiler.EnvFits.cons_unit_iff,

@@ -22,6 +22,11 @@ extent only; validity of the original object is a separate heap predicate.
 
 These are mathematical operations on a shared heap, not yet statement syntax,
 an execution relation or a claim about allocation or machine costs.
+
+`Buffer.Contents` observes a valid view as an ordinary `Array.extract` for
+mathematical specifications. It is a ghost relation, not an operation that
+copies the buffer before execution. Reads and writes still access the current
+shared object, and the content rules retain aliasing and unaffected cells.
 -/
 
 namespace Complexity.Language
@@ -304,6 +309,139 @@ theorem Valid.write {heap finish : Heap} {τ σ : CellTy} {buffer : Buffer τ}
       exact Heap.object?_replace_self (Heap.object_lt_size found)
     · simpa using otherExtent
   · exact ⟨otherValues, (Heap.object?_replace_ne sameObject).trans otherFound, otherExtent⟩
+
+/-- The ordinary mathematical contents of a valid borrowed view. This relation
+observes the current heap; it does not introduce a runtime snapshot or copy. -/
+def Contents {τ : CellTy} (buffer : Buffer τ) (heap : Heap)
+    (contents : Array (CellValue τ)) : Prop :=
+  ∃ values, heap.object? τ buffer.object = some values ∧
+    buffer.offset + buffer.length ≤ values.size ∧
+    contents = values.extract buffer.offset (buffer.offset + buffer.length)
+
+/-- Observing contents includes validity of the complete view. -/
+theorem Contents.valid {τ : CellTy} {buffer : Buffer τ} {heap : Heap}
+    {contents : Array (CellValue τ)} (observed : buffer.Contents heap contents) :
+    buffer.Valid heap := by
+  obtain ⟨values, found, extent, _⟩ := observed
+  exact ⟨values, found, extent⟩
+
+/-- Every valid view has mathematical contents in the native array type. -/
+theorem Valid.contents {τ : CellTy} {buffer : Buffer τ} {heap : Heap}
+    (valid : buffer.Valid heap) : ∃ contents, buffer.Contents heap contents := by
+  obtain ⟨values, found, extent⟩ := valid
+  exact ⟨_, values, found, extent, rfl⟩
+
+/-- A valid view's mathematical contents have exactly its advertised length. -/
+theorem Contents.size_eq {τ : CellTy} {buffer : Buffer τ} {heap : Heap}
+    {contents : Array (CellValue τ)} (observed : buffer.Contents heap contents) :
+    contents.size = buffer.length := by
+  obtain ⟨values, _, extent, rfl⟩ := observed
+  simp only [Array.size_extract, Nat.min_eq_left extent, Nat.add_sub_cancel_left]
+
+/-- The same view and heap determine a unique ordinary array. -/
+theorem Contents.unique {τ : CellTy} {buffer : Buffer τ} {heap : Heap}
+    {contents other : Array (CellValue τ)} (observed : buffer.Contents heap contents)
+    (observedOther : buffer.Contents heap other) : contents = other := by
+  obtain ⟨values, found, _, rfl⟩ := observed
+  obtain ⟨otherValues, otherFound, _, rfl⟩ := observedOther
+  have same : values = otherValues := Option.some.inj (found.symm.trans otherFound)
+  rw [same]
+
+/-- Reading a valid mathematical index returns its ordinary array element. -/
+theorem Contents.read {τ : CellTy} {buffer : Buffer τ} {heap : Heap}
+    {contents : Array (CellValue τ)} (observed : buffer.Contents heap contents)
+    {index : Nat} (bound : index < contents.size) :
+    heap.read buffer index = .ok contents[index] := by
+  obtain ⟨values, found, extent, rfl⟩ := observed
+  have localBound : index < buffer.length := by
+    simpa only [Array.size_extract, Nat.min_eq_left extent, Nat.add_sub_cancel_left] using bound
+  rw [Heap.read_eq found extent localBound]
+  simp only [Array.getElem_extract]
+
+/-- Native array extensionality establishes contents from the actual reads of
+a valid view. No independently supplied evaluator or snapshot is involved. -/
+theorem Contents.of_read {τ : CellTy} {buffer : Buffer τ} {heap : Heap}
+    {contents : Array (CellValue τ)} (valid : buffer.Valid heap)
+    (size : contents.size = buffer.length)
+    (reads : ∀ index (bound : index < contents.size),
+      heap.read buffer index = .ok contents[index]) :
+    buffer.Contents heap contents := by
+  obtain ⟨actual, observed⟩ := valid.contents
+  have same : contents = actual := by
+    apply Array.ext (size.trans observed.size_eq.symm)
+    intro index bound actualBound
+    exact Except.ok.inj ((reads index bound).symm.trans (observed.read actualBound))
+  exact same.symm ▸ observed
+
+/-- A successful write supplies the index proof needed by native `Array.set`. -/
+theorem Contents.index_lt_size_of_write {τ : CellTy} {buffer : Buffer τ}
+    {heap finish : Heap} {contents : Array (CellValue τ)}
+    (observed : buffer.Contents heap contents) {index : Nat} {value : CellValue τ}
+    (written : heap.write buffer index value = .ok finish) : index < contents.size := by
+  obtain ⟨_, _, _, bound, _⟩ := Heap.write_eq_ok_iff.mp written
+  simpa only [observed.size_eq] using bound
+
+/-- A write falling inside another valid view updates that view at the matching
+relative index. The views may coincide, overlap or have different extents. -/
+theorem Contents.write_alias {τ : CellTy} {buffer other : Buffer τ}
+    {heap finish : Heap} {contents : Array (CellValue τ)}
+    (observed : other.Contents heap contents) {index otherIndex : Nat} {value : CellValue τ}
+    (written : heap.write buffer index value = .ok finish)
+    (sameObject : buffer.object = other.object) (bound : otherIndex < contents.size)
+    (sameCell : buffer.offset + index = other.offset + otherIndex) :
+    other.Contents finish (contents.set otherIndex value bound) := by
+  apply Contents.of_read (observed.valid.write written)
+    (by simpa only [Array.size_set] using observed.size_eq)
+  intro next nextBound
+  have originalBound : next < contents.size := by
+    simpa only [Array.size_set] using nextBound
+  by_cases sameIndex : otherIndex = next
+  · subst next
+    rw [Heap.read_write_alias written observed.valid sameObject
+      (by simpa only [observed.size_eq] using bound) sameCell]
+    simp only [Array.getElem_set_self]
+  · have differentCell : buffer.offset + index ≠ other.offset + next := by omega
+    rw [Heap.read_write_of_ne_cell written sameObject differentCell,
+      observed.read originalBound]
+    simp only [Array.getElem_set_ne bound originalBound sameIndex]
+
+/-- Writing through a view updates its ordinary array with native `Array.set`.
+The successful write supplies the index bound; it is not required again. -/
+theorem Contents.write {τ : CellTy} {buffer : Buffer τ} {heap finish : Heap}
+    {contents : Array (CellValue τ)} (observed : buffer.Contents heap contents)
+    {index : Nat} {value : CellValue τ}
+    (written : heap.write buffer index value = .ok finish) :
+    buffer.Contents finish
+      (contents.set index value (observed.index_lt_size_of_write written)) :=
+  observed.write_alias written rfl (observed.index_lt_size_of_write written) rfl
+
+/-- A write to a different object preserves this view's entire contents,
+including when the two objects have different element types. -/
+theorem Contents.write_of_ne {τ σ : CellTy} {buffer : Buffer τ} {other : Buffer σ}
+    {heap finish : Heap} {contents : Array (CellValue σ)}
+    (observed : other.Contents heap contents) {index : Nat} {value : CellValue τ}
+    (written : heap.write buffer index value = .ok finish)
+    (different : buffer.object ≠ other.object) : other.Contents finish contents := by
+  obtain ⟨values, found, extent, same⟩ := observed
+  exact ⟨values, (Heap.object?_write_of_ne written different).trans found, extent, same⟩
+
+/-- A write outside this view's interval leaves its entire mathematical contents
+unchanged, even when it updates the same shared object. -/
+theorem Contents.write_of_outside {τ : CellTy} {buffer other : Buffer τ}
+    {heap finish : Heap} {contents : Array (CellValue τ)}
+    (observed : other.Contents heap contents) {index : Nat} {value : CellValue τ}
+    (written : heap.write buffer index value = .ok finish)
+    (outside : buffer.offset + index < other.offset ∨
+      other.offset + other.length ≤ buffer.offset + index) :
+    other.Contents finish contents := by
+  by_cases sameObject : buffer.object = other.object
+  · apply Contents.of_read (observed.valid.write written) observed.size_eq
+    intro next bound
+    have localBound : next < other.length := by simpa only [observed.size_eq] using bound
+    have differentCell : buffer.offset + index ≠ other.offset + next := by omega
+    rw [Heap.read_write_of_ne_cell written sameObject differentCell]
+    exact observed.read bound
+  · exact observed.write_of_ne written sameObject
 
 end Buffer
 

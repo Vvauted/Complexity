@@ -446,9 +446,25 @@ Directly reuse mathlib mathematics when no machine correspondence is needed.
 Status: the independent shared-object foundation is implemented in
 [`Language/Heap`](../Complexity/Language/Heap.lean). Typed native arrays,
 checked views, reads/writes/slices, different-object preservation and overlapping
-alias observations are proved. The same source execution and function contracts
-now carry this heap, but read/write statements and the RAM representation bridge
-do not yet consume its operations, so mutable programming remains an open milestone.
+alias observations are proved. `Buffer.Contents` gives a view its ordinary native
+array contents; reads use `getElem`, writes use `Array.set`, and overlapping views
+observe the same update. The
+[RAM heap relation](../Complexity/Computability/Ram/Compiler/Language/Heap.lean)
+represents complete objects using a fixed proof-level placement. It preserves
+actual aliases, object-cell separation and legal empty endpoints through reads,
+writes, parameter binding and caller restoration. It is not a runtime object
+table or a source-statement lowering theorem. The
+[operation bridge](../Complexity/Computability/Ram/Compiler/Language/HeapOperation.lean)
+executes successful source reads and writes with actual dynamic RAM expressions,
+preserving the same heap relation and counting operand evaluation through the
+existing measured compiler. These rules do not implement source faults or add
+runtime validity checks.
+
+The same source execution and function contracts carry this heap. The compiler's
+existing layouts now index actual fields uniformly, including parameter packing,
+fresh call receivers and result lookup. The enabled source types remain
+Nat/Bool/Unit: neither generic field infrastructure nor the heap relation alone
+enables buffer statements. Mutable programming remains an open milestone.
 
 The source state contains typed locals and the
 shared heap. Calls restore caller locals while retaining the actual callee

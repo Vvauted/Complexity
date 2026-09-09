@@ -116,7 +116,10 @@ def resultExprs (τ : Ty) (resultSlot : Reg) : List Expr :=
 /-- Result expressions fit the reserved result tuple, independently of the body. -/
 theorem resultExprs_bounded (τ : Ty) (resultSlot : Reg) :
     ∀ expr ∈ resultExprs τ resultSlot, expr.Bounded (resultSlot + fieldCount τ) := by
-  cases τ <;> simp [resultExprs, valueRegs, fieldCount, Expr.Bounded]
+  intro expr member
+  change expr ∈ (valueRegs τ resultSlot).map Expr.var at member
+  obtain ⟨slot, slotMember, rfl⟩ := List.mem_map.mp member
+  exact (mem_valueRegs.mp slotMember).2
 
 /-- Parameters occupy the initial compact prefix, followed by the reserved
 result fields, private return flag and fresh lexical slots. A function has no

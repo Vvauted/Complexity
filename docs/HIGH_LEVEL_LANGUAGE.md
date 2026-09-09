@@ -376,19 +376,31 @@ typed native-array objects, offset/length views, checked read/write/slice
 operations and read-after-write/alias/frame laws. A successful write is proved
 to be an actual native `Array.set` at the object and cell levels. This foundation
 is carried by the source execution state, including across calls and faults.
-Read/write statements and the heap-to-RAM representation are not implemented
-yet; transporting the heap alone does not make mutable programs available.
+`Buffer.Contents` observes a valid view as an ordinary native array and transfers
+reads and writes to `getElem` and `Array.set`, including updates through aliases.
+Read/write statements are not implemented yet; transporting the heap alone does
+not make mutable programs available.
 
-The first borrowed-buffer bridge will fix an object-to-base placement as proof
-data, represent each complete object with the existing `Source.ArrayAt`, and
-pass views through the existing two-field `ArrayRef` convention. Placement is
-not a runtime object table. Reuse `ArrayAt.slice`, native-array store rules and
-indexed frames; separate actual cells of different objects, not overlapping
-views of one object. Extend the existing register layout to typed fields rather
-than adding an unrelated buffer layout. A view encoding need not recover source
-handle identity: empty views of different objects can share an encoded endpoint.
+The [borrowed-buffer representation](../Complexity/Computability/Ram/Compiler/Language/Heap.lean)
+fixes an object-to-base placement as proof data, represents each complete object
+with the existing `Source.ArrayAt`, and observes views through the existing
+two-field `ArrayRef` convention. Placement is not a runtime object table.
+Its read and write rules reuse `ArrayAt.slice`, native-array store rules and
+indexed frames; they separate actual cells of different objects, not overlapping
+views of one object. The same register layout now indexes typed fields, with
+generic argument packing and receiver proofs; enabling buffer types and passing
+their fields through the whole compiler remains to be done. A view encoding
+need not recover source handle identity: empty views of different objects can
+share an encoded endpoint.
 Do not infer handle equality from descriptor equality or assume that a successful
 access simulation also implements and charges fault checks.
+
+The [operation bridge](../Complexity/Computability/Ram/Compiler/Language/HeapOperation.lean)
+connects a successful source read or write to real RAM load/store expressions,
+their exact endpoints and the existing compiler-derived instruction counts.
+Operand expressions are evaluated dynamically; placement is only a proof
+parameter. These shared rules are available for the upcoming source statement
+cases, not a claim that the frontend already accepts them.
 
 Use relations when abstraction forgets storage details; do not require a
 bijection between an entire RAM heap and an observed list. Update related views

@@ -78,9 +78,18 @@ instances; it does not make `mvcgen` prove source termination automatically.
 Function preconditions take the initial heap, and postconditions relate it to
 the returned value and final heap. The native triple fixes the initial heap as
 a ghost rather than identifying it with the post-state. Calls retain the
-callee's actual heap even on failure. Buffer statements and their RAM
-representation remain unfinished; this state interface alone does not enable
-array programs.
+callee's actual heap even on failure. The
+[heap foundation](##Complexity.Language.Heap) supplies `Buffer.Contents`, whose
+mathematical view is a native array; reads and writes correspond to `getElem`
+and `Array.set`, retaining aliases. The
+[RAM representation](##Complexity.Computability.Ram.Compiler.Language.Heap)
+relates complete shared objects and their views to actual memory, preserving
+the relation through successful reads and writes. Its placement is proof data,
+not a runtime object table. The
+[operation bridge](##Complexity.Computability.Ram.Compiler.Language.HeapOperation)
+executes real dynamic load/store expressions and retains their compiler-derived
+counts, without claiming runtime fault checks. Buffer statements and their whole-program lowering
+remain unfinished; these interfaces alone do not enable array programs.
 
 The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
 branches on its returned value and proves the result equals `min (n + 1) limit`
@@ -181,6 +190,10 @@ Compiler maintenance is a separate, active proof workflow. The
 [layout rules](##Complexity.Computability.Ram.Compiler.Language.Layout),
 [return-flag preservation](##Complexity.Computability.Ram.Compiler.Language.Control)
 and measured simulation compose actual register updates and calling conventions.
+The same layout indexes every actual value field. Parameter packing and fresh
+receivers use those indices and the existing register-update rules; Unit has no
+dummy field. The enabled source vocabulary is still Nat/Bool/Unit, not arbitrary
+products or buffers.
 Maintainers may use these lemmas directly, without frontend metadata. Preserving
 caller registers does not imply that a callee leaves memory or I/O unchanged.
 The [frame-effect rules](##Complexity.Computability.Ram.Compiler.Effects) include

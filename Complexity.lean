@@ -94,8 +94,11 @@ import Complexity.Computability.Ram.Compiler.Language.CostBound
 import Complexity.Computability.Ram.Compiler.Language.CostDeterministic
 import Complexity.Computability.Ram.Compiler.Language.CostExecution
 import Complexity.Computability.Ram.Compiler.Language.Effects
+import Complexity.Computability.Ram.Compiler.Language.Encoding
 import Complexity.Computability.Ram.Compiler.Language.Execution
 import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
+import Complexity.Computability.Ram.Compiler.Language.Heap
+import Complexity.Computability.Ram.Compiler.Language.HeapOperation
 import Complexity.Computability.Ram.Compiler.Language.Layout
 import Complexity.Computability.Ram.Compiler.Language.Lowering
 import Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation

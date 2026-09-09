@@ -123,6 +123,15 @@ theorem lowerFunc_params_le_programControl {signatures : List Signature}
     contextSize signatures[fn].params ≤ programControl program :=
   Nat.le_trans (lowerFunc_wellFormed program fn).1 (lowerFunc_locals_le_programControl program fn)
 
+/-- The complete result tuple fits the global boundary through its actual
+reserved region in the generated local frame. -/
+theorem lowerFunc_resultFields_le_programControl {signatures : List Signature}
+    (program : Complexity.Language.Program signatures) (fn : Fin signatures.length) :
+    fieldCount signatures[fn].result ≤ programControl program := by
+  have withinFrame : fieldCount signatures[fn].result ≤ (lowerFunc program fn).locals :=
+    Nat.le_trans (Nat.le_add_left _ _) (Nat.le_max_left _ _)
+  exact Nat.le_trans withinFrame (lowerFunc_locals_le_programControl program fn)
+
 /-- The existing function-entry trampoline and entire generated table satisfy
 the checked linker's static conditions. No input or execution is used here. -/
 theorem function_trampoline_valid {signatures : List Signature}
@@ -130,12 +139,11 @@ theorem function_trampoline_valid {signatures : List Signature}
     LocalCompiler.Valid (programControl program) (lowerProgram program)
       (LocalCompiler.Function.trampoline fn.val (contextSize signatures[fn].params)
         (fieldCount signatures[fn].result)) := by
-  have fields (τ : Ty) : fieldCount τ ≤ 1 := by cases τ <;> decide
   refine ⟨?_, ?_, ?_⟩
   · constructor
     · intro dst member
       exact Nat.lt_of_lt_of_le (List.mem_range.mp member)
-        (Nat.le_trans (fields _) (one_le_programControl program))
+        (lowerFunc_resultFields_le_programControl program fn)
     · intro expr member
       change expr ∈ (List.range (contextSize signatures[fn].params)).map Expr.var at member
       obtain ⟨index, inRange, rfl⟩ := List.mem_map.mp member
@@ -150,8 +158,8 @@ theorem function_trampoline_valid {signatures : List Signature}
     obtain ⟨index, rfl⟩ := List.mem_ofFn.mp member
     refine ⟨lowerFunc_wellFormed program index,
       lowerFunc_locals_le_programControl program index, lowerBody_callsValid program index, ?_⟩
-    rw [lowerFunc_results_length, Nat.sub_eq_zero_of_le (fields _)]
-    exact Nat.zero_le _
+    rw [lowerFunc_results_length]
+    exact Nat.le_trans (Nat.sub_le _ _) (lowerFunc_resultFields_le_programControl program index)
 
 /-- The existing linker output for a fixed source declaration and function.
 No runtime argument, correctness proof or budget specializes this code. -/

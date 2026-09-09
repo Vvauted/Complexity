@@ -46,7 +46,7 @@ theorem lowerPrim_measured (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ
 theorem lowerReturn_measured (layout : RegisterMap Γ) (resultSlot : Reg) (atom : Atom Γ τ)
     (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
     (matched : layout.Matches env entry.regs)
-    (fits : ∀ _scalar : Scalar τ, valueToNat (atom.eval env) < 2 ^ w) :
+    (fits : ∀ i : Fin (fieldCount τ), valueField (atom.eval env) i < 2 ^ w) :
     Source.LocalMeasuredExec control program heapLimit depth (lowerReturn layout resultSlot atom)
       (2 * fieldCount τ) entry
       (entry.setRegs (valueRegs τ resultSlot) (valueWords w (atom.eval env))) := by
@@ -113,7 +113,7 @@ theorem lowerCall_measured_fresh (layout : RegisterMap Γ) (args : Args Γ param
       (envWords w (args.eval env)) bodySteps entry (valueWords w value) finish)
     (lookup : program[fn]? = some f) (resultCount : fieldCount τ = f.results.length)
     (bounded : layout.Bounded dst)
-    (resultFits : ∀ _scalar : Scalar τ, valueToNat value < 2 ^ w) :
+    (resultFits : ∀ i : Fin (fieldCount τ), valueField value i < 2 ^ w) :
     let received := finish.setRegs (valueRegs τ dst) (valueWords w value)
     Source.LocalMeasuredExec control program heapLimit (depth + 1)
         (.call (valueRegs τ dst) fn (argsExprs layout args))
