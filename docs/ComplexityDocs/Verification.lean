@@ -195,6 +195,33 @@ work and call depth. Code and stack capacity still concern the complete linked
 program; an unrelated imported function may have different space requirements
 or heap effects. No host callbacks or trusted cost annotations replace these proofs.
 
+Import the [connection-layer tactics](##Complexity.Computability.Ram.Compiler.Language.Linking.Tactic)
+to pass the original library theorems directly:
+
+```lean
+ram_source_call using (Library.realizable contents), (Library.total_frame contents)
+  via Client.imports.Library.embedding
+```
+
+On a realization goal the first theorem supplies realizability; on a cost goal
+pass the original library cost bound instead. The second theorem is the source
+correctness contract in both cases. The tactic transports those contracts by the
+embedding and invokes the existing staged call rule. It retains the actual
+returned value and final heap, then stops at the next call. It neither chooses
+a contract nor substitutes the library body. The function-level
+`ram_source_realize (names) using feasible, specification via embedding` and
+`ram_source_cost (names) using bound via embedding` forms use the same proved
+transport; ordinary parameter names may be omitted.
+
+The [effectful client](##Examples.Language.ImportsTraversalCompiled) calls the
+imported traversal twice with different contents contracts. The first frame
+preserves the second input in the actual intermediate heap, so the second call
+does not reuse a stale pre-state. Both array results and the outside-both frame
+appear together in the compiled invocation's represented final heap. The views
+may be disjoint slices of the same object. Its instruction bound reuses the
+original composition bound, with imported call overhead identified by the
+lowering theorem; no loop-cost or array-correctness proof is repeated.
+
 The typed core also has an effectful-guard `Stmt.while`. Its guard is an actual
 Boolean-producing block: it runs in the current state on every iteration, and
 even its false exit retains local and heap updates. A normally completing body

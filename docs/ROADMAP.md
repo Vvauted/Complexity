@@ -399,10 +399,19 @@ Before broadening the surface further, close these connected gaps:
   rules at its real imported factorial call and reaches the halted runner,
   charging the extra caller and retaining target-program code/stack conditions.
   Source behavior equality alone establishes none of those resource results.
-  Next make the same interface convenient for imported effectful calls: reuse
-  contents/frame consequences at the actual intermediate heap and retain them
-  in a complete compiled client. Contract selection remains explicit; do not
-  turn it into body unfolding or assume the combined table is heap-pure.
+  The connection-layer tactic's `via embedding` clause now applies these rules
+  to supplied original library contracts before the existing structural pass.
+  It removes private transport wrappers from the recursive client. The
+  [effectful client](../Examples/Language/ImportsTraversalCompiled.lean) uses the
+  staged form for two imported traversals, passing distinct contents contracts
+  at the two call sites. The first actual frame supplies the second input; the
+  compiled invocation retains both mapped arrays and the outside-both frame in
+  one represented final heap. Its cost reuses the original composition bound
+  through the actual call-overhead equality. Contract selection and mathematical
+  frame consequences remain explicit. Next automate those supplied frame
+  consequences in nested traversals and support result/state-dependent call
+  bounds, without reopening callee bodies or assuming the combined table is
+  heap-pure.
   Do not substitute host callbacks or copied implementations for source linking.
 - Expose ordinary loop locals, current contents and return outcomes to invariants.
   Scope/state plumbing belongs to shared rules; the invariant, termination

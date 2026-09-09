@@ -206,9 +206,21 @@ The [compiled client](../Examples/Language/ImportsCompiled.lean) applies these
 rules to the imported recursive factorial, then uses the existing structural
 tactics to prove its caller and real halted invocation. The recursive library
 proof is not reopened. The caller's additional call and nesting are counted;
-code and stack capacity still refer to the complete target program. Convenient
-selection of imported effectful contracts and their intermediate-heap/frame
-consequences remains proof-interface work, not a new linker axiom.
+code and stack capacity still refer to the complete target program.
+
+The [connection-layer tactics](../Complexity/Computability/Ram/Compiler/Language/Linking/Tactic.lean)
+accept `via P.imports.Library.embedding` after their supplied contracts. This
+applies the proved transport rules before the existing structural tactic, so
+callers can pass original library theorems without local transport wrappers.
+`ram_source_call using resource, specification via embedding` consumes one
+call's contracts and stops at the next call. The
+[effectful imported client](../Examples/Language/ImportsTraversalCompiled.lean)
+uses distinct contents contracts for two calls to the same traversal. The first
+call's actual frame supplies the second input; the final runner retains both
+mapped arrays and the outside-both frame in one represented heap. Its bound
+reuses the original two-call bound via the proved equality of call overhead.
+This is not automatic discovery of contracts or frame consequences: the author
+still selects the contents and supplies the mathematical separation argument.
 
 ### Current surface and intended traversal extension
 

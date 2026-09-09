@@ -106,6 +106,7 @@ import Complexity.Computability.Ram.Compiler.Language.Layout
 import Complexity.Computability.Ram.Compiler.Language.Linking.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.Linking.Lowering
 import Complexity.Computability.Ram.Compiler.Language.Linking.Realization
+import Complexity.Computability.Ram.Compiler.Language.Linking.Tactic
 import Complexity.Computability.Ram.Compiler.Language.Linking.Verification
 import Complexity.Computability.Ram.Compiler.Language.Lowering
 import Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation

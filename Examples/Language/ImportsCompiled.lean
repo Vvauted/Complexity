@@ -5,8 +5,7 @@ Authors: vvauted
 -/
 import Examples.Language.Imports
 import Examples.Language.FactorialCompiled
-import Complexity.Language.Linking.Verification
-import Complexity.Computability.Ram.Compiler.Language.Linking.Verification
+import Complexity.Computability.Ram.Compiler.Language.Linking.Tactic
 
 /-!
 # Compiling a caller of the imported recursive factorial
@@ -26,27 +25,6 @@ namespace Complexity.Language.Examples.Imports
 
 open Ram.LanguageCompiler
 
-private abbrev importedFactorialId :=
-  Implementation.imports.Factorial.Implementation.map.toFun Factorial.Implementation.factorialId
-
-private theorem imported_factorial_total :
-    FunctionTotal Implementation.program importedFactorialId (fun _ _ => True)
-      (fun args heap value finish => value = Nat.factorial (Env.head args) ∧ finish = heap) := by
-  simpa only [cast_eq] using FunctionTotal.renameCalls
-    Implementation.imports.Factorial.Implementation.embedding Factorial.factorial_total
-
-private theorem imported_factorial_realizable {w : Nat} (n : Nat) :
-    FunctionRealizable Implementation.program w n importedFactorialId
-      (fun args _ => Env.head args = n ∧ Nat.factorial n < 2 ^ w) := by
-  simpa only [cast_eq] using FunctionRealizable.renameCalls
-    Implementation.imports.Factorial.Implementation.embedding (Factorial.factorial_realizable n)
-
-private theorem imported_factorial_costBound :
-    FunctionCostBound Implementation.program importedFactorialId (fun _ _ => True)
-      (fun args _ => Factorial.factorialBodyBound (Env.head args)) := by
-  simpa only [cast_eq] using FunctionCostBound.renameCalls
-    Implementation.imports.Factorial.Implementation.embedding Factorial.factorial_costBound
-
 /-- The existing source result supplies the caller's total contract, including preservation
 of every initial source heap. No proposed instruction budget is required. -/
 theorem factorial_total :
@@ -62,7 +40,8 @@ The same factorial range premise bounds the argument and actual returned value. 
 theorem factorial_realizable {w : Nat} (n : Nat) :
     FunctionRealizable Implementation.program w (n + 1) Implementation.factorialId
       (fun args _ => Env.head args = n ∧ Nat.factorial n < 2 ^ w) := by
-  ram_source_realize (input) using (imported_factorial_realizable n), imported_factorial_total
+  ram_source_realize (input) using (Factorial.factorial_realizable n), Factorial.factorial_total
+    via Implementation.imports.Factorial.Implementation.embedding
   all_goals
     have fits : Nat.factorial n < 2 ^ w := by omega
     have inputFits : n < 2 ^ w := Nat.lt_of_le_of_lt (Nat.self_le_factorial n) fits
@@ -80,8 +59,9 @@ transported rather than proved by another induction or copied from a different i
 theorem factorial_costBound :
     FunctionCostBound Implementation.program Implementation.factorialId (fun _ _ => True)
       (fun args _ => factorialBodyBound (Env.head args)) := by
-  ram_source_cost (input) using imported_factorial_costBound
-  all_goals simp only [factorialBodyBound, importedFactorialId]; omega
+  ram_source_cost (input) using Factorial.factorial_costBound
+    via Implementation.imports.Factorial.Implementation.embedding
+  all_goals simp only [factorialBodyBound]; omega
 
 /-- The actual compiled imported-function caller halts with factorial and a complete
 instruction bound. The new caller, original recursive calls and outer invocation all count
