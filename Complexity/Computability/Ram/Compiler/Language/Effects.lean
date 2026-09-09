@@ -66,7 +66,7 @@ theorem lowerStmt_noSharedWrites {signatures : List Signature} {Γ : List Ty} {r
 theorem lowerBody_noSharedWrites {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (fn : Fin signatures.length) :
     (lowerBody program fn).NoSharedWrites :=
-  lowerStmt_noSharedWrites _ _ _ _ _ trivial
+  ⟨trivial, lowerStmtCore_noSharedWrites _ _ _ _ _⟩
 
 /-- All actual entries in the lowered function table have no shared writes.
 This single condition covers recursive and mutually recursive target calls. -/

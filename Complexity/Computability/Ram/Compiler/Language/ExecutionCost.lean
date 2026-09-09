@@ -16,7 +16,8 @@ flag and actual callee-frame work. The observation does not supply termination,
 change source behavior, or ask a program author to assign instruction prices.
 
 Counts here cover `lowerStmtCore`. A returning function body additionally runs
-its flag initialization and final dispatch, for five transitions. The outer
+its flag initialization, for two transitions. Its specialized exit needs no
+normal-continuation dispatch. The outer
 invocation's calling convention and final halt are accounted for separately.
 Internal calls already include their callee's complete body and call overhead.
 
@@ -106,7 +107,7 @@ inductive ExecutionCost {signatures : List Signature}
         (Env.cons value entry) finish control} {calleeSteps bodySteps : Nat}
       (calleeCost : ExecutionCost callee calleeSteps) (bodyCost : ExecutionCost body bodySteps) :
       ExecutionCost (.callReturn arguments callee body)
-        (callCost program fn (calleeSteps + 5) + bodySteps)
+        (callCost program fn (calleeSteps + 2) + bodySteps)
 
 /-- A successful source execution determines a cost observation without any
 proposed bound. This is a proposition about the existing execution, not an
@@ -149,7 +150,7 @@ def FunctionCostBound {signatures : List Signature}
     (pre : Env signatures[fn].params → Prop) (bound : Env signatures[fn].params → Nat) : Prop :=
   ∀ args, pre args → ∀ {w depth finish value}
     (execution : RealizedExec program w depth (program.body fn) args finish (.returned value))
-    {steps}, ExecutionCost execution steps → steps + 5 ≤ bound args
+    {steps}, ExecutionCost execution steps → steps + 2 ≤ bound args
 
 namespace FunctionCostBound
 

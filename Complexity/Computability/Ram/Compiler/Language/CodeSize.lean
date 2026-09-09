@@ -132,8 +132,23 @@ theorem lowerBody_stmtSize {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (fn : Fin signatures.length)
     (control : Nat) :
     LocalCompiler.stmtSize control (LocalCompiler.calleeLocals (lowerProgram program))
-        (lowerBody program fn) =
-      sourceCodeSize (LocalCompiler.calleeLocals (lowerProgram program)) (program.body fn) + 5 := by
-  simp only [lowerBody, lowerStmt_stmtSize, LocalCompiler.stmtSize_skip, Nat.add_zero]
+      (lowerBody program fn) =
+      sourceCodeSize (LocalCompiler.calleeLocals (lowerProgram program)) (program.body fn) + 2 := by
+  simp only [lowerBody, LocalCompiler.stmtSize_seq, LocalCompiler.stmtSize_assign,
+    Expr.compile, List.length_singleton, lowerStmtCore_stmtSize]
+  omega
+
+/-- The specialized function exit removes exactly three instructions from the
+generic wrapper with an empty normal continuation. -/
+theorem lowerBody_stmtSize_add_three {signatures : List Signature}
+    (program : Complexity.Language.Program signatures) (fn : Fin signatures.length)
+    (control : Nat) :
+    LocalCompiler.stmtSize control (LocalCompiler.calleeLocals (lowerProgram program))
+        (lowerBody program fn) + 3 =
+      LocalCompiler.stmtSize control (LocalCompiler.calleeLocals (lowerProgram program))
+        (lowerStmt (parameterMap signatures[fn].params)
+          (contextSize signatures[fn].params + fieldCount signatures[fn].result)
+          (contextSize signatures[fn].params) (program.body fn) .skip) := by
+  simp only [lowerBody_stmtSize, lowerStmt_stmtSize, LocalCompiler.stmtSize_skip]
 
 end Ram.LanguageCompiler

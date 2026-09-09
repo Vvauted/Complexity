@@ -307,7 +307,14 @@ Status: in progress, not complete.
   same realized execution; `FunctionCostBound.of_stmt` adds the returning-body
   wrapper once. Call rules can reuse an existing result contract when the bound
   needs it, but do not require re-proving the mathematical minimum. Applying
-  these rules and proving their inequalities are still explicit source work.
+  these rules is now automated for the scalar uniform-bound fragment; actual
+  arithmetic inequalities remain ordinary mathematical proof work.
+- [Scalar proof tactics](../Complexity/Computability/Ram/Compiler/Language/Tactic.lean)
+  open ordinary arguments and compose realization/cost rules in the existing
+  scalar and nested-remainder consumers. Realization reuses supplied callee
+  contracts; cost uses uniform branch and call-continuation bounds without
+  demanding a duplicate correctness proof. They neither maintain a price table
+  nor infer invariants, arbitrary callee specifications or recursive bounds.
 
 Next, in a bounded scalar-interface pass alongside the lemma-transfer bridge
 and the first borrowed-buffer implementation:
@@ -320,10 +327,10 @@ and the first borrowed-buffer implementation:
    rule or claiming automatic discovery of mathematical proofs.
 2. Generate structured realization and cost obligations from the same source
    constructors and shared callee contracts. Shared cost rules now hide execution
-   case analysis, but their application remains explicit. The realization
-   consumer still unfolds source bindings and proves `EnvFits` structurally.
-   Generate that plumbing while leaving actual range, call-nesting and cost
-   inequalities visible. Reuse checked rules without per-program simulation
+   case analysis, and the initial scalar tactic now applies them and opens
+   arguments automatically. Extend beyond its supplied-callee and uniform-cost
+   fragment while leaving actual range, call-nesting and cost inequalities
+   visible. Reuse checked rules without per-program simulation
    adapters or manually supplied instruction prices. The executable observation
    remains the existing compiled runner, not the noncomputable source `Part` value.
 
@@ -332,8 +339,12 @@ It is not yet instrumentation of every unrestricted source execution, nor
 source-level loop/heap/potential support. Mutable data and loops require their
 own source semantics, lowering cases and justified observations in M2–M3.
 
-Later remove redundant flag checks or specialize no-return fragments only
-through proved optimizations and revised costs. The current size-safe lowering
+Complete function bodies now omit their redundant empty final dispatch. Exact
+code-size comparison proves a three-instruction saving with the same register
+bound; measured simulation changes the function wrapper from `+5` to `+2`.
+Generic statement wrappers and ABI charges retain their original conventions.
+Further flag-check removal or no-return specialization needs its own proof and
+revised costs. The current size-safe lowering
 can add instructions and enlarge frames compared with small CPS examples;
 smaller code on branching families is not a claim of universally faster runs.
 
@@ -423,6 +434,18 @@ cost correspondence, not an arbitrary host callback or a dummy source body.
 Directly reuse mathlib mathematics when no machine correspondence is needed.
 
 ## M2 — Abstract mutable data and arbitrary traversal bodies
+
+Status: the independent shared-object foundation is implemented in
+[`Language/Heap`](../Complexity/Language/Heap.lean). Typed native arrays,
+checked views, reads/writes/slices, different-object preservation and overlapping
+alias observations are proved. Source statements, execution and the RAM bridge
+do not yet consume it, so mutable programming remains an open milestone.
+
+The next closed migration uses one source state with typed locals and the
+shared heap. Calls restore caller locals while retaining the actual callee
+heap; scope exit preserves updates to outer locals and the current heap.
+This state feeds the existing execution and proof interfaces, not a parallel
+language. Direct source assignment precedes any optional SSA normalization.
 
 1. Give borrowed objects/views independent heap semantics with actual aliasing.
    Prove read/write/slice and local-frame rules using ordinary contents.

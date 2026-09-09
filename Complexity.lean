@@ -103,6 +103,7 @@ import Complexity.Computability.Ram.Compiler.Language.MeasuredValues
 import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Compiler.Language.Scalar
 import Complexity.Computability.Ram.Compiler.Language.Simulation
+import Complexity.Computability.Ram.Compiler.Language.Tactic
 import Complexity.Computability.Ram.Compiler.Language.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Validity
 import Complexity.Computability.Ram.Compiler.Language.Values
@@ -270,7 +271,9 @@ import Complexity.Language.Eval.Basic
 import Complexity.Language.Eval.Composition
 import Complexity.Language.Eval.Continuation
 import Complexity.Language.Eval.Verification
+import Complexity.Language.Heap
 import Complexity.Language.Semantics
+import Complexity.Language.State
 import Complexity.Language.Syntax
 import Complexity.Language.Verification
 import Complexity.LinearAlgebra.Matrix.Update

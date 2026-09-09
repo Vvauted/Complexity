@@ -119,13 +119,29 @@ theorem resultExprs_bounded (τ : Ty) (resultSlot : Reg) :
   cases τ <;> simp [resultExprs, valueRegs, fieldCount, Expr.Bounded]
 
 /-- Parameters occupy the initial compact prefix, followed by the reserved
-result fields and then fresh lexical slots. Only normal fallthrough reaches
-the terminal skip; this does not claim that a missing source return succeeds. -/
+result fields, private return flag and fresh lexical slots. A function has no
+normal continuation to dispatch: initialize the flag and run its core directly.
+This does not claim that a missing source return succeeds. -/
 def lowerBody {signatures : List Signature} (program : Complexity.Language.Program signatures)
     (fn : Fin signatures.length) : Ram.Stmt :=
-  lowerStmt (parameterMap signatures[fn].params)
-    (contextSize signatures[fn].params + fieldCount signatures[fn].result)
-    (contextSize signatures[fn].params) (program.body fn) .skip
+  let resultSlot := contextSize signatures[fn].params
+  let next := resultSlot + fieldCount signatures[fn].result
+  let flag := returnFlag signatures[fn].result next resultSlot
+  .seq (.assign flag (.const 0))
+    (lowerStmtCore (parameterMap signatures[fn].params) (flag + 1) resultSlot flag
+      (program.body fn))
+
+/-- Omitting the empty final dispatch does not change the inferred register
+bound: the return flag is already named by its initialization. -/
+theorem lowerBody_regBound_eq_lowerStmt {signatures : List Signature}
+    (program : Complexity.Language.Program signatures) (fn : Fin signatures.length) :
+    (lowerBody program fn).regBound =
+      (lowerStmt (parameterMap signatures[fn].params)
+        (contextSize signatures[fn].params + fieldCount signatures[fn].result)
+        (contextSize signatures[fn].params) (program.body fn) .skip).regBound := by
+  simp only [lowerBody, lowerStmt, Ram.Stmt.regBound, Expr.varBound,
+    Nat.max_self, Nat.max_comm]
+  rw [← Nat.max_assoc, Nat.max_self]
 
 /-- The actual lowered function, with its local frame inferred from its IR. -/
 def lowerFunc {signatures : List Signature} (program : Complexity.Language.Program signatures)

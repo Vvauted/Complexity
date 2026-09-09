@@ -16,9 +16,10 @@ source values and private return flag from the behavior simulation. It does not
 introduce another evaluator or require an algorithm's correctness proof again.
 
 The core's executed branches include their real guard and jump instructions.
-A returned function additionally pays for flag initialization and final
-dispatch. Internal calls include the callee's complete body and actual calling
-convention exactly once. The outer invocation and final halt remain separate.
+A function additionally pays for flag initialization; a generic statement
+wrapper also dispatches around its normal continuation. Internal calls include
+the callee's complete body and actual calling convention exactly once. The
+outer invocation and final halt remain separate.
 
 Register placement is a compiler detail: the canonical call-cost expression is
 valid at every reserved-register boundary. The public function theorem asks
@@ -44,6 +45,40 @@ variable {stmt : Complexity.Language.Stmt signatures Γ result}
 variable {entry finish : Env Γ} {outcome : Control result}
 variable {execution : RealizedExec program w depth stmt entry finish outcome}
 
+/-- Initialize the private flag and prepare the same fresh layout for either
+the generic statement wrapper or a complete function's core. -/
+private theorem lowerInitializedCore_of_core {value : Value result} (controlReg : Nat)
+    (core : ∀ (layout : RegisterMap Γ) (next resultSlot flag : Reg) (s : Source.State w),
+      layout.Bounded next → layout.Matches entry s.regs → layout.Avoids flag →
+      flag < next → resultSlot + fieldCount result ≤ flag → s.regs flag = 0 →
+      ∃ t, Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+        (lowerStmtCore layout next resultSlot flag stmt) steps s t ∧
+        ControlMatches layout resultSlot flag finish (.returned value) t) :
+    ∀ (layout : RegisterMap Γ) (next resultSlot : Reg) (s : Source.State w),
+      layout.Bounded next → layout.Matches entry s.regs →
+      let flag := returnFlag result next resultSlot
+      ∃ t, Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+        (.assign flag (.const 0)) 2 s (s.setReg flag 0) ∧
+        Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+          (lowerStmtCore layout (flag + 1) resultSlot flag stmt) steps (s.setReg flag 0) t ∧
+        ControlMatches layout resultSlot flag finish (.returned value) t := by
+  intro layout next resultSlot s bounded matched
+  let flag := returnFlag result next resultSlot
+  have nextFlag : next ≤ flag := Nat.le_max_left _ _
+  have resultFlag : resultSlot + fieldCount result ≤ flag := Nat.le_max_right _ _
+  have avoids : layout.Avoids flag := by
+    intro τ scalar v
+    exact Nat.ne_of_lt (Nat.lt_of_lt_of_le (bounded scalar v) nextFlag)
+  have bounded' : layout.Bounded (flag + 1) := by
+    intro τ scalar v
+    exact Nat.lt_of_lt_of_le (bounded scalar v) (Nat.le_trans nextFlag (Nat.le_succ flag))
+  have matched' : layout.Matches entry (s.setReg flag 0).regs :=
+    RegisterMap.Matches.setReg_of_ne matched avoids 0
+  obtain ⟨t, body, property⟩ := core layout (flag + 1) resultSlot flag (s.setReg flag 0)
+    bounded' matched' avoids (Nat.lt_succ_self flag) resultFlag
+    (Source.State.setReg_same s flag 0)
+  exact ⟨t, .assign trivial, body, property⟩
+
 /-- A returned core pays two instructions for flag initialization and three
 for the final true-flag dispatch. Its external continuation is not executed. -/
 private theorem lowerReturned_of_core {value : Value result} (controlReg : Nat) (hw : 0 < w)
@@ -61,21 +96,8 @@ private theorem lowerReturned_of_core {value : Value result} (controlReg : Nat) 
         (resultExprs result resultSlot).map t.eval = valueWords w value := by
   intro layout next resultSlot s continuation bounded matched
   let flag := returnFlag result next resultSlot
-  have nextFlag : next ≤ flag := Nat.le_max_left _ _
-  have resultFlag : resultSlot + fieldCount result ≤ flag := Nat.le_max_right _ _
-  have avoids : layout.Avoids flag := by
-    intro τ scalar v
-    exact Nat.ne_of_lt (Nat.lt_of_lt_of_le (bounded scalar v) nextFlag)
-  have bounded' : layout.Bounded (flag + 1) := by
-    intro τ scalar v
-    exact Nat.lt_of_lt_of_le (bounded scalar v) (Nat.le_trans nextFlag (Nat.le_succ flag))
-  have matched' : layout.Matches entry (s.setReg flag 0).regs :=
-    RegisterMap.Matches.setReg_of_ne matched avoids 0
-  obtain ⟨t, body, property⟩ := core layout (flag + 1) resultSlot flag (s.setReg flag 0)
-    bounded' matched' avoids (Nat.lt_succ_self flag) resultFlag
-    (Source.State.setReg_same s flag 0)
-  have flagInit : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
-      (.assign flag (.const 0)) 2 s (s.setReg flag 0) := .assign trivial
+  obtain ⟨t, flagInit, body, property⟩ :=
+    lowerInitializedCore_of_core controlReg core layout next resultSlot s bounded matched
   have raised : t.eval (.var flag) ≠ 0 := by
     change t.regs flag ≠ 0
     rw [property.2]
@@ -87,6 +109,34 @@ private theorem lowerReturned_of_core {value : Value result} (controlReg : Nat) 
   convert Source.LocalMeasuredExec.seq flagInit (Source.LocalMeasuredExec.seq body dispatch)
     using 1
   omega
+
+/-- A complete function has no external continuation to dispatch. Its actual
+body consists of the shared two-step initialization followed by the core. -/
+private theorem lowerFunction_of_core {fn : Fin signatures.length}
+    {args calleeFinish : Env signatures[fn].params} {value : Value signatures[fn].result}
+    (controlReg : Nat)
+    (core : ∀ (layout : RegisterMap signatures[fn].params)
+      (next resultSlot flag : Reg) (s : Source.State w),
+      layout.Bounded next → layout.Matches args s.regs → layout.Avoids flag →
+      flag < next → resultSlot + fieldCount signatures[fn].result ≤ flag →
+      s.regs flag = 0 →
+      ∃ t, Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+        (lowerStmtCore layout next resultSlot flag (program.body fn)) steps s t ∧
+        ControlMatches layout resultSlot flag calleeFinish (.returned value) t)
+    (arguments : EnvFits w args) (s : Source.State w) :
+    ∃ t, Source.FunctionMeasuredExec controlReg (lowerProgram program) heapLimit depth
+      (lowerFunc program fn) (envWords w args) (steps + 2) s (valueWords w value) t := by
+  obtain ⟨callee, flagInit, body, property⟩ := lowerInitializedCore_of_core controlReg core
+    (parameterMap signatures[fn].params)
+    (contextSize signatures[fn].params + fieldCount signatures[fn].result)
+    (contextSize signatures[fn].params) (s.enter (envWords w args))
+    (parameterMap_bodyBound _ _) (parameterMap_matches_enter s args arguments)
+  have measured : Source.LocalMeasuredExec controlReg (lowerProgram program) heapLimit depth
+      (lowerBody program fn) (steps + 2) (s.enter (envWords w args)) callee := by
+    convert Source.LocalMeasuredExec.seq flagInit body using 1
+    omega
+  exact ⟨s.restore callee, by simp, (lowerFunc_wellFormed program fn).1,
+    callee, measured, resultExprs_readsBelow _ _ callee, property.1.symm, rfl⟩
 
 /-- The observed core count is exactly the existing local compiler's measured
 execution, with the same represented outcome. Register separation is internal
@@ -194,16 +244,8 @@ theorem lowerCoreMeasured (cost : ExecutionCost execution steps) (controlReg : N
   | @callReturn Γ result depth fn args body entry calleeFinish value finish outcome
       arguments callee execution calleeSteps bodySteps calleeCost bodyCost ihCallee ihBody =>
       intro layout next resultSlot flag s bounded matched avoids fresh resultFlag flagZero
-      obtain ⟨calleeTarget, calleeRun, calleeResult⟩ :=
-        lowerReturned_of_core controlReg hw ihCallee (parameterMap signatures[fn].params)
-          (contextSize signatures[fn].params + fieldCount signatures[fn].result)
-          (contextSize signatures[fn].params) (s.enter (envWords w (args.eval entry))) .skip
-          (parameterMap_bodyBound _ _) (parameterMap_matches_enter s _ arguments)
-      have invocation : Source.FunctionMeasuredExec controlReg (lowerProgram program) heapLimit depth
-          (lowerFunc program fn) (envWords w (args.eval entry)) (calleeSteps + 5) s
-          (valueWords w value) (s.restore calleeTarget) := by
-        exact ⟨by simp, (lowerFunc_wellFormed program fn).1, calleeTarget, calleeRun,
-          resultExprs_readsBelow _ _ calleeTarget, calleeResult.symm, rfl⟩
+      obtain ⟨calleeTarget, invocation⟩ :=
+        lowerFunction_of_core controlReg ihCallee arguments s
       obtain ⟨callRun, matching, preserved⟩ := lowerCall_measured_fresh
         (τ := signatures[fn].result) (value := value)
         layout args entry s next hw matched arguments invocation
@@ -233,22 +275,16 @@ theorem lowerReturnedMeasured {value : Value result}
   lowerReturned_of_core controlReg hw (cost.lowerCoreMeasured controlReg hw)
 
 /-- The exact core observation yields the actual generated function's body
-count, including its private flag wrapper. This does not include its enclosing
-call's argument, frame, return or halt work. -/
+count, including its two-step private flag initialization. This does not include
+its enclosing call's argument, frame, return or halt work. -/
 theorem functionMeasuredExec {fn : Fin signatures.length}
     {args finish : Env signatures[fn].params} {value : Value signatures[fn].result}
     {execution : RealizedExec program w depth (program.body fn) args finish (.returned value)}
     (cost : ExecutionCost execution steps) (controlReg : Nat) (hw : 0 < w)
     (arguments : EnvFits w args) (s : Source.State w) :
     ∃ t, Source.FunctionMeasuredExec controlReg (lowerProgram program) heapLimit depth
-      (lowerFunc program fn) (envWords w args) (steps + 5) s (valueWords w value) t := by
-  obtain ⟨callee, body, result⟩ := cost.lowerReturnedMeasured controlReg hw
-    (parameterMap signatures[fn].params)
-    (contextSize signatures[fn].params + fieldCount signatures[fn].result)
-    (contextSize signatures[fn].params) (s.enter (envWords w args)) .skip
-    (parameterMap_bodyBound _ _) (parameterMap_matches_enter s args arguments)
-  exact ⟨s.restore callee, by simp, (lowerFunc_wellFormed program fn).1,
-    callee, body, resultExprs_readsBelow _ _ callee, result.symm, rfl⟩
+      (lowerFunc program fn) (envWords w args) (steps + 2) s (valueWords w value) t :=
+  lowerFunction_of_core controlReg (cost.lowerCoreMeasured controlReg hw) arguments s
 
 end ExecutionCost
 

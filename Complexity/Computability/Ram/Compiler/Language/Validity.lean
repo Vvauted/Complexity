@@ -79,7 +79,7 @@ theorem lowerStmt_callsValid {signatures : List Signature}
 theorem lowerBody_callsValid {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (fn : Fin signatures.length) :
     Compiler.CallsValid (lowerProgram program) (lowerBody program fn) :=
-  lowerStmt_callsValid program _ _ _ _ .skip trivial
+  ⟨trivial, lowerStmtCore_callsValid program _ _ _ _ _⟩
 
 /-- The finite generated table satisfies the same check recursively at every body. -/
 theorem lowerProgram_callsValid {signatures : List Signature}

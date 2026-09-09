@@ -88,9 +88,19 @@ compositional contract is the preferred starting point. The
 [compiled invocation](##Examples.Language.ScalarCompiled) supplies only source-level
 range and call-nesting facts, then reuses that mathematical proof. In particular,
 `n + 1` must fit even when the final minimum is small. These conditions do not
-include a proposed instruction budget. The current realization proof still opens
-source bindings and constructs `EnvFits` structurally; the frontend does not yet
-automate that environment bookkeeping.
+include a proposed instruction budget. The
+[structural tactics](##Complexity.Computability.Ram.Compiler.Language.Tactic)
+now open ordinary parameters and compose the scalar realization rules:
+
+```lean
+ram_source_realize (n limit) using increment_realizable, increment_total
+all_goals omega
+```
+
+The supplied callee facts remain opaque. Environment projections and argument
+packing are simplified internally; genuine scalar ranges, callee preconditions
+and sufficient call nesting remain mathematical goals. This is a scalar proof
+pass, not automatic discovery of invariants or general recursive contracts.
 
 [Generic simulation](##Complexity.Computability.Ram.Compiler.Language.Simulation)
 handles lexical layouts, real callees and returned fields.
@@ -110,7 +120,10 @@ and even a returned path pays the flag checks in enclosing sequences.
 
 [Source cost rules](##Complexity.Computability.Ram.Compiler.Language.ExecutionCost)
 now observe the same realized source execution. `ExecutionCost` counts its
-lowered core; the returning function's flag wrapper adds five transitions.
+lowered core; a complete function adds two transitions for flag initialization.
+Its empty final dispatch has been removed, with a proved saving of three static
+instructions and an unchanged register bound. The generic statement wrapper
+with an external continuation still uses five additional transitions on return.
 `callCost` derives internal-call overhead from the actual compiler, including
 the callee body and frame, without a user-supplied ABI price.
 The [measured simulation](##Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation)
@@ -130,11 +143,13 @@ Use the [structural bound rules](##Complexity.Computability.Ram.Compiler.Languag
 to compose source costs. `StmtCostBound` bounds the existing execution observation;
 its primitive, sequence, branch, return and call rules hide case analysis on
 `ExecutionCost`. `FunctionCostBound.of_stmt` adds the returning-body wrapper once.
-The scalar consumer applies these rules to its helper and selected branch, then
-proves an ordinary inequality. Its uniform bound needs no proof of the minimum;
+`ram_source_cost (n limit) using increment_costBound` applies these rules to the
+scalar consumer and compares the inferred bound with its requested bound.
+Its uniform bound needs no proof of the minimum;
 result-dependent bounds can reuse an existing source contract through the call
-rule. These applications are still explicit, not generated cost proofs. Neither
-the instruction prices nor the mathematical correctness argument is duplicated.
+rule. The tactic currently uses uniform bounds at branches and call
+continuations; result-dependent bounds retain the explicit rule interface.
+Neither instruction prices nor mathematical correctness proofs are duplicated.
 
 The frontend currently supports `Nat`, `Bool`, `Unit`, lexical bindings, actual
 named calls, branches and returns. Nested addition, multiplication, saturating
@@ -145,13 +160,13 @@ The [remainder example](##Examples.Language.Remainder) implements
 compiled result with a separate instruction bound. Divisor zero is included;
 no artificial subtraction-order condition is required.
 Mutable data and loop syntax remain future
-work; automatic contract plumbing and range/cost obligation generation remain
+work. The scalar tactics automate structural range/cost obligations, but richer
+callee selection, recursive proofs and data-dependent bound automation remain
 unfinished. Costs are currently derived
 for successfully realized scalar executions, not an instrumentation theorem for
 every unrestricted source execution.
-M1 therefore remains open despite the ordinary-equation correctness proof and
-shared cost rules: contract conversion and realization/cost plumbing still need
-a convenient shared automation layer.
+M1 remains open: the scalar pass is useful but does not establish the complete
+source proof and specification interface needed by mutable data and recursion.
 Optimizing code size does not imply every execution is faster.
 The executable word-RAM workflow and maintainer interfaces below remain available.
 

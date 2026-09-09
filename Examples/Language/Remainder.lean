@@ -8,6 +8,7 @@ import Complexity.Language.Eval.Verification
 import Complexity.Computability.Ram.Compiler.Language.Execution
 import Complexity.Computability.Ram.Compiler.Language.CostExecution
 import Complexity.Computability.Ram.Compiler.Language.CostBound
+import Complexity.Computability.Ram.Compiler.Language.Tactic
 
 /-!
 # Remainder from mathematical division, multiplication and subtraction
@@ -47,31 +48,18 @@ is needed. The emitted code implements all mathematical inputs that fit. -/
 theorem remainder_realizable {w : Nat} :
     FunctionRealizable Implementation.program w 0 (0 : Fin 1)
       (fun args => Env.head args < 2 ^ w ∧ Env.head (Env.tail args) < 2 ^ w) := by
-  apply FunctionRealizable.of_wp
-  intro args fits
-  change RealizationWP Implementation.program w 0 Implementation.remainderBody
-    (fun _ => False) (fun _ _ => True) args
-  have quotient := Nat.lt_of_le_of_lt
-    (Nat.div_le_self (Env.head args) (Env.head (Env.tail args))) fits.1
-  have product := Nat.lt_of_le_of_lt
-    (Nat.div_mul_le_self (Env.head args) (Env.head (Env.tail args))) fits.1
-  have difference := Nat.lt_of_le_of_lt
-    (Nat.sub_le (Env.head args) (Env.head args / Env.head (Env.tail args) *
-      Env.head (Env.tail args))) fits.1
-  simp only [Implementation.remainderBody,
-    RealizationWP.letPrim_iff, RealizationWP.ret_iff, PrimFits, Prim.eval,
-    Atom.eval, Env.cons_here, Env.cons_there, valueToNat, and_true]
-  exact ⟨fits, ⟨⟨quotient, fits.2, product⟩, ⟨⟨fits.1, product⟩, difference⟩⟩⟩
+  ram_source_realize (n d)
+  all_goals
+    have quotient := Nat.div_le_self n d
+    have product := Nat.div_mul_le_self n d
+    omega
 
-/-- The exact straight-line body count includes division, multiplication,
+/-- The straight-line body bound includes division, multiplication,
 saturating subtraction, the return and the function-body wrapper. -/
 theorem remainder_costBound :
     FunctionCostBound Implementation.program (0 : Fin 1) (fun _ => True)
-      (fun _ => 25) := by
-  apply FunctionCostBound.of_stmt (coreBound := fun _ => 20)
-  intro args _
-  exact StmtCostBound.letPrim _ (StmtCostBound.letPrim _
-    (StmtCostBound.letPrim _ (StmtCostBound.ret _ _)))
+      (fun _ => 22) := by
+  ram_source_cost (n d)
 
 /-- Generic lowering supplies the actual callable result without a register proof. -/
 theorem remainder_functionExec {w heapLimit : Nat} (hw : 0 < w) (n d : Nat)

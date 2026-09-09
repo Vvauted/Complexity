@@ -39,7 +39,7 @@ theorem le_of_functionTimeBound (cost : ExecutionCost execution steps)
       (lowerFunc program fn) P bound)
     (hw : 0 < w) (arguments : EnvFits w args) (entry : Source.State w)
     (hpre : P (envWords w args) entry) :
-    steps + 5 ≤ bound (envWords w args) entry := by
+    steps + 2 ≤ bound (envWords w args) entry := by
   obtain ⟨target, measured⟩ :=
     cost.functionMeasuredExec controlReg hw arguments entry (heapLimit := heapLimit)
   exact time _ _ hpre _ _ _ measured
@@ -57,7 +57,7 @@ theorem le_of_functionTimeBound_of_le (cost : ExecutionCost execution steps)
     (hpre : sourcePre args)
     (precondition : sourcePre args → P (envWords w args) entry)
     (budget : sourcePre args → bound (envWords w args) entry ≤ sourceBound args) :
-    steps + 5 ≤ sourceBound args :=
+    steps + 2 ≤ sourceBound args :=
   Nat.le_trans (cost.le_of_functionTimeBound time hw arguments entry (precondition hpre))
     (budget hpre)
 

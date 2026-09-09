@@ -33,7 +33,7 @@ theorem ExecutionCost.bodyTime_eq_some {signatures : List Signature}
     (cost : ExecutionCost execution steps) (hw : 0 < w) (arguments : EnvFits w args)
     (entry : Source.State w) :
     (lowerFunc program fn).bodyTime (lowerProgram program) heapLimit (envWords w args) entry =
-      Part.some (steps + 5) := by
+      Part.some (steps + 2) := by
   obtain ⟨target, measured⟩ := cost.functionMeasuredExec 0 hw arguments entry
     (heapLimit := heapLimit)
   exact measured.bodyTime_eq_some
@@ -74,12 +74,12 @@ theorem FunctionRealizable.runUntil_le {signatures : List Signature}
           (bound args) + 1 := by
   obtain ⟨finish, value, execution⟩ := realizable args hfeasible
   obtain ⟨steps, cost⟩ := execution.exists_cost
-  have sourceBound : steps + 5 ≤ bound args := timeBound args hcost execution cost
+  have sourceBound : steps + 2 ≤ bound args := timeBound args hcost execution cost
   have sourceTime := cost.bodyTime_eq_some hw arguments entry (heapLimit := heapLimit)
   obtain ⟨value', bodySteps, target, property, run, values, observed, actualTime⟩ :=
     realizable.runUntil specification hw args arguments hfeasible hpre entry
       codeCapacity stackCapacity
-  have same : bodySteps = steps + 5 := Part.some_injective (actualTime.symm.trans sourceTime)
+  have same : bodySteps = steps + 2 := Part.some_injective (actualTime.symm.trans sourceTime)
   have bodyBound : bodySteps ≤ bound args := by simpa only [same] using sourceBound
   exact ⟨value', bodySteps, target, property, run, values, observed, actualTime, bodyBound,
     Nat.add_le_add_right (LocalCompiler.Function.callSteps_mono _ _ bodyBound) 1⟩

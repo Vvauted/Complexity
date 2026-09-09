@@ -12,7 +12,7 @@ Generated one-step function equations support ordinary mathematical correctness
 proofs; shared structural rules compose separate cost bounds. The generated
 curried functions are noncomputable semantic observations, not `#eval` runtimes.
 Generated contract equivalences hide argument-environment packing;
-realization/cost rule application is still explicit.
+focused scalar tactics compose realization and uniform structural cost rules.
 Full source proof automation, mutable data and loops are not yet supported. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
@@ -125,10 +125,16 @@ Support lexical `let`, `let mut`, assignment, sequencing, conditionals,
 indexed array traversal, `while`, first-order calls and recursive functions.
 The core records actual scope and binding, not a flat map of display names.
 
-Loops carry their live source values explicitly; surface mutable locals are
-translated to these values by a shared elaboration/normalization rule. The
-algorithm invariant is expressed in those values, never in an environment-to-
-register decoding supplied by the algorithm author.
+The mutable extension uses one source state containing typed local values and
+the shared heap. Assignment changes a lexical value, not a named machine
+register. Loop invariants describe the current source locals and object contents.
+Explicit loop-carried values may later be a proved normalization, but an SSA
+translation is not a prerequisite for mutable source semantics or proof rules.
+
+Leaving a lexical binding removes its local slot from the actual final state;
+it does not restore the entry heap or undo assignments to outer locals. A call
+uses its actual arguments and the current heap. Return restores the caller's
+locals and retains the callee's final heap, including effects before a fault.
 
 Specify normal continuation and function return as different control outcomes
 from the start. A return crosses nested blocks and loops and is caught by the
@@ -310,9 +316,10 @@ reject an error value; the source function specification supplies that policy.
 Next connect the compositional equations and shared operation specifications to
 `@[spec]`, `mvcgen` and focused source proof automation. The current scalar
 consumer already proves ordinary function equations by rewriting and Nat
-reasoning; the generic contract conversion still explicitly opens `Env`.
-The frontend does not automatically discharge mathematical contracts,
-realization conditions or cost bounds. These are semantic views of the core,
+reasoning, and generated contract conversion hides the typed argument packing.
+The backend's scalar tactics now compose realization and uniform cost rules;
+they do not automatically discover mathematical contracts or recursive bounds.
+These are semantic views of the core,
 not acceptance of arbitrary host monadic terms as executable primitives.
 The laws belong to the interpretation,
 not unproved syntactic monad equalities for raw source trees.
@@ -345,6 +352,13 @@ Initial aliases must agree on the scalar type of the underlying object. There
 is no unchecked pointer reinterpretation: overlapping views cannot silently
 import the same cells as unrelated Nat and Bool objects. Cross-type views need
 an explicit verified conversion/representation rule before they are supported.
+
+The independent [heap foundation](../Complexity/Language/Heap.lean) now supplies
+typed native-array objects, offset/length views, checked read/write/slice
+operations and read-after-write/alias/frame laws. A successful write is proved
+to be an actual native `Array.set` at the object and cell levels. This foundation
+is not yet connected to source statement execution or RAM representation; it
+does not establish that the language can already run mutable programs.
 
 Use relations when abstraction forgets storage details; do not require a
 bijection between an entire RAM heap and an observed list. Update related views
@@ -409,10 +423,12 @@ does not automatically give a tight call-stack bound. Shared rules can derive
 such bounds for supported recursion patterns without confusing them with time.
 
 The current scalar realization API has shared `RealizationWP` rules, but its
-consumer still opens source bindings, transports returned values and constructs
-`EnvFits` proofs explicitly. Removing this environment bookkeeping is pending
-automation work; the underlying intermediate-range and call-nesting facts must
-remain genuine source-level obligations.
+consumer no longer applies them one source constructor at a time.
+`ram_source_realize` opens ordinary arguments, reuses the supplied callee's
+realizability and correctness facts and simplifies environment bookkeeping.
+The underlying intermediate-range and call-nesting facts remain genuine
+source-level obligations. General callee selection and recursive automation
+remain work for the richer language.
 
 ## 6. Automatic proof transfer to the existing backend
 
@@ -485,8 +501,9 @@ work is not.
 
 Use one accounting convention: `sourceCharge` covers the selected lowered
 function body and all complete internal calls. This includes the body's private
-flag initialization and final dispatch, as well as checks crossed after an
-early return. `outerOverhead` covers only the external entry trampoline,
+flag initialization, as well as checks crossed after an early return. Complete
+functions omit the empty final dispatch; a generic wrapper with a normal
+continuation still charges its actual dispatch. `outerOverhead` covers only the external entry trampoline,
 outermost calling convention and final halt. No instruction belongs to both.
 
 The upper-bound connection must have the useful direction:
@@ -527,12 +544,18 @@ the selected branch and actual calls without making consumers destruct the
 execution relation. `FunctionCostBound.of_stmt` adds the returning-body wrapper
 once; `callCost` still comes from the actual calling convention.
 
-The scalar consumer now uses these rules explicitly. Its uniform branch bound
+The scalar consumer now uses `ram_source_cost` to compose these rules. Its uniform branch bound
 does not need the helper's mathematical result; a result-dependent continuation
 can instead reuse a consequence of an existing source contract through the call
-rule. Structural rule selection, argument transport and the final inequality
-are not yet generated automatically. This reduces proof plumbing without
-changing the emitted code, accounting convention or separation from correctness.
+rule. Structural rule selection and intermediate bounds are generated from
+the existing theorems; ordinary arithmetic tactics finish the requested
+inequality. The initial tactic uses uniform branch/call-continuation bounds;
+result-dependent costs still use the public explicit rules.
+
+The function-exit optimization separately removes the redundant final dispatch.
+The actual body is three instructions shorter, its inferred register bound is
+unchanged, and measured lowering charges initialization plus the core (`+2`).
+The generic statement wrapper and its returning-path `+5` are unchanged.
 
 ## 8. Migration and module boundaries
 
@@ -609,9 +632,9 @@ costs and preservation of real safety conditions.
 
 The scalar implementation now fixes typed lexical contexts, the `source_program`
 spelling, one-step monadic equations and a strict scoped Part/Std.Do interpretation.
-Shared cost rules remove execution case analysis from the scalar consumer.
-M1 remains open: structural realization and cost-rule application still need
-source-facing automation and reusable specifications. Improve these alongside
+Shared cost rules and focused tactics remove structural bookkeeping from the
+scalar consumers. M1 remains open: richer source specifications, general callee
+selection and recursive/data-dependent automation are unfinished. Improve these alongside
 the lemma-transfer bridge and the first complete borrowed-buffer path; do not
 require perfect scalar automation before heap effects and loops can inform the
 proof interface. No choice may define high-level meaning through
