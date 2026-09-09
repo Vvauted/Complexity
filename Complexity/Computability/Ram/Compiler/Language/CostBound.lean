@@ -164,6 +164,40 @@ theorem ite {condition : Atom Γ .bool}
       simpa only [test, Bool.false_eq_true, ↓reduceIte] using
         Nat.add_le_add_right (noCost test body bodyCost) 2
 
+/-- A proved true guard requires a bound only for the selected branch. -/
+theorem ite_true {condition : Atom Γ .bool}
+    {yes no : Complexity.Language.Stmt signatures Γ result}
+    (test : condition.eval entry.locals = true)
+    (body : StmtCostBound program yes entry bound) :
+    StmtCostBound program (.ite condition yes no) entry (bound + 3) := by
+  have selected : StmtCostBound program (.ite condition yes no) entry
+      (if condition.eval entry.locals then bound + 3 else 0 + 2) := by
+    apply ite (yesBound := bound) (noBound := 0)
+    · intro _
+      exact @body
+    · intro impossible
+      have mismatch : true = false := test.symm.trans impossible
+      cases mismatch
+  simp only [test, ↓reduceIte] at selected
+  exact @selected
+
+/-- A proved false guard requires a bound only for the selected branch. -/
+theorem ite_false {condition : Atom Γ .bool}
+    {yes no : Complexity.Language.Stmt signatures Γ result}
+    (test : condition.eval entry.locals = false)
+    (body : StmtCostBound program no entry bound) :
+    StmtCostBound program (.ite condition yes no) entry (bound + 2) := by
+  have selected : StmtCostBound program (.ite condition yes no) entry
+      (if condition.eval entry.locals then 0 + 3 else bound + 2) := by
+    apply ite (yesBound := 0) (noBound := bound)
+    · intro impossible
+      have mismatch : false = true := test.symm.trans impossible
+      cases mismatch
+    · intro _
+      exact @body
+  simp only [test, Bool.false_eq_true, ↓reduceIte] at selected
+  exact @selected
+
 /-- A branch-independent upper bound uses the larger of the two already
 justified path charges. It need not recover the branch's mathematical result. -/
 theorem ite_max {condition : Atom Γ .bool}

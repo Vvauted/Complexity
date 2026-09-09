@@ -24,8 +24,9 @@ mathematical proof obligations, not inferred validity or alias assumptions.
 
 `ram_source_cost (n limit) using calleeBound` composes the existing cost rules,
 then compares the derived returning-body bound with the requested bound. It
-uses a maximum for branches and uniform continuation bounds at calls, so it
-does not require a correctness proof when the bound does not depend on returned
+selects a branch when its condition follows from source values and local facts,
+and otherwise uses a maximum for both branches. Uniform continuation bounds at
+calls need no correctness proof when the bound does not depend on returned
 contents. For result-dependent bounds use `StmtCostBound.call` directly.
 
 `ram_source_realize_step` and `ram_source_cost_step` run the same structural
@@ -220,6 +221,19 @@ private def inferLocalBound : TacticM Unit := withMainContext do
   replaceMainGoal [proof.mvarId!]
   evalTactic (← `(tactic| constructor))
 
+/-- Select a known branch only after its guard proof is complete. An unresolved
+condition leaves the original uniform rule available, with no speculative
+branch choice or proof obligation retained from the failed attempt. -/
+private def costBranch : TacticM Unit := do
+  let known (rule : Name) : TacticM Unit := do
+    evalTactic (← `(tactic| apply $(mkIdent rule):ident))
+    focusAndDone do
+      normalizeValues
+      evalTactic (← `(tactic| all_goals first | assumption | (norm_num; done) | omega))
+  Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtCostBound.ite_true) fun _ => do
+    Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtCostBound.ite_false) fun _ => do
+      evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.ite_max))
+
 private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
   unless (← getGoals).isEmpty do
     withMainContext do
@@ -253,7 +267,7 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
         else if statement.isAppOf ``Complexity.Language.Stmt.seq then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.seq))
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
-          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.ite_max))
+          costBranch
         else if statement.isAppOf ``Complexity.Language.Stmt.while then
           return
         else if statement.isAppOf ``Complexity.Language.Stmt.call then
@@ -310,7 +324,8 @@ elab_rules : tactic
 
 /-- Derive a structural cost bound from proved instruction charges and
 an optional callee bound, leaving its comparison with the requested budget.
-Branch and call-continuation bounds are uniform; no result theorem is required. -/
+Known branch conditions select their actual path; otherwise branch bounds are
+uniform. Call-continuation bounds need no result theorem. -/
 syntax (name := ramSourceCost) "ram_source_cost" (" (" ident* ")")?
   (" using " term:max)? : tactic
 

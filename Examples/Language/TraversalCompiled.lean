@@ -89,71 +89,33 @@ theorem loop_costBound (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     (potential := fun locals _ =>
       (callCost Implementation.program Implementation.incrementId 10 + 43) *
         (contents.size - locals.1) + 21)
+  all_goals simp (config := { failIfUnchanged := false }) only
+    [Implementation.boundedMap_loop1.regroup_symm_apply]
   · intro mutable heap _
-    exact guard_costBound (Implementation.boundedMap_loop1.Regroup.symm
-      (mutable, (xs, limit, ()))) heap
+    exact guard_costBound (mutable.1, xs, limit, ()) heap
   · intro mutable heap afterGuard afterHeap _ _
-    exact body_costBound (Implementation.boundedMap_loop1.Regroup.symm
-      (afterGuard, (xs, limit, ()))) afterHeap
+    exact body_costBound (afterGuard.1, xs, limit, ()) afterHeap
   · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial tested iterated
-    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
-      (guard_spec xs limit j entry) rfl
-      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
-        Implementation.boundedMap_loop1.guard_observe] using tested)
-    change k = j at sameIndex
-    subst k afterHeap
-    have size : contents.size = xs.length := by
-      simpa only [Array.size_mapIdx] using initial.2.size_eq
-    have available : j < contents.size := by
-      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
-    obtain ⟨sameOutcome, updated⟩ := Part.TotalCorrectness.stateT_post_of_eq
-      (body_spec xs limit contents initial available) rfl
-      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
-        Implementation.boundedMap_loop1.body_observe] using iterated)
-    have next : l = j + 1 := congrArg (fun outcome => outcome.2.1) sameOutcome
-    simpa only [next] using updated
+    have ready := Part.TotalCorrectness.stateT_post_of_eq
+      (round_spec xs limit contents initial) rfl tested
+    have completed := Part.TotalCorrectness.stateT_post_of_eq ready.2 rfl iterated
+    exact completed.2
   · intro mutable heap afterGuard afterHeap _ _
-    dsimp only
     omega
   · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial tested iterated
-    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
-      (guard_spec xs limit j entry) rfl
-      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
-        Implementation.boundedMap_loop1.guard_observe] using tested)
-    change k = j at sameIndex
-    subst k afterHeap
-    have size : contents.size = xs.length := by
-      simpa only [Array.size_mapIdx] using initial.2.size_eq
-    have available : j < contents.size := by
-      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
-    obtain ⟨sameOutcome, _⟩ := Part.TotalCorrectness.stateT_post_of_eq
-      (body_spec xs limit contents initial available) rfl
-      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
-        Implementation.boundedMap_loop1.body_observe] using iterated)
-    have next : l = j + 1 := congrArg (fun outcome => outcome.2.1) sameOutcome
-    subst l
+    have ready := Part.TotalCorrectness.stateT_post_of_eq
+      (round_spec xs limit contents initial) rfl tested
+    have completed := Part.TotalCorrectness.stateT_post_of_eq ready.2 rfl iterated
+    have next : l = j + 1 := completed.1
+    have nextBound : l ≤ contents.size := completed.2.1
     have remaining : contents.size - j = contents.size - (j + 1) + 1 := by omega
-    dsimp only
-    rw [remaining, Nat.mul_add, Nat.mul_one]
+    dsimp (config := { failIfUnchanged := false }) only
+    rw [next, remaining, Nat.mul_add, Nat.mul_one]
     omega
   · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ finalHeap value initial tested iterated
-    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
-      (guard_spec xs limit j entry) rfl
-      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
-        Implementation.boundedMap_loop1.guard_observe] using tested)
-    change k = j at sameIndex
-    subst k afterHeap
-    have size : contents.size = xs.length := by
-      simpa only [Array.size_mapIdx] using initial.2.size_eq
-    have available : j < contents.size := by
-      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
-    obtain ⟨sameOutcome, _⟩ := Part.TotalCorrectness.stateT_post_of_eq
-      (body_spec xs limit contents initial available) rfl
-      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
-        Implementation.boundedMap_loop1.body_observe] using iterated)
-    have impossible : (Control.returned value : Control .unit) = .normal :=
-      congrArg Prod.fst sameOutcome
-    cases impossible
+    have ready := Part.TotalCorrectness.stateT_post_of_eq
+      (round_spec xs limit contents initial) rfl tested
+    exact False.elim (Part.TotalCorrectness.stateT_post_of_eq ready.2 rfl iterated)
   · exact current
 
 /-- Guard realization only needs the compared natural values and its Boolean
@@ -235,40 +197,23 @@ theorem loop_realizable {w : Nat} (hw : 0 < w) (xs : Buffer .nat) (limit : Nat)
     Implementation.boundedMap_loop1.body_preservesCaptures (xs, limit, ())
     (mutable := (i, ())) (heap := heap)
     (invariant := fun mutable => invariant xs limit contents mutable.1) total
+  all_goals simp (config := { failIfUnchanged := false }) only
+    [Implementation.boundedMap_loop1.regroup_symm_apply]
   · rintro ⟨j, ⟨⟩⟩ entry initial
     have size : contents.size = xs.length := by
       simpa only [Array.size_mapIdx] using initial.2.size_eq
     exact guard_realizable hw xs limit j entry (by have := initial.1; omega) lengthFits
   · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap initial tested
-    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
-      (guard_spec xs limit j entry) rfl
-      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
-        Implementation.boundedMap_loop1.guard_observe] using tested)
-    change k = j at sameIndex
-    subst k afterHeap
-    have size : contents.size = xs.length := by
-      simpa only [Array.size_mapIdx] using initial.2.size_eq
-    have available : j < contents.size := by
-      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
-    exact body_realizable hw xs limit contents j entry initial available lengthFits limitFits
-      (incrementsFit j available)
+    have ready := Part.TotalCorrectness.stateT_post_of_eq
+      (round_spec xs limit contents initial) rfl tested
+    have available : k < contents.size := ready.1.2.mp rfl
+    exact body_realizable hw xs limit contents k afterHeap ready.1.1 available lengthFits limitFits
+      (incrementsFit k available)
   · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial tested iterated
-    obtain ⟨selected, sameIndex, sameHeap⟩ := Part.TotalCorrectness.stateT_post_of_eq
-      (guard_spec xs limit j entry) rfl
-      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
-        Implementation.boundedMap_loop1.guard_observe] using tested)
-    change k = j at sameIndex
-    subst k afterHeap
-    have size : contents.size = xs.length := by
-      simpa only [Array.size_mapIdx] using initial.2.size_eq
-    have available : j < contents.size := by
-      simpa only [Control.returned.injEq, decide_eq_true_eq, ← size] using selected.symm
-    obtain ⟨sameOutcome, updated⟩ := Part.TotalCorrectness.stateT_post_of_eq
-      (body_spec xs limit contents initial available) rfl
-      (by simpa only [Implementation.boundedMap_loop1.regroup_symm_apply,
-        Implementation.boundedMap_loop1.body_observe] using iterated)
-    have next : l = j + 1 := congrArg (fun outcome => outcome.2.1) sameOutcome
-    simpa only [next] using updated
+    have ready := Part.TotalCorrectness.stateT_post_of_eq
+      (round_spec xs limit contents initial) rfl tested
+    have completed := Part.TotalCorrectness.stateT_post_of_eq ready.2 rfl iterated
+    exact completed.2
   · exact current
 
 /-- The traversal uses one call level for its helper. Its original values'

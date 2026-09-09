@@ -24,7 +24,8 @@ normal-continuation proofs and a variant rule over named mutable locals.
 The complete buffer traversal proof now gives its ordinary `Array.map` result,
 termination, compiled invocation and independent linear instruction bound.
 A self-recursive factorial proof uses ordinary induction and mathlib's
-`Nat.factorial`; its compiled invocation and bound remain unfinished. The
+`Nat.factorial`; its compiled invocation now has a separate linear instruction
+bound, subject to word-range and code/stack-capacity conditions. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -240,19 +241,31 @@ preloaded heap representation and code/stack capacity remain explicit. Shared
 realization rules reuse source termination rather than requiring a second
 decreasing measure, and cost composition reuses the source array invariant.
 Fixed-capture realization and cost rules now reuse the generated lexical frame,
-so their invariants and potentials need only the mutable index and heap. Native
-guard/body contracts supply mathematical facts about the actual outcomes through
-`Part.TotalCorrectness.stateT_post_of_eq`, without consumer-specific uniqueness
-proofs. Selecting the generated views/frames, applying these contracts and
-normalizing guard/body outcomes remain explicit. Further named automation and
-an exported outside-buffer frame remain separate work.
+so their invariants and potentials need only the mutable index and heap. A single
+native `round_spec` retains the mathematical guard result and the body contract
+at that guard's actual final locals and heap. Both source correctness and the
+separate resource proofs reuse it through the existing
+`Part.TotalCorrectness.stateT_post_of_eq`. This removes repeated index/heap
+substitutions and guard-to-array-bound reasoning from the compiled consumer;
+no additional specification wrapper or execution relation is needed. Choosing
+the generated views/frames and applying the supplied contract remain explicit.
+Further named automation and an exported outside-buffer frame remain separate work.
 
 The [recursive factorial](../Examples/Language/Factorial.lean) makes a real
 source self-call on `n - 1`. Rewriting its generated one-step equation and using
 ordinary `Nat` induction proves the same action equals `pure (Nat.factorial n)`:
 finite success with the expected result and preservation of every initial heap.
-This does not establish bounded-word realizability or a runtime cost, and it
-is not yet a consumer of the generic mutual-recursion contract rule.
+The [compiled factorial](../Examples/Language/FactorialCompiled.lean) reuses that
+source theorem unchanged. Separate induction proves that `n! < 2^w` suffices
+for its intermediate value ranges and that `n` nested calls suffice. A second,
+independent induction composes the actual primitive and recursive-call charges;
+the structural tactic selects the known base/successor branch. The resulting
+runner theorem retains code capacity and stack space for the outer call plus
+those `n` recursive levels. Its bound is linear in the numeric argument `n`
+in the word-RAM instruction model, not in binary input length or arbitrary-precision
+multiplication cost. This is the first self-recursive source-to-runner consumer,
+not yet a use of the generic mutual-recursion contract rule or an effectful
+recursive program.
 
 The core's `Stmt.while guard body` uses a Boolean-producing statement block as
 its guard. Every iteration runs that block in the current state and passes its
@@ -667,15 +680,20 @@ conditional upper bound on the existing `ExecutionCost` observation, not a new
 interpreter or termination proof. Rules compose primitives, returns, sequencing,
 the selected branch and actual calls without making consumers destruct the
 execution relation. `FunctionCostBound.of_stmt` adds the returning-body wrapper
-once; `callCost` still comes from the actual calling convention.
+once; `callCost` still comes from the actual calling convention. The proved
+`callCost_eq_add` separates the body count from that fixed generated overhead,
+keeping frame and return layouts out of recursive arithmetic proofs.
 
 The scalar consumer now uses `ram_source_cost` to compose these rules. Its uniform branch bound
 does not need the helper's mathematical result; a result-dependent continuation
 can instead reuse a consequence of an existing source contract through the call
 rule. Structural rule selection and intermediate bounds are generated from
 the existing theorems; ordinary arithmetic tactics finish the requested
-inequality. The initial tactic uses uniform branch/call-continuation bounds;
-result-dependent costs still use the public explicit rules.
+inequality. When the guard follows from source values and local facts, the
+tactic selects only that branch through the proved `ite_true`/`ite_false` rules.
+Otherwise it retains a uniform maximum; it does not guess a symbolic decision.
+Call-continuation bounds remain uniform, and result-dependent costs still use
+the public explicit rules.
 
 The function-exit optimization separately removes the redundant final dispatch.
 The actual body is three instructions shorter, its inferred register bound is

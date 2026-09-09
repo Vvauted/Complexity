@@ -320,12 +320,15 @@ Status: in progress, not complete.
   needs it, but do not require re-proving the mathematical minimum. Applying
   these rules is now automated for the scalar uniform-bound fragment; actual
   arithmetic inequalities remain ordinary mathematical proof work.
-- [Scalar proof tactics](../Complexity/Computability/Ram/Compiler/Language/Tactic.lean)
+- [Structural proof tactics](../Complexity/Computability/Ram/Compiler/Language/Tactic.lean)
   open ordinary arguments and compose realization/cost rules in the existing
   scalar and nested-remainder consumers. Realization reuses supplied callee
-  contracts; cost uses uniform branch and call-continuation bounds without
-  demanding a duplicate correctness proof. They neither maintain a price table
-  nor infer invariants, arbitrary callee specifications or recursive bounds.
+  contracts. Cost selects only the executed branch when the guard follows from
+  source values and local facts; otherwise it uses a uniform maximum. Uniform
+  call-continuation bounds need no duplicate correctness proof. The recursive
+  factorial now uses the same structural pass with its supplied induction
+  hypothesis. These tactics neither maintain a price table nor infer invariants,
+  arbitrary callee specifications or recursive bounds.
 
 Next, alongside the lemma-transfer bridge and borrowed-buffer integration:
 
@@ -559,9 +562,9 @@ source termination proof; cost composition reuses its array invariant, without
 a second array-correctness proof. Native operation specifications and strict
 `StateT` adequacy remove routine WP/bind unfolding from the source proof.
 The remaining gate includes a reusable outside-buffer frame and an indexed
-traversal interface. Fixed-capture transport is now shared; choosing and
-composing supplied contracts and handling guard/body outcomes still need better
-automation.
+traversal interface. Fixed-capture transport is shared, and one native round
+contract now supplies the same guard/body facts to all three proofs. Selecting
+and composing supplied contracts still need better automation.
 This first complete invocation does not finish M2.
 
 This completes a useful borrowed-array subset, not allocated-container support.
@@ -610,14 +613,19 @@ or dedicated result-uniqueness proofs. Its ordinary guard/body contracts feed
 the same actual outcomes into correctness and resource reasoning through the
 shared strict `StateT` postcondition rule.
 
+The traversal now proves one native `round_spec`: it records the mathematical
+guard decision, then the body contract at the actual post-guard locals and heap.
+Its source loop proof and separate resource proofs reuse this same statement.
+The existing strict `StateT` postcondition rule extracts the facts directly;
+the compiled proof no longer repeats post-guard index/heap substitutions and
+array-bound reconstruction in five obligations. No special round-specification
+framework or second execution relation is introduced.
+
 The next proof-interface step is automatic application of supplied contracts
-and reuse of a round's mathematical postcondition. The current compiled
-traversal still explicitly selects views/frames, folds named observations and
-substitutes post-guard indices and heaps in several obligations. Remove this
-mechanical repetition while retaining the actual heap, source range conditions
-and cost inequalities. Keep RAM-specific rules out of the source semantics and
-syntax; simplify the existing proof rather than introducing another
-implementation or whole-loop template.
+and selection of generated named views/frames, which remain explicit. Preserve
+the actual heap, source range conditions and cost inequalities. Keep
+RAM-specific rules out of source semantics and syntax; simplify existing proofs
+rather than introducing another implementation or whole-loop template.
 
 The shared ordinary-local observation now retains all lexical values and the
 actual heap on every exit. Its well-founded and natural-variant specifications
@@ -636,11 +644,21 @@ existing source body rule. The index may select one function or mutually
 recursive functions with different signatures. The
 [named factorial](../Examples/Language/Factorial.lean) now demonstrates the
 ordinary parameter-induction path: its real self-call returns mathlib's
-`Nat.factorial` and preserves every initial heap. It does not consume the generic
-contract rule or demonstrate mutual recursion. Convenient generated recursive
-contract hypotheses and an effectful recursive consumer remain open. Neither
-correctness route requires a proposed instruction budget or call-stack depth;
-compiled realizability and cost are separate obligations.
+`Nat.factorial` and preserves every initial heap. Its
+[compiled consumer](../Examples/Language/FactorialCompiled.lean) now reuses that
+proof and the shared lowering to establish the actual halted invocation, returned
+factorial and a separate linear instruction bound. Representable factorial
+results bound the intermediate values; `n` nested calls and space for the outer
+call remain distinct from the instruction budget. Known base/successor guards
+are selected automatically by the structural cost tactic, and `callCost_eq_add`
+keeps compiler-derived call overhead separate from the recursive body count.
+The bound is linear in numeric `n` in the word-RAM model, not binary input length
+or arbitrary-precision multiplication cost; this does not complete M5.
+The example does not consume the generic contract rule or demonstrate mutual
+recursion. Convenient generated recursive contract hypotheses and an effectful
+recursive consumer remain open. Neither correctness route requires a proposed
+instruction budget or call-stack depth; compiled realizability and cost are
+separate obligations.
 
 1. Provide well-founded source `while` and recursive-call rules; user invariants
    and recursive hypotheses concern source values, not backend state.

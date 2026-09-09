@@ -42,6 +42,15 @@ theorem callCost_mono {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (fn : Fin signatures.length) :
     Monotone (callCost program fn) := LocalCompiler.Function.callSteps_mono 0 _
 
+/-- Separate callee body work from its fixed, compiler-derived call overhead.
+This lets recursive bounds use ordinary arithmetic without unfolding argument,
+frame or return layouts in the algorithm proof. -/
+theorem callCost_eq_add {signatures : List Signature}
+    (program : Complexity.Language.Program signatures) (fn : Fin signatures.length)
+    (bodySteps : Nat) : callCost program fn bodySteps = bodySteps + callCost program fn 0 := by
+  simp only [callCost, LocalCompiler.Function.callSteps_eq]
+  omega
+
 /-- The backend-derived core count of the given successful source execution.
 Range and call-nesting evidence belongs to that execution, not to a second
 correctness proof. Each constructor adds only its emitted runtime work. -/

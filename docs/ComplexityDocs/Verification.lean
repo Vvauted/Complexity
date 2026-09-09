@@ -149,12 +149,13 @@ reuse source termination without a second decreasing measure, and the
 [ordinary-local cost rules](##Complexity.Computability.Ram.Compiler.Language.CostBound.Locals)
 compose actual guard/body bounds and the source invariant. Their fixed-capture
 rules reuse generated lexical preservation, leaving only mutable locals and the
-heap in the author's invariant and potential. The source guard/body native
-contracts feed actual outcome facts into both proofs through
-`Part.TotalCorrectness.stateT_post_of_eq`; no dedicated result-uniqueness proof is
-needed. Selecting views and contracts and normalizing each round's outcomes
-still need a more convenient named interface. Exported outside-buffer frames
-also remain work.
+heap in the author's invariant and potential. One native `round_spec` records
+the guard's mathematical decision and the body contract at its actual final
+locals and heap. Source correctness and resource proofs reuse that same contract
+through `Part.TotalCorrectness.stateT_post_of_eq`, without repeated index/heap
+substitutions or dedicated result-uniqueness proofs. There is no additional
+round-specification framework. Selecting the generated views and supplied
+contracts remains explicit; exported outside-buffer frames also remain work.
 
 For recursion, the [source contract rule](##Complexity.Language.Verification.Recursion)
 supplies complete callable specifications at smaller mathematical indices through
@@ -165,8 +166,16 @@ frontend work. The [named factorial](##Examples.Language.Factorial) demonstrates
 the ordinary-induction route instead: rewriting the generated one-step equation
 and using `Nat` induction proves the real recursive action equals
 `pure (Nat.factorial n)` for every input, with every initial heap preserved.
-It does not yet consume the generic contract rule, demonstrate mutual recursion
-or establish a bounded-word compiled invocation and cost.
+The [compiled factorial](##Examples.Language.FactorialCompiled) reuses that same
+source theorem. Its separate realization proof bounds intermediate values by
+the representable factorial result and bounds nested calls by `n`. Its independent
+cost induction uses the structural tactic and actual generated call overhead.
+The resulting halted-runner theorem returns factorial, preserves shared entry
+memory and retains the generated code and stack-capacity premises. The linear
+word-RAM instruction bound is in the numeric argument `n`, not its binary bit
+length or the cost of arbitrary-precision multiplication. Mutual recursion,
+an effectful recursive consumer and convenient generated recursive hypotheses
+remain open.
 
 The [compiled buffer invocation](##Examples.Language.BufferCompiled) reuses this
 source proof and derives the read cell's range from the input heap representation.
@@ -224,7 +233,9 @@ Its empty final dispatch has been removed, with a proved saving of three static
 instructions and an unchanged register bound. The generic statement wrapper
 with an external continuation still uses five additional transitions on return.
 `callCost` derives internal-call overhead from the actual compiler, including
-the callee body and frame, without a user-supplied ABI price.
+the callee body and frame, without a user-supplied ABI price. `callCost_eq_add`
+separates the body count from the fixed generated overhead, so a recursive bound
+can use ordinary arithmetic without unfolding frame or return layouts.
 The [measured simulation](##Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation)
 proves these are real machine counts. Budget-free behavior simulation erases
 this same proof instead of maintaining a second structural induction.
@@ -246,8 +257,11 @@ its primitive, sequence, branch, return and call rules hide case analysis on
 scalar consumer and compares the inferred bound with its requested bound.
 Its uniform bound needs no proof of the minimum;
 result-dependent bounds can reuse an existing source contract through the call
-rule. The tactic currently uses uniform bounds at branches and call
-continuations; result-dependent bounds retain the explicit rule interface.
+rule. A guard proved from source values and local facts selects only its actual
+branch through `StmtCostBound.ite_true` or `ite_false`. If neither decision can
+be proved, the tactic retains the uniform maximum of both branches. Call
+continuations still use uniform bounds; result-dependent bounds retain the
+explicit rule interface.
 Neither instruction prices nor mathematical correctness proofs are duplicated.
 
 For typed loops, `StmtCostBound.while` uses a state-dependent potential. The
@@ -265,8 +279,9 @@ The [remainder example](##Examples.Language.Remainder) implements
 `n - (n / d) * d`, reuses the ordinary Nat identity, and derives the actual
 compiled result with a separate instruction bound. Divisor zero is included;
 no artificial subtraction-order condition is required.
-Loop syntax, products and allocation remain future work. Local assignment is
-covered by the same structural realization and cost tactics. Richer
+Named `while` is supported as described above; products and allocation remain
+future work. Local assignment is covered by the same structural realization and
+cost tactics. Richer
 callee selection, recursive proofs and data-dependent bound automation remain
 unfinished. Costs are currently derived
 for successfully realized executions, not an instrumentation theorem for

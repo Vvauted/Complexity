@@ -176,6 +176,53 @@ theorem body_step (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
       (body_spec xs limit contents current bound) heap rfl
   exact ⟨finish, same ▸ executed, updated⟩
 
+/-- One source round exposes the invariant and mathematical decision at the
+actual guard result, then the index progress and invariant at the actual body
+result. The body starts from the guard's real locals and heap. No machine
+representation, instruction bound or duplicate traversal proof is involved. -/
+theorem round_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
+    {i : Nat} {heap : Heap} (current : invariant xs limit contents i heap) :
+    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+      (Stmt.observe Implementation.boundedMap_loop1.View Implementation.boundedMap_loop1.Guard
+        Implementation.program (i, xs, limit, ()))
+      (fun entry => ⟨entry = heap⟩)
+      (fun guardOutcome guardHeap => ⟨match guardOutcome.1 with
+        | .returned again =>
+            (invariant xs limit contents guardOutcome.2.1 guardHeap ∧
+              (again = true ↔ guardOutcome.2.1 < contents.size)) ∧
+            if again then
+              Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+                (Stmt.observe Implementation.boundedMap_loop1.View
+                  Implementation.boundedMap_loop1.Body Implementation.program guardOutcome.2)
+                (fun entry => ⟨entry = guardHeap⟩)
+                (fun bodyOutcome bodyHeap => ⟨match bodyOutcome.1 with
+                  | .normal => bodyOutcome.2.1 = i + 1 ∧
+                      invariant xs limit contents bodyOutcome.2.1 bodyHeap
+                  | .returned _ => False
+                  | .fault _ => False⟩, ⟨⟩)
+            else True
+        | .normal => False
+        | .fault _ => False⟩, ⟨⟩) := by
+  rw [Implementation.boundedMap_loop1.guard_observe, guard_eval]
+  apply Std.Do.Triple.pure
+  intro entry same
+  subst entry
+  have size : contents.size = xs.length := by
+    simpa only [Array.size_mapIdx] using current.2.size_eq
+  refine ⟨⟨current, ?_⟩, ?_⟩
+  · simp only [size, decide_eq_true_eq]
+  · by_cases fits : i < contents.size
+    · have active : i < xs.length := by simpa only [size] using fits
+      simp only [decide_eq_true_eq, if_pos active]
+      apply Std.Do.SPred.entails.trans (body_spec xs limit contents current fits)
+      apply (Std.Do.WP.wp _).mono
+      constructor
+      · rintro outcome finish ⟨rfl, updated⟩
+        exact ⟨rfl, updated⟩
+      · trivial
+    · have inactive : ¬i < xs.length := by simpa only [size] using fits
+      simp only [decide_eq_true_eq, if_neg inactive]
+
 /-- The generated loop rule needs an invariant only for the changing index.
 Readonly captures are handled by the frontend's proved frame. -/
 theorem loop_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat) (i : Nat) :
@@ -191,21 +238,41 @@ theorem loop_spec (xs : Buffer .nat) (limit : Nat) (contents : Array Nat) (i : N
     (fun _ heap => xs.Contents heap (contents.map fun x => min (x + 1) limit))
     (fun _ _ _ => False) ?_ i
   intro j entry current
+  have round := round_spec xs limit contents current
+  -- Align the actual native body entry with the generated fixed-capture interface.
+  rw [Implementation.boundedMap_loop1.guard_observe, guard_eval] at round
   rw [guard_eval]
   apply Std.Do.Triple.pure
   intro heap same
   subst heap
-  have length : contents.size = xs.length := by
-    simpa only [Array.size_mapIdx] using current.2.size_eq
+  have guardPost := Part.TotalCorrectness.stateT_post_of_eq round
+    (entry := entry) (finish := entry)
+    (value := (Control.returned (result := .bool) (decide (j < xs.length)), j, xs, limit, ()))
+    rfl rfl
+  rcases guardPost with ⟨⟨guardInvariant, guardTest⟩, body⟩
+  simp only [decide_eq_true_eq] at guardTest
   by_cases fits : j < xs.length
-  · simp only [decide_eq_true_eq, if_pos fits]
-    obtain ⟨finish, executed, updated⟩ :=
-      body_step xs limit contents current (by omega)
-    exact Part.TotalCorrectness.stateT_triple_of_eq executed ⟨updated, by
-        change contents.size - (j + 1) < contents.size - j
-        omega⟩
+  · simp only [decide_eq_true_eq, if_pos fits] at body ⊢
+    have available : j < contents.size := guardTest.mp fits
+    apply Std.Do.SPred.entails.trans body
+    apply (Std.Do.WP.wp _).mono
+    constructor
+    · rintro ⟨control, locals⟩ finish property
+      cases control with
+      | normal =>
+          rcases property with ⟨next, updated⟩
+          exact ⟨updated, by
+            change contents.size - locals.1 < contents.size - j
+            rw [next]
+            omega⟩
+      | returned value => exact property
+      | fault error => exact property
+    · trivial
   · simp only [decide_eq_true_eq, if_neg fits]
-    exact invariant_done xs limit contents current (by omega)
+    have finished : ¬j < contents.size := fun bound => fits (guardTest.mpr bound)
+    exact invariant_done xs limit contents guardInvariant (by
+      change contents.size ≤ j
+      omega)
 
 /-- The declared traversal terminates and updates the actual buffer to the
 ordinary native array map. This is the same source program, not a host map used
