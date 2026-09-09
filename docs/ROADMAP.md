@@ -13,10 +13,11 @@ register-source interface, not the implementation of this new semantics.
 
 ## The correction in direction
 
-The current named language mainly elaborates into register-based `Stmt/Func`.
+The existing `ram_def` language elaborates into register-based `Stmt/Func`.
 Its generated body equations, mathematical result projections and source-cursor
-tactics are useful, but do not constitute a complete high-level semantics and
-automatic proof transfer.
+tactics are useful, but do not constitute the independent high-level semantics.
+The new `source_program` path supplies that separate semantics and shared
+lowering; its remaining author-facing proof work is described in M1 below.
 
 There are two coordinated development tracks: high-level programming/proofs and
 backend proof engineering. The first delivers a source proof whose connection
@@ -201,8 +202,13 @@ Status: in progress, not complete.
   includes the control outcome; missing returns fault, including for Unit.
 - [Source total-WP rules](../Complexity/Language/Verification.lean) support
   budget-free mathematical contracts. The
-  [scalar consumer](../Examples/Language/Scalar.lean) proves an actual helper-call
-  and branch program returns `min (n + 1) limit`, without a RAM proof.
+  [scalar consumer](../Examples/Language/Scalar.lean) now starts with
+  `increment_eval` and `boundedIncrement_eval`: generated function equations,
+  the helper's result and ordinary Nat reasoning establish the actual result
+  `min (n + 1) limit`. `FunctionTotal.iff_eval`, `Env.forall_cons` and
+  `Env.forall_nil` then recover the contracts used by lowering, without another
+  algorithm proof.
+  Direct source-WP rules remain available as a compositional proof interface.
 - [Independent partial observations](../Complexity/Language/Eval/Basic.lean)
   retain finite normal continuation, return and fault. At a function boundary,
   `Program.eval` returns `Part (Except Fault result)`: finite faults, including
@@ -211,7 +217,11 @@ Status: in progress, not complete.
   execution, not a result chosen from a specification or a lowered RAM run.
 - [Evaluation composition](../Complexity/Language/Eval/Composition.lean) gives
   equations for skip, return, primitive binding, sequencing, conditionals and
-  actual calls. The [strict Part adapter](../Complexity/Control/Part.lean) reuses
+  actual calls. [Continuation equations](../Complexity/Language/Eval/Continuation.lean)
+  express the same observation through `Stmt.evalWith`: only normal continuation
+  runs the remaining block, and calls use native `ExceptT Fault Part` bind.
+  This is composition of the existing semantics, not another interpreter.
+  The [strict Part adapter](../Complexity/Control/Part.lean) reuses
   mathlib's lawful monad with `open scoped Part.TotalCorrectness`: its native
   `Std.Do.WPMonad` requires a returned value, so divergence cannot prove a
   postcondition vacuously. The
@@ -223,8 +233,11 @@ Status: in progress, not complete.
   `let`, named calls, conditionals and returns. Operations use atomic operands;
   deeper expressions must first be named with `let`. Its generated curried
   `P.f` is a noncomputable `Part (Except Fault result)` observation, not a
-  `#eval` runtime. The scalar consumer now uses this frontend while retaining
-  its previous typed AST definitionally and preserving its public API.
+  `#eval` runtime. The generated `P.f_eq` exposes one body in ordinary monadic
+  notation using the proved continuation equations. Named callees remain
+  opaque, and the equation is deliberately not a simp rule: users unfold one
+  body explicitly and reuse a callee's specification. The scalar consumer uses
+  this frontend while retaining its typed AST definitionally and its public API.
   Mutable bindings, heap operations, loops and automatic source proofs are not
   supplied by this surface.
 - [Scalar lowering](../Complexity/Computability/Ram/Compiler/Language/Scalar.lean)
@@ -272,24 +285,32 @@ Status: in progress, not complete.
   identifies the existing `bodyTime` and combines a separate `FunctionCostBound`
   with source correctness/realizability in `FunctionRealizable.runUntil_le`.
   Returning-body wrapper work and internal calls are included in the body;
-  outer call-and-halt work is added exactly once. The existing scalar consumer
-  composes its helper's cost with the selected branch without register proofs
-  or a second proof of the mathematical minimum.
+  outer call-and-halt work is added exactly once.
+- [Structural bound rules](../Complexity/Computability/Ram/Compiler/Language/CostBound.lean)
+  let the scalar consumer compose primitive, return, branch and helper-call
+  bounds without case analysis on `ExecutionCost`. `StmtCostBound` bounds the
+  same realized execution; `FunctionCostBound.of_stmt` adds the returning-body
+  wrapper once. Call rules can reuse an existing result contract when the bound
+  needs it, but do not require re-proving the mathematical minimum. Applying
+  these rules and proving their inequalities are still explicit source work.
 
 Next, before broadening the frontend:
 
-1. Make the existing source equations and strict Std.Do adapter convenient for
-   shared specifications and source proof automation. Present named arguments,
-   actual call results and return propagation through the proved rules, rather
-   than requiring each consumer to repeat context projections and structural
-   case analysis. A named declaration and a curried semantic equation alone do
-   not complete that proof interface.
+1. Build shared-specification and source proof automation on the generated
+   one-step equations and strict Std.Do adapter. The scalar correctness proof
+   now uses named arguments, actual call results and ordinary mathematics;
+   its conversion to `FunctionTotal` still explicitly opens the typed argument
+   environment. Reduce that routine contract plumbing and support reusable
+   operation specifications, without making recursive unfolding a global simp
+   rule or claiming automatic discovery of mathematical proofs.
 2. Generate structured realization and cost obligations from the same source
-   constructors and shared callee contracts. The current cost consumer still
-   performs explicit structural case analysis. Reuse checked range, call-nesting
-   and emitted-cost rules without per-program simulation adapters or manually
-   supplied instruction prices. The executable observation remains the existing
-   compiled runner, not the noncomputable source `Part` value.
+   constructors and shared callee contracts. Shared cost rules now hide execution
+   case analysis, but their application remains explicit. The realization
+   consumer still unfolds source bindings and proves `EnvFits` structurally.
+   Generate that plumbing while leaving actual range, call-nesting and cost
+   inequalities visible. Reuse checked rules without per-program simulation
+   adapters or manually supplied instruction prices. The executable observation
+   remains the existing compiled runner, not the noncomputable source `Part` value.
 
 The present cost interpretation concerns successful realized scalar executions.
 It is not yet instrumentation of every unrestricted source execution, nor

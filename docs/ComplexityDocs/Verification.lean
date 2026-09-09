@@ -37,8 +37,12 @@ source_program Bounded where
       return limit
 ```
 
-It generates typed source bodies and ordinary curried semantic functions. A result
-statement can be written as
+It generates typed source bodies, ordinary curried semantic functions and one-step
+equations such as `Bounded.boundedIncrement_eq`. Each equation exposes that function's
+body in native `ExceptT Fault Part` `do` notation, retaining named callee actions.
+It is deliberately not a simp rule: unfold one body explicitly, then reuse a
+callee's specification instead of recursively expanding its implementation.
+A result statement can be written as
 `Bounded.boundedIncrement n limit = Part.some (.ok (min (n + 1) limit))`.
 This is the actual source program's result, not a separately implemented answer.
 These `Part` functions are noncomputable mathematical observations, not host
@@ -47,8 +51,21 @@ executables for `#eval`; execution still uses the compiled RAM runner.
 [Evaluation adequacy](##Complexity.Language.Eval.Basic) distinguishes finite
 faults from absence of a finite result. The
 [composition equations](##Complexity.Language.Eval.Composition) preserve lexical
-scope, actual callee results and early returns. Recursive call equations are
-explicit rules, not automatically unfolding simplifications.
+scope, actual callee results and early returns. The
+[continuation interface](##Complexity.Language.Eval.Continuation) derives ordinary
+monadic composition from the same evaluation: `Stmt.evalWith` runs its continuation
+only after a normal outcome. Return and fault bypass it; function fallthrough is
+the defined `.missingReturn` error. These proved rules justify the generated
+function equations, without a second interpreter or a user-supplied host algorithm.
+
+For example, the helper proof begins directly at its generated equation:
+
+```lean
+theorem increment_eval (n : Nat) :
+    Bounded.increment n = Part.some (.ok (n + 1)) := by
+  rw [Bounded.increment_eq]
+  rfl
+```
 
 For native `Std.Do` reasoning, `open scoped Part.TotalCorrectness` activates the
 [strict partial-value WP adapter](##Complexity.Control.Part). It requires an actual
@@ -60,11 +77,19 @@ instances; it does not make `mvcgen` prove source termination automatically.
 
 The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
 branches on its returned value and proves the result equals `min (n + 1) limit`
-using ordinary Nat facts. Its
+using ordinary Nat facts. Its primary `increment_eval` and `boundedIncrement_eval`
+proofs rewrite the generated equations; the latter reuses the helper result and
+splits the mathematical comparison. `FunctionTotal.iff_eval` then derives the
+contracts required by compilation from these result equations. The generic
+`Env.forall_cons` and `Env.forall_nil` rules open their typed arguments, without
+another correctness proof. Direct source-WP rules remain available when a
+compositional contract is the preferred starting point. The
 [compiled invocation](##Examples.Language.ScalarCompiled) supplies only source-level
 range and call-nesting facts, then reuses that mathematical proof. In particular,
 `n + 1` must fit even when the final minimum is small. These conditions do not
-include a proposed instruction budget.
+include a proposed instruction budget. The current realization proof still opens
+source bindings and constructs `EnvFits` structurally; the frontend does not yet
+automate that environment bookkeeping.
 
 [Generic simulation](##Complexity.Computability.Ram.Compiler.Language.Simulation)
 handles lexical layouts, real callees and returned fields.
@@ -98,14 +123,28 @@ termination or repeat the mathematical postcondition. Its counts are
 identifies the existing `bodyTime`; `FunctionRealizable.runUntil_le` combines
 the source bound with the original correctness and realization contracts.
 The complete invocation bound adds the outer calling convention and final halt
-exactly once. The scalar consumer reuses its helper bound and both branch rules.
+exactly once.
+
+Use the [structural bound rules](##Complexity.Computability.Ram.Compiler.Language.CostBound)
+to compose source costs. `StmtCostBound` bounds the existing execution observation;
+its primitive, sequence, branch, return and call rules hide case analysis on
+`ExecutionCost`. `FunctionCostBound.of_stmt` adds the returning-body wrapper once.
+The scalar consumer applies these rules to its helper and selected branch, then
+proves an ordinary inequality. Its uniform bound needs no proof of the minimum;
+result-dependent bounds can reuse an existing source contract through the call
+rule. These applications are still explicit, not generated cost proofs. Neither
+the instruction prices nor the mathematical correctness argument is duplicated.
 
 The frontend currently supports `Nat`, `Bool`, `Unit`, lexical bindings, actual
 named calls, branches and returns. Addition/comparison operands must be atomic;
-name deeper expressions with `let`. Mutable data, loop syntax and fully automated
-source contract/range/cost proofs remain future work. Costs are currently derived
+name deeper expressions with `let`. Mutable data and loop syntax remain future
+work; automatic contract plumbing and range/cost obligation generation remain
+unfinished. Costs are currently derived
 for successfully realized scalar executions, not an instrumentation theorem for
 every unrestricted source execution.
+M1 therefore remains open despite the ordinary-equation correctness proof and
+shared cost rules: contract conversion and realization/cost plumbing still need
+a convenient shared automation layer.
 Optimizing code size does not imply every execution is faster.
 The executable word-RAM workflow and maintainer interfaces below remain available.
 

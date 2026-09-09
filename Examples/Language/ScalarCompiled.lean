@@ -6,6 +6,7 @@ Authors: vvauted
 import Examples.Language.Scalar
 import Complexity.Computability.Ram.Compiler.Language.Execution
 import Complexity.Computability.Ram.Compiler.Language.CostExecution
+import Complexity.Computability.Ram.Compiler.Language.CostBound
 
 /-!
 # Transferring the scalar source proof through generic lowering
@@ -149,34 +150,24 @@ theorem boundedIncrement_runUntil {w heapLimit : Nat} (hw : 0 < w) (n limit : Na
 value and setting the flag, and five on the function-body wrapper. -/
 theorem increment_costBound :
     FunctionCostBound program (0 : Fin 2) (fun _ => True) (fun _ => 13) := by
-  intro args _ w depth finish value execution steps cost
-  cases cost with
-  | letPrim tail =>
-      cases tail
-      change 4 + (2 * 1 + 2) + 5 ≤ 13
-      decide
+  apply FunctionCostBound.of_stmt (coreBound := fun _ => 8)
+  intro args _
+  exact StmtCostBound.letPrim _ (StmtCostBound.ret _ _)
 
 /-- The caller reuses the helper's complete call bound. Its comparison, selected
 return branch and wrapper add at most sixteen transitions. -/
 theorem boundedIncrement_costBound :
     FunctionCostBound program (1 : Fin 2) (fun _ => True)
       (fun _ => callCost program (0 : Fin 2) 13 + 16) := by
-  intro args _ w depth finish value execution steps cost
-  cases cost with
-  | callReturn calleeCost bodyCost =>
-      have helperBound := increment_costBound _ trivial _ calleeCost
-      change _ + 5 ≤ 13 at helperBound
-      have callBound := callCost_mono program (0 : Fin 2) helperBound
-      cases bodyCost with
-      | letPrim branch =>
-          cases branch with
-          | iteTrue returned =>
-              cases returned
-              exact Nat.add_le_add_right callBound 16
-          | iteFalse returned =>
-              cases returned
-              exact Nat.le_trans (Nat.add_le_add_right callBound 15)
-                (Nat.add_le_add_left (by decide : 15 ≤ 16) _)
+  apply FunctionCostBound.of_stmt (coreBound := fun _ => callCost program (0 : Fin 2) 13 + 11)
+  intro args _
+  refine StmtCostBound.call (post := fun _ => True) (nextBound := fun _ => 11)
+    increment_costBound trivial (fun _ => trivial) ?_ (fun _ _ => Nat.le_refl _)
+  intro value _
+  refine StmtCostBound.mono (StmtCostBound.letPrim _ (StmtCostBound.ite
+    (fun _ => StmtCostBound.ret _ _) (fun _ => StmtCostBound.ret _ _))) ?_
+  change 4 + (if _ then 4 + 3 else 4 + 2) ≤ 11
+  split <;> decide
 
 /-- The same halted machine invocation returns the mathematical minimum and
 satisfies the independent source cost bound, including the outer call and halt. -/

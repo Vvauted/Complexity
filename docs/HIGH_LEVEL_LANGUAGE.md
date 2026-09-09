@@ -8,9 +8,11 @@ of realized scalar executions now transfers source bounds to the actual runner,
 including internal calls and the outer invocation overhead. The Lean-like
 scalar `source_program` surface, independent `Part` observations, compositional
 evaluation equations and a scoped strict Std.Do interpretation are now present.
-The generated curried functions are noncomputable semantic observations, not
-`#eval` runtimes. Shared source-specification and realization/cost automation
-remain incomplete; mutable source data and loops are not yet supported. The
+Generated one-step function equations support ordinary mathematical correctness
+proofs; shared structural rules compose separate cost bounds. The generated
+curried functions are noncomputable semantic observations, not `#eval` runtimes.
+Contract plumbing and realization/cost rule application are still explicit;
+full source proof automation, mutable data and loops are not yet supported. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -165,9 +167,13 @@ The [existing scalar consumer](../Examples/Language/Scalar.lean) uses this
 declaration and retains its previous typed core definitionally. The declaration
 exports signatures, function identifiers and bodies, the shared program, and
 curried mathematical observations. In particular,
-`Implementation.boundedIncrement n limit` has type `Part (Except Fault Nat)`;
-its equation identifies `Part.some (.ok (min (n + 1) limit))` from the source proof.
-It is noncomputable, not an executable replacement for the compiled runner.
+`Implementation.boundedIncrement n limit` has type `Part (Except Fault Nat)`.
+The generated `Implementation.boundedIncrement_eq` unfolds one source body into
+ordinary `ExceptT Fault Part` `do` notation, retaining the named `increment`
+call. It is not a simp rule: recursive callees are not expanded automatically.
+The user proves the minimum result from this equation and the helper's proved
+result, not from a second implementation. The observation is noncomputable,
+not an executable replacement for the compiled runner.
 All function signatures are collected before lowering the bodies, so named
 calls refer to the same source program rather than arbitrary host callbacks.
 The available surface is Nat/Bool/Unit, immutable `let`, calls, `if` and `return`;
@@ -234,6 +240,22 @@ skip, return, primitive binding, sequencing, conditionals and calls, preserving
 return/fault propagation and lexical scope. They provide an equational
 mathematical interface to the same source program, not a second algorithm.
 
+The [continuation interface](../Complexity/Language/Eval/Continuation.lean)
+composes these observations through `Stmt.evalWith`. A normal outcome runs the
+supplied continuation; a return or fault bypasses it. The call equation uses
+the actual `Program.eval` action in the existing `ExceptT Fault Part` monad.
+At a function boundary, falling through produces `.missingReturn`. The frontend
+uses these proved rules to generate `P.f_eq`, rather than assuming a host `do`
+block agrees with the typed source.
+
+In the scalar example, `increment_eval` first rewrites `Implementation.increment_eq`.
+Then `boundedIncrement_eval` rewrites its own one-step equation, reuses the helper
+result and proves the two minimum cases using ordinary Nat facts.
+`FunctionTotal.iff_eval` transports these successful result equations back to
+the budget-free source contracts. `Env.forall_cons` and `Env.forall_nil` open
+the typed arguments for that generic bridge. The mathematical argument is not
+repeated in the contract or compiled-execution proof.
+
 Prove determinism of source outcomes and final state. Mathematical result and
 cost observations must not depend on which proof of execution or termination
 was supplied. When allocation is introduced, use a deterministic fresh-object
@@ -287,10 +309,12 @@ reject an error value; the source function specification supplies that policy.
 
 Next connect the compositional equations and shared operation specifications to
 `@[spec]`, `mvcgen` and focused source proof automation. The current scalar
-consumer still uses explicit source-WP reasoning; the frontend does not
-automatically discharge mathematical contracts, realization conditions or cost
-bounds. These are semantic views of the core, not acceptance of arbitrary host
-monadic terms as executable primitives. The laws belong to the interpretation,
+consumer already proves ordinary function equations by rewriting and Nat
+reasoning; the generic contract conversion still explicitly opens `Env`.
+The frontend does not automatically discharge mathematical contracts,
+realization conditions or cost bounds. These are semantic views of the core,
+not acceptance of arbitrary host monadic terms as executable primitives.
+The laws belong to the interpretation,
 not unproved syntactic monad equalities for raw source trees.
 
 A native list iterator visits fixed list values. For a mutable buffer, iterate
@@ -377,6 +401,12 @@ The second group is derived from source-level facts and exposed in those terms
 when it cannot be solved automatically. A well-founded termination argument
 does not automatically give a tight call-stack bound. Shared rules can derive
 such bounds for supported recursion patterns without confusing them with time.
+
+The current scalar realization API has shared `RealizationWP` rules, but its
+consumer still opens source bindings, transports returned values and constructs
+`EnvFits` proofs explicitly. Removing this environment bookkeeping is pending
+automation work; the underlying intermediate-range and call-nesting facts must
+remain genuine source-level obligations.
 
 ## 6. Automatic proof transfer to the existing backend
 
@@ -483,6 +513,21 @@ lemmas. Generating structural cost obligations does not automatically discover
 the right recurrence, potential or invariant. Ordinary behavioral equality
 allows mathematical reuse but never transfers an algorithm's cost by itself.
 
+The current [structural scalar rules](../Complexity/Computability/Ram/Compiler/Language/CostBound.lean)
+expose `StmtCostBound` for a source statement and its entry values. This is a
+conditional upper bound on the existing `ExecutionCost` observation, not a new
+interpreter or termination proof. Rules compose primitives, returns, sequencing,
+the selected branch and actual calls without making consumers destruct the
+execution relation. `FunctionCostBound.of_stmt` adds the returning-body wrapper
+once; `callCost` still comes from the actual calling convention.
+
+The scalar consumer now uses these rules explicitly. Its uniform branch bound
+does not need the helper's mathematical result; a result-dependent continuation
+can instead reuse a consequence of an existing source contract through the call
+rule. Structural rule selection, argument transport and the final inequality
+are not yet generated automatically. This reduces proof plumbing without
+changing the emitted code, accounting convention or separation from correctness.
+
 ## 8. Migration and module boundaries
 
 Keep `Complexity/` as the only reusable library root. The
@@ -530,12 +575,14 @@ shared mutable heap, budget-free behavior, checked lowering, backend-derived
 costs and preservation of real safety conditions.
 
 The scalar implementation now fixes typed lexical contexts, the `source_program`
-spelling and a strict scoped Part/Std.Do interpretation. M1 remains open:
-structured realization/cost obligations and shared-specification automation
-must make the complete scalar author proof convenient, not only its final
-equation. Improve that path before broadening the language to the first buffer
-operation. No choice may define high-level meaning through lowering, accept
-manually entered instruction prices or expose register proofs to algorithm authors.
+spelling, one-step monadic equations and a strict scoped Part/Std.Do interpretation.
+Shared cost rules remove execution case analysis from the scalar consumer.
+M1 remains open: contract conversion, structural realization and cost-rule
+application still need source-facing automation and reusable specifications.
+Make that complete author proof convenient before broadening the language to
+the first buffer operation. No choice may define high-level meaning through
+lowering, accept manually entered instruction prices or expose register proofs
+to algorithm authors.
 
 Richer data operations and allocation remain scheduled capabilities, not
 assumed consequences of a mathematical view. Arbitrary Lean compilation,

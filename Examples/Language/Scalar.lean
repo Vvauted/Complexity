@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Language.Verification
+import Complexity.Language.Eval.Verification
 import Complexity.Language.Syntax
 
 /-!
@@ -11,8 +11,9 @@ import Complexity.Language.Syntax
 
 The program calls an increment function, compares its actual returned natural
 number with a supplied limit, and returns the smaller value. Both function
-bodies are typed source syntax. Their proof uses the source WP rules and ordinary
-natural-number mathematics, not a reference algorithm or a register program.
+bodies are typed source syntax. Their mathematical proof uses generated monadic
+equations and ordinary natural-number facts. Shared evaluation adequacy supplies
+the source contracts used by the compiler, without another implementation proof.
 
 This file establishes source behavior only. Realizing these unbounded natural
 operations on a word backend requires its separate range, compilation and cost
@@ -47,36 +48,49 @@ def boundedIncrement : Stmt signatures [.nat, .nat] .nat :=
 /-- Both actual typed function bodies, with no host-side executable callback. -/
 def program : Program signatures := Implementation.program
 
+/-- The actual named helper has the ordinary mathematical increment value. -/
+theorem increment_eval (n : Nat) :
+    Implementation.increment n = Part.some (.ok (n + 1)) := by
+  rw [Implementation.increment_eq]
+  rfl
+
+/-- The named source function has an ordinary curried mathematical result,
+obtained from the same source correctness proof. -/
+theorem boundedIncrement_eval (n limit : Nat) :
+    Implementation.boundedIncrement n limit = Part.some (.ok (min (n + 1) limit)) := by
+  have helper : Implementation.increment n =
+      (pure (n + 1) : ExceptT Fault Part Nat) := increment_eval n
+  rw [Implementation.boundedIncrement_eq, helper, pure_bind]
+  by_cases small : n + 1 ≤ limit
+  · simp only [decide_eq_true_eq, if_pos small, Nat.min_eq_left small]
+    rfl
+  · simp only [decide_eq_true_eq, if_neg small,
+      Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small))]
+    rfl
+
 /-- Ordinary addition specifies the actual source helper. -/
 theorem increment_total :
     FunctionTotal program (0 : Fin 2) (fun _ => True)
       (fun args value => value = Env.head args + 1) := by
-  apply FunctionTotal.of_wp
-  intro args _
-  change TotalWP program increment (fun _ => False)
-    (fun value _ => value = Env.head args + 1) args
-  simp [increment, Implementation.incrementBody, Env.head]
+  rw [FunctionTotal.iff_eval]
+  refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
+  intro n
+  refine (Env.forall_nil _).mpr ?_
+  intro _
+  exact ⟨n + 1, increment_eval n, rfl⟩
 
 /-- The caller's source proof composes the helper contract and the actual branch. -/
 theorem boundedIncrement_total :
     FunctionTotal program (1 : Fin 2) (fun _ => True)
       (fun args value => value = min (Env.head args + 1) (Env.head (Env.tail args))) := by
-  apply FunctionTotal.of_wp
-  intro args _
-  change TotalWP program boundedIncrement (fun _ => False)
-    (fun value _ => value = min (Env.head args + 1) (Env.head (Env.tail args))) args
-  unfold boundedIncrement Implementation.boundedIncrementBody
-  apply TotalWP.call increment_total trivial
-  intro value returned
-  have value_eq : value = Env.head args + 1 := returned
-  subst value
-  simp only [TotalWP.letPrim_iff, TotalWP.ite_iff, TotalWP.ret_iff,
-    Prim.eval, Atom.eval, Env.cons_here, Env.cons_there]
-  by_cases small : Env.head args + 1 ≤ Env.head (Env.tail args)
-  · simp only [Env.head, Env.get_tail] at small ⊢
-    simp [small]
-  · simp only [Env.head, Env.get_tail] at small ⊢
-    simp [small, Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small))]
+  rw [FunctionTotal.iff_eval]
+  refine (Env.forall_cons (τ := .nat) (Γ := [.nat]) _).mpr ?_
+  intro n
+  refine (Env.forall_cons (τ := .nat) (Γ := []) _).mpr ?_
+  intro limit
+  refine (Env.forall_nil _).mpr ?_
+  intro _
+  exact ⟨(min (n + 1) limit : Nat), boundedIncrement_eval n limit, rfl⟩
 
 /-- A successful invocation exists for every pair of natural inputs, and its
 actual returned value is the ordinary mathematical minimum. -/
@@ -95,11 +109,5 @@ theorem boundedIncrement_result (n limit value : Nat)
       (Env.cons n (Env.cons limit Env.empty)) finish (.returned value)) :
     value = min (n + 1) limit :=
   boundedIncrement_total.postcondition trivial execution
-
-/-- The named source function has an ordinary curried mathematical result,
-obtained from the same source correctness proof. -/
-theorem boundedIncrement_eval (n limit : Nat) :
-    Implementation.boundedIncrement n limit = Part.some (.ok (min (n + 1) limit)) :=
-  Program.eval_eq_ok_iff.mpr (boundedIncrement_returns n limit)
 
 end Complexity.Language.Examples.Scalar

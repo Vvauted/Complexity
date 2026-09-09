@@ -85,6 +85,27 @@ def tail {Γ : List Ty} {τ : Ty} (env : Env (τ :: Γ)) : Env Γ :=
   funext σ v
   cases v <;> rfl
 
+/-- A predicate on the empty source environment has no remaining arguments. -/
+theorem forall_nil (p : Env [] → Prop) : (∀ env, p env) ↔ p empty := by
+  constructor
+  · intro h
+    exact h empty
+  · intro h env
+    have same : env = empty := by
+      funext τ v
+      cases v
+    exact same.symm ▸ h
+
+/-- Quantifying over a source environment is ordinary quantification over its
+head value and remaining arguments. No representation or register map is involved. -/
+theorem forall_cons {Γ : List Ty} {τ : Ty} (p : Env (τ :: Γ) → Prop) :
+    (∀ env, p env) ↔ ∀ value outer, p (cons value outer) := by
+  constructor
+  · intro h value outer
+    exact h (cons value outer)
+  · intro h env
+    simpa only [cons_head_tail] using h (head env) (tail env)
+
 end Env
 
 /-- Atoms only observe an existing variable or materialize a literal value. -/

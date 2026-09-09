@@ -89,6 +89,7 @@ import Complexity.Computability.Ram.Compiler.Expr.Basic
 import Complexity.Computability.Ram.Compiler.Expr.Memory
 import Complexity.Computability.Ram.Compiler.Language.CodeSize
 import Complexity.Computability.Ram.Compiler.Language.Control
+import Complexity.Computability.Ram.Compiler.Language.CostBound
 import Complexity.Computability.Ram.Compiler.Language.CostDeterministic
 import Complexity.Computability.Ram.Compiler.Language.CostExecution
 import Complexity.Computability.Ram.Compiler.Language.Effects
@@ -265,6 +266,7 @@ import Complexity.Data.Nat.Log
 import Complexity.Language.Basic
 import Complexity.Language.Eval.Basic
 import Complexity.Language.Eval.Composition
+import Complexity.Language.Eval.Continuation
 import Complexity.Language.Eval.Verification
 import Complexity.Language.Semantics
 import Complexity.Language.Syntax

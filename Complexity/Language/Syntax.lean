@@ -3,8 +3,9 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Language.Eval.Basic
+import Complexity.Language.Eval.Continuation
 import Lean.Elab.Command
+import Lean.Elab.Do
 import Lean.Parser.Do
 
 /-!
@@ -18,7 +19,10 @@ operands; a compound return or condition introduces an actual core primitive
 binding. More deeply nested expressions must first be named with `let`.
 
 The declaration exports `P.signatures`, `P.fId`, `P.fBody` and `P.program`,
-together with the ordinary curried observation `P.f`. This noncomputable
+together with the ordinary curried observation `P.f` and its equation `P.f_eq`.
+The equation exposes one body using ordinary `ExceptT Fault Part` notation,
+keeping named callee observations opaque. It is not a global simp rule.
+This noncomputable
 `Part (Except Fault result)` observes the actual independent source execution;
 it is a mathematical proof interface, not a host executable for `#eval`.
 All signatures are collected before any body is translated, so forward calls
@@ -62,21 +66,33 @@ private abbrev Scope := List (Option Name × Ty)
 private structure Atomic where
   type : Ty
   term : TSyntax `term
+  value : TSyntax `term
 
 private structure Primitive where
   type : Ty
   term : TSyntax `term
   atom : Option (TSyntax `term)
+  value : TSyntax `term
+
+private structure LoweredBlock where
+  term : TSyntax `term
+  proofBody : Array (TSyntax `doElem)
+  fallsThrough : Bool
 
 -- These witnesses justify the partial elaborator definitions; no translation
 -- branch uses them as a default source expression.
 private instance : Nonempty Atomic :=
-  ⟨⟨.unit, ⟨(mkCIdent ``Complexity.Language.Atom.unit).raw⟩⟩⟩
+  ⟨⟨.unit, ⟨(mkCIdent ``Complexity.Language.Atom.unit).raw⟩,
+    ⟨(mkCIdent ``Unit.unit).raw⟩⟩⟩
 
 private instance : Nonempty Primitive :=
   ⟨⟨.unit, Lean.Syntax.mkCApp ``Complexity.Language.Prim.atom
       #[⟨(mkCIdent ``Complexity.Language.Atom.unit).raw⟩],
-    some ⟨(mkCIdent ``Complexity.Language.Atom.unit).raw⟩⟩⟩
+    some ⟨(mkCIdent ``Complexity.Language.Atom.unit).raw⟩,
+    ⟨(mkCIdent ``Unit.unit).raw⟩⟩⟩
+
+private instance : Nonempty LoweredBlock :=
+  ⟨⟨⟨(mkCIdent ``Complexity.Language.Stmt.skip).raw⟩, #[], true⟩⟩
 
 private def typeName : Ty → String
   | .nat => "Nat"
@@ -135,40 +151,45 @@ private def variableTerm (index : Nat) : MacroM (TSyntax `term) := do
 private def lookupVariable (scope : Scope) (name : TSyntax `ident) : MacroM Atomic := do
   for ((binding, type), index) in scope.zipIdx do
     if binding == some name.getId then
-      return ⟨type, ← `(Complexity.Language.Atom.var $(← variableTerm index))⟩
+      return ⟨type, ← `(Complexity.Language.Atom.var $(← variableTerm index)),
+        ← `($name:ident)⟩
   Macro.throwErrorAt name s!"unknown source variable '{name.getId}'"
 
 private partial def parseAtom (scope : Scope) (stx : TSyntax `term) : MacroM Atomic := do
   match stx with
   | `(($value:term)) => parseAtom scope value
-  | `(true) => return ⟨.bool, ← `(Complexity.Language.Atom.bool true)⟩
-  | `(false) => return ⟨.bool, ← `(Complexity.Language.Atom.bool false)⟩
-  | `(()) => return ⟨.unit, ← `(Complexity.Language.Atom.unit)⟩
-  | `($value:num) => return ⟨.nat, ← `(Complexity.Language.Atom.nat $value:num)⟩
+  | `(true) => return ⟨.bool, ← `(Complexity.Language.Atom.bool true), ← `(true)⟩
+  | `(false) => return ⟨.bool, ← `(Complexity.Language.Atom.bool false), ← `(false)⟩
+  | `(()) => return ⟨.unit, ← `(Complexity.Language.Atom.unit), ← `(())⟩
+  | `($value:num) =>
+      return ⟨.nat, ← `(Complexity.Language.Atom.nat $value:num), ← `(($value:num : Nat))⟩
   | `($name:ident) => lookupVariable scope name
   | _ =>
       Macro.throwErrorAt stx
         "expected a source variable or scalar literal; name a compound operand with 'let' first"
 
 private def binaryPrimitive (scope : Scope) (left right : TSyntax `term)
-    (result : Ty) (constructor : Name) : MacroM Primitive := do
+    (result : Ty) (constructor native : Name) : MacroM Primitive := do
   let lhs ← parseAtom scope left
   let rhs ← parseAtom scope right
   expectType left lhs.type .nat
   expectType right rhs.type .nat
   let op := mkCIdent constructor
-  return ⟨result, ← `($op $(lhs.term) $(rhs.term)), none⟩
+  let nativeApp := Lean.Syntax.mkCApp native #[lhs.value, rhs.value]
+  let value ← if result == .bool then `(decide $nativeApp) else pure nativeApp
+  return ⟨result, ← `($op $(lhs.term) $(rhs.term)), none, value⟩
 
 private partial def parsePrimitive (scope : Scope) (stx : TSyntax `term) : MacroM Primitive := do
   match stx with
   | `(($value:term)) => parsePrimitive scope value
-  | `($left + $right) => binaryPrimitive scope left right .nat ``Prim.add
-  | `($left < $right) => binaryPrimitive scope left right .bool ``Prim.lt
-  | `($left ≤ $right) => binaryPrimitive scope left right .bool ``Prim.le
-  | `($left <= $right) => binaryPrimitive scope left right .bool ``Prim.le
+  | `($left + $right) => binaryPrimitive scope left right .nat ``Prim.add ``Nat.add
+  | `($left < $right) => binaryPrimitive scope left right .bool ``Prim.lt ``LT.lt
+  | `($left ≤ $right) => binaryPrimitive scope left right .bool ``Prim.le ``LE.le
+  | `($left <= $right) => binaryPrimitive scope left right .bool ``Prim.le ``LE.le
   | _ =>
       let atom ← parseAtom scope stx
-      return ⟨atom.type, ← `(Complexity.Language.Prim.atom $(atom.term)), some atom.term⟩
+      return ⟨atom.type, ← `(Complexity.Language.Prim.atom $(atom.term)), some atom.term,
+        atom.value⟩
 
 private def checkAnnotation (annotation : Option (TSyntax `term)) (actual : Ty) : MacroM Unit := do
   if let some annotation := annotation then
@@ -179,8 +200,9 @@ private def lookupFunction (functions : Array Function) (name : TSyntax `ident) 
     | Macro.throwErrorAt name s!"unknown source function '{name.getId}'; calls must name this program's functions"
   return fn
 
-private def parseCall (functions : Array Function) (scope : Scope) (stx : TSyntax `term) :
-    MacroM (Function × TSyntax `term) := do
+private def parseCall (family : TSyntax `ident) (functions : Array Function)
+    (scope : Scope) (stx : TSyntax `term) :
+    MacroM (Function × TSyntax `term × TSyntax `term) := do
   let (name, operands) ← match stx with
     | `($name:ident $operands:term*) => pure (name, operands)
     | `($name:ident) => pure (name, #[])
@@ -189,73 +211,99 @@ private def parseCall (functions : Array Function) (scope : Scope) (stx : TSynta
   unless operands.size == fn.params.size do
     Macro.throwErrorAt stx s!"source function '{name.getId}' expects {fn.params.size} arguments, found {operands.size}"
   let mut atoms : Array (TSyntax `term) := #[]
+  let mut values : Array (TSyntax `term) := #[]
   for operand in operands, param in fn.params do
     let atom ← parseAtom scope operand
     expectType operand atom.type param.type
     atoms := atoms.push atom.term
+    values := values.push atom.value
   let mut args ← `(Complexity.Language.Args.nil)
   for atom in atoms.reverse do
     args ← `(Complexity.Language.Args.cons $atom $args)
-  return (fn, args)
+  let name := generatedName family fn.name ""
+  return (fn, args, Lean.Syntax.mkApp ⟨name.raw⟩ values)
 
 private def returnCode (scope : Scope) (result : Ty) (value : TSyntax `term) :
-    MacroM (TSyntax `term) := do
+    MacroM LoweredBlock := do
   let parsed ← parsePrimitive scope value
   expectType value parsed.type result
-  match parsed.atom with
-  | some atom => `(Complexity.Language.Stmt.ret $atom)
-  | none =>
-      `(Complexity.Language.Stmt.letPrim $(parsed.term)
-        (Complexity.Language.Stmt.ret (Complexity.Language.Atom.var Complexity.Language.Var.here)))
+  let term ← match parsed.atom with
+    | some atom => `(Complexity.Language.Stmt.ret $atom)
+    | none =>
+        `(Complexity.Language.Stmt.letPrim $(parsed.term)
+          (Complexity.Language.Stmt.ret (Complexity.Language.Atom.var Complexity.Language.Var.here)))
+  return ⟨term, #[← `(doElem| return $(parsed.value))], false⟩
+
+private def doSequence (elements : Array (TSyntax `doElem)) : TSyntax ``doSeq :=
+  ⟨Lean.Elab.Term.Do.mkDoSeq (elements.map (·.raw))⟩
+
+private def LoweredBlock.proofSequence (block : LoweredBlock) (normal : TSyntax `doElem) :
+    TSyntax ``doSeq :=
+  doSequence (if block.fallsThrough then block.proofBody.push normal else block.proofBody)
 
 private partial def blockCode (family : TSyntax `ident) (functions : Array Function)
     (scope : Scope) (result : Ty) (elements : List (TSyntax `doElem)) :
-    MacroM (TSyntax `term) := do
+    MacroM LoweredBlock := do
   match elements with
-  | [] => `(Complexity.Language.Stmt.skip)
+  | [] => return ⟨← `(Complexity.Language.Stmt.skip), #[], true⟩
   | element :: rest => withRef element do
       match element with
       | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
           let parsed ← parsePrimitive scope value
           checkAnnotation annotation parsed.type
           let body ← blockCode family functions ((some name.getId, parsed.type) :: scope) result rest
-          `(Complexity.Language.Stmt.letPrim $(parsed.term) $body)
+          let type ← valueTypeTerm parsed.type
+          let binding ← `(doElem| let $name:ident : $type := $(parsed.value))
+          return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
+            #[binding] ++ body.proofBody, body.fallsThrough⟩
       | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
-          let (fn, args) ← parseCall functions scope action
+          let (fn, args, invocation) ← parseCall family functions scope action
           checkAnnotation annotation fn.result
           let body ← blockCode family functions ((some name.getId, fn.result) :: scope) result rest
           let id := generatedName family fn.name "Id"
-          `(Complexity.Language.Stmt.call $id:ident $args $body)
+          let type ← valueTypeTerm fn.result
+          let binding ← `(doElem| let $name:ident : $type ← $invocation:term)
+          return ⟨← `(Complexity.Language.Stmt.call $id:ident $args $(body.term)),
+            #[binding] ++ body.proofBody, body.fallsThrough⟩
       | _ =>
-          let statement ← match element with
+          -- A term-valued match keeps its local `return` from exiting this block's translation.
+          let statement ← (match element with
             | `(doElem| return $value:term) => returnCode scope result value
-            | `(doElem| return) => returnCode scope result (← `(()))
+            | `(doElem| return) => do returnCode scope result (← `(()))
             | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) => do
                 let parsed ← parsePrimitive scope condition
                 expectType condition parsed.type .bool
-                match parsed.atom with
-                | some atom =>
-                    let yesCode ← blockCode family functions scope result (getDoElems yes).toList
-                    let noCode ← blockCode family functions scope result (getDoElems no).toList
-                    `(Complexity.Language.Stmt.ite $atom $yesCode $noCode)
-                | none =>
-                    let inner := (none, Ty.bool) :: scope
-                    let yesCode ← blockCode family functions inner result (getDoElems yes).toList
-                    let noCode ← blockCode family functions inner result (getDoElems no).toList
-                    `(Complexity.Language.Stmt.letPrim $(parsed.term)
-                      (Complexity.Language.Stmt.ite
-                        (Complexity.Language.Atom.var Complexity.Language.Var.here) $yesCode $noCode))
+                let inner := if parsed.atom.isSome then scope else (none, Ty.bool) :: scope
+                let yesCode ← blockCode family functions inner result (getDoElems yes).toList
+                let noCode ← blockCode family functions inner result (getDoElems no).toList
+                let term ← match parsed.atom with
+                  | some atom =>
+                      `(Complexity.Language.Stmt.ite $atom $(yesCode.term) $(noCode.term))
+                  | none =>
+                      `(Complexity.Language.Stmt.letPrim $(parsed.term)
+                        (Complexity.Language.Stmt.ite
+                          (Complexity.Language.Atom.var Complexity.Language.Var.here)
+                          $(yesCode.term) $(noCode.term)))
+                let normal ← `(doElem| pure ())
+                let yesBody := yesCode.proofSequence normal
+                let noBody := noCode.proofSequence normal
+                let branch ← `(doElem|
+                  if $(parsed.value) then $yesBody:doSeq else $noBody:doSeq)
+                return ⟨term, #[branch], yesCode.fallsThrough || noCode.fallsThrough⟩
             | _ =>
                 Macro.throwErrorAt element
-                  "unsupported source statement; use immutable let, a named call, if/then/else, or return"
+                  "unsupported source statement; use immutable let, a named call, if/then/else, or return")
           if rest.isEmpty then
             return statement
           else
             let continuation ← blockCode family functions scope result rest
-            `(Complexity.Language.Stmt.seq $statement $continuation)
+            return ⟨← `(Complexity.Language.Stmt.seq $(statement.term) $(continuation.term)),
+              if statement.fallsThrough then statement.proofBody ++ continuation.proofBody
+                else statement.proofBody,
+              statement.fallsThrough && continuation.fallsThrough⟩
 
 private def functionCode (family : TSyntax `ident) (functions : Array Function)
-    (fn : Function) : MacroM (TSyntax `term) := do
+    (fn : Function) : MacroM LoweredBlock := do
   match fn.body with
   | `(do $body:doSeq) =>
       let scope := fn.params.toList.map fun param => (some param.name.getId, param.type)
@@ -284,6 +332,42 @@ private def observationDeclaration (family programName : TSyntax `ident)
     noncomputable def $name:ident : $type := $value)
   return declaration.raw
 
+private def equationDeclaration (family programName : TSyntax `ident)
+    (fn : Function) (lowered : LoweredBlock) : MacroM Syntax := do
+  let name := generatedName family fn.name "_eq"
+  let observation := generatedName family fn.name ""
+  let bodyName := generatedName family fn.name "Body"
+  let id := generatedName family fn.name "Id"
+  let arguments : Array (TSyntax `term) := fn.params.map fun param => ⟨param.name.raw⟩
+  let lhs := Lean.Syntax.mkApp ⟨observation.raw⟩ arguments
+  let fallthrough ← `(doElem| throw Complexity.Language.Fault.missingReturn)
+  let body := lowered.proofSequence fallthrough
+  let result ← valueTypeTerm fn.result
+  let mut type ← `($lhs = ((do $body:doSeq) : ExceptT Complexity.Language.Fault Part $result))
+  let mut proof ← `(by
+    have body_selected : ($programName:ident).body $id:ident = $bodyName:ident := rfl
+    conv =>
+      lhs
+      unfold $observation:ident
+      rw [Complexity.Language.Program.eval_eq_evalWith, body_selected]
+    simp only [$bodyName:ident,
+      Complexity.Language.Stmt.evalWith_skip, Complexity.Language.Stmt.evalWith_ret,
+      Complexity.Language.Stmt.evalWith_letPrim, Complexity.Language.Stmt.evalWith_seq,
+      Complexity.Language.Stmt.evalWith_ite, Complexity.Language.Stmt.evalWith_call,
+      Complexity.Language.Atom.eval, Complexity.Language.Prim.eval, Complexity.Language.Args.eval,
+      Complexity.Language.Env.cons_here, Complexity.Language.Env.cons_there,
+      Complexity.Language.Env.tail_cons, Complexity.Language.Env.get_tail, pure_bind]
+    all_goals rfl)
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let parameterType ← valueTypeTerm param.type
+    type ← `(∀ ($parameter:ident : $parameterType), $type)
+    proof ← `(fun ($parameter:ident : $parameterType) => $proof)
+  let declaration ← `(command|
+    /-- One source-body equation in ordinary monadic notation; named callees remain opaque. -/
+    theorem $name:ident : $type := $proof)
+  return declaration.raw
+
 private def programDeclarations (family : TSyntax `ident)
     (sources : Array (TSyntax `sourceFunction)) : MacroM Syntax := do
   let mut functions : Array Function := #[]
@@ -308,14 +392,16 @@ private def programDeclarations (family : TSyntax `ident)
       /-- This named source function's index in its declared signature table. -/
       abbrev $id:ident : Fin ($signaturesName:ident).length := ⟨$number:num, by decide⟩)
     declarations := declarations.push declaration.raw
+  let mut loweredBodies : Array LoweredBlock := #[]
   for fn in functions do
     let name := generatedName family fn.name "Body"
     let params ← parameterTypes fn.params
     let result ← typeTerm fn.result
     let body ← functionCode family functions fn
+    loweredBodies := loweredBodies.push body
     let declaration ← `(command|
       /-- The named function's actual independently interpreted source body. -/
-      def $name:ident : Complexity.Language.Stmt $signaturesName:ident $params $result := $body)
+      def $name:ident : Complexity.Language.Stmt $signaturesName:ident $params $result := $(body.term))
     declarations := declarations.push declaration.raw
   let mut bodies ← `(fun index => Fin.elim0 index)
   for fn in functions.reverse do
@@ -328,6 +414,8 @@ private def programDeclarations (family : TSyntax `ident)
   declarations := declarations.push programDeclaration.raw
   for fn in functions do
     declarations := declarations.push (← observationDeclaration family programName fn)
+  for fn in functions, body in loweredBodies do
+    declarations := declarations.push (← equationDeclaration family programName fn body)
   return mkNullNode declarations
 
 elab_rules : command
