@@ -355,8 +355,12 @@ This lets existing alias/frame lemmas remain usable without assuming all views
 are disjoint. Generated `P.f_spec contract` now applies a supplied contract to a
 named function's ordinary parameters through native `mvcgen`. The buffer consumer
 reuses `clamp_total` without unfolding its helper; initial/final heaps and actual
-results remain in the rule. This pure-helper consumer is not yet evidence of
-ergonomic arbitrary effectful-call composition.
+results remain in the rule. The
+[two-buffer composition](../Examples/Language/TraversalComposition.lean) now
+calls the existing mutating traversal twice with these contracts. The first
+frame supplies the second call's current input, and the second frame preserves
+the first result. It unfolds neither callee body. `Unit` functions can now be
+called as ordinary statements without unused result bindings.
 
 `Buffer.PreservesOutside` now exports preservation of initially valid disjoint
 views, including disjoint intervals of one object. Its write and composition
@@ -366,11 +370,13 @@ are unchanged; no ownership/no-alias restriction or second backend proof is adde
 
 Before broadening the surface further, close these connected gaps:
 
-- Exercise named contract application on a helper that actually modifies the
-  shared heap, retaining relational postconditions without unfolding its body.
-- Compose supplied frame contracts through effectful calls and nested traversal
-  without repeating write-level reasoning. Heap-level lemmas alone are not
-  sufficient: callers must receive preserved contents in the function contract.
+- Automate selecting supplied effectful-call contracts and their contents/frame
+  consequences in nested traversals. Sequential calls now compose these facts,
+  but the caller still chooses the contract and its mathematical contents.
+- Link independently declared source programs with proved signature/call
+  embeddings and contract transfer. Current named calls are confined to one
+  source function table; Lean imports do not yet link those tables. Do not
+  substitute host callbacks or copied implementations for source linking.
 - Expose ordinary loop locals, current contents and return outcomes to invariants.
   Scope/state plumbing belongs to shared rules; the invariant, termination
   argument and algorithm-dependent inequalities belong to the author.
@@ -523,6 +529,22 @@ contracts also retain preservation of disjoint borrowed views. The general
 indexed-traversal interface and automatic composition of effectful helper
 contracts remain open.
 
+`boundedMapPair` reuses that exact traversal twice, including when the two
+disjoint views belong to one object. Its source contract retains both results
+and all observations outside both views. The
+[compiled composition](../Examples/Language/TraversalCompositionCompiled.lean)
+reuses the first callee's frame to establish the second callee's input at the
+actual intermediate heap. `StmtCostBound.call_seq` hides routine call/skip
+state transport and charges the actual normal dispatch. Both callee bounds,
+two levels of nested calls and the full halted invocation are composed without
+reopening either loop. Automatic contract selection and cross-program linking
+are not supplied by this same-program consumer.
+The next cost-proof automation should hide its repeated argument-environment
+opening and structural call/sequence composition while accepting separately
+supplied callee contracts. Keep real disjointness and cost inequalities visible;
+the source proof's use of each frame is an actual dependency, not boilerplate
+to erase.
+
 The [buffer consumer](../Examples/Language/Buffer.lean) uses native operation
 specifications to prove its ordinary `Array.set` result. Its
 [compiled theorem](../Examples/Language/BufferCompiled.lean) reuses that proof,
@@ -635,8 +657,8 @@ array-bound reconstruction in five obligations. No special round-specification
 framework or second execution relation is introduced.
 
 Named function contracts can now be passed to `mvcgen` through generated
-`P.f_spec` rules. The next step is effectful-call composition and selection of
-generated loop views/frames, which remain explicit. Preserve
+`P.f_spec` rules, including sequential mutating callees. The next step is
+contract selection and generated loop views/frames, which remain explicit. Preserve
 the actual heap, source range conditions and cost inequalities. Keep
 RAM-specific rules out of source semantics and syntax; simplify existing proofs
 rather than introducing another implementation or whole-loop template.

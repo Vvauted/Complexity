@@ -41,6 +41,11 @@ source_program Implementation where
       i := i + 1
     return
 
+  def boundedMapPair (xs : Buffer Nat) (ys : Buffer Nat) (limit : Nat) : Unit := do
+    boundedMap xs limit
+    boundedMap ys limit
+    return
+
 /-- The actual helper returns the mathematical increment and preserves every
 initial heap. This statement does not impose a machine word width or budget. -/
 theorem increment_eval (x : Nat) :

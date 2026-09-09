@@ -119,9 +119,28 @@ mvcgen [clampSpec]
 
 The author still supplies read/write contents and bounds. The helper's full
 contract carries its initial heap, actual result and final heap; the rule does
-not require that heap to be unchanged. This example's helper is pure, so it does
-not establish general effectful-call ergonomics. No contract is guessed or
+not require that heap to be unchanged. No contract is guessed or
 registered globally, and no loop invariant is automatically synthesized.
+
+For a real effectful composition, the existing source program also declares:
+
+```lean
+def boundedMapPair (xs : Buffer Nat) (ys : Buffer Nat) (limit : Nat) : Unit := do
+  boundedMap xs limit
+  boundedMap ys limit
+  return
+```
+
+Named `Unit` calls are ordinary statements; non-`Unit` results require an explicit
+binding. The [composition proof](##Examples.Language.TraversalComposition) passes
+each callee's `boundedMap_total_frame` to the generated `boundedMap_spec` with
+the corresponding arguments and contents. The first frame supplies the second
+call's current input; the second preserves the first result. The resulting
+contract retains both `Array.map` results and all initially valid views disjoint
+from both buffers. Disjoint slices of the same object are allowed. Neither
+callee body nor its array invariant is unfolded in the caller proof.
+Calls currently name functions in the same `source_program`; linking separately
+declared source programs and transferring their contracts remains future work.
 
 The typed core also has an effectful-guard `Stmt.while`. Its guard is an actual
 Boolean-producing block: it runs in the current state on every iteration, and
@@ -287,6 +306,16 @@ be proved, the tactic retains the uniform maximum of both branches. Call
 continuations still use uniform bounds; result-dependent bounds retain the
 explicit rule interface.
 Neither instruction prices nor mathematical correctness proofs are duplicated.
+
+`StmtCostBound.call_seq` handles a standalone call followed by another statement.
+It reuses the supplied callee contract to pass the actual final heap and ordinary
+postcondition to the next bound, keeping caller-local restoration and empty
+result-scope cases inside the shared proof. The
+[compiled two-buffer composition](##Examples.Language.TraversalCompositionCompiled)
+uses it twice and reuses the original traversal's bounds. Its actual halted
+invocation retains both arrays and the outside-both frame in the same represented
+final heap. Word ranges, code capacity and space for pair/traversal/helper remain
+explicit; these are not a proposed instruction budget.
 
 For typed loops, `StmtCostBound.while` uses a state-dependent potential. The
 guard and body bounds follow the actual state; normal iterations account for

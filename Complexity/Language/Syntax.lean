@@ -31,6 +31,9 @@ and call arguments. Their operands are normalized left to right into actual
 lexical primitive bindings; no host
 computation replaces the generated operations.
 
+A named function returning `Unit` may be called directly as a `do` statement.
+Other return types require an explicit binding; results are not silently discarded.
+
 Each `while` has an actual source guard block, including for compound Boolean
 conditions and parenthesized effectful `do` guards. The guard is reevaluated in
 the current state; returning its Boolean leaves only the guard. Named loop,
@@ -527,6 +530,21 @@ private def writeCode (scope : Scope) (stx : TSyntax `term) : MacroM LoweredBloc
     #[← `(doElem| Complexity.Language.Buffer.writeM $(buffer.value) $(index.value) $(value.value))],
     true, #[]⟩
 
+private def actionCode (family : TSyntax `ident) (functions : Array Function)
+    (scope : Scope) (action : TSyntax `term) : MacroM LoweredBlock := do
+  if let `($head:term $_operands:term*) := action then
+    if let some (_, field) := fieldAccess? head then
+      if field == `set then
+        return ← writeCode scope action
+  let (resultType, statement, invocation) ← parseBinding family functions scope action
+  unless resultType == .unit do
+    Macro.throwErrorAt action
+      "a standalone source call must return Unit; bind its result with 'let name ← ...'"
+  -- The callee's Unit result has only this empty lexical scope. The existing
+  -- call boundary retains the actual final heap before the next statement.
+  return ⟨← `($statement Complexity.Language.Stmt.skip),
+    #[← `(doElem| $invocation:term)], true, #[]⟩
+
 private def assignCode (scope : Scope) (name : TSyntax `ident) (value : TSyntax `term) :
     MacroM LoweredBlock := do
   -- The normalizer has already introduced every RHS temporary into this scope.
@@ -719,7 +737,7 @@ private def statementCode (family : TSyntax `ident) (functions : Array Function)
       let code := loopMember site "Code"
       return ⟨⟨code.raw⟩, ← loopProofBody site, true,
         guardCode.loops ++ bodyCode.loops |>.push site⟩
-  | `(doElem| $action:term) => writeCode scope action
+  | `(doElem| $action:term) => actionCode family functions scope action
   | _ =>
       Macro.throwErrorAt element
         "unsupported source statement; use let, let mut, assignment, a named call, buffer access, if/then/else, while, or return"

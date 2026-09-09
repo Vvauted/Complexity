@@ -365,6 +365,46 @@ theorem call_uniform {fn : Fin signatures.length} {args : Args Γ signatures[fn]
   call (post := fun _ _ => True) (nextBound := fun _ _ => nextBound) callee hpre
     (fun _ => trivial) (fun value heap _ => body value heap) (fun _ _ _ => Nat.le_refl _)
 
+/-- A standalone call resumes the next statement with the caller's locals and
+the callee's actual final heap. Its supplied contract transports contents and
+frame facts to the next cost proof, without exposing call/skip execution cases.
+The empty result scope cannot return from the caller, so only the real normal
+sequence dispatch is charged. Callee initialization is already in its bound. -/
+theorem call_seq {fn : Fin signatures.length} {args : Args Γ signatures[fn].params}
+    {second : Complexity.Language.Stmt signatures Γ result}
+    {costPre pre : Env signatures[fn].params → Heap → Prop}
+    {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
+    {calleeBound : Env signatures[fn].params → Heap → Nat}
+    {nextBound : Value signatures[fn].result → Heap → Nat}
+    (callee : FunctionCostBound program fn costPre calleeBound)
+    (specification : FunctionTotal program fn pre post)
+    (costInput : costPre (args.eval entry.locals) entry.heap)
+    (input : pre (args.eval entry.locals) entry.heap)
+    (body : ∀ value heap, post (args.eval entry.locals) entry.heap value heap →
+      StmtCostBound program second ⟨entry.locals, heap⟩ (nextBound value heap))
+    (combine : ∀ value heap, post (args.eval entry.locals) entry.heap value heap →
+      callCost program fn (calleeBound (args.eval entry.locals) entry.heap) + 2 +
+        nextBound value heap ≤ bound) :
+    StmtCostBound program (.seq (.call fn args .skip) second) entry bound := by
+  intro w depth finish control execution steps cost
+  cases cost with
+  | @seqNormal Γ result depth first second entry middle finish control
+      firstExec secondExec firstSteps secondSteps firstCost secondCost =>
+      cases firstCost with
+      | @callReturn Γ result depth fn args continuation entry calleeFinish value finish control
+          arguments calleeExec bodyExec calleeSteps bodySteps calleeCost bodyCost =>
+          cases bodyCost
+          have property := specification.postcondition input calleeExec.erase
+          have calleeLe := callCost_mono program fn
+            (callee _ _ costInput calleeExec calleeCost)
+          have tailLe := body value calleeFinish.heap property secondExec secondCost
+          have totalLe := combine value calleeFinish.heap property
+          simpa only [Nat.add_zero] using
+            (Nat.add_le_add (Nat.add_le_add_right calleeLe 2) tailLe).trans totalLe
+  | seqReturn firstCost =>
+      cases firstCost with
+      | callReturn calleeCost bodyCost => cases bodyCost
+
 end StmtCostBound
 
 namespace FunctionCostBound

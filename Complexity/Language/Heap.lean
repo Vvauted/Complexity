@@ -471,6 +471,13 @@ def Disjoint {τ σ : CellTy} (buffer : Buffer τ) (other : Buffer σ) : Prop :=
     _root_.Disjoint (Set.Ico buffer.offset (buffer.offset + buffer.length))
       (Set.Ico other.offset (other.offset + other.length))
 
+/-- Disjoint borrowed views protect each other, including slices of one object. -/
+theorem Disjoint.symm {τ σ : CellTy} {buffer : Buffer τ} {other : Buffer σ}
+    (separated : buffer.Disjoint other) : other.Disjoint buffer := by
+  rcases separated with different | intervals
+  · exact Or.inl (Ne.symm different)
+  · exact Or.inr intervals.symm
+
 /-- A successful write preserves the contents of any disjoint view, including
 another slice of the same object. Object tags, not an assumption about handles,
 resolve the element types when the objects coincide. -/

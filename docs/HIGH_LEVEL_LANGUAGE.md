@@ -166,7 +166,9 @@ tag/payload lowering, not dummy returned words.
 First-order functions are sufficient for the initial recursive algorithms.
 Static specialization may later support generic combinators; dynamic closures,
 arbitrary dependent runtime types and a general effect-handler system are not
-prerequisites. Function contracts are reusable across callers and imports.
+prerequisites. Contracts are reusable by callers within the current source
+program. Reuse across independently declared programs also needs verified
+signature/call embedding and linking; a Lean `import` alone does not supply it.
 
 ### Current surface and intended traversal extension
 
@@ -206,6 +208,10 @@ heap or separate pure evaluator is chosen. This equation describes behavior,
 not zero execution cost or absence of intermediate work.
 All function signatures are collected before lowering the bodies, so named
 calls refer to the same source program rather than arbitrary host callbacks.
+A named function returning `Unit` can appear directly as a statement; other
+results require an explicit binding. The source call still executes, catches
+the callee's return at its own boundary and passes its actual heap to the next
+statement. No dummy return word or host callback is introduced.
 The available surface also accepts `Buffer Nat` and `Buffer Bool`, their length,
 `let x ← xs.get i`, `xs.set i x` and `let ys ← xs.slice offset length`.
 These operations use the actual current shared heap. `let mut`, `x := expression`
@@ -434,8 +440,11 @@ specializes it to the named function's ordinary arguments. For example, the
 buffer consumer uses `have clampSpec := Implementation.clamp_spec clamp_total`
 and `mvcgen [clampSpec]`, without unfolding the helper. The supplied contract
 retains its initial heap, actual returned value and final heap; no unchanged-heap
-condition is imposed by the rule. This consumer's helper is pure, so general
-effectful-helper proof ergonomics still need a consumer. The rule does not guess
+condition is imposed by the rule. The
+[two-buffer composition](../Examples/Language/TraversalComposition.lean) applies
+the existing mutating traversal twice using these named contracts. The first
+callee's frame preserves the second input, and the second frame preserves the
+first result; neither traversal body is unfolded. The rule does not guess
 the callee's mathematical contract or register it globally. The scalar consumer proves
 ordinary function equations by rewriting and Nat reasoning, and generated
 contract conversion hides the typed argument packing. General mutable helper/loop
@@ -493,6 +502,17 @@ is not ownership of handles, whole-heap equality or a ban on overlapping aliases
 The named traversal exports this relation with its array result through the
 source function contract and the same actual compiled invocation. General
 indexed-traversal and effectful-call frame automation remain unfinished.
+
+The same source program now includes `boundedMapPair`, two ordinary calls to
+the existing traversal. Its contract gives both mapped arrays and preservation
+of every initially valid view disjoint from both. The two inputs must be disjoint
+for this independent-map specification, but may be slices of one object. This
+is not a global no-alias restriction. Its
+[compiled invocation](../Examples/Language/TraversalCompositionCompiled.lean)
+reuses the callee's correctness, realization and cost bounds at the actual
+intermediate heap. The stack bound covers the pair, traversal and increment
+helper; the independent linear instruction bound counts both traversals and
+their real invocation/sequence overheads.
 
 The [borrowed-buffer representation](../Complexity/Computability/Ram/Compiler/Language/Heap.lean)
 fixes an object-to-base placement as proof data, represents each complete object
@@ -709,8 +729,12 @@ the existing theorems; ordinary arithmetic tactics finish the requested
 inequality. When the guard follows from source values and local facts, the
 tactic selects only that branch through the proved `ite_true`/`ite_false` rules.
 Otherwise it retains a uniform maximum; it does not guess a symbolic decision.
-Call-continuation bounds remain uniform, and result-dependent costs still use
-the public explicit rules.
+The tactic's call-continuation bounds remain uniform; result-dependent costs
+use public explicit rules. `StmtCostBound.call_seq` composes a standalone call
+with the next statement using its supplied source contract and actual final
+heap. The shared rule hides call/skip execution cases and accounts only for the
+possible normal sequence dispatch. The two-buffer composition uses it twice,
+without an array-loop or register proof in its cost argument.
 
 The function-exit optimization separately removes the redundant final dispatch.
 The actual body is three instructions shorter, its inferred register bound is
