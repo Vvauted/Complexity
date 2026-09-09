@@ -9,7 +9,7 @@ import Lean.Meta.Transform
 import Mathlib.Tactic.NormNum
 
 /-!
-# Structural scalar realization and cost proofs
+# Structural realization and cost proofs
 
 `ram_source_realize (n limit) using feasible, specification` introduces ordinary
 arguments of a `FunctionRealizable` goal and composes the existing realization
@@ -18,6 +18,9 @@ rules. The supplied callee contracts stay opaque. The parameter names and the
 call-depth inequalities remain ordinary proof goals.
 The initial shared heap is quantified independently of the ordinary arguments;
 scopes and calls retain their actual heaps through the existing state rules.
+Buffer reads and writes expose successful current-heap operations and the actual
+read values or updated heaps. Slices expose their relative extent. These are
+mathematical proof obligations, not inferred validity or alias assumptions.
 
 `ram_source_cost (n limit) using calleeBound` composes the existing cost rules,
 then compares the derived returning-body bound with the requested bound. It
@@ -47,7 +50,7 @@ private def onGoals (action : TacticM Unit) : TacticM Unit := do
 
 /-- Expose only the selected statement, not recursive callee implementations. -/
 private def exposeStatement (position : Nat) : TacticM Lean.Expr := withMainContext do
-  let target ← instantiateMVars (← getMainTarget)
+  let target := (← instantiateMVars (← getMainTarget)).headBeta
   let arguments := target.getAppArgs
   let statement ← whnf arguments[position]!
   let exposed := mkAppN target.getAppFn (arguments.set! position statement)
@@ -95,13 +98,16 @@ private def normalizeTypeIndices (expression : Lean.Expr) : MetaM Lean.Expr := d
     if let .proj ``Complexity.Language.Signature _ _ := expression then
       return .done (← whnf expression)
     if expression.isAppOf ``Complexity.Language.Value ||
-        expression.isAppOf ``Ram.LanguageCompiler.valueToNat ||
-        expression.isAppOf ``Ram.LanguageCompiler.valueField ||
         expression.isAppOf ``Ram.LanguageCompiler.fieldCount then
       let arguments := expression.getAppArgs
       unless arguments.isEmpty do
         let index ← whnf arguments[0]!
         return .continue (some (mkAppN expression.getAppFn (arguments.set! 0 index)))
+    if expression.isAppOf ``Ram.LanguageCompiler.ValueFits then
+      let arguments := expression.getAppArgs
+      if arguments.size > 1 then
+        let index ← whnf arguments[1]!
+        return .continue (some (mkAppN expression.getAppFn (arguments.set! 1 index)))
     return .continue)
 
 /-- Preserve every local fact while making its source-type indices explicit.
@@ -135,11 +141,13 @@ private def normalizeValues : TacticM Unit := do
         Complexity.Language.State.locals_cons, Complexity.Language.State.heap_cons,
         Complexity.Language.State.locals_tail, Complexity.Language.State.heap_tail,
         Complexity.Language.State.tail_cons,
-        Complexity.Language.Value, Ram.LanguageCompiler.valueToNat,
-        Ram.LanguageCompiler.valueField_nat, Ram.LanguageCompiler.valueField_bool,
+        Complexity.Language.Value, Ram.LanguageCompiler.ValueFits,
+        Complexity.Language.CellTy.toValue, Complexity.Language.CellTy.ofValue,
+        Complexity.Language.CellTy.toTy,
         Ram.LanguageCompiler.EnvFits.cons_nat_iff,
         Ram.LanguageCompiler.EnvFits.cons_bool_iff,
         Ram.LanguageCompiler.EnvFits.cons_unit_iff,
+        Ram.LanguageCompiler.EnvFits.cons_buffer_iff,
         Ram.LanguageCompiler.EnvFits.empty,
         decide_eq_true_eq, and_true, true_and] at * <;> try assumption)))
 
@@ -147,7 +155,7 @@ private partial def realize
     (callee : Option (TSyntax `term × TSyntax `term)) : TacticM Unit := do
   unless (← getGoals).isEmpty do
     withMainContext do
-      let target ← instantiateMVars (← getMainTarget)
+      let target := (← instantiateMVars (← getMainTarget)).headBeta
       if target.isForall then
         evalTactic (← `(tactic| intro))
         realize callee
@@ -160,6 +168,12 @@ private partial def realize
         else if statement.isAppOf ``Complexity.Language.Stmt.letPrim then
           evalTactic (← `(tactic|
             (rw [Ram.LanguageCompiler.RealizationWP.letPrim_iff]; constructor)))
+        else if statement.isAppOf ``Complexity.Language.Stmt.read then
+          evalTactic (← `(tactic| apply Ram.LanguageCompiler.RealizationWP.read_of_success))
+        else if statement.isAppOf ``Complexity.Language.Stmt.write then
+          evalTactic (← `(tactic| apply Ram.LanguageCompiler.RealizationWP.write_of_success))
+        else if statement.isAppOf ``Complexity.Language.Stmt.slice then
+          evalTactic (← `(tactic| apply Ram.LanguageCompiler.RealizationWP.slice_of_bound))
         else if statement.isAppOf ``Complexity.Language.Stmt.seq then
           evalTactic (← `(tactic| rw [Ram.LanguageCompiler.RealizationWP.seq_iff]))
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
@@ -194,7 +208,7 @@ private def inferLocalBound : TacticM Unit := withMainContext do
 private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
   unless (← getGoals).isEmpty do
     withMainContext do
-      let target ← instantiateMVars (← getMainTarget)
+      let target := (← instantiateMVars (← getMainTarget)).headBeta
       if target.isForall then
         evalTactic (← `(tactic| intro))
         cost callee
@@ -209,6 +223,12 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.ret))
         else if statement.isAppOf ``Complexity.Language.Stmt.letPrim then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.letPrim))
+        else if statement.isAppOf ``Complexity.Language.Stmt.read then
+          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.read_uniform))
+        else if statement.isAppOf ``Complexity.Language.Stmt.write then
+          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.write))
+        else if statement.isAppOf ``Complexity.Language.Stmt.slice then
+          evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.slice_uniform))
         else if statement.isAppOf ``Complexity.Language.Stmt.seq then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.StmtCostBound.seq))
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
@@ -228,6 +248,8 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
         evalTactic (← `(tactic|
           all_goals
             try norm_num only [Ram.LanguageCompiler.primCodeSize,
+              Ram.LanguageCompiler.readCodeSize, Ram.LanguageCompiler.writeCodeSize,
+              Ram.LanguageCompiler.sliceCodeSize,
               Ram.LanguageCompiler.fieldCount]))
 
 private def startRealization (names : Array (TSyntax `ident))
@@ -246,7 +268,7 @@ end Ram.LanguageCompiler.Tactic
 
 open Lean Elab Tactic
 
-/-- Compose scalar realization rules, retaining mathematical range and nesting
+/-- Compose realization rules, retaining mathematical heap, range and nesting
 goals. Optional names introduce ordinary source parameters; the two supplied
 callee facts are its realizability theorem and its source correctness contract. -/
 syntax (name := ramSourceRealize) "ram_source_realize" (" (" ident* ")")?
@@ -263,7 +285,7 @@ elab_rules : tactic
   | `(tactic| ram_source_realize ($names:ident*) using $feasible, $specification) =>
       Ram.LanguageCompiler.Tactic.startRealization names (some (feasible, specification))
 
-/-- Derive a scalar structural cost bound from proved instruction charges and
+/-- Derive a structural cost bound from proved instruction charges and
 an optional callee bound, leaving its comparison with the requested budget.
 Branch and call-continuation bounds are uniform; no result theorem is required. -/
 syntax (name := ramSourceCost) "ram_source_cost" (" (" ident* ")")?

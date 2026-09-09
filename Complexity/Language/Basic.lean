@@ -4,11 +4,12 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Mathlib.Data.List.Basic
+import Complexity.Language.Heap
 
 /-!
-# A typed scalar source language
+# A typed source language with shared borrowed buffers
 
-Source values are ordinary natural numbers, booleans and unit. Variables refer
+Source values are ordinary natural numbers, booleans, unit and borrowed buffers. Variables refer
 to lexical bindings in a typed context, not to machine registers. Administrative
 normal form separates atoms from primitive operations: arithmetic and comparison
 results are explicitly bound before use. A primitive is a syntax constructor,
@@ -16,18 +17,20 @@ not an arbitrary Lean function accepted as executable code.
 
 A finite signature table types first-order calls. A program supplies an actual
 statement body for each signature, including bodies that call themselves. No
-termination, machine representation, heap or time bound is implicit in this
-syntax. The current scalar fragment has immutable lexical bindings; a binding's
+termination, machine representation or time bound is implicit in this
+syntax. Heap accesses are explicit statements on the shared current objects.
+Lexical bindings are immutable; a binding's
 continuation is its scope, and a return can occur inside that continuation.
 -/
 
 namespace Complexity.Language
 
-/-- The value types supported by the scalar core. -/
+/-- Mathematical scalars and typed borrowed views supported by the core. -/
 inductive Ty where
   | nat
   | bool
   | unit
+  | buffer (kind : CellTy)
   deriving DecidableEq, Repr
 
 /-- Mathematical values, interpreted using existing Lean types. -/
@@ -35,6 +38,30 @@ abbrev Value : Ty → Type
   | .nat => Nat
   | .bool => Bool
   | .unit => Unit
+  | .buffer kind => Buffer kind
+
+/-- The ordinary source scalar type of a shared object's cells. -/
+@[simp] def CellTy.toTy : CellTy → Ty
+  | .nat => .nat
+  | .bool => .bool
+
+/-- Regard a native object cell as the corresponding ordinary source value. -/
+def CellTy.toValue : (kind : CellTy) → CellValue kind → Value kind.toTy
+  | .nat, value => value
+  | .bool, value => value
+
+/-- Regard a source scalar as a native cell of the same declared kind. -/
+def CellTy.ofValue : (kind : CellTy) → Value kind.toTy → CellValue kind
+  | .nat, value => value
+  | .bool, value => value
+
+@[simp] theorem CellTy.toValue_ofValue (kind : CellTy) (value : Value kind.toTy) :
+    kind.toValue (kind.ofValue value) = value := by
+  cases kind <;> rfl
+
+@[simp] theorem CellTy.ofValue_toValue (kind : CellTy) (value : CellValue kind) :
+    kind.ofValue (kind.toValue value) = value := by
+  cases kind <;> rfl
 
 /-- A typed lexical position. Repeated types in a context remain distinct bindings. -/
 inductive Var : List Ty → Ty → Type where
@@ -136,6 +163,7 @@ inductive Prim (Γ : List Ty) : Ty → Type where
   | eq : Atom Γ .nat → Atom Γ .nat → Prim Γ .bool
   | lt : Atom Γ .nat → Atom Γ .nat → Prim Γ .bool
   | le : Atom Γ .nat → Atom Γ .nat → Prim Γ .bool
+  | length {kind : CellTy} : Atom Γ (.buffer kind) → Prim Γ .nat
 
 /-- The mathematical meaning of the supported, explicitly enumerated primitives. -/
 @[simp] def Prim.eval {Γ : List Ty} {τ : Ty} (prim : Prim Γ τ) (env : Env Γ) : Value τ :=
@@ -149,6 +177,7 @@ inductive Prim (Γ : List Ty) : Ty → Type where
   | .eq left right => decide (left.eval env = right.eval env)
   | .lt left right => decide (left.eval env < right.eval env)
   | .le left right => decide (left.eval env ≤ right.eval env)
+  | .length buffer => (buffer.eval env).length
 
 /-- A first-order function's parameter types and result type. -/
 structure Signature where
@@ -173,6 +202,15 @@ inductive Stmt (signatures : List Signature) : List Ty → Ty → Type where
   | skip {Γ : List Ty} {result : Ty} : Stmt signatures Γ result
   | letPrim {Γ : List Ty} {τ result : Ty} (value : Prim Γ τ)
       (continuation : Stmt signatures (τ :: Γ) result) : Stmt signatures Γ result
+  | read {Γ : List Ty} {result : Ty} {kind : CellTy}
+      (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
+      (continuation : Stmt signatures (kind.toTy :: Γ) result) : Stmt signatures Γ result
+  | write {Γ : List Ty} {result : Ty} {kind : CellTy}
+      (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat) (value : Atom Γ kind.toTy) :
+      Stmt signatures Γ result
+  | slice {Γ : List Ty} {result : Ty} {kind : CellTy}
+      (buffer : Atom Γ (.buffer kind)) (offset length : Atom Γ .nat)
+      (continuation : Stmt signatures (.buffer kind :: Γ) result) : Stmt signatures Γ result
   | call {Γ : List Ty} {result : Ty} (fn : Fin signatures.length)
       (args : Args Γ signatures[fn].params)
       (continuation : Stmt signatures (signatures[fn].result :: Γ) result) :

@@ -13,7 +13,7 @@ Start with the mathematical result you want, then connect it to the implementati
 The correctness interface includes safety and termination, but asks for no time budget.
 A separate [complexity proof](##ComplexityDocs.Complexity) can reuse the same invariants.
 
-## Independent scalar source proofs
+## Independent source proofs
 
 The new [typed core](##Complexity.Language.Basic) has its own
 [finite execution semantics](##Complexity.Language.Semantics), independent of RAM.
@@ -88,8 +88,25 @@ the relation through successful reads and writes. Its placement is proof data,
 not a runtime object table. The
 [operation bridge](##Complexity.Computability.Ram.Compiler.Language.HeapOperation)
 executes real dynamic load/store expressions and retains their compiler-derived
-counts, without claiming runtime fault checks. Buffer statements and their whole-program lowering
-remain unfinished; these interfaces alone do not enable array programs.
+counts, without claiming runtime fault checks. The source language now accepts
+borrowed-buffer length, reads, writes and relative slices; calls and compiled
+execution retain their actual final heap rather than restoring the initial one.
+
+The [buffer example](##Examples.Language.Buffer) reads an element, calls a
+branching helper, writes the result and returns a slice. Its ordinary native-array
+specification describes the update with `Array.set`. After rewriting the generated
+function equation, native `mvcgen` composes the public `readM_spec`, `writeM_spec`
+and `sliceM_spec`; the author supplies contents and bounds, not monad implementation
+equations. The write rule also retains its real write equation for alias/frame
+reasoning. `FunctionTotal.triple_spec` turns a supplied source function contract
+into a native continuation rule without unfolding the callee. This does not yet
+automatically synthesize a whole function's frame contract or a loop invariant.
+
+The [compiled buffer invocation](##Examples.Language.BufferCompiled) reuses this
+source proof and derives the read cell's range from the input heap representation.
+Its separate bound concerns the same read/helper/write/slice program and its
+actual returned descriptor and updated heap. Borrowed aliases remain allowed;
+the example does not establish a general mutable-loop proof interface.
 
 The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
 branches on its returned value and proves the result equals `min (n + 1) limit`
@@ -167,7 +184,7 @@ rule. The tactic currently uses uniform bounds at branches and call
 continuations; result-dependent bounds retain the explicit rule interface.
 Neither instruction prices nor mathematical correctness proofs are duplicated.
 
-The frontend currently supports `Nat`, `Bool`, `Unit`, lexical bindings, actual
+The frontend currently supports `Nat`, `Bool`, `Unit`, borrowed buffers, lexical bindings, actual
 named calls, branches and returns. Nested addition, multiplication, saturating
 subtraction, division, remainder and comparisons are normalized left to right
 into actual primitive bindings. This also applies to guards and call arguments.
@@ -175,11 +192,11 @@ The [remainder example](##Examples.Language.Remainder) implements
 `n - (n / d) * d`, reuses the ordinary Nat identity, and derives the actual
 compiled result with a separate instruction bound. Divisor zero is included;
 no artificial subtraction-order condition is required.
-Mutable data and loop syntax remain future
-work. The scalar tactics automate structural range/cost obligations, but richer
+Mutable local bindings, loop syntax, products and allocation remain future
+work. The source tactics automate structural range/cost obligations, but richer
 callee selection, recursive proofs and data-dependent bound automation remain
 unfinished. Costs are currently derived
-for successfully realized scalar executions, not an instrumentation theorem for
+for successfully realized executions, not an instrumentation theorem for
 every unrestricted source execution.
 M1 remains open: the scalar pass is useful but does not establish the complete
 source proof and specification interface needed by mutable data and recursion.
@@ -192,8 +209,9 @@ Compiler maintenance is a separate, active proof workflow. The
 and measured simulation compose actual register updates and calling conventions.
 The same layout indexes every actual value field. Parameter packing and fresh
 receivers use those indices and the existing register-update rules; Unit has no
-dummy field. The enabled source vocabulary is still Nat/Bool/Unit, not arbitrary
-products or buffers.
+dummy field. Buffers have two fields, their actual base address and length;
+arbitrary products are not enabled yet. Sequential multi-field copies preserve
+their operands through proved destination separation, not an assumed snapshot.
 Maintainers may use these lemmas directly, without frontend metadata. Preserving
 caller registers does not imply that a callee leaves memory or I/O unchanged.
 The [frame-effect rules](##Complexity.Computability.Ram.Compiler.Effects) include

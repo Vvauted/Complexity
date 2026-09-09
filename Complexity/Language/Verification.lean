@@ -17,6 +17,9 @@ an instruction budget.
 `FunctionTotal` requires the declared body to return a value. Falling through
 the body is not successful function termination. Function contracts compose
 through the same `Exec.callReturn` rule as the source semantics.
+Buffer rules bind the actual read value or slice and retain the actual heap
+after a write. Their success conditions use the shared heap operations;
+`Buffer.Contents` connects those operations to ordinary array specifications.
 -/
 
 namespace Complexity.Language
@@ -91,6 +94,56 @@ theorem mono_post (h : TotalWP program stmt normal returned entry)
   · rintro ⟨finish, control, execution, post⟩
     exact ⟨finish.tail, control, .letPrim execution, post⟩
 
+/-- A read must succeed and its actual current cell supplies the scoped value.
+The continuation may change the heap, return early or execute further calls. -/
+@[simp] theorem read_iff {kind : CellTy} (buffer : Atom Γ (.buffer kind))
+    (index : Atom Γ .nat) (continuation : Stmt signatures (kind.toTy :: Γ) result) :
+    TotalWP program (.read buffer index continuation) normal returned entry ↔
+      ∃ value, entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .ok value ∧
+        TotalWP program continuation (fun finish => normal finish.tail)
+          (fun result finish => returned result finish.tail)
+          (State.cons (kind.toValue value) entry) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | read loaded body => exact ⟨_, loaded, _, control, body, post⟩
+    | readFault failed => exact False.elim post
+  · rintro ⟨value, loaded, finish, control, execution, post⟩
+    exact ⟨finish.tail, control, .read loaded execution, post⟩
+
+/-- A write must succeed and its actual new heap satisfies the normal
+postcondition. It neither introduces a lexical binding nor returns a value. -/
+@[simp] theorem write_iff {kind : CellTy} (buffer : Atom Γ (.buffer kind))
+    (index : Atom Γ .nat) (value : Atom Γ kind.toTy) :
+    TotalWP program (.write buffer index value) normal returned entry ↔
+      ∃ heap, entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+        (kind.ofValue (value.eval entry.locals)) = .ok heap ∧ normal ⟨entry.locals, heap⟩ := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | write written => exact ⟨_, written, post⟩
+    | writeFault failed => exact False.elim post
+  · rintro ⟨heap, written, post⟩
+    exact ⟨⟨entry.locals, heap⟩, .normal, .write written, post⟩
+
+/-- A relative slice must fit the original view. The continuation receives the
+actual new handle with the current heap, not a copy of the object's contents. -/
+@[simp] theorem slice_iff {kind : CellTy} (buffer : Atom Γ (.buffer kind))
+    (offset length : Atom Γ .nat)
+    (continuation : Stmt signatures (.buffer kind :: Γ) result) :
+    TotalWP program (.slice buffer offset length continuation) normal returned entry ↔
+      ∃ view, (buffer.eval entry.locals).slice (offset.eval entry.locals)
+        (length.eval entry.locals) = .ok view ∧
+        TotalWP program continuation (fun finish => normal finish.tail)
+          (fun result finish => returned result finish.tail) (State.cons view entry) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | slice sliced body => exact ⟨_, sliced, _, control, body, post⟩
+    | sliceFault failed => exact False.elim post
+  · rintro ⟨view, sliced, finish, control, execution, post⟩
+    exact ⟨finish.tail, control, .slice sliced execution, post⟩
+
 /-- Sequencing runs the tail only after normal continuation. An actual return
 passes directly to the enclosing return postcondition. -/
 @[simp] theorem seq_iff (first second : Stmt signatures Γ result) :
@@ -144,6 +197,46 @@ theorem letPrim {τ : Ty} {value : Prim Γ τ}
       (State.cons (value.eval entry.locals) entry)) :
     TotalWP program (.letPrim value continuation) normal returned entry :=
   (letPrim_iff value continuation).mpr body
+
+/-- Compose a successful current-heap read with a proof about its actual value. -/
+theorem read {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
+    {continuation : Stmt signatures (kind.toTy :: Γ) result} {value : CellValue kind}
+    (loaded : entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .ok value)
+    (body : TotalWP program continuation (fun finish => normal finish.tail)
+      (fun result finish => returned result finish.tail) (State.cons (kind.toValue value) entry)) :
+    TotalWP program (.read buffer index continuation) normal returned entry :=
+  (read_iff buffer index continuation).mpr ⟨value, loaded, body⟩
+
+/-- Native array contents supply the mathematical value bound by a source read. -/
+theorem read_contents {kind : CellTy} {buffer : Atom Γ (.buffer kind)}
+    {index : Atom Γ .nat} {continuation : Stmt signatures (kind.toTy :: Γ) result}
+    {contents : Array (CellValue kind)}
+    (observed : (buffer.eval entry.locals).Contents entry.heap contents)
+    (bound : index.eval entry.locals < contents.size)
+    (body : TotalWP program continuation (fun finish => normal finish.tail)
+      (fun result finish => returned result finish.tail)
+      (State.cons (kind.toValue contents[index.eval entry.locals]) entry)) :
+    TotalWP program (.read buffer index continuation) normal returned entry :=
+  read (observed.read bound) body
+
+/-- Compose the actual shared-heap update with a normal postcondition. -/
+theorem write {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
+    {value : Atom Γ kind.toTy} {heap : Heap}
+    (written : entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+      (kind.ofValue (value.eval entry.locals)) = .ok heap)
+    (post : normal ⟨entry.locals, heap⟩) :
+    TotalWP program (.write buffer index value) normal returned entry :=
+  (write_iff buffer index value).mpr ⟨heap, written, post⟩
+
+/-- Compose a successful relative slice with its actual scoped borrowed view. -/
+theorem slice {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {offset length : Atom Γ .nat}
+    {continuation : Stmt signatures (.buffer kind :: Γ) result} {view : Buffer kind}
+    (sliced : (buffer.eval entry.locals).slice (offset.eval entry.locals)
+      (length.eval entry.locals) = .ok view)
+    (body : TotalWP program continuation (fun finish => normal finish.tail)
+      (fun result finish => returned result finish.tail) (State.cons view entry)) :
+    TotalWP program (.slice buffer offset length continuation) normal returned entry :=
+  (slice_iff buffer offset length continuation).mpr ⟨view, sliced, body⟩
 
 /-- Use a mathematical intermediate condition in a source sequence. -/
 theorem seq {first second : Stmt signatures Γ result} {middle : State Γ → Prop}

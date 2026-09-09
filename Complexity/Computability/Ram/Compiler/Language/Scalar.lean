@@ -32,6 +32,19 @@ inductive Scalar : Ty → Prop where
 
 namespace Scalar
 
+/-- Scalar observations are available only for actual one-word source types. -/
+def toNat : {τ : Ty} → Scalar τ → Value τ → Nat
+  | .nat, _, value => value
+  | .bool, _, value => if value then 1 else 0
+  | .unit, impossible, _ => nomatch impossible
+  | .buffer _, impossible, _ => nomatch impossible
+
+/-- Every supported object cell has its ordinary scalar source type. -/
+def cell (kind : CellTy) : Scalar kind.toTy :=
+  match kind with
+  | .nat => .nat
+  | .bool => .bool
+
 /-- A scalar operation selects the sole actual field of its operand. -/
 def index {τ : Ty} (scalar : Scalar τ) : Fin (fieldCount τ) :=
   ⟨0, by cases scalar <;> decide⟩
@@ -43,20 +56,15 @@ theorem fieldCount_eq_one {τ : Ty} (scalar : Scalar τ) : fieldCount τ = 1 := 
   cases scalar <;> rfl
 
 /-- Every field of a scalar is its usual unsigned observation. -/
-theorem valueField {τ : Ty} (scalar : Scalar τ) (value : Value τ)
+theorem valueField {τ : Ty} (scalar : Scalar τ) (placement : Nat → Word w) (value : Value τ)
     (i : Fin (fieldCount τ)) :
-    LanguageCompiler.valueField value i = valueToNat value := by
+    LanguageCompiler.valueField placement value i = scalar.toNat value := by
   cases scalar <;> rfl
 
 /-- The scalar range condition is exactly its field range condition. -/
 theorem fits_iff {τ : Ty} (scalar : Scalar τ) (value : Value τ) :
-    (∀ i : Fin (fieldCount τ), LanguageCompiler.valueField value i < 2 ^ w) ↔
-      valueToNat value < 2 ^ w := by
-  constructor
-  · intro fits
-    simpa only [scalar.valueField] using fits scalar.index
-  · intro fits i
-    simpa only [scalar.valueField] using fits
+    ValueFits w value ↔ scalar.toNat value < 2 ^ w := by
+  cases scalar <;> rfl
 
 end Scalar
 
@@ -71,9 +79,10 @@ abbrev RegisterMap (Γ : List Ty) := ∀ {τ}, Var Γ τ → Fin (fieldCount τ)
 namespace RegisterMap
 
 /-- Every actual field has its exact mathematical value. -/
-def Matches (layout : RegisterMap Γ) (env : Env Γ) (regs : Reg → Word w) : Prop :=
+def Matches (layout : RegisterMap Γ) (placement : Nat → Word w)
+    (env : Env Γ) (regs : Reg → Word w) : Prop :=
   ∀ {τ} (v : Var Γ τ) (i : Fin (fieldCount τ)),
-    (regs (layout v i)).toNat = valueField (env.get v) i
+    (regs (layout v i)).toNat = valueField placement (env.get v) i
 
 /-- Source slots lie below the expression compiler's scratch register. -/
 def Bounded (layout : RegisterMap Γ) (bound : Reg) : Prop :=
@@ -81,9 +90,10 @@ def Bounded (layout : RegisterMap Γ) (bound : Reg) : Prop :=
 
 /-- Scalar expression proofs project the one field from the common relation. -/
 theorem Matches.scalar {layout : RegisterMap Γ} {env : Env Γ} {regs : Reg → Word w}
-    (matched : layout.Matches env regs) (scalar : Scalar τ) (v : Var Γ τ) :
-    (regs (layout v scalar.index)).toNat = valueToNat (env.get v) :=
-  (matched v scalar.index).trans (scalar.valueField (env.get v) scalar.index)
+    {placement : Nat → Word w} (matched : layout.Matches placement env regs)
+    (scalar : Scalar τ) (v : Var Γ τ) :
+    (regs (layout v scalar.index)).toNat = scalar.toNat (env.get v) :=
+  (matched v scalar.index).trans (scalar.valueField placement (env.get v) scalar.index)
 
 /-- Scalar expressions use the same inferred register bound as other fields. -/
 theorem Bounded.scalar {layout : RegisterMap Γ} (bounded : layout.Bounded bound)
@@ -92,24 +102,60 @@ theorem Bounded.scalar {layout : RegisterMap Γ} (bounded : layout.Bounded bound
 
 end RegisterMap
 
-/-- Lower an atom without adding computations to its source meaning. -/
-def atomExpr (layout : RegisterMap Γ) : {τ : Ty} → Atom Γ τ → Scalar τ → Expr
-  | _, .var v, scalar => .var (layout v scalar.index)
+/-- Materialize one actual field. Object placement is not part of the code. -/
+def atomFieldExpr (layout : RegisterMap Γ) :
+    {τ : Ty} → Atom Γ τ → Fin (fieldCount τ) → Expr
+  | _, .var v, i => .var (layout v i)
   | _, .nat n, _ => .const n
   | _, .bool b, _ => .const (if b then 1 else 0)
-  | _, .unit, impossible => nomatch impossible
+  | _, .unit, impossible => Fin.elim0 impossible
+
+/-- Every atom field is represented exactly under the common value range. -/
+theorem atomFieldExpr_toNat (layout : RegisterMap Γ) (atom : Atom Γ τ)
+    (env : Env Γ) (regs : Reg → Word w) (mem : Word w → Word w)
+    {placement : Nat → Word w} (matched : layout.Matches placement env regs)
+    (fits : ValueFits w (atom.eval env)) (i : Fin (fieldCount τ)) :
+    ((atomFieldExpr layout atom i).eval regs mem).toNat =
+      valueField placement (atom.eval env) i := by
+  cases atom with
+  | var v => exact matched v i
+  | nat n => exact Word.ofNat_toNat_of_lt fits
+  | bool b => exact Word.ofNat_toNat_of_lt fits
+  | unit => exact Fin.elim0 i
+
+/-- All fields obey the same inferred layout bound. -/
+theorem atomFieldExpr_bounded (layout : RegisterMap Γ) (atom : Atom Γ τ)
+    (bounded : layout.Bounded dst) (i : Fin (fieldCount τ)) :
+    (atomFieldExpr layout atom i).Bounded dst := by
+  cases atom with
+  | var v => exact bounded v i
+  | nat | bool => trivial
+  | unit => exact Fin.elim0 i
+
+/-- Materializing an atom field executes one expression instruction. -/
+@[simp] theorem atomFieldExpr_compile_length (layout : RegisterMap Γ) (atom : Atom Γ τ)
+    (i : Fin (fieldCount τ)) (dst : Reg) :
+    ((atomFieldExpr layout atom i).compile dst).length = 1 := by
+  cases atom with
+  | var | nat | bool => rfl
+  | unit => exact Fin.elim0 i
+
+/-- Scalar operations use the sole field of the common atom materialization. -/
+def atomExpr (layout : RegisterMap Γ) (atom : Atom Γ τ) (scalar : Scalar τ) : Expr :=
+  atomFieldExpr layout atom scalar.index
 
 /-- An in-range atom is decoded exactly after lowering. -/
 theorem atomExpr_toNat (layout : RegisterMap Γ) (atom : Atom Γ τ) (scalar : Scalar τ)
     (env : Env Γ) (regs : Reg → Word w) (mem : Word w → Word w)
-    (hw : 0 < w) (matched : layout.Matches env regs)
-    (fits : valueToNat (atom.eval env) < 2 ^ w) :
-    ((atomExpr layout atom scalar).eval regs mem).toNat = valueToNat (atom.eval env) := by
+    (hw : 0 < w) {placement : Nat → Word w} (matched : layout.Matches placement env regs)
+    (fits : ValueFits w (atom.eval env)) :
+    ((atomExpr layout atom scalar).eval regs mem).toNat = scalar.toNat (atom.eval env) := by
   cases atom with
   | var v => exact matched.scalar scalar v
   | nat n => exact Word.ofNat_toNat_of_lt fits
   | bool b =>
-      cases b <;> simp [atomExpr, Expr.eval, Atom.eval, valueToNat, BitVec.toNat_one hw]
+      cases b <;>
+        simp [atomExpr, atomFieldExpr, Expr.eval, Atom.eval, Scalar.toNat, BitVec.toNat_one hw]
   | unit => cases scalar
 
 /-- Atom lowering respects the backend's inferred register bound. -/
@@ -135,13 +181,14 @@ def primExpr (layout : RegisterMap Γ) : {τ : Ty} → Prim Γ τ → Scalar τ 
   | _, .eq a b, _ => .bin .eq (atomExpr layout a .nat) (atomExpr layout b .nat)
   | _, .lt a b, _ => .bin .ult (atomExpr layout a .nat) (atomExpr layout b .nat)
   | _, .le a b, _ => .bin .ule (atomExpr layout a .nat) (atomExpr layout b .nat)
+  | _, .length buffer, _ => atomFieldExpr layout buffer ⟨1, by change 1 < 2; decide⟩
 
 /-- Source-level sufficient ranges for an operation. Addition and multiplication
 include their actual results, even if later code returns a smaller value. Other
 natural operations only require their operands to fit; subtraction and division
 retain their entire mathematical domains, including underflow and zero divisors. -/
 def PrimFits (w : Nat) (env : Env Γ) : {τ : Ty} → Prim Γ τ → Prop
-  | _, .atom a => valueToNat (a.eval env) < 2 ^ w
+  | _, .atom a => ValueFits w (a.eval env)
   | _, .add a b =>
       a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w ∧ a.eval env + b.eval env < 2 ^ w
   | _, .mul a b =>
@@ -152,13 +199,15 @@ def PrimFits (w : Nat) (env : Env Γ) : {τ : Ty} → Prim Γ τ → Prop
   | _, .eq a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
   | _, .lt a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
   | _, .le a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
+  | _, .length buffer => (buffer.eval env).length < 2 ^ w
 
 /-- The fixed lowering implements mathematical Nat/Bool semantics, not merely
 equality modulo the word width. -/
 theorem primExpr_toNat (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar : Scalar τ)
     (env : Env Γ) (regs : Reg → Word w) (mem : Word w → Word w)
-    (hw : 0 < w) (matched : layout.Matches env regs) (fits : PrimFits w env prim) :
-    ((primExpr layout prim scalar).eval regs mem).toNat = valueToNat (prim.eval env) := by
+    (hw : 0 < w) {placement : Nat → Word w} (matched : layout.Matches placement env regs)
+    (fits : PrimFits w env prim) :
+    ((primExpr layout prim scalar).eval regs mem).toNat = scalar.toNat (prim.eval env) := by
   cases prim with
   | atom atom => exact atomExpr_toNat layout atom scalar env regs mem hw matched fits
   | add a b =>
@@ -188,35 +237,38 @@ theorem primExpr_toNat (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar : S
         a.eval env - b.eval env
       simp only [saturated,
         atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
-        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, valueToNat]
+        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, Scalar.toNat]
   | div a b =>
       change (BinOp.eval .udiv _ _).toNat = a.eval env / b.eval env
       simp only [BinOp.eval_udiv_toNat,
         atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
-        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, valueToNat]
+        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, Scalar.toNat]
   | mod a b =>
       change (BinOp.eval .umod _ _).toNat = a.eval env % b.eval env
       simp only [BinOp.eval_umod_toNat,
         atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
-        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, valueToNat]
+        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, Scalar.toNat]
   | eq a b =>
-      change (BinOp.eval .eq _ _).toNat = valueToNat (Prim.eval (.eq a b) env)
+      change (BinOp.eval .eq _ _).toNat = Scalar.bool.toNat (Prim.eval (.eq a b) env)
       rw [BinOp.eval_eq_toNat hw]
       simp [BitVec.toNat_eq,
         atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
-        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, Prim.eval, valueToNat]
+        atomExpr_toNat layout b .nat env regs mem hw matched fits.2, Prim.eval, Scalar.toNat]
   | lt a b =>
-      change (BinOp.eval .ult _ _).toNat = valueToNat (Prim.eval (.lt a b) env)
+      change (BinOp.eval .ult _ _).toNat = Scalar.bool.toNat (Prim.eval (.lt a b) env)
       rw [BinOp.eval_ult_toNat hw,
         atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
         atomExpr_toNat layout b .nat env regs mem hw matched fits.2]
-      simp [Prim.eval, valueToNat]
+      simp [Prim.eval, Scalar.toNat]
   | le a b =>
-      change (BinOp.eval .ule _ _).toNat = valueToNat (Prim.eval (.le a b) env)
+      change (BinOp.eval .ule _ _).toNat = Scalar.bool.toNat (Prim.eval (.le a b) env)
       rw [BinOp.eval_ule_toNat hw,
         atomExpr_toNat layout a .nat env regs mem hw matched fits.1,
         atomExpr_toNat layout b .nat env regs mem hw matched fits.2]
-      simp [Prim.eval, valueToNat]
+      simp [Prim.eval, Scalar.toNat]
+  | length buffer =>
+      exact atomFieldExpr_toNat layout buffer env regs mem matched fits
+        ⟨1, by change 1 < 2; decide⟩
 
 /-- Scalar lowering requires no additional live source registers. -/
 theorem primExpr_bounded (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar : Scalar τ)
@@ -228,6 +280,8 @@ theorem primExpr_bounded (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar :
   | sub a b =>
       exact ⟨⟨atomExpr_bounded layout a .nat bounded, atomExpr_bounded layout b .nat bounded⟩,
         ⟨atomExpr_bounded layout b .nat bounded, atomExpr_bounded layout a .nat bounded⟩⟩
+  | length buffer =>
+      exact atomFieldExpr_bounded layout buffer bounded ⟨1, by change 1 < 2; decide⟩
 
 /-- Atom materialization executes one emitted instruction, including variables. -/
 @[simp] theorem atomExpr_compile_length (layout : RegisterMap Γ) (atom : Atom Γ τ)
@@ -244,7 +298,7 @@ theorem primExpr_compile_length (layout : RegisterMap Γ) (prim : Prim Γ τ)
     (scalar : Scalar τ) (dst : Reg) :
     ((primExpr layout prim scalar).compile dst).length =
       match prim with
-      | .atom _ => 1
+      | .atom _ | .length _ => 1
       | .add _ _ | .mul _ _ | .div _ _ | .mod _ _ | .eq _ _ | .lt _ _ | .le _ _ => 3
       | .sub _ _ => 7 := by
   cases prim <;> simp [primExpr, Expr.compile]
@@ -254,12 +308,13 @@ The existing `Expr.Compiled` conclusion preserves live slots, heap, I/O and
 status. This is the scalar fragment, not yet a whole-function lowering theorem. -/
 theorem prim_refines (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar : Scalar τ)
     (env : Env Γ) (s : State w) (hw : 0 < w)
-    (matched : layout.Matches env s.regs) (fits : PrimFits w env prim)
+    {placement : Nat → Word w} (matched : layout.Matches placement env s.regs)
+    (fits : PrimFits w env prim)
     (bounded : layout.Bounded dst)
     (placed : CodeAt code s.pc ((primExpr layout prim scalar).compile dst))
     (running : s.status = .running) :
     ∃ t, Exec code ((primExpr layout prim scalar).compile dst).length s t ∧
-      (t.regs dst).toNat = valueToNat (prim.eval env) ∧
+      (t.regs dst).toNat = scalar.toNat (prim.eval env) ∧
       Expr.Compiled (primExpr layout prim scalar) dst s t ∧
       t.pc = s.pc + ((primExpr layout prim scalar).compile dst).length := by
   obtain ⟨t, execution, compiled, pc⟩ :=

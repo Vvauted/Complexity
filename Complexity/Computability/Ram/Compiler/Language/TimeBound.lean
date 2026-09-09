@@ -26,6 +26,7 @@ open Complexity.Language
 
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
 variable {w depth heapLimit controlReg steps : Nat} {fn : Fin signatures.length}
+variable {placement : Nat → Word w}
 variable {args : Env signatures[fn].params} {initialHeap : Heap}
 variable {finish : Complexity.Language.State signatures[fn].params}
 variable {value : Value signatures[fn].result}
@@ -41,10 +42,11 @@ theorem le_of_functionTimeBound (cost : ExecutionCost execution steps)
     (time : Source.FunctionTimeBound controlReg (lowerProgram program) heapLimit depth
       (lowerFunc program fn) P bound)
     (hw : 0 < w) (arguments : EnvFits w args) (entry : Source.State w)
-    (hpre : P (envWords w args) entry) :
-    steps + 2 ≤ bound (envWords w args) entry := by
-  obtain ⟨target, measured⟩ :=
-    cost.functionMeasuredExec controlReg hw arguments entry (heapLimit := heapLimit)
+    (represented : HeapRep placement heapLimit initialHeap entry)
+    (hpre : P (envWords placement args) entry) :
+    steps + 2 ≤ bound (envWords placement args) entry := by
+  obtain ⟨target, measured, _⟩ :=
+    cost.functionMeasuredExec controlReg hw arguments entry represented
   exact time _ _ hpre _ _ _ measured
 
 /-- Transport an ordinary source precondition and mathematical upper bound
@@ -55,14 +57,15 @@ theorem le_of_functionTimeBound_of_le (cost : ExecutionCost execution steps)
     (time : Source.FunctionTimeBound controlReg (lowerProgram program) heapLimit depth
       (lowerFunc program fn) P bound)
     (hw : 0 < w) (arguments : EnvFits w args) (entry : Source.State w)
+    (represented : HeapRep placement heapLimit initialHeap entry)
     {sourcePre : Env signatures[fn].params → Heap → Prop}
     {sourceBound : Env signatures[fn].params → Heap → Nat}
     (hpre : sourcePre args initialHeap)
-    (precondition : sourcePre args initialHeap → P (envWords w args) entry)
+    (precondition : sourcePre args initialHeap → P (envWords placement args) entry)
     (budget : sourcePre args initialHeap →
-      bound (envWords w args) entry ≤ sourceBound args initialHeap) :
+      bound (envWords placement args) entry ≤ sourceBound args initialHeap) :
     steps + 2 ≤ sourceBound args initialHeap :=
-  Nat.le_trans (cost.le_of_functionTimeBound time hw arguments entry (precondition hpre))
+  Nat.le_trans (cost.le_of_functionTimeBound time hw arguments entry represented (precondition hpre))
     (budget hpre)
 
 end Ram.LanguageCompiler.ExecutionCost

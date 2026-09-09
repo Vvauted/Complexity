@@ -89,6 +89,7 @@ import Complexity.Computability.Ram.Compiler.Expr.Basic
 import Complexity.Computability.Ram.Compiler.Expr.Memory
 import Complexity.Computability.Ram.Compiler.Language.CodeSize
 import Complexity.Computability.Ram.Compiler.Language.Control
+import Complexity.Computability.Ram.Compiler.Language.Copy
 import Complexity.Computability.Ram.Compiler.Language.Contract
 import Complexity.Computability.Ram.Compiler.Language.CostBound
 import Complexity.Computability.Ram.Compiler.Language.CostDeterministic

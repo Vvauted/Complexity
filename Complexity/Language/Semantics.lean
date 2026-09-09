@@ -22,9 +22,10 @@ fault or missing return. A body that
 falls through faults at this function boundary, including a Unit-returning body:
 Unit must be returned explicitly and is not a default for a missing return.
 
-The current statement vocabulary remains scalar and has no heap operations or
-assignments. Shared state is nevertheless passed explicitly; restoration is a
-lexical operation, not rollback of heap effects.
+Reads and writes operate on the current shared heap. A failed operation leaves
+its entry state unchanged, without rolling back earlier effects. Slices check
+their relative extent and bind another view of the same object, not a snapshot.
+Locals remain immutable; caller restoration is lexical, not heap rollback.
 -/
 
 namespace Complexity.Language
@@ -32,6 +33,7 @@ namespace Complexity.Language
 /-- A finite source execution can fault instead of returning a value. -/
 inductive Fault where
   | missingReturn
+  | heap (error : Heap.Error)
   deriving DecidableEq, Repr
 
 /-- Statement continuation, function return and failure are distinct outcomes. -/
@@ -54,6 +56,50 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
       (body : Exec program continuation (State.cons (value.eval entry.locals) entry)
         finish control) :
       Exec program (.letPrim value continuation) entry finish.tail control
+  | read {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
+      {continuation : Stmt signatures (kind.toTy :: Γ) result}
+      {entry : State Γ} {finish : State (kind.toTy :: Γ)} {control : Control result}
+      {value : CellValue kind}
+      (loaded : entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .ok value)
+      (body : Exec program continuation (State.cons (kind.toValue value) entry) finish control) :
+      Exec program (.read buffer index continuation) entry finish.tail control
+  | readFault {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
+      {continuation : Stmt signatures (kind.toTy :: Γ) result}
+      {entry : State Γ} {error : Heap.Error}
+      (failed : entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .error error) :
+      Exec program (.read buffer index continuation) entry entry (.fault (.heap error))
+  | write {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
+      {entry : State Γ} {heap : Heap}
+      (written : entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+        (kind.ofValue (value.eval entry.locals)) = .ok heap) :
+      Exec program (.write buffer index value : Stmt signatures Γ result)
+        entry ⟨entry.locals, heap⟩ .normal
+  | writeFault {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
+      {entry : State Γ} {error : Heap.Error}
+      (failed : entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+        (kind.ofValue (value.eval entry.locals)) = .error error) :
+      Exec program (.write buffer index value : Stmt signatures Γ result)
+        entry entry (.fault (.heap error))
+  | slice {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {buffer : Atom Γ (.buffer kind)} {offset length : Atom Γ .nat}
+      {continuation : Stmt signatures (.buffer kind :: Γ) result}
+      {entry : State Γ} {finish : State (.buffer kind :: Γ)} {control : Control result}
+      {view : Buffer kind}
+      (sliced : (buffer.eval entry.locals).slice (offset.eval entry.locals)
+        (length.eval entry.locals) = .ok view)
+      (body : Exec program continuation (State.cons view entry) finish control) :
+      Exec program (.slice buffer offset length continuation) entry finish.tail control
+  | sliceFault {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {buffer : Atom Γ (.buffer kind)} {offset length : Atom Γ .nat}
+      {continuation : Stmt signatures (.buffer kind :: Γ) result}
+      {entry : State Γ} {error : Heap.Error}
+      (failed : (buffer.eval entry.locals).slice (offset.eval entry.locals)
+        (length.eval entry.locals) = .error error) :
+      Exec program (.slice buffer offset length continuation) entry entry (.fault (.heap error))
   | seqNormal {Γ : List Ty} {result : Ty} {first second : Stmt signatures Γ result}
       {entry middle finish : State Γ} {control : Control result}
       (head : Exec program first entry middle .normal)
@@ -108,17 +154,24 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
 
 namespace Exec
 
-/-- The current scalar vocabulary has no assignment or heap operation, so
-lexical exit restores the entire entry state. This is a property of this
-vocabulary, not a rollback rule for calls or faults. -/
-theorem state_eq {signatures : List Signature} {program : Program signatures}
+/-- The statement vocabulary has no local assignment. Scoped values are dropped
+on exit and calls restore caller locals, independently of actual heap effects. -/
+theorem locals_eq {signatures : List Signature} {program : Program signatures}
     {Γ : List Ty} {result : Ty} {stmt : Stmt signatures Γ result}
     {entry finish : State Γ} {control : Control result}
-    (execution : Exec program stmt entry finish control) : finish = entry := by
+    (execution : Exec program stmt entry finish control) : finish.locals = entry.locals := by
   induction execution with
   | skip => rfl
   | letPrim body ih =>
-      simpa only [State.tail_cons] using congrArg State.tail ih
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using congrArg Env.tail ih
+  | read loaded body ih =>
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using congrArg Env.tail ih
+  | readFault => rfl
+  | write => rfl
+  | writeFault => rfl
+  | slice sliced body ih =>
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using congrArg Env.tail ih
+  | sliceFault => rfl
   | seqNormal head tail ihHead ihTail => exact ihTail.trans ihHead
   | seqReturn head ih => exact ih
   | seqFault head ih => exact ih
@@ -126,28 +179,10 @@ theorem state_eq {signatures : List Signature} {program : Program signatures}
   | iteFalse test body ih => exact ih
   | ret => rfl
   | callReturn callee body ihCallee ihBody =>
-      rw [ihBody, State.tail_cons, ihCallee]
-      rfl
-  | callFault callee ih =>
-      rw [ih]
-      rfl
-  | callMissingReturn callee ih =>
-      rw [ih]
-      rfl
-
-/-- Current scalar statements preserve their outer lexical values. -/
-theorem locals_eq {signatures : List Signature} {program : Program signatures}
-    {Γ : List Ty} {result : Ty} {stmt : Stmt signatures Γ result}
-    {entry finish : State Γ} {control : Control result}
-    (execution : Exec program stmt entry finish control) : finish.locals = entry.locals :=
-  congrArg State.locals execution.state_eq
-
-/-- Current scalar statements have no shared-heap effects. -/
-theorem heap_eq {signatures : List Signature} {program : Program signatures}
-    {Γ : List Ty} {result : Ty} {stmt : Stmt signatures Γ result}
-    {entry finish : State Γ} {control : Control result}
-    (execution : Exec program stmt entry finish control) : finish.heap = entry.heap :=
-  congrArg State.heap execution.state_eq
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons, State.locals_restore]
+        using congrArg Env.tail ihBody
+  | callFault => rfl
+  | callMissingReturn => rfl
 
 /-- The same source statement and entry state determine both its final state
 and its finite control outcome, independently of execution proofs. -/
@@ -165,6 +200,44 @@ theorem deterministic {signatures : List Signature} {program : Program signature
       cases second with
       | letPrim body' =>
           obtain ⟨rfl, rfl⟩ := ih body'
+          exact ⟨rfl, rfl⟩
+  | read loaded body ih =>
+      cases second with
+      | read loaded' body' =>
+          cases Except.ok.inj (loaded.symm.trans loaded')
+          obtain ⟨rfl, rfl⟩ := ih body'
+          exact ⟨rfl, rfl⟩
+      | readFault failed => cases loaded.symm.trans failed
+  | readFault failed =>
+      cases second with
+      | read loaded body => cases failed.symm.trans loaded
+      | readFault failed' =>
+          cases Except.error.inj (failed.symm.trans failed')
+          exact ⟨rfl, rfl⟩
+  | write written =>
+      cases second with
+      | write written' =>
+          cases Except.ok.inj (written.symm.trans written')
+          exact ⟨rfl, rfl⟩
+      | writeFault failed => cases written.symm.trans failed
+  | writeFault failed =>
+      cases second with
+      | write written => cases failed.symm.trans written
+      | writeFault failed' =>
+          cases Except.error.inj (failed.symm.trans failed')
+          exact ⟨rfl, rfl⟩
+  | slice sliced body ih =>
+      cases second with
+      | slice sliced' body' =>
+          cases Except.ok.inj (sliced.symm.trans sliced')
+          obtain ⟨rfl, rfl⟩ := ih body'
+          exact ⟨rfl, rfl⟩
+      | sliceFault failed => cases sliced.symm.trans failed
+  | sliceFault failed =>
+      cases second with
+      | slice sliced body => cases failed.symm.trans sliced
+      | sliceFault failed' =>
+          cases Except.error.inj (failed.symm.trans failed')
           exact ⟨rfl, rfl⟩
   | seqNormal head tail ihHead ihTail =>
       cases second with

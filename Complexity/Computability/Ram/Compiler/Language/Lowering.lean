@@ -7,12 +7,14 @@ import Complexity.Computability.Ram.Compiler.Language.Layout
 import Complexity.Computability.Ram.Source.Bounds
 
 /-!
-# Lowering typed scalar programs to structured RAM code
+# Lowering typed programs with borrowed buffers to structured RAM code
 
 The lowering is syntax-directed and independent of inputs, execution witnesses,
-range proofs and cost bounds. Scalar bindings receive fresh local slots; Unit
-bindings have no fields. Calls flatten the typed arguments and receive the
-actual result fields using the existing calling convention.
+range proofs and cost bounds. Bindings receive fresh local slots for their
+actual fields; Unit has no fields. Calls flatten typed arguments and receive
+actual results using the existing calling convention. Buffer reads, writes and
+slices emit ordinary address arithmetic and memory instructions. Successful
+source access and realization justify safety; no runtime check is added here.
 
 Each statement child is lowered once. An internal return flag records whether
 the function returned; sequence tails and the final normal continuation inspect
@@ -23,7 +25,9 @@ Falling through a source function is not certified as a successful source
 return. Behavioral transfer concerns executions that actually return.
 
 Function-local bounds are inferred from the generated IR. No instruction cost
-or source execution relation is defined here.
+or source execution relation is defined here. Multi-field return copying is
+sequential, not a hidden snapshot: its simulation requires the source layout to
+avoid the result region. Generated function layouts reserve that region.
 -/
 
 namespace Ram.LanguageCompiler
@@ -31,14 +35,12 @@ namespace Ram.LanguageCompiler
 open Complexity.Language
 
 /-- The actual word expressions for an atomic argument. Unit contributes no field. -/
-def atomExprs (layout : RegisterMap Γ) : {τ : Ty} → Atom Γ τ → List Expr
-  | .nat, atom => [atomExpr layout atom .nat]
-  | .bool, atom => [atomExpr layout atom .bool]
-  | .unit, _ => []
+def atomExprs (layout : RegisterMap Γ) (atom : Atom Γ τ) : List Expr :=
+  List.ofFn (atomFieldExpr layout atom)
 
 @[simp] theorem atomExprs_length (layout : RegisterMap Γ) (atom : Atom Γ τ) :
     (atomExprs layout atom).length = fieldCount τ := by
-  cases τ <;> rfl
+  simp only [atomExprs, List.length_ofFn]
 
 /-- Flatten call operands in their declared order, omitting only Unit fields. -/
 def argsExprs (layout : RegisterMap Γ) : {params : List Ty} → Args Γ params → List Expr
@@ -51,18 +53,47 @@ def argsExprs (layout : RegisterMap Γ) : {params : List Ty} → Args Γ params 
   | nil => rfl
   | cons atom rest ih => simp [argsExprs, contextSize, ih]
 
-/-- Materialize the primitive's actual result, without a dummy Unit register. -/
+/-- Copy fields in order using real assignments. Every expression is evaluated
+at its assignment; correctness needs preservation of later source fields.
+The singleton form retains the ordinary scalar assignment without a trailing skip. -/
+def copyFields (dst : Reg) : List Expr → Ram.Stmt
+  | [] => .skip
+  | [expr] => .assign dst expr
+  | expr :: next :: rest =>
+      .seq (.assign dst expr) (copyFields (dst + 1) (next :: rest))
+
+/-- Materialize the primitive's actual fields, without a dummy Unit register.
+Buffer aliases copy their descriptor into the new binding's fresh local region. -/
 def lowerPrim (layout : RegisterMap Γ) (dst : Reg) : {τ : Ty} → Prim Γ τ → Ram.Stmt
   | .nat, prim => .assign dst (primExpr layout prim .nat)
   | .bool, prim => .assign dst (primExpr layout prim .bool)
   | .unit, _ => .skip
+  | .buffer _, .atom atom => copyFields dst (atomExprs layout atom)
 
-/-- Write the function's fixed result field. Unit has an empty result tuple. -/
-def lowerReturn (layout : RegisterMap Γ) (resultSlot : Reg) :
-    {τ : Ty} → Atom Γ τ → Ram.Stmt
-  | .nat, atom => .assign resultSlot (atomExpr layout atom .nat)
-  | .bool, atom => .assign resultSlot (atomExpr layout atom .bool)
-  | .unit, _ => .skip
+/-- Write the function's actual result fields. Multiple fields require a
+non-overlapping source layout; the code does not provide an implicit snapshot. -/
+def lowerReturn (layout : RegisterMap Γ) (resultSlot : Reg) (atom : Atom Γ τ) : Ram.Stmt :=
+  copyFields resultSlot (atomExprs layout atom)
+
+/-- Read one actual cell through the represented buffer base and source index. -/
+def lowerRead (layout : RegisterMap Γ) (dst : Reg) (buffer : Atom Γ (.buffer kind))
+    (index : Atom Γ .nat) : Ram.Stmt :=
+  .assign dst (Expr.index (atomFieldExpr layout buffer ⟨0, by change 0 < 2; decide⟩)
+    (atomExpr layout index .nat))
+
+/-- Write one actual cell; the source and realization premises justify the
+address and cell representation instead of adding an uncounted bounds check. -/
+def lowerWrite (layout : RegisterMap Γ) (buffer : Atom Γ (.buffer kind))
+    (index : Atom Γ .nat) (value : Atom Γ kind.toTy) : Ram.Stmt :=
+  .store (.bin .add (atomFieldExpr layout buffer ⟨0, by change 0 < 2; decide⟩)
+    (atomExpr layout index .nat)) (atomExpr layout value (Scalar.cell kind))
+
+/-- Construct the actual borrowed descriptor with address addition and a length
+copy. Its caller allocates both destinations beyond the source layout. -/
+def lowerSlice (layout : RegisterMap Γ) (dst : Reg) (buffer : Atom Γ (.buffer kind))
+    (offset length : Atom Γ .nat) : Ram.Stmt :=
+  .seq (.assign dst (.bin .add (atomFieldExpr layout buffer ⟨0, by change 0 < 2; decide⟩)
+    (atomExpr layout offset .nat))) (.assign (dst + 1) (atomExpr layout length .nat))
 
 /-- Lower each source child once, with an initialized, separate return flag.
 Calls restore the caller's flag before assigning their fresh result fields.
@@ -76,6 +107,15 @@ def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
       .seq (lowerPrim layout next value)
         (lowerStmtCore (RegisterMap.extend layout τ next)
           (next + fieldCount τ) resultSlot flag body)
+  | .read (kind := kind) buffer index body =>
+      .seq (lowerRead layout next buffer index)
+        (lowerStmtCore (RegisterMap.extend layout kind.toTy next)
+          (next + fieldCount kind.toTy) resultSlot flag body)
+  | .write buffer index value => lowerWrite layout buffer index value
+  | .slice (kind := kind) buffer offset length body =>
+      .seq (lowerSlice layout next buffer offset length)
+        (lowerStmtCore (RegisterMap.extend layout (.buffer kind) next)
+          (next + fieldCount (.buffer kind)) resultSlot flag body)
   | .call fn args body =>
       .seq (.call (valueRegs signatures[fn].result next) fn.val (argsExprs layout args))
         (lowerStmtCore (RegisterMap.extend layout signatures[fn].result next)
@@ -96,7 +136,9 @@ def returnFlag (result : Ty) (next resultSlot : Reg) : Reg :=
 
 /-- Lower a statement and retain its normal continuation exactly once. The
 fresh flag hides internal return bookkeeping from both the source program and
-the public simulation's register hypotheses. Source returns bypass the tail. -/
+the public simulation's register hypotheses. Source returns bypass the tail.
+The flag reservation alone does not separate an arbitrary source layout from
+the result region: multi-field-copy safety is an explicit simulation premise. -/
 def lowerStmt {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (layout : RegisterMap Γ) (next resultSlot : Reg)
     (stmt : Complexity.Language.Stmt signatures Γ result) (continuation : Ram.Stmt) : Ram.Stmt :=

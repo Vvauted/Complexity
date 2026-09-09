@@ -4,7 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Basic
-import Complexity.Computability.Ram.Word
+import Complexity.Computability.Ram.Array.Basic
 import Init.Data.List.OfFn
 
 /-!
@@ -14,6 +14,9 @@ Each source type has a fixed number of actual word fields. Encoding enumerates
 those fields in order using `List.ofFn`; Unit has no field or dummy word.
 The encoding alone does not assert that mathematical fields fit a word.
 Register layouts and their exact representation use the same field indices.
+Borrowed views carry their actual word address and mathematical length. The
+placement is proof-level representation data, not a compiler or runtime argument.
+An empty view at an address-space endpoint may wrap its unused address field.
 -/
 
 namespace Ram.LanguageCompiler
@@ -24,52 +27,104 @@ open Complexity.Language
 @[simp] def fieldCount : Ty → Nat
   | .nat | .bool => 1
   | .unit => 0
+  | .buffer _ => 2
 
-/-- The unsigned scalar observation. Unit's zero is not an encoded field. -/
-def valueToNat : {τ : Ty} → Value τ → Nat
-  | .nat, n => n
-  | .bool, b => if b then 1 else 0
-  | .unit, _ => 0
+/-- Source value ranges, independently of any physical object placement.
+Buffer validity in a source heap is a separate semantic condition. -/
+@[simp] def ValueFits (w : Nat) : {τ : Ty} → Value τ → Prop
+  | .nat, value => value < 2 ^ w
+  | .bool, value => (if value then 1 else 0) < 2 ^ w
+  | .unit, _ => True
+  | .buffer _, value => value.length < 2 ^ w
 
 /-- The mathematical value of an actual representation field. -/
-def valueField : {τ : Ty} → Value τ → Fin (fieldCount τ) → Nat
+def valueField (placement : Nat → Word w) : {τ : Ty} → Value τ → Fin (fieldCount τ) → Nat
   | .nat, value, _ => value
   | .bool, value, _ => if value then 1 else 0
   | .unit, _, i => Fin.elim0 i
+  | .buffer _, value, i =>
+      if i.val = 0 then (arrayAddr (placement value.object) value.offset).toNat else value.length
 
-@[simp] theorem valueField_nat (value : Nat) (i : Fin (fieldCount .nat)) :
-    valueField (τ := .nat) value i = value := rfl
+@[simp] theorem valueField_nat (placement : Nat → Word w) (value : Nat)
+    (i : Fin (fieldCount .nat)) : valueField placement (τ := .nat) value i = value := rfl
 
-@[simp] theorem valueField_bool (value : Bool) (i : Fin (fieldCount .bool)) :
-    valueField (τ := .bool) value i = (if value then 1 else 0) := rfl
+@[simp] theorem valueField_bool (placement : Nat → Word w) (value : Bool)
+    (i : Fin (fieldCount .bool)) :
+    valueField placement (τ := .bool) value i = (if value then 1 else 0) := rfl
+
+@[simp] theorem valueField_buffer_zero (placement : Nat → Word w) (value : Buffer kind) :
+    valueField placement (τ := .buffer kind) value ⟨0, by change 0 < 2; decide⟩ =
+      (arrayAddr (placement value.object) value.offset).toNat := rfl
+
+@[simp] theorem valueField_buffer_one (placement : Nat → Word w) (value : Buffer kind) :
+    valueField placement (τ := .buffer kind) value ⟨1, by change 1 < 2; decide⟩ =
+      value.length := rfl
+
+/-- The source range condition is exactly the range of every encoded field.
+The address field is already a word, even at an unused wrapping endpoint. -/
+theorem valueFits_iff (placement : Nat → Word w) {τ : Ty} (value : Value τ) :
+    ValueFits w value ↔ ∀ i : Fin (fieldCount τ), valueField placement value i < 2 ^ w := by
+  cases τ with
+  | nat | bool =>
+      constructor
+      · intro fits i
+        exact fits
+      · intro fields
+        exact fields ⟨0, by decide⟩
+  | unit =>
+      constructor
+      · intro _ i
+        exact Fin.elim0 i
+      · intro _
+        trivial
+  | buffer kind =>
+      constructor
+      · intro fits i
+        by_cases zero : i.val = 0
+        · simpa only [valueField, if_pos zero] using
+            (arrayAddr (placement value.object) value.offset).isLt
+        · simpa only [valueField, if_neg zero] using fits
+      · intro fields
+        exact fields ⟨1, by change 1 < 2; decide⟩
+
+/-- Any chosen placement exposes the same source-admissible field ranges. -/
+theorem ValueFits.fields {τ : Ty} {value : Value τ} (fits : ValueFits w value)
+    (placement : Nat → Word w) (i : Fin (fieldCount τ)) :
+    valueField placement value i < 2 ^ w := (valueFits_iff placement value).mp fits i
 
 /-- Encode every actual field, in its declared order. -/
-def valueWords (w : Nat) {τ : Ty} (value : Value τ) : List (Word w) :=
-  List.ofFn fun i => BitVec.ofNat w (valueField value i)
+def valueWords (placement : Nat → Word w) {τ : Ty} (value : Value τ) : List (Word w) :=
+  List.ofFn fun i => BitVec.ofNat w (valueField placement value i)
 
-@[simp] theorem valueWords_length (w : Nat) {τ : Ty} (value : Value τ) :
-    (valueWords w value).length = fieldCount τ := List.length_ofFn
+@[simp] theorem valueWords_length (placement : Nat → Word w) {τ : Ty} (value : Value τ) :
+    (valueWords placement value).length = fieldCount τ := List.length_ofFn
 
 /-- Field lookup observes an actual list entry, never an out-of-range default. -/
-@[simp] theorem valueWords_getElem (w : Nat) {τ : Ty} (value : Value τ)
+@[simp] theorem valueWords_getElem (placement : Nat → Word w) {τ : Ty} (value : Value τ)
     (i : Fin (fieldCount τ)) :
-    (valueWords w value)[i.val]'(by simp) =
-      BitVec.ofNat w (valueField value i) := List.getElem_ofFn _
+    (valueWords placement value)[i.val]'(by simp) =
+      BitVec.ofNat w (valueField placement value i) := List.getElem_ofFn _
 
-@[simp] theorem valueWords_getElem? (w : Nat) {τ : Ty} (value : Value τ)
+@[simp] theorem valueWords_getElem? (placement : Nat → Word w) {τ : Ty} (value : Value τ)
     (i : Fin (fieldCount τ)) :
-    (valueWords w value)[i.val]? = some (BitVec.ofNat w (valueField value i)) := by
+    (valueWords placement value)[i.val]? =
+      some (BitVec.ofNat w (valueField placement value i)) := by
   simp only [valueWords, List.getElem?_ofFn, dif_pos i.isLt]
 
-@[simp] theorem valueWords_nat (w : Nat) (value : Nat) :
-    valueWords w (τ := .nat) value = [BitVec.ofNat w value] := by
+@[simp] theorem valueWords_nat (placement : Nat → Word w) (value : Nat) :
+    valueWords placement (τ := .nat) value = [BitVec.ofNat w value] := by
   simp only [valueWords, fieldCount, List.ofFn_succ, List.ofFn_zero, valueField_nat]
 
-@[simp] theorem valueWords_bool (w : Nat) (value : Bool) :
-    valueWords w (τ := .bool) value = [BitVec.ofNat w (if value then 1 else 0)] := by
+@[simp] theorem valueWords_bool (placement : Nat → Word w) (value : Bool) :
+    valueWords placement (τ := .bool) value = [BitVec.ofNat w (if value then 1 else 0)] := by
   simp only [valueWords, fieldCount, List.ofFn_succ, List.ofFn_zero, valueField_bool]
 
-@[simp] theorem valueWords_unit (w : Nat) (value : Unit) :
-    valueWords w (τ := .unit) value = [] := List.ofFn_zero
+@[simp] theorem valueWords_unit (placement : Nat → Word w) (value : Unit) :
+    valueWords placement (τ := .unit) value = [] := List.ofFn_zero
+
+@[simp] theorem valueWords_buffer (placement : Nat → Word w) (value : Buffer kind) :
+    valueWords placement (τ := .buffer kind) value =
+      [arrayAddr (placement value.object) value.offset, BitVec.ofNat w value.length] := by
+  simp [valueWords, List.ofFn_succ, valueField]
 
 end Ram.LanguageCompiler

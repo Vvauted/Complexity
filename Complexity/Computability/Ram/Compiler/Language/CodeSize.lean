@@ -7,7 +7,7 @@ import Complexity.Computability.Ram.Compiler.Language.Lowering
 import Complexity.Computability.Ram.Compiler.Local.Basic
 
 /-!
-# Exact size of scalar lowering
+# Exact size of typed value and buffer lowering
 
 The structural formulas below equal the length of the actual emitted machine
 code. Every statement child contributes once, including both sides of a branch;
@@ -31,6 +31,16 @@ def primCodeSize {Γ : List Ty} {τ : Ty} : Prim Γ τ → Nat
   | .atom _ => 2 * fieldCount τ
   | .add .. | .mul .. | .div .. | .mod .. | .eq .. | .lt .. | .le .. => 4
   | .sub .. => 8
+  | .length _ => 2
+
+/-- Emitted buffer-read length, justified by `lowerRead_stmtSize`. -/
+def readCodeSize : Nat := 5
+
+/-- Emitted buffer-write length, justified by `lowerWrite_stmtSize`. -/
+def writeCodeSize : Nat := 5
+
+/-- Emitted descriptor-construction length, justified by `lowerSlice_stmtSize`. -/
+def sliceCodeSize : Nat := 6
 
 /-- Exact static size after lowering, with each child counted once. The locals
 table is the existing backend's actual callee-frame table, not a price chosen
@@ -39,6 +49,9 @@ def sourceCodeSize {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (localsTable : Nat → Nat) : Complexity.Language.Stmt signatures Γ result → Nat
   | .skip => 0
   | .letPrim value body => primCodeSize value + sourceCodeSize localsTable body
+  | .read _ _ body => readCodeSize + sourceCodeSize localsTable body
+  | .write .. => writeCodeSize
+  | .slice _ _ _ body => sliceCodeSize + sourceCodeSize localsTable body
   | .call fn _ body =>
       2 * contextSize signatures[fn].params + 4 * localsTable fn.val + 5 +
         fieldCount signatures[fn].result + sourceCodeSize localsTable body
@@ -49,7 +62,16 @@ def sourceCodeSize {signatures : List Signature} {Γ : List Ty} {result : Ty}
 /-- Each atomic argument field is materialized by one actual instruction. -/
 theorem atomExprs_compile_lengths (layout : RegisterMap Γ) (atom : Atom Γ τ) (dst : Reg) :
     ((atomExprs layout atom).map (fun expr => (expr.compile dst).length)).sum = fieldCount τ := by
-  cases τ <;> simp [atomExprs, atomExpr_compile_length]
+  have materialized :
+      (atomExprs layout atom).map (fun expr => (expr.compile dst).length) =
+        (atomExprs layout atom).map (fun _ => 1) := by
+    apply List.map_congr_left
+    intro expr member
+    change expr ∈ List.ofFn (atomFieldExpr layout atom) at member
+    obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+    exact atomFieldExpr_compile_length layout atom i dst
+  rw [materialized]
+  simp only [List.map_const', List.sum_replicate_nat, atomExprs_length, Nat.mul_one]
 
 /-- Flattened argument fields retain their exact materialization length. -/
 theorem argsExprs_compile_lengths (layout : RegisterMap Γ) (args : Args Γ params) (dst : Reg) :
@@ -60,19 +82,66 @@ theorem argsExprs_compile_lengths (layout : RegisterMap Γ) (args : Args Γ para
       simp only [argsExprs, List.map_append, List.sum_append,
         atomExprs_compile_lengths, ih, contextSize]
 
+/-- Ordered copying charges each expression and its actual destination move. -/
+theorem copyFields_stmtSize (control : Nat) (localsTable : Nat → Nat)
+    (dst : Reg) (fields : List Expr) :
+    LocalCompiler.stmtSize control localsTable (copyFields dst fields) =
+      (fields.map (fun expr => (expr.compile (ABI.scratch control)).length)).sum +
+        fields.length := by
+  induction fields generalizing dst with
+  | nil => rfl
+  | cons expr rest ih =>
+      cases rest with
+      | nil => simp [copyFields]
+      | cons next rest =>
+          simp only [copyFields, LocalCompiler.stmtSize_seq, LocalCompiler.stmtSize_assign,
+            ih, List.map_cons, List.sum_cons, List.length_cons]
+          omega
+
 /-- Primitive size is derived from emitted assignments and expression code. -/
 theorem lowerPrim_stmtSize (control : Nat) (localsTable : Nat → Nat)
     (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ) :
     LocalCompiler.stmtSize control localsTable (lowerPrim layout dst prim) = primCodeSize prim := by
   cases τ <;> cases prim <;>
     simp [lowerPrim, LocalCompiler.stmtSize_assign, LocalCompiler.stmtSize_skip,
-      primExpr_compile_length, primCodeSize]
+      copyFields_stmtSize, atomExprs_compile_lengths, primExpr_compile_length, primCodeSize]
 
-/-- The scalar return tuple is materialized before setting the separate flag. -/
+/-- Every return field is materialized before setting the separate flag. -/
 theorem lowerReturn_stmtSize (control : Nat) (localsTable : Nat → Nat)
     (layout : RegisterMap Γ) (dst : Reg) (atom : Atom Γ τ) :
     LocalCompiler.stmtSize control localsTable (lowerReturn layout dst atom) = 2 * fieldCount τ := by
-  cases τ <;> simp [lowerReturn, atomExpr_compile_length]
+  rw [lowerReturn, copyFields_stmtSize, atomExprs_compile_lengths, atomExprs_length]
+  omega
+
+/-- A read charges base/index materialization, address addition, load and assignment. -/
+theorem lowerRead_stmtSize (control : Nat) (localsTable : Nat → Nat)
+    (layout : RegisterMap Γ) (dst : Reg) (buffer : Atom Γ (.buffer kind))
+    (index : Atom Γ .nat) :
+    LocalCompiler.stmtSize control localsTable (lowerRead layout dst buffer index) =
+      readCodeSize := by
+  simp only [lowerRead, LocalCompiler.stmtSize_assign, Expr.index, Expr.compile,
+    List.length_append, List.length_singleton, atomFieldExpr_compile_length,
+    atomExpr_compile_length, readCodeSize]
+
+/-- A write charges the actual address, cell materialization and store. -/
+theorem lowerWrite_stmtSize (control : Nat) (localsTable : Nat → Nat)
+    (layout : RegisterMap Γ) (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
+    (value : Atom Γ kind.toTy) :
+    LocalCompiler.stmtSize control localsTable (lowerWrite layout buffer index value) =
+      writeCodeSize := by
+  simp only [lowerWrite, LocalCompiler.stmtSize, LocalCompiler.compileStmt, Expr.compile,
+    List.length_append, List.length_singleton, atomFieldExpr_compile_length,
+    atomExpr_compile_length, writeCodeSize]
+
+/-- A slice performs real base-address addition and a second descriptor-field copy. -/
+theorem lowerSlice_stmtSize (control : Nat) (localsTable : Nat → Nat)
+    (layout : RegisterMap Γ) (dst : Reg) (buffer : Atom Γ (.buffer kind))
+    (offset length : Atom Γ .nat) :
+    LocalCompiler.stmtSize control localsTable (lowerSlice layout dst buffer offset length) =
+      sliceCodeSize := by
+  simp only [lowerSlice, LocalCompiler.stmtSize_seq, LocalCompiler.stmtSize_assign,
+    Expr.compile, List.length_append, List.length_singleton, atomFieldExpr_compile_length,
+    atomExpr_compile_length, sliceCodeSize]
 
 /-- Actual call code includes argument materialization, frame work and receivers. -/
 theorem lowerCall_stmtSize {signatures : List Signature}
@@ -97,6 +166,13 @@ theorem lowerStmtCore_stmtSize {signatures : List Signature} {Γ : List Ty} {res
   | skip => rfl
   | letPrim value body ih =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerPrim_stmtSize,
+        ih, sourceCodeSize]
+  | read buffer index body ih =>
+      simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerRead_stmtSize,
+        ih, sourceCodeSize]
+  | write buffer index value => exact lowerWrite_stmtSize control localsTable layout _ _ _
+  | slice buffer offset length body ih =>
+      simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerSlice_stmtSize,
         ih, sourceCodeSize]
   | call fn args body ih =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerCall_stmtSize,

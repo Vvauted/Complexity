@@ -15,7 +15,9 @@ Generated contract equivalences hide argument-environment packing;
 focused scalar tactics compose realization and uniform structural cost rules.
 Source execution and function contracts carry typed locals and a shared heap;
 their native monadic view retains the final heap on success and failure.
-Full source proof automation, mutable data and loops are not yet supported. The
+Borrowed-buffer length, reads, writes and slices now have source syntax and
+semantics and checked whole-compiler behavior/cost connections. Full source
+proof automation, mutable local bindings and loops are not yet supported. The
 [roadmap](ROADMAP.md) records these boundaries and defines completion gates.
 Program sketches and proposed interfaces below are schematic, not a claim that
 the complete language/API is available.
@@ -153,7 +155,7 @@ Static specialization may later support generic combinators; dynamic closures,
 arbitrary dependent runtime types and a general effect-handler system are not
 prerequisites. Function contracts are reusable across callers and imports.
 
-### Current scalar surface and intended data extension
+### Current surface and intended traversal extension
 
 The [scalar frontend](../Complexity/Language/Syntax.lean) accepts ordinary typed
 headers and `do` bodies inside `source_program`:
@@ -189,10 +191,14 @@ heap or separate pure evaluator is chosen. This equation describes behavior,
 not zero execution cost or absence of intermediate work.
 All function signatures are collected before lowering the bodies, so named
 calls refer to the same source program rather than arbitrary host callbacks.
-The available surface is Nat/Bool/Unit, immutable `let`, calls, `if` and `return`;
-it does not yet supply mutable locals, buffers, loops or automatic proofs.
+The available surface also accepts `Buffer Nat` and `Buffer Bool`, their length,
+`let x ← xs.get i`, `xs.set i x` and `let ys ← xs.slice offset length`.
+These operations use the actual current shared heap. Mutable locals, loops and
+general proof automation remain unimplemented. The buffer consumer separately
+checks its source specification and the compiled invocation of that declaration.
 
-The buffer program below remains a design sketch, not accepted source syntax:
+The traversal program below remains a design sketch: its loop is not accepted
+source syntax yet.
 
 ```text
 program transform (xs : Buffer Nat) (limit : Nat) : Unit := do
@@ -331,10 +337,16 @@ The triple fixes the initial heap as a ghost and tests its equality in the
 precondition, so a relational postcondition cannot confuse initial and final
 contents. Existing transformer instances supply this composition.
 
-Next connect the compositional equations and shared operation specifications to
-`@[spec]`, `mvcgen` and focused source proof automation. The current scalar
-consumer already proves ordinary function equations by rewriting and Nat
-reasoning, and generated contract conversion hides the typed argument packing.
+The buffer actions now have native `@[spec]` rules. Reads and slices preserve
+the actual heap; writes provide both their real write equation and updated
+native contents, so alias/frame facts are not lost at the operation boundary.
+`FunctionTotal.triple_spec` converts a supplied source contract into a native
+continuation rule, including its actual final heap. It does not make automation
+guess the callee's mathematical contract. The current scalar consumer proves
+ordinary function equations by rewriting and Nat reasoning, and generated
+contract conversion hides the typed argument packing. Mutable helper/loop
+composition and elimination of routine ghost-witness packaging remain work
+for the author-facing proof interface.
 The backend's scalar tactics now compose realization and uniform cost rules;
 they do not automatically discover mathematical contracts or recursive bounds.
 These are semantic views of the core,
@@ -378,8 +390,8 @@ to be an actual native `Array.set` at the object and cell levels. This foundatio
 is carried by the source execution state, including across calls and faults.
 `Buffer.Contents` observes a valid view as an ordinary native array and transfers
 reads and writes to `getElem` and `Array.set`, including updates through aliases.
-Read/write statements are not implemented yet; transporting the heap alone does
-not make mutable programs available.
+Read/write/slice statements now invoke these same operations; calls retain their
+actual updated heap. Mutable traversal remains a separate unfinished capability.
 
 The [borrowed-buffer representation](../Complexity/Computability/Ram/Compiler/Language/Heap.lean)
 fixes an object-to-base placement as proof data, represents each complete object
@@ -388,8 +400,8 @@ two-field `ArrayRef` convention. Placement is not a runtime object table.
 Its read and write rules reuse `ArrayAt.slice`, native-array store rules and
 indexed frames; they separate actual cells of different objects, not overlapping
 views of one object. The same register layout now indexes typed fields, with
-generic argument packing and receiver proofs; enabling buffer types and passing
-their fields through the whole compiler remains to be done. A view encoding
+generic argument packing and receiver proofs. Passing buffer fields and actual
+updated heaps through the whole compiler is now proved. A view encoding
 need not recover source handle identity: empty views of different objects can
 share an encoded endpoint.
 Do not infer handle equality from descriptor equality or assume that a successful
@@ -399,8 +411,8 @@ The [operation bridge](../Complexity/Computability/Ram/Compiler/Language/HeapOpe
 connects a successful source read or write to real RAM load/store expressions,
 their exact endpoints and the existing compiler-derived instruction counts.
 Operand expressions are evaluated dynamically; placement is only a proof
-parameter. These shared rules are available for the upcoming source statement
-cases, not a claim that the frontend already accepts them.
+parameter. The source statement cases use these shared rules, and the whole
+simulation and runner connection retain the same actual final heap.
 
 Use relations when abstraction forgets storage details; do not require a
 bijection between an entire RAM heap and an observed list. Update related views

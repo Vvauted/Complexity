@@ -24,15 +24,29 @@ namespace Ram.LanguageCompiler
 
 open Complexity.Language
 
-/-- Scalar materialization introduces no function call. -/
+/-- Sequential field materialization introduces no function call. -/
+theorem copyFields_callsValid (program : Ram.Program) (dst : Reg) (fields : List Expr) :
+    Compiler.CallsValid program (copyFields dst fields) := by
+  induction fields generalizing dst with
+  | nil => trivial
+  | cons expr rest ih =>
+      cases rest with
+      | nil => trivial
+      | cons next rest => exact ⟨trivial, ih (dst + 1)⟩
+
+/-- Primitive materialization introduces no function call. -/
 theorem lowerPrim_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
     (dst : Reg) (prim : Prim Γ τ) : Compiler.CallsValid program (lowerPrim layout dst prim) := by
-  cases τ <;> trivial
+  cases τ with
+  | nat | bool | unit => trivial
+  | buffer kind =>
+      cases prim with
+      | atom atom => exact copyFields_callsValid program dst (atomExprs layout atom)
 
 /-- Returning the declared fields introduces no function call. -/
 theorem lowerReturn_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
-    (dst : Reg) (atom : Atom Γ τ) : Compiler.CallsValid program (lowerReturn layout dst atom) := by
-  cases τ <;> trivial
+    (dst : Reg) (atom : Atom Γ τ) : Compiler.CallsValid program (lowerReturn layout dst atom) :=
+  copyFields_callsValid program dst (atomExprs layout atom)
 
 /-- Every typed source call has exactly the generated callee's field counts. -/
 theorem call_callsValid {signatures : List Signature}
@@ -56,6 +70,9 @@ theorem lowerStmtCore_callsValid {signatures : List Signature}
   | skip => trivial
   | letPrim value body ih =>
       exact ⟨lowerPrim_callsValid _ _ _ _, ih _ _ _ _⟩
+  | read buffer index body ih => exact ⟨trivial, ih _ _ _ _⟩
+  | write buffer index value => trivial
+  | slice buffer offset length body ih => exact ⟨⟨trivial, trivial⟩, ih _ _ _ _⟩
   | call fn args body ih =>
       exact ⟨call_callsValid program layout fn args next, ih _ _ _ _⟩
   | seq first second ihFirst ihSecond =>

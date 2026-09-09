@@ -64,6 +64,70 @@ theorem evalWith_letPrim {τ : Ty} (value : Prim Γ τ)
   funext heap
   simp only [evalWith, eval_letPrim, Part.bind_map, State.cons, State.tail]
 
+/-- A checked current-heap read uses the native action and binds its actual
+scalar cell. Faults bypass both the scoped body and the normal continuation. -/
+theorem evalWith_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
+    (continuation : Stmt signatures (kind.toTy :: Γ) result) (entry : Env Γ)
+    (next : Env Γ → ExceptT Fault (StateT Heap Part) (Value result)) :
+    (Stmt.read buffer index continuation).evalWith program entry next =
+      (do
+        let value ← (buffer.eval entry).readM (index.eval entry)
+        continuation.evalWith program (Env.cons (kind.toValue value) entry)
+          (fun finish => next finish.tail)) := by
+  funext heap
+  change ((Stmt.read buffer index continuation).eval program ⟨entry, heap⟩).bind _ =
+    ((buffer.eval entry).readM (index.eval entry) heap).bind (fun outcome =>
+      ExceptT.bindCont
+        (fun value => continuation.evalWith program (Env.cons (kind.toValue value) entry)
+          (fun finish => next finish.tail)) outcome.1 outcome.2)
+  rw [eval_read]
+  cases loaded : heap.read (buffer.eval entry) (index.eval entry) <;>
+    simp only [Buffer.readM, loaded, Part.bind_some, Part.bind_map, ExceptT.bindCont,
+      evalWith, State.cons, State.tail]
+  all_goals rfl
+
+/-- A source write is the existing native heap action followed by normal
+continuation at its actual updated heap. A failed write retains prior effects. -/
+theorem evalWith_write {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
+    (value : Atom Γ kind.toTy) (entry : Env Γ)
+    (next : Env Γ → ExceptT Fault (StateT Heap Part) (Value result)) :
+    (Stmt.write buffer index value : Stmt signatures Γ result).evalWith program entry next =
+      (do
+        (buffer.eval entry).writeM (index.eval entry) (kind.ofValue (value.eval entry))
+        next entry) := by
+  funext heap
+  change ((Stmt.write buffer index value : Stmt signatures Γ result).eval
+    program ⟨entry, heap⟩).bind _ =
+      ((buffer.eval entry).writeM (index.eval entry) (kind.ofValue (value.eval entry)) heap).bind
+        (fun outcome => ExceptT.bindCont (fun _ : Unit => next entry) outcome.1 outcome.2)
+  rw [eval_write]
+  cases written : heap.write (buffer.eval entry) (index.eval entry)
+      (kind.ofValue (value.eval entry)) <;>
+    simp only [Buffer.writeM, written, Part.bind_some, ExceptT.bindCont]
+  all_goals rfl
+
+/-- Borrowing checked slice metadata is native action composition, not a
+snapshot of the underlying object. The actual shared heap passes to the body. -/
+theorem evalWith_slice {kind : CellTy} (buffer : Atom Γ (.buffer kind))
+    (offset length : Atom Γ .nat)
+    (continuation : Stmt signatures (.buffer kind :: Γ) result) (entry : Env Γ)
+    (next : Env Γ → ExceptT Fault (StateT Heap Part) (Value result)) :
+    (Stmt.slice buffer offset length continuation).evalWith program entry next =
+      (do
+        let view ← (buffer.eval entry).sliceM (offset.eval entry) (length.eval entry)
+        continuation.evalWith program (Env.cons view entry) (fun finish => next finish.tail)) := by
+  funext heap
+  change ((Stmt.slice buffer offset length continuation).eval program ⟨entry, heap⟩).bind _ =
+    ((buffer.eval entry).sliceM (offset.eval entry) (length.eval entry) heap).bind
+      (fun outcome => ExceptT.bindCont
+        (fun view => continuation.evalWith program (Env.cons view entry)
+          (fun finish => next finish.tail)) outcome.1 outcome.2)
+  rw [eval_slice]
+  cases sliced : (buffer.eval entry).slice (offset.eval entry) (length.eval entry) <;>
+    simp only [Buffer.sliceM, sliced, Part.bind_some, Part.bind_map, ExceptT.bindCont,
+      evalWith, State.cons, State.tail]
+  all_goals rfl
+
 /-- Sequencing composes only normal continuations; an early return or fault in
 the first statement skips both the second statement and its normal tail. -/
 theorem evalWith_seq (first second : Stmt signatures Γ result) (entry : Env Γ)

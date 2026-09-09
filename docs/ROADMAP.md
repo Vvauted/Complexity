@@ -242,8 +242,8 @@ Status: in progress, not complete.
   source contracts to these observations and exception-aware native triples;
   their false exceptional postcondition also rejects finite faults.
 - [Named scalar syntax](../Complexity/Language/Syntax.lean),
-  `source_program P where`, now supports Nat/Bool/Unit functions, immutable
-  `let`, named calls, conditionals and returns. Nested arithmetic and comparisons
+  `source_program P where`, now supports Nat/Bool/Unit and borrowed-buffer
+  functions, immutable `let`, named calls, conditionals and returns. Nested arithmetic and comparisons
   are normalized left to right into actual primitive bindings, including within
   call arguments and guards. Its generated curried
   `P.f` is a noncomputable `ExceptT Fault (StateT Heap Part) result` observation, not a
@@ -256,8 +256,9 @@ Status: in progress, not complete.
   `P.increment n = pure (n + 1)`, valid for every initial heap without a default
   empty heap. Function contracts relate initial and final heaps; their native
   triples retain the initial heap as a ghost.
-  Mutable bindings, heap operations, loops and automatic source proofs are not
-  supplied by this surface.
+  Buffer length, read, write and relative slice operations use the same current
+  heap. Mutable local bindings and loops are not yet supplied by this surface.
+  The same buffer declaration now has compiled execution and cost theorems.
 - [Scalar lowering](../Complexity/Computability/Ram/Compiler/Language/Scalar.lean)
   connects Nat/Bool atoms and operations to the existing expression compiler,
   with source range conditions, preserved state and counted machine execution.
@@ -324,8 +325,7 @@ Status: in progress, not complete.
   demanding a duplicate correctness proof. They neither maintain a price table
   nor infer invariants, arbitrary callee specifications or recursive bounds.
 
-Next, in a bounded scalar-interface pass alongside the lemma-transfer bridge
-and the first borrowed-buffer implementation:
+Next, alongside the lemma-transfer bridge and borrowed-buffer integration:
 
 1. Build shared-specification and source proof automation on the generated
    one-step equations and strict Std.Do adapter. The scalar correctness proof
@@ -342,10 +342,35 @@ and the first borrowed-buffer implementation:
    adapters or manually supplied instruction prices. The executable observation
    remains the existing compiled runner, not the noncomputable source `Part` value.
 
-The present cost interpretation concerns successful realized scalar executions.
+The source proof interface must be judged on mutable composition, not just
+surface syntax or a short scalar equation. The native buffer specifications in
+`Language/Eval/Verification` preserve the current heap for reads/slices and give
+both the actual write equation and updated `Array.set` contents for writes.
+This lets existing alias/frame lemmas remain usable without assuming all views
+are disjoint. The buffer consumer and the generic helper-contract adapter are checked;
+they are not yet evidence of an ergonomic arbitrary-loop proof.
+
+Before broadening the surface further, close these connected gaps:
+
+- Carry a named helper's mathematical postcondition and actual heap effects
+  into a caller using the existing native specification interface, without
+  unfolding the helper or regenerating a register proof.
+- Make preserved objects/intervals available in reusable function contracts.
+  Having heap-level frame lemmas alone does not give callers a frame theorem;
+  a contract that mentions only changed contents can discard that information.
+- Expose ordinary loop locals, current contents and return outcomes to invariants.
+  Scope/state plumbing belongs to shared rules; the invariant, termination
+  argument and algorithm-dependent inequalities belong to the author.
+- Validate behavior, realization and cost on the same source declaration.
+  Passing source semantics alone does not establish its compiled execution.
+
+These priorities refine M1–M3; they do not remove products, mutable locals,
+loops, recursion, allocation or compiler automation from the intended language.
+
+The present cost interpretation concerns successful realized executions.
 It is not yet instrumentation of every unrestricted source execution, nor
-source-level loop/heap/potential support. Mutable data and loops require their
-own source semantics, lowering cases and justified observations in M2–M3.
+source-level loop/potential support. Borrowed-buffer operations now have their
+own lowering and cost observations; loops still require those cases in M2–M3.
 
 Complete function bodies now omit their redundant empty final dispatch. Exact
 code-size comparison proves a three-instruction saving with the same register
@@ -462,9 +487,19 @@ runtime validity checks.
 
 The same source execution and function contracts carry this heap. The compiler's
 existing layouts now index actual fields uniformly, including parameter packing,
-fresh call receivers and result lookup. The enabled source types remain
-Nat/Bool/Unit: neither generic field infrastructure nor the heap relation alone
-enables buffer statements. Mutable programming remains an open milestone.
+fresh call receivers and result lookup. Buffer types and statements now exist;
+their whole-compiler and actual-runner integration is checked.
+Mutable local bindings and traversal remain an open milestone.
+
+The [buffer consumer](../Examples/Language/Buffer.lean) uses native operation
+specifications to prove its ordinary `Array.set` result. Its
+[compiled theorem](../Examples/Language/BufferCompiled.lean) reuses that proof,
+derives the read cell's range from the supplied heap representation, and retains
+the actual final heap and two returned descriptor fields. Its independent bound
+charges the read, real helper call, write, length, slice and return. No additional
+non-alias condition or algorithm-specific register proof is imposed. This is one
+read/write path, not the traversal completion gate below; its helper is still
+pure and its returned slice covers the entire view.
 
 The source state contains typed locals and the
 shared heap. Calls restore caller locals while retaining the actual callee

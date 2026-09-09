@@ -55,6 +55,106 @@ theorem eval_letPrim {τ : Ty} (value : Prim Γ τ)
     cases same
     exact mem_eval_iff.mpr (.letPrim (mem_eval_iff.mp body))
 
+/-- Reading observes the current shared heap before binding its actual cell.
+A finite heap fault skips the scoped continuation and retains that heap. -/
+theorem eval_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
+    (continuation : Stmt signatures (kind.toTy :: Γ) result) (entry : State Γ) :
+    (Stmt.read buffer index continuation).eval program entry =
+      match entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) with
+      | .ok value =>
+          (continuation.eval program (State.cons (kind.toValue value) entry)).map
+            (fun outcome => (outcome.1.tail, outcome.2))
+      | .error error => Part.some (entry, .fault (.heap error)) := by
+  apply Part.ext
+  rintro ⟨finish, control⟩
+  constructor
+  · intro member
+    cases mem_eval_iff.mp member with
+    | read loaded body =>
+        rw [loaded]
+        exact Part.mem_map_iff _ |>.mpr ⟨(_, _), mem_eval_iff.mpr body, rfl⟩
+    | readFault failed =>
+        rw [failed]
+        exact Part.mem_some_iff.mpr rfl
+  · intro member
+    cases loaded : entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) with
+    | ok value =>
+        rw [loaded] at member
+        obtain ⟨⟨scopedFinish, scopedControl⟩, body, same⟩ := Part.mem_map_iff _ |>.mp member
+        cases same
+        exact mem_eval_iff.mpr (.read loaded (mem_eval_iff.mp body))
+    | error error =>
+        rw [loaded] at member
+        cases Part.mem_some_iff.mp member
+        exact mem_eval_iff.mpr (.readFault loaded)
+
+/-- A write continues normally at the actual updated heap. Its failure is
+finite and preserves the entry state of this operation, not an older snapshot. -/
+theorem eval_write {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
+    (value : Atom Γ kind.toTy) (entry : State Γ) :
+    (Stmt.write buffer index value : Stmt signatures Γ result).eval program entry =
+      match entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+          (kind.ofValue (value.eval entry.locals)) with
+      | .ok heap => Part.some (⟨entry.locals, heap⟩, .normal)
+      | .error error => Part.some (entry, .fault (.heap error)) := by
+  apply Part.ext
+  rintro ⟨finish, control⟩
+  constructor
+  · intro member
+    cases mem_eval_iff.mp member with
+    | write written =>
+        rw [written]
+        exact Part.mem_some_iff.mpr rfl
+    | writeFault failed =>
+        rw [failed]
+        exact Part.mem_some_iff.mpr rfl
+  · intro member
+    cases written : entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+        (kind.ofValue (value.eval entry.locals)) with
+    | ok heap =>
+        rw [written] at member
+        cases Part.mem_some_iff.mp member
+        exact mem_eval_iff.mpr (.write written)
+    | error error =>
+        rw [written] at member
+        cases Part.mem_some_iff.mp member
+        exact mem_eval_iff.mpr (.writeFault written)
+
+/-- Slicing binds checked metadata for the same shared object. It performs no
+heap read or copy, and a failed relative extent skips its continuation. -/
+theorem eval_slice {kind : CellTy} (buffer : Atom Γ (.buffer kind))
+    (offset length : Atom Γ .nat)
+    (continuation : Stmt signatures (.buffer kind :: Γ) result) (entry : State Γ) :
+    (Stmt.slice buffer offset length continuation).eval program entry =
+      match (buffer.eval entry.locals).slice (offset.eval entry.locals) (length.eval entry.locals) with
+      | .ok view =>
+          (continuation.eval program (State.cons view entry)).map
+            (fun outcome => (outcome.1.tail, outcome.2))
+      | .error error => Part.some (entry, .fault (.heap error)) := by
+  apply Part.ext
+  rintro ⟨finish, control⟩
+  constructor
+  · intro member
+    cases mem_eval_iff.mp member with
+    | slice sliced body =>
+        rw [sliced]
+        exact Part.mem_map_iff _ |>.mpr ⟨(_, _), mem_eval_iff.mpr body, rfl⟩
+    | sliceFault failed =>
+        rw [failed]
+        exact Part.mem_some_iff.mpr rfl
+  · intro member
+    cases sliced : (buffer.eval entry.locals).slice
+        (offset.eval entry.locals) (length.eval entry.locals) with
+    | ok view =>
+        rw [sliced] at member
+        obtain ⟨⟨scopedFinish, scopedControl⟩, body, same⟩ := Part.mem_map_iff _ |>.mp member
+        cases same
+        exact mem_eval_iff.mpr (.slice sliced (mem_eval_iff.mp body))
+    | error error =>
+        rw [sliced] at member
+        cases Part.mem_some_iff.mp member
+        exact mem_eval_iff.mpr (.sliceFault sliced)
+
 /-- Only normal continuation executes the second statement. A finite return or
 fault from the first statement is retained without evaluating the second. -/
 theorem eval_seq (first second : Stmt signatures Γ result) (entry : State Γ) :

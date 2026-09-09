@@ -8,10 +8,10 @@ import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Compiler.Local.Function
 
 /-!
-# Costs of realized scalar source executions
+# Costs of realized source executions
 
 `ExecutionCost` observes the same source execution as `RealizedExec`. Its rules
-count the operations emitted by scalar lowering, including the private return
+count the operations emitted by lowering, including actual buffer operations, the private return
 flag and actual callee-frame work. The observation does not supply termination,
 change source behavior, or ask a program author to assign instruction prices.
 
@@ -63,6 +63,45 @@ inductive ExecutionCost {signatures : List Signature}
       {steps : Nat}
       (tail : ExecutionCost body steps) :
       ExecutionCost (.letPrim fits body) (primCodeSize value + steps)
+  | read {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
+      {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
+      {continuation : Complexity.Language.Stmt signatures (kind.toTy :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (kind.toTy :: Γ)} {control : Control result}
+      {value : CellValue kind} {bufferFits : ValueFits w (buffer.eval entry.locals)}
+      {indexFits : index.eval entry.locals < 2 ^ w}
+      {loaded : entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .ok value}
+      {valueFits : ValueFits w (kind.toValue value)}
+      {body : RealizedExec program w depth continuation
+        (Complexity.Language.State.cons (kind.toValue value) entry) finish control}
+      {steps : Nat} (tail : ExecutionCost body steps) :
+      ExecutionCost (.read bufferFits indexFits loaded valueFits body) (readCodeSize + steps)
+  | write {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
+      {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
+      {entry : Complexity.Language.State Γ} {heap : Heap}
+      {bufferFits : ValueFits w (buffer.eval entry.locals)}
+      {indexFits : index.eval entry.locals < 2 ^ w}
+      {valueFits : ValueFits w (value.eval entry.locals)}
+      {written : entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+        (kind.ofValue (value.eval entry.locals)) = .ok heap} :
+      ExecutionCost (RealizedExec.write (program := program) (result := result) (depth := depth)
+        bufferFits indexFits valueFits written) writeCodeSize
+  | slice {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
+      {buffer : Atom Γ (.buffer kind)} {offset length : Atom Γ .nat}
+      {continuation : Complexity.Language.Stmt signatures (.buffer kind :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (.buffer kind :: Γ)} {control : Control result}
+      {view : Buffer kind} {bufferFits : ValueFits w (buffer.eval entry.locals)}
+      {offsetFits : offset.eval entry.locals < 2 ^ w}
+      {lengthFits : length.eval entry.locals < 2 ^ w}
+      {sliced : (buffer.eval entry.locals).slice (offset.eval entry.locals)
+        (length.eval entry.locals) = .ok view}
+      {viewFits : ValueFits w (τ := .buffer kind) view}
+      {body : RealizedExec program w depth continuation
+        (Complexity.Language.State.cons view entry) finish control}
+      {steps : Nat} (tail : ExecutionCost body steps) :
+      ExecutionCost (.slice bufferFits offsetFits lengthFits sliced viewFits body)
+        (sliceCodeSize + steps)
   | seqNormal {Γ : List Ty} {result : Ty} {depth : Nat}
       {first second : Complexity.Language.Stmt signatures Γ result}
       {entry middle finish : Complexity.Language.State Γ} {control : Control result}
@@ -93,7 +132,7 @@ inductive ExecutionCost {signatures : List Signature}
       ExecutionCost (.iteFalse (yes := yes) test body) (steps + 2)
   | ret {Γ : List Ty} {result : Ty} {depth : Nat}
       (value : Atom Γ result) (entry : Complexity.Language.State Γ)
-      {fits : valueToNat (value.eval entry.locals) < 2 ^ w} :
+      {fits : ValueFits w (value.eval entry.locals)} :
       ExecutionCost (RealizedExec.ret (program := program) (depth := depth) value entry fits)
         (2 * fieldCount result + 2)
   | callReturn {Γ : List Ty} {result : Ty} {depth : Nat} {fn : Fin signatures.length}
@@ -127,6 +166,17 @@ theorem RealizedExec.exists_cost {signatures : List Signature}
   | letPrim fits body ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .letPrim (fits := fits) cost⟩
+  | read bufferFits indexFits loaded valueFits body ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .read (bufferFits := bufferFits) (indexFits := indexFits)
+        (loaded := loaded) (valueFits := valueFits) cost⟩
+  | write bufferFits indexFits valueFits written =>
+      exact ⟨_, .write (bufferFits := bufferFits) (indexFits := indexFits)
+        (valueFits := valueFits) (written := written)⟩
+  | slice bufferFits offsetFits lengthFits sliced viewFits body ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .slice (bufferFits := bufferFits) (offsetFits := offsetFits)
+        (lengthFits := lengthFits) (sliced := sliced) (viewFits := viewFits) cost⟩
   | seqNormal head tail ihHead ihTail =>
       obtain ⟨firstSteps, firstCost⟩ := ihHead
       obtain ⟨secondSteps, secondCost⟩ := ihTail

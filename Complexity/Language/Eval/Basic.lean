@@ -85,6 +85,72 @@ def Control.toExcept {result : Ty} : Control result → Except Fault (Value resu
     (value : Value result) : control.toExcept = .ok value ↔ control = .returned value := by
   cases control <;> simp [Control.toExcept]
 
+namespace Buffer
+
+/-- Lift the existing checked heap read into the native exception/state action.
+The cell is read from the current heap; neither outcome changes that heap. -/
+def readM {kind : CellTy} (buffer : Buffer kind) (index : Nat) :
+    ExceptT Fault (StateT Heap Part) (CellValue kind) := fun heap =>
+  Part.some (match heap.read buffer index with
+    | .ok value => (.ok value, heap)
+    | .error error => (.error (.heap error), heap))
+
+/-- Lift the existing checked heap write. Success retains the actual updated
+heap; failure retains the current heap without undoing any earlier action. -/
+def writeM {kind : CellTy} (buffer : Buffer kind) (index : Nat) (value : CellValue kind) :
+    ExceptT Fault (StateT Heap Part) Unit := fun heap =>
+  Part.some (match heap.write buffer index value with
+    | .ok finish => (.ok (), finish)
+    | .error error => (.error (.heap error), heap))
+
+/-- Form checked borrowed metadata through the existing slice operation.
+No contents are copied, loaded or selected independently of the shared heap. -/
+def sliceM {kind : CellTy} (buffer : Buffer kind) (offset length : Nat) :
+    ExceptT Fault (StateT Heap Part) (Buffer kind) := fun heap =>
+  Part.some (match buffer.slice offset length with
+    | .ok view => (.ok view, heap)
+    | .error error => (.error (.heap error), heap))
+
+/-- A proved real read supplies the action's actual returned cell. -/
+theorem readM_eq_ok {kind : CellTy} {buffer : Buffer kind} {index : Nat}
+    {heap : Heap} {value : CellValue kind} (read : heap.read buffer index = .ok value) :
+    buffer.readM index heap = Part.some (.ok value, heap) := by
+  simp only [readM, read]
+
+/-- A failed real read is a finite heap fault, not divergence. -/
+theorem readM_eq_error {kind : CellTy} {buffer : Buffer kind} {index : Nat}
+    {heap : Heap} {error : Heap.Error} (read : heap.read buffer index = .error error) :
+    buffer.readM index heap = Part.some (.error (.heap error), heap) := by
+  simp only [readM, read]
+
+/-- A proved real write supplies the action's actual final heap. -/
+theorem writeM_eq_ok {kind : CellTy} {buffer : Buffer kind} {index : Nat}
+    {heap finish : Heap} {value : CellValue kind}
+    (written : heap.write buffer index value = .ok finish) :
+    buffer.writeM index value heap = Part.some (.ok (), finish) := by
+  simp only [writeM, written]
+
+/-- A failed write retains its current heap, including earlier effects. -/
+theorem writeM_eq_error {kind : CellTy} {buffer : Buffer kind} {index : Nat}
+    {heap : Heap} {value : CellValue kind} {error : Heap.Error}
+    (written : heap.write buffer index value = .error error) :
+    buffer.writeM index value heap = Part.some (.error (.heap error), heap) := by
+  simp only [writeM, written]
+
+/-- A proved real slice returns that same borrowed view at every current heap. -/
+theorem sliceM_eq_ok {kind : CellTy} {buffer view : Buffer kind} {offset length : Nat}
+    (sliced : buffer.slice offset length = .ok view) (heap : Heap) :
+    buffer.sliceM offset length heap = Part.some (.ok view, heap) := by
+  simp only [sliceM, sliced]
+
+/-- A failed slice is a finite heap fault and preserves the current heap. -/
+theorem sliceM_eq_error {kind : CellTy} {buffer : Buffer kind} {offset length : Nat}
+    {error : Heap.Error} (sliced : buffer.slice offset length = .error error) (heap : Heap) :
+    buffer.sliceM offset length heap = Part.some (.error (.heap error), heap) := by
+  simp only [sliceM, sliced]
+
+end Buffer
+
 namespace Program
 
 /-- The actual function action, retaining its final shared heap on both success

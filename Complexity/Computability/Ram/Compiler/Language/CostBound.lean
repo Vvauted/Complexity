@@ -72,6 +72,71 @@ theorem letPrim {τ : Ty} (value : Prim Γ τ)
   cases cost with
   | letPrim tail => exact Nat.add_le_add_left (body _ tail) _
 
+/-- A read continues with the cell obtained from the current heap. A bound may
+use that read equation without re-establishing validity, ranges or termination. -/
+theorem read {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
+    {continuation : Complexity.Language.Stmt signatures (kind.toTy :: Γ) result}
+    {nextBound : CellValue kind → Nat}
+    (body : ∀ value,
+      entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .ok value →
+      StmtCostBound program continuation
+        (Complexity.Language.State.cons (kind.toValue value) entry) (nextBound value))
+    (combine : ∀ value,
+      entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .ok value →
+      readCodeSize + nextBound value ≤ bound) :
+    StmtCostBound program (.read buffer index continuation) entry bound := by
+  intro w depth finish control execution steps cost
+  cases cost with
+  | @read Γ result kind depth buffer index continuation entry finish control value
+      bufferFits indexFits loaded valueFits bodyExec steps tail =>
+      exact (Nat.add_le_add_left (body value loaded bodyExec tail) _).trans
+        (combine value loaded)
+
+/-- A uniform read-continuation bound needs no contents specification. -/
+theorem read_uniform {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
+    {continuation : Complexity.Language.Stmt signatures (kind.toTy :: Γ) result}
+    (body : ∀ value, StmtCostBound program continuation
+      (Complexity.Language.State.cons (kind.toValue value) entry) bound) :
+    StmtCostBound program (.read buffer index continuation) entry (readCodeSize + bound) :=
+  read (nextBound := fun _ => bound) (fun value _ => body value) (fun _ _ => Nat.le_refl _)
+
+/-- An actual successful store pays for its emitted address, value and store
+instructions. Its changed heap is already part of the observed execution. -/
+theorem write {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
+    (value : Atom Γ kind.toTy) (entry : Complexity.Language.State Γ) :
+    StmtCostBound program (.write buffer index value : Complexity.Language.Stmt signatures Γ result)
+      entry writeCodeSize := by
+  intro w depth finish control execution steps cost
+  cases cost
+  exact Nat.le_refl _
+
+/-- Slice accounting follows the actual returned view, without copying its
+contents or charging a host allocation. The slice equation can inform the bound. -/
+theorem slice {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {offset length : Atom Γ .nat}
+    {continuation : Complexity.Language.Stmt signatures (.buffer kind :: Γ) result}
+    {nextBound : Buffer kind → Nat}
+    (body : ∀ view, (buffer.eval entry.locals).slice (offset.eval entry.locals)
+      (length.eval entry.locals) = .ok view →
+      StmtCostBound program continuation
+        (Complexity.Language.State.cons view entry) (nextBound view))
+    (combine : ∀ view, (buffer.eval entry.locals).slice (offset.eval entry.locals)
+      (length.eval entry.locals) = .ok view → sliceCodeSize + nextBound view ≤ bound) :
+    StmtCostBound program (.slice buffer offset length continuation) entry bound := by
+  intro w depth finish control execution steps cost
+  cases cost with
+  | @slice Γ result kind depth buffer offset length continuation entry finish control view
+      bufferFits offsetFits lengthFits sliced viewFits bodyExec steps tail =>
+      exact (Nat.add_le_add_left (body view sliced bodyExec tail) _).trans
+        (combine view sliced)
+
+/-- A uniform slice-continuation bound needs no additional result contract. -/
+theorem slice_uniform {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {offset length : Atom Γ .nat}
+    {continuation : Complexity.Language.Stmt signatures (.buffer kind :: Γ) result}
+    (body : ∀ view, StmtCostBound program continuation
+      (Complexity.Language.State.cons view entry) bound) :
+    StmtCostBound program (.slice buffer offset length continuation) entry (sliceCodeSize + bound) :=
+  slice (nextBound := fun _ => bound) (fun view _ => body view) (fun _ _ => Nat.le_refl _)
+
 /-- A branch bound uses the actual guard decision. The true path includes the
 extra jump past the unselected branch; neither path charges the other's body. -/
 theorem ite {condition : Atom Γ .bool}
@@ -101,6 +166,30 @@ theorem ite_max {condition : Atom Γ .bool}
   · exact Nat.le_max_left _ _
   · exact Nat.le_max_right _ _
 
+/-- Reuse a property of an actual normal first execution to bound the second
+statement at that execution's final state. The property can come from an existing
+source specification; no first-statement termination or repeated contents proof
+is required. Early return skips the second statement and pays only its dispatch. -/
+theorem seq_of_post {first second : Complexity.Language.Stmt signatures Γ result}
+    {firstBound : Nat} {post : Complexity.Language.State Γ → Prop}
+    {nextBound : Complexity.Language.State Γ → Nat}
+    (head : StmtCostBound program first entry firstBound)
+    (finished : ∀ {middle},
+      Complexity.Language.Exec program first entry middle .normal → post middle)
+    (tail : ∀ middle, post middle → StmtCostBound program second middle (nextBound middle))
+    (combine : ∀ middle, post middle → firstBound + 2 + nextBound middle ≤ bound)
+    (earlyReturn : firstBound + 3 ≤ bound) :
+    StmtCostBound program (.seq first second) entry bound := by
+  intro w depth finish control execution steps cost
+  cases cost with
+  | @seqNormal Γ result depth first second entry middle finish control
+      firstExec secondExec firstSteps secondSteps firstCost secondCost =>
+      have property := finished firstExec.erase
+      exact (Nat.add_le_add (Nat.add_le_add_right (head firstExec firstCost) 2)
+        (tail middle property secondExec secondCost)).trans (combine middle property)
+  | seqReturn firstCost =>
+      exact (Nat.add_le_add_right (head _ firstCost) 3).trans earlyReturn
+
 /-- A uniformly bounded continuation composes without an intermediate
 correctness proof. Normal continuation pays two guard instructions and executes
 the tail; early return pays three guard/jump instructions and skips the tail. -/
@@ -110,18 +199,12 @@ theorem seq {first second : Complexity.Language.Stmt signatures Γ result}
     (tail : ∀ middle, StmtCostBound program second middle secondBound) :
     StmtCostBound program (.seq first second) entry
       (firstBound + max (2 + secondBound) 3) := by
-  intro w depth finish control execution steps cost
-  cases cost with
-  | seqNormal firstCost secondCost =>
-      calc
-        _ ≤ firstBound + 2 + secondBound :=
-          Nat.add_le_add (Nat.add_le_add_right (head _ firstCost) 2) (tail _ _ secondCost)
-        _ = firstBound + (2 + secondBound) := Nat.add_assoc _ _ _
-        _ ≤ firstBound + max (2 + secondBound) 3 :=
-          Nat.add_le_add_left (Nat.le_max_left _ _) _
-  | seqReturn firstCost =>
-      exact Nat.le_trans (Nat.add_le_add_right (head _ firstCost) 3)
-        (Nat.add_le_add_left (Nat.le_max_right _ _) _)
+  apply seq_of_post (post := fun _ => True) (nextBound := fun _ => secondBound)
+    head (fun _ => trivial) (fun middle _ => tail middle)
+  · intro middle property
+    simpa only [Nat.add_assoc] using Nat.add_le_add_left (Nat.le_max_left (2 + secondBound) 3)
+      firstBound
+  · exact Nat.add_le_add_left (Nat.le_max_right (2 + secondBound) 3) firstBound
 
 /-- Compose a separate callee bound with its actual returned-value and heap continuation.
 The result premise concerns only completed source calls: use an existing

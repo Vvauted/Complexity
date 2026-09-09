@@ -65,18 +65,20 @@ theorem remainder_costBound :
   ram_source_cost (n d)
 
 /-- Generic lowering supplies the actual callable result without a register proof. -/
-theorem remainder_functionExec {w heapLimit : Nat} (hw : 0 < w) (n d : Nat) (sourceHeap : Heap)
+theorem remainder_functionExec {w heapLimit : Nat} (hw : 0 < w) (n d : Nat) (_sourceHeap : Heap)
     (hn : n < 2 ^ w) (hd : d < 2 ^ w) (entry : Ram.Source.State w) :
     ∃ finish, Ram.Source.FunctionExec (lowerProgram Implementation.program) heapLimit 0
       (lowerFunc Implementation.program (0 : Fin 1))
-      (envWords w (Env.cons (τ := .nat) n (Env.cons (τ := .nat) d Env.empty))) entry
-      (valueWords w (τ := .nat) (n % d)) finish := by
+      (envWords (fun _ => 0) (Env.cons (τ := .nat) n (Env.cons (τ := .nat) d Env.empty))) entry
+      (valueWords (fun _ => 0) (τ := .nat) (n % d)) finish := by
+  clear _sourceHeap
   let args : Env [.nat, .nat] :=
     Env.cons (τ := .nat) n (Env.cons (τ := .nat) d Env.empty)
   have arguments : EnvFits w args := by
     simpa only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true] using And.intro hn hd
-  obtain ⟨value, _, finish, _, execution, result⟩ := remainder_realizable.functionExec
-    (heapLimit := heapLimit) remainder_total hw args sourceHeap arguments ⟨hn, hd⟩ trivial entry
+  obtain ⟨value, _, finish, _, execution, result, _⟩ := remainder_realizable.functionExec
+    (heapLimit := heapLimit) remainder_total hw args ⟨#[]⟩ arguments ⟨hn, hd⟩ trivial entry
+    (HeapRep.empty (fun _ => 0) heapLimit entry)
   have actualValue : (value : Nat) = n % d := result.1
   exact ⟨finish, actualValue ▸ execution⟩
 

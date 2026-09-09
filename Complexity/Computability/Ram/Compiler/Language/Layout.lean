@@ -10,9 +10,10 @@ import Init.Data.List.Nat.Range
 /-!
 # Field layouts and parameter representation
 
-The backend represents natural numbers and booleans by one word and Unit by no
-words. Parameter layouts follow lexical parameter order without reserving dummy
-slots for Unit. The same field lists serve argument encoding and real call
+The backend represents natural numbers and booleans by one word, borrowed
+buffers by address and length, and Unit by no words. Parameter layouts follow
+lexical parameter order without reserving dummy slots for Unit. The same field
+lists serve argument encoding and real call
 receivers. Exact representation requires the source values to fit the chosen
 word width; the encoding alone makes no non-wrapping arithmetic claim.
 
@@ -53,59 +54,69 @@ theorem valueRegs_nodup (τ : Ty) (dst : Reg) : (valueRegs τ dst).Nodup := List
 
 @[simp] theorem valueRegs_unit (dst : Reg) : valueRegs .unit dst = [] := rfl
 
+@[simp] theorem valueRegs_buffer (kind : CellTy) (dst : Reg) :
+    valueRegs (.buffer kind) dst = [dst, dst + 1] := rfl
+
 /-- Encode the parameter environment in its declared order. -/
-def envWords (w : Nat) : {Γ : List Ty} → Env Γ → List (Word w)
+def envWords (placement : Nat → Word w) : {Γ : List Ty} → Env Γ → List (Word w)
   | [], _ => []
-  | _ :: _, env => valueWords w env.head ++ envWords w env.tail
+  | _ :: _, env => valueWords placement env.head ++ envWords placement env.tail
 
-@[simp] theorem envWords_nil (w : Nat) (env : Env []) : envWords w env = [] := rfl
+@[simp] theorem envWords_nil (placement : Nat → Word w) (env : Env []) :
+    envWords placement env = [] := rfl
 
-@[simp] theorem envWords_cons (w : Nat) {τ : Ty} (value : Value τ) (env : Env Γ) :
-    envWords w (Env.cons value env) = valueWords w value ++ envWords w env := rfl
+@[simp] theorem envWords_cons (placement : Nat → Word w) {τ : Ty}
+    (value : Value τ) (env : Env Γ) :
+    envWords placement (Env.cons value env) =
+      valueWords placement value ++ envWords placement env := rfl
 
-@[simp] theorem envWords_length (w : Nat) (env : Env Γ) :
-    (envWords w env).length = contextSize Γ := by
+@[simp] theorem envWords_length (placement : Nat → Word w) (env : Env Γ) :
+    (envWords placement env).length = contextSize Γ := by
   induction Γ with
   | nil => rfl
   | cons τ Γ ih =>
       simp only [envWords, List.length_append, valueWords_length, ih, contextSize]
 
-/-- Every actual lexical field is in range. Unit has no range obligation. -/
+/-- Source value ranges do not depend on physical object placement. -/
 def EnvFits (w : Nat) (env : Env Γ) : Prop :=
-  ∀ {τ} (v : Var Γ τ) (i : Fin (fieldCount τ)), valueField (env.get v) i < 2 ^ w
+  ∀ {τ} (v : Var Γ τ), ValueFits w (env.get v)
 
 namespace EnvFits
 
 /-- An empty parameter environment has no field range obligations. -/
 @[simp] theorem empty (w : Nat) : EnvFits w Env.empty := by
-  intro τ v i
+  intro τ v
   cases v
+
+/-- Any placement represents the actual fields within the selected word width. -/
+theorem fields {env : Env Γ} (fits : EnvFits w env) (placement : Nat → Word w)
+    (v : Var Γ τ) (i : Fin (fieldCount τ)) :
+    valueField placement (env.get v) i < 2 ^ w := (fits v).fields placement i
 
 /-- Scalar arithmetic uses the one-field consequence of the common range facts. -/
 theorem scalar {env : Env Γ} (fits : EnvFits w env) (scalar : Scalar τ) (v : Var Γ τ) :
-    valueToNat (env.get v) < 2 ^ w := by
-  simpa only [scalar.valueField] using fits v scalar.index
+    scalar.toNat (env.get v) < 2 ^ w := (scalar.fits_iff (env.get v)).mp (fits v)
 
 /-- Extend the source range facts by an actual newly computed value. -/
 theorem cons {env : Env Γ} (fits : EnvFits w env) (value : Value τ)
-    (fitsValue : ∀ i : Fin (fieldCount τ), valueField value i < 2 ^ w) :
+    (fitsValue : ValueFits w value) :
     EnvFits w (Env.cons value env) := by
-  intro σ v i
+  intro σ v
   cases v with
-  | here => exact fitsValue i
-  | there v => exact fits v i
+  | here => exact fitsValue
+  | there v => exact fits v
 
 /-- Leaving a lexical scope retains all outer range facts. -/
 theorem tail {env : Env (τ :: Γ)} (fits : EnvFits w env) : EnvFits w env.tail :=
-  fun v i => fits (.there v) i
+  fun v => fits (.there v)
 
 /-- Parameter ranges decompose into the actual head value and outer environment. -/
 @[simp] theorem cons_iff (value : Value τ) (env : Env Γ) :
     EnvFits w (Env.cons value env) ↔
-      (∀ i : Fin (fieldCount τ), valueField value i < 2 ^ w) ∧ EnvFits w env := by
+      ValueFits w value ∧ EnvFits w env := by
   constructor
   · intro fits
-    exact ⟨fun i => fits .here i, fits.tail⟩
+    exact ⟨fits .here, fits.tail⟩
   · rintro ⟨fitsValue, fits⟩
     exact fits.cons value fitsValue
 
@@ -129,11 +140,37 @@ theorem tail {env : Env (τ :: Γ)} (fits : EnvFits w env) : EnvFits w env.tail 
   constructor
   · exact fun fits => fits.2
   · intro fits
-    exact ⟨(fun i => Fin.elim0 i), fits⟩
+    exact ⟨True.intro, fits⟩
+
+/-- A buffer contributes its length range, independently of its placed address. -/
+@[simp] theorem cons_buffer_iff (value : Buffer kind) (env : Env Γ) :
+    EnvFits w (Env.cons (τ := .buffer kind) value env) ↔
+      value.length < 2 ^ w ∧ EnvFits w env := by
+  rw [cons_iff]
+  rfl
 
 end EnvFits
 
 namespace RegisterMap
+
+/-- Every live source field lies outside a contiguous destination interval. -/
+def AvoidsRange (layout : RegisterMap Γ) (dst count : Reg) : Prop :=
+  ∀ {τ} (v : Var Γ τ) (i : Fin (fieldCount τ)),
+    layout v i < dst ∨ dst + count ≤ layout v i
+
+/-- A fresh interval lies after all currently represented fields. -/
+theorem Bounded.avoidsRange {layout : RegisterMap Γ} (bounded : layout.Bounded dst)
+    (count : Nat) : layout.AvoidsRange dst count := fun v i => Or.inl (bounded v i)
+
+/-- Separation concerns the actual fields in the generated destination list. -/
+theorem AvoidsRange.not_mem {layout : RegisterMap Γ}
+    (separate : layout.AvoidsRange dst count) (v : Var Γ τ) (i : Fin (fieldCount τ)) :
+    layout v i ∉ List.range' dst count := by
+  intro member
+  have interval := List.mem_range'_1.mp member
+  rcases separate v i with before | after
+  · exact Nat.not_le_of_gt before interval.1
+  · exact Nat.not_le_of_gt interval.2 after
 
 /-- Bind a fresh variable to all its actual consecutive fields. -/
 def extend (layout : RegisterMap Γ) (τ : Ty) (dst : Reg) : RegisterMap (τ :: Γ) :=
@@ -156,6 +193,15 @@ theorem extend_bounded {layout : RegisterMap Γ} (bounded : layout.Bounded next)
   | here => exact Nat.add_lt_add_left i.isLt next
   | there v =>
       exact Nat.lt_of_lt_of_le (bounded v i) (Nat.le_add_right _ _)
+
+/-- Fresh fields beyond a protected interval retain its separation. -/
+theorem AvoidsRange.extend {layout : RegisterMap Γ}
+    (separate : layout.AvoidsRange dst count) (fresh : dst + count ≤ next) :
+    AvoidsRange (RegisterMap.extend layout τ next) dst count := by
+  intro σ v i
+  cases v with
+  | here => exact Or.inr (Nat.le_trans fresh (Nat.le_add_right _ _))
+  | there v => exact separate v i
 
 end RegisterMap
 
@@ -201,15 +247,15 @@ theorem parameterMap_bounded (Γ : List Ty) (base : Reg := 0) :
 
 /-- Each parameter field has an actual entry at its compact slot. The optional
 lookup returns `some`, so the frame's out-of-range default is never used here. -/
-theorem envWords_getElem? (w : Nat) (env : Env Γ) (v : Var Γ τ)
+theorem envWords_getElem? (placement : Nat → Word w) (env : Env Γ) (v : Var Γ τ)
     (i : Fin (fieldCount τ)) :
-    (envWords w env)[parameterMap Γ 0 v i]? =
-      some (BitVec.ofNat w (valueField (env.get v) i)) := by
+    (envWords placement env)[parameterMap Γ 0 v i]? =
+      some (BitVec.ofNat w (valueField placement (env.get v) i)) := by
   induction v with
   | here =>
       rw [envWords, parameterMap_here, Nat.zero_add,
         List.getElem?_append_left (by simp)]
-      exact valueWords_getElem? w env.head i
+      exact valueWords_getElem? placement env.head i
   | @there Γ τ σ v ih =>
       simp only [envWords, parameterMap_there, Nat.zero_add]
       rw [parameterMap_add Γ (fieldCount σ) v i,
@@ -219,63 +265,65 @@ theorem envWords_getElem? (w : Nat) (env : Env Γ) (v : Var Γ τ)
 
 /-- Entering an actual argument list establishes exact source-variable
 representation when its source values are in range. -/
-theorem parameterMap_matches_enter (entry : Source.State w) (env : Env Γ)
+theorem parameterMap_matches_enter (entry : Source.State w) (placement : Nat → Word w) (env : Env Γ)
     (fits : EnvFits w env) :
-    RegisterMap.Matches (parameterMap Γ) env (entry.enter (envWords w env)).regs := by
+    RegisterMap.Matches (parameterMap Γ) placement env
+      (entry.enter (envWords placement env)).regs := by
   intro τ v i
   rw [Source.State.enter_regs, envWords_getElem?, Option.getD_some]
-  exact Word.ofNat_toNat_of_lt (fits v i)
+  exact Word.ofNat_toNat_of_lt (fits.fields placement v i)
 
 namespace RegisterMap.Matches
 
 /-- Leaving a lexical scope restricts the correspondence to its outer bindings. -/
 theorem tail {layout : RegisterMap Γ} {finish : Env (τ :: Γ)} {regs : Reg → Word w}
-    (matched : RegisterMap.Matches (RegisterMap.extend layout τ dst) finish regs) :
-    layout.Matches finish.tail regs := fun v i => matched (.there v) i
+    {placement : Nat → Word w}
+    (matched : RegisterMap.Matches (RegisterMap.extend layout τ dst) placement finish regs) :
+    layout.Matches placement finish.tail regs := fun v i => matched (.there v) i
 
 /-- A represented value and preservation of outer slots establish the lexical
 correspondence after a binding, independently of the chosen state update. -/
 theorem extend {layout : RegisterMap Γ} {env : Env Γ} {regs regs' : Reg → Word w}
-    {value : Value τ} (matched : layout.Matches env regs)
+    {placement : Nat → Word w} {value : Value τ} (matched : layout.Matches placement env regs)
     (preserved : ∀ {σ} (v : Var Γ σ) (i : Fin (fieldCount σ)),
       regs' (layout v i) = regs (layout v i))
     (represented : ∀ i : Fin (fieldCount τ),
-      (regs' (dst + i.val)).toNat = valueField value i) :
-    RegisterMap.Matches (RegisterMap.extend layout τ dst) (Env.cons value env) regs' := by
+      (regs' (dst + i.val)).toNat = valueField placement value i) :
+    RegisterMap.Matches (RegisterMap.extend layout τ dst) placement (Env.cons value env) regs' := by
   intro σ v i
   cases v with
   | here => exact represented i
   | there v =>
-      change (regs' (layout v i)).toNat = valueField (env.get v) i
+      change (regs' (layout v i)).toNat = valueField placement (env.get v) i
       rw [preserved v i]
       exact matched v i
 
 /-- Fresh receiver assignment installs exactly the encoded fields. Unit adds a
 lexical binding but performs no register write. -/
 theorem setRegs {layout : RegisterMap Γ} {env : Env Γ} {entry : Source.State w}
-    (matched : layout.Matches env entry.regs) (bounded : layout.Bounded dst)
-    (value : Value τ) (fits : ∀ i : Fin (fieldCount τ), valueField value i < 2 ^ w) :
-    RegisterMap.Matches (RegisterMap.extend layout τ dst) (Env.cons value env)
-      (entry.setRegs (valueRegs τ dst) (valueWords w value)).regs := by
+    {placement : Nat → Word w} (matched : layout.Matches placement env entry.regs)
+    (bounded : layout.Bounded dst) (value : Value τ) (fits : ValueFits w value) :
+    RegisterMap.Matches (RegisterMap.extend layout τ dst) placement (Env.cons value env)
+      (entry.setRegs (valueRegs τ dst) (valueWords placement value)).regs := by
   apply matched.extend
   · intro σ v i
-    exact Source.State.setRegs_ne entry (valueRegs τ dst) (valueWords w value) (layout v i)
+    exact Source.State.setRegs_ne entry (valueRegs τ dst) (valueWords placement value) (layout v i)
       (fun member => Nat.not_le_of_gt (bounded v i) (mem_valueRegs.mp member).1)
   · intro i
     have assigned :
-        (entry.setRegs (valueRegs τ dst) (valueWords w value)).regs (dst + i.val) =
-          BitVec.ofNat w (valueField value i) := by
+        (entry.setRegs (valueRegs τ dst) (valueWords placement value)).regs (dst + i.val) =
+          BitVec.ofNat w (valueField placement value i) := by
       simpa only [valueRegs_getElem, valueWords_getElem] using
-        Source.State.setRegs_getElem entry (valueRegs τ dst) (valueWords w value)
+        Source.State.setRegs_getElem entry (valueRegs τ dst) (valueWords placement value)
           (valueRegs_nodup τ dst) (by simp) i.val (by simp)
     rw [assigned]
-    exact Word.ofNat_toNat_of_lt (fits i)
+    exact Word.ofNat_toNat_of_lt (fits.fields placement i)
 
 /-- Caller restoration retains the lexical environment while preserving the
 callee's actual shared state. No heap or I/O frame premise is needed. -/
 theorem restore {layout : RegisterMap Γ} {env : Env Γ} {entry : Source.State w}
-    (matched : layout.Matches env entry.regs) (callee : Source.State w) :
-    layout.Matches env (entry.restore callee).regs := matched
+    {placement : Nat → Word w} (matched : layout.Matches placement env entry.regs)
+    (callee : Source.State w) : layout.Matches placement env (entry.restore callee).regs := matched
 
 end RegisterMap.Matches
 

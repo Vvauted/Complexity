@@ -16,8 +16,9 @@ and preserve the flag while receiving fresh binding fields.
 
 No source value observes the flag. Unit continues to have no result field;
 separation from a Unit result imposes no fictitious register requirement.
-Matching concerns only lexical values and control. Applying it to a source
-state's locals does not relate that state's heap to RAM memory.
+The fixed placement determines borrowed views' encoded address fields.
+Matching concerns only lexical values and control; heap contents are related
+separately by the shared-heap representation.
 -/
 
 namespace Ram.LanguageCompiler
@@ -27,21 +28,22 @@ open Complexity.Language
 /-- Normal completion retains the lexical environment; return exposes its
 actual fields. The private flag distinguishes these outcomes without requiring
 returned executions to preserve source bindings that are no longer live. -/
-def ControlMatches (layout : RegisterMap Γ) (resultSlot flag : Reg) (finish : Env Γ)
-    (control : Control result) (target : Source.State w) : Prop :=
+def ControlMatches (layout : RegisterMap Γ) (placement : Nat → Word w)
+    (resultSlot flag : Reg) (finish : Env Γ) (control : Control result)
+    (target : Source.State w) : Prop :=
   match control with
-  | .normal => layout.Matches finish target.regs ∧ target.regs flag = 0
+  | .normal => layout.Matches placement finish target.regs ∧ target.regs flag = 0
   | .returned value =>
-      (resultExprs result resultSlot).map target.eval = valueWords w value ∧
+      (resultExprs result resultSlot).map target.eval = valueWords placement value ∧
         target.regs flag = 1
   | .fault _ => False
 
 /-- Finishing a lexical binding drops only its temporary environment entry. -/
 theorem ControlMatches.tail {layout : RegisterMap Γ} {finish : Env (τ :: Γ)}
-    {target : Source.State w} {control : Control result}
+    {target : Source.State w} {placement : Nat → Word w} {control : Control result}
     (matched : ControlMatches (RegisterMap.extend layout τ dst)
-      resultSlot flag finish control target) :
-    ControlMatches layout resultSlot flag finish.tail control target := by
+      placement resultSlot flag finish control target) :
+    ControlMatches layout placement resultSlot flag finish.tail control target := by
   cases control with
   | normal => exact ⟨RegisterMap.Matches.tail matched.1, matched.2⟩
   | returned _ => exact matched
@@ -66,9 +68,10 @@ theorem Avoids.extend {layout : RegisterMap Γ} (avoids : layout.Avoids flag)
 /-- Initializing or updating a private register preserves every represented
 source value. This applies equally to the initial zero and the returned flag. -/
 theorem Matches.setReg_of_ne {layout : RegisterMap Γ} {env : Env Γ}
-    {entry : Source.State w} (matched : layout.Matches env entry.regs)
+    {entry : Source.State w} {placement : Nat → Word w}
+    (matched : layout.Matches placement env entry.regs)
     (avoids : layout.Avoids r) (value : Word w) :
-    layout.Matches env (entry.setReg r value).regs := by
+    layout.Matches placement env (entry.setReg r value).regs := by
   intro τ v i
   rw [Source.State.setReg_ne entry r (layout v i) value (avoids v i)]
   exact matched v i

@@ -6,7 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
 
 /-!
-# Determinism of scalar source execution costs
+# Determinism of source execution costs
 
 The same source statement and entry state determine its backend-derived count.
 Word width, call capacity and the proofs used to realize the execution do not
@@ -53,6 +53,26 @@ theorem deterministic {signatures : List Signature}
       intro w' depth' finish' control' execution' steps' second
       cases second with
       | letPrim tail' => rw [ih tail']
+  | @read Γ result kind depth buffer index continuation entry finish control value
+      bufferFits indexFits loaded valueFits body steps tail ih =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | @read _ _ _ _ _ _ _ _ _ _ value' _ _ loaded' _ _ _ tail' =>
+          have same : value = value' := Except.ok.inj (loaded.symm.trans loaded')
+          subst value'
+          rw [ih tail']
+  | write =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second
+      rfl
+  | @slice Γ result kind depth buffer offset length continuation entry finish control view
+      bufferFits offsetFits lengthFits sliced viewFits body steps tail ih =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | @slice _ _ _ _ _ _ _ _ _ _ _ view' _ _ _ sliced' _ _ _ tail' =>
+          have same : view = view' := Except.ok.inj (sliced.symm.trans sliced')
+          subst view'
+          rw [ih tail']
   | seqNormal firstCost secondCost ihFirst ihSecond =>
       intro w' depth' finish' control' execution' steps' second
       cases second with

@@ -20,7 +20,7 @@ successful no-op. Updates use Lean's array operations; their successful-access
 conditions establish that the updated slots exist. Slicing checks relative
 extent only; validity of the original object is a separate heap predicate.
 
-These are mathematical operations on a shared heap, not yet statement syntax,
+These are mathematical operations on a shared heap, independent of statement syntax,
 an execution relation or a claim about allocation or machine costs.
 
 `Buffer.Contents` observes a valid view as an ordinary `Array.extract` for
@@ -131,6 +131,12 @@ theorem slice_eq {τ : CellTy} (buffer : Buffer τ) {offset length : Nat}
     (bound : offset + length ≤ buffer.length) :
     buffer.slice offset length = .ok ⟨buffer.object, buffer.offset + offset, length⟩ := by
   simp [slice, bound]
+
+/-- The full relative slice is the original borrowed view, including an empty view. -/
+@[simp] theorem slice_self {τ : CellTy} (buffer : Buffer τ) :
+    buffer.slice 0 buffer.length = .ok buffer := by
+  simpa only [Nat.add_zero] using buffer.slice_eq (offset := 0) (length := buffer.length)
+    (by omega)
 
 /-- Relative slicing preserves validity of an already valid view. -/
 theorem Valid.slice {τ : CellTy} {buffer : Buffer τ} {heap : Heap}
@@ -414,6 +420,20 @@ theorem Contents.write {τ : CellTy} {buffer : Buffer τ} {heap finish : Heap}
     buffer.Contents finish
       (contents.set index value (observed.index_lt_size_of_write written)) :=
   observed.write_alias written rfl (observed.index_lt_size_of_write written) rfl
+
+/-- A valid mathematical index admits an actual heap write with the specified
+native array update. Callers need not construct or unfold the object storage. -/
+theorem Contents.write_exists {τ : CellTy} {buffer : Buffer τ} {heap : Heap}
+    {contents : Array (CellValue τ)} (observed : buffer.Contents heap contents)
+    {index : Nat} (bound : index < contents.size) (value : CellValue τ) :
+    ∃ finish, heap.write buffer index value = .ok finish ∧
+      buffer.Contents finish (contents.set index value bound) := by
+  obtain ⟨values, found, extent⟩ := observed.valid
+  have localBound : index < buffer.length := by simpa only [observed.size_eq] using bound
+  let finish := heap.replace buffer.object (values.setIfInBounds (buffer.offset + index) value)
+  have written : heap.write buffer index value = .ok finish :=
+    Heap.write_eq_ok_iff.mpr ⟨values, found, extent, localBound, rfl⟩
+  exact ⟨finish, written, observed.write written⟩
 
 /-- A write to a different object preserves this view's entire contents,
 including when the two objects have different element types. -/

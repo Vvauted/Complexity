@@ -7,12 +7,16 @@ import Complexity.Computability.Ram.Source.Frame
 import Complexity.Computability.Ram.Source.State.Frame
 
 /-!
-# Source executions without shared-state writes
+# Source executions with preserved shared state or streams
 
 `Stmt.NoSharedWrites` excludes stores and stream operations. Expressions may
 still read memory, so this condition does not assert that returned values are
 independent of the heap. Calls are admitted provided every function body in the
 program satisfies the same condition.
+
+`Stmt.NoIOWrites` instead permits memory stores and preserves only the two
+streams. A function can therefore return an updated heap without changing its
+input or output stream.
 
 Induction on the actual finite execution covers recursive and mutually recursive
 calls without assuming their termination. The resulting local frame combines
@@ -33,7 +37,55 @@ def Stmt.NoSharedWrites : Stmt → Prop
   | .while _ body => body.NoSharedWrites
   | .store .. | .read .. | .write .. => False
 
+/-- A sufficient condition for retaining both streams while permitting actual
+heap stores. Calls also require the condition on their program's bodies. -/
+def Stmt.NoIOWrites : Stmt → Prop
+  | .skip | .assign .. | .store .. | .call .. => True
+  | .seq first second => first.NoIOWrites ∧ second.NoIOWrites
+  | .ite _ yes no => yes.NoIOWrites ∧ no.NoIOWrites
+  | .while _ body => body.NoIOWrites
+  | .read .. | .write .. => False
+
 namespace Source
+
+/-- Actual finite execution of a stream-free statement preserves its input and
+output, independently of changes to shared memory or local registers. -/
+theorem Exec.streams_eq_of_noIOWrites {program : Program} {stmt : Stmt}
+    {s t : State w} (execution : Exec program stmt s t)
+    (programCondition : ∀ f ∈ program, f.body.NoIOWrites)
+    (statementCondition : stmt.NoIOWrites) :
+    t.input = s.input ∧ t.outputRev = s.outputRev := by
+  induction execution with
+  | skip | assign | store => exact ⟨rfl, rfl⟩
+  | seq _ _ first second =>
+      have firstStreams := first statementCondition.1
+      have secondStreams := second statementCondition.2
+      exact ⟨secondStreams.1.trans firstStreams.1, secondStreams.2.trans firstStreams.2⟩
+  | iteTrue _ _ body => exact body statementCondition.1
+  | iteFalse _ _ body => exact body statementCondition.2
+  | whileFalse _ => exact ⟨rfl, rfl⟩
+  | whileTrue _ _ _ body rest =>
+      have bodyStreams := body statementCondition
+      have restStreams := rest statementCondition
+      exact ⟨restStreams.1.trans bodyStreams.1, restStreams.2.trans bodyStreams.2⟩
+  | read _ | write => exact False.elim statementCondition
+  | call lookup _ _ _ _ body =>
+      simpa only [State.leave_input, State.leave_outputRev,
+        State.enter_input, State.enter_outputRev] using
+        body (programCondition _ (List.mem_of_getElem? lookup))
+
+/-- Function return keeps the callee's actual heap while retaining both streams
+when all executed bodies contain no stream operations. -/
+theorem FunctionExec.streams_eq_of_noIOWrites {program : Program} {f : Func}
+    {heapLimit depth : Nat} {args values : List (Word w)} {entry finish : State w}
+    (execution : FunctionExec program heapLimit depth f args entry values finish)
+    (programCondition : ∀ function ∈ program, function.body.NoIOWrites)
+    (bodyCondition : f.body.NoIOWrites) :
+    finish.input = entry.input ∧ finish.outputRev = entry.outputRev := by
+  obtain ⟨_, _, callee, body, _, _, rfl⟩ := execution
+  simpa only [State.restore_input, State.restore_outputRev,
+    State.enter_input, State.enter_outputRev] using
+    body.erase.streams_eq_of_noIOWrites programCondition bodyCondition
 
 private theorem Exec.shared_eq_of_noSharedWrites {program : Program} {stmt : Stmt}
     {s t : State w} (execution : Exec program stmt s t)

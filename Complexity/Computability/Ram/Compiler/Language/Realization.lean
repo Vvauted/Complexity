@@ -10,15 +10,16 @@ import Complexity.Language.Eval.Verification
 # Source-level realization conditions for the word backend
 
 `RealizedExec` retains the same successful finite source execution while recording
-the mathematical scalar ranges and sufficient maximum call nesting used by the
+the mathematical value ranges and sufficient maximum call nesting used by the
 word backend. Its depth parameter is a nesting capacity, not an instruction
 budget: a call's continuation and sequential siblings reuse the caller's depth.
 
 Erasure gives the independent `Complexity.Language.Exec`. No target execution,
 register assignment or chosen instruction count occurs in these conditions.
-The current source fragment has immutable scalar locals and no heap operations.
-It nevertheless threads the actual shared heap through each scope and call;
-caller-local restoration never resets the callee's final heap.
+Locals are immutable, while buffer operations use the actual shared heap.
+Caller-local restoration never resets the callee's final heap. Buffer range
+conditions concern lengths and actual scalar operands; physical placement and
+address representation belong to the separate simulation layer.
 -/
 
 namespace Ram.LanguageCompiler
@@ -42,6 +43,45 @@ inductive RealizedExec {signatures : List Signature}
       (body : RealizedExec program w depth continuation
         (Complexity.Language.State.cons (value.eval entry.locals) entry) finish control) :
       RealizedExec program w depth (.letPrim value continuation) entry finish.tail control
+  | read {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
+      {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
+      {continuation : Complexity.Language.Stmt signatures (kind.toTy :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (kind.toTy :: Γ)} {control : Control result}
+      {value : CellValue kind}
+      (bufferFits : ValueFits w (buffer.eval entry.locals))
+      (indexFits : index.eval entry.locals < 2 ^ w)
+      (loaded : entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .ok value)
+      (valueFits : ValueFits w (kind.toValue value))
+      (body : RealizedExec program w depth continuation
+        (Complexity.Language.State.cons (kind.toValue value) entry) finish control) :
+      RealizedExec program w depth (.read buffer index continuation) entry finish.tail control
+  | write {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
+      {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
+      {entry : Complexity.Language.State Γ} {heap : Heap}
+      (bufferFits : ValueFits w (buffer.eval entry.locals))
+      (indexFits : index.eval entry.locals < 2 ^ w)
+      (valueFits : ValueFits w (value.eval entry.locals))
+      (written : entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+        (kind.ofValue (value.eval entry.locals)) = .ok heap) :
+      RealizedExec program w depth (.write buffer index value :
+        Complexity.Language.Stmt signatures Γ result) entry ⟨entry.locals, heap⟩ .normal
+  | slice {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
+      {buffer : Atom Γ (.buffer kind)} {offset length : Atom Γ .nat}
+      {continuation : Complexity.Language.Stmt signatures (.buffer kind :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (.buffer kind :: Γ)} {control : Control result}
+      {view : Buffer kind}
+      (bufferFits : ValueFits w (buffer.eval entry.locals))
+      (offsetFits : offset.eval entry.locals < 2 ^ w)
+      (lengthFits : length.eval entry.locals < 2 ^ w)
+      (sliced : (buffer.eval entry.locals).slice (offset.eval entry.locals)
+        (length.eval entry.locals) = .ok view)
+      (viewFits : ValueFits w (τ := .buffer kind) view)
+      (body : RealizedExec program w depth continuation
+        (Complexity.Language.State.cons view entry) finish control) :
+      RealizedExec program w depth (.slice buffer offset length continuation)
+        entry finish.tail control
   | seqNormal {Γ : List Ty} {result : Ty} {depth : Nat}
       {first second : Complexity.Language.Stmt signatures Γ result}
       {entry middle finish : Complexity.Language.State Γ} {control : Control result}
@@ -67,7 +107,7 @@ inductive RealizedExec {signatures : List Signature}
       RealizedExec program w depth (.ite condition yes no) entry finish control
   | ret {Γ : List Ty} {result : Ty} {depth : Nat}
       (value : Atom Γ result) (entry : Complexity.Language.State Γ)
-      (fits : valueToNat (value.eval entry.locals) < 2 ^ w) :
+      (fits : ValueFits w (value.eval entry.locals)) :
       RealizedExec program w depth (.ret value) entry entry (.returned (value.eval entry.locals))
   | callReturn {Γ : List Ty} {result : Ty} {depth : Nat} {fn : Fin signatures.length}
       {args : Args Γ signatures[fn].params}
@@ -89,7 +129,7 @@ returned value. This predicate depends on the outcome, never its execution proof
 def ControlFits (w : Nat) {result : Ty} (control : Control result) : Prop :=
   match control with
   | .normal => True
-  | .returned value => valueToNat value < 2 ^ w
+  | .returned value => ValueFits w value
   | .fault _ => False
 
 namespace RealizedExec
@@ -105,6 +145,9 @@ theorem erase (execution : RealizedExec program w depth stmt entry finish contro
   induction execution with
   | skip entry => exact .skip entry
   | letPrim fits body ih => exact .letPrim ih
+  | read bufferFits indexFits loaded valueFits body ih => exact .read loaded ih
+  | write bufferFits indexFits valueFits written => exact .write written
+  | slice bufferFits offsetFits lengthFits sliced viewFits body ih => exact .slice sliced ih
   | seqNormal head tail ihHead ihTail => exact .seqNormal ihHead ihTail
   | seqReturn head ih => exact .seqReturn ih
   | iteTrue test body ih => exact .iteTrue test ih
@@ -112,23 +155,21 @@ theorem erase (execution : RealizedExec program w depth stmt entry finish contro
   | ret value entry fits => exact .ret value entry
   | callReturn arguments callee body ihCallee ihBody => exact .callReturn ihCallee ihBody
 
-/-- This immutable scalar fragment preserves the enclosing lexical environment.
+/-- Immutable locals preserve the enclosing lexical environment.
 New inner bindings are discarded on scope exit, including when returning. -/
 theorem locals_eq (execution : RealizedExec program w depth stmt entry finish control) :
     finish.locals = entry.locals := execution.erase.locals_eq
 
-/-- The current scalar statement vocabulary has no heap operations. This follows
-from its execution rules, not from caller restoration or a heap representation. -/
-theorem heap_eq (execution : RealizedExec program w depth stmt entry finish control) :
-    finish.heap = entry.heap := execution.erase.heap_eq
-
-/-- Every actual returned scalar is representable; successful normal continuation
+/-- Every actual returned value is representable; successful normal continuation
 requires no result value, and a realized execution cannot fault. -/
 theorem outcome_fits (execution : RealizedExec program w depth stmt entry finish control) :
     ControlFits w control := by
   induction execution with
   | skip => trivial
   | letPrim fits body ih => exact ih
+  | read bufferFits indexFits loaded valueFits body ih => exact ih
+  | write => trivial
+  | slice bufferFits offsetFits lengthFits sliced viewFits body ih => exact ih
   | seqNormal head tail ihHead ihTail => exact ihTail
   | seqReturn head ih => exact ih
   | iteTrue test body ih => exact ih
@@ -136,10 +177,10 @@ theorem outcome_fits (execution : RealizedExec program w depth stmt entry finish
   | ret value entry fits => exact fits
   | callReturn arguments callee body ihCallee ihBody => exact ihBody
 
-/-- A caller may use the actual returned value's word range. -/
+/-- A caller may use the actual returned value's representation range. -/
 theorem returned_fits {value : Value result}
     (execution : RealizedExec program w depth stmt entry finish (.returned value)) :
-    valueToNat value < 2 ^ w := execution.outcome_fits
+    ValueFits w value := execution.outcome_fits
 
 /-- More allowed call nesting preserves the same execution and values. This
 does not add instructions or change the word-range conditions. -/
@@ -149,6 +190,12 @@ theorem mono_depth (execution : RealizedExec program w depth stmt entry finish c
   induction execution generalizing depth' with
   | skip entry => exact .skip entry
   | letPrim fits body ih => exact .letPrim fits (ih capacity)
+  | read bufferFits indexFits loaded valueFits body ih =>
+      exact .read bufferFits indexFits loaded valueFits (ih capacity)
+  | write bufferFits indexFits valueFits written =>
+      exact .write bufferFits indexFits valueFits written
+  | slice bufferFits offsetFits lengthFits sliced viewFits body ih =>
+      exact .slice bufferFits offsetFits lengthFits sliced viewFits (ih capacity)
   | seqNormal head tail ihHead ihTail => exact .seqNormal (ihHead capacity) (ihTail capacity)
   | seqReturn head ih => exact .seqReturn (ih capacity)
   | iteTrue test body ih => exact .iteTrue test (ih capacity)
@@ -220,7 +267,7 @@ theorem mono_depth (h : RealizationWP program w depth stmt normal returned entry
 /-- Return materialization requires the actual source result to fit. -/
 @[simp] theorem ret_iff (value : Atom Γ result) :
     RealizationWP program w depth (.ret value) normal returned entry ↔
-      valueToNat (value.eval entry.locals) < 2 ^ w ∧ returned (value.eval entry.locals) entry := by
+      ValueFits w (value.eval entry.locals) ∧ returned (value.eval entry.locals) entry := by
   constructor
   · rintro ⟨finish, control, execution, post⟩
     cases execution with
@@ -242,6 +289,122 @@ theorem mono_depth (h : RealizationWP program w depth stmt normal returned entry
     | letPrim fits body => exact ⟨fits, _, control, body, post⟩
   · rintro ⟨fits, finish, control, execution, post⟩
     exact ⟨finish.tail, control, .letPrim fits execution, post⟩
+
+/-- A read binds the actual current-heap cell and its representation range. -/
+@[simp] theorem read_iff {kind : CellTy} (buffer : Atom Γ (.buffer kind))
+    (index : Atom Γ .nat)
+    (continuation : Complexity.Language.Stmt signatures (kind.toTy :: Γ) result) :
+    RealizationWP program w depth (.read buffer index continuation) normal returned entry ↔
+      ValueFits w (buffer.eval entry.locals) ∧ index.eval entry.locals < 2 ^ w ∧
+        ∃ value, entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .ok value ∧
+          ValueFits w (kind.toValue value) ∧
+          RealizationWP program w depth continuation (fun finish => normal finish.tail)
+            (fun value finish => returned value finish.tail)
+            (Complexity.Language.State.cons (kind.toValue value) entry) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | read bufferFits indexFits loaded valueFits body =>
+        exact ⟨bufferFits, indexFits, _, loaded, valueFits, _, control, body, post⟩
+  · rintro ⟨bufferFits, indexFits, value, loaded, valueFits, finish, control, body, post⟩
+    exact ⟨finish.tail, control, .read bufferFits indexFits loaded valueFits body, post⟩
+
+/-- A write exposes its actual updated shared heap, not a restored snapshot. -/
+@[simp] theorem write_iff {kind : CellTy} (buffer : Atom Γ (.buffer kind))
+    (index : Atom Γ .nat) (value : Atom Γ kind.toTy) :
+    RealizationWP program w depth (.write buffer index value) normal returned entry ↔
+      ValueFits w (buffer.eval entry.locals) ∧ index.eval entry.locals < 2 ^ w ∧
+        ValueFits w (value.eval entry.locals) ∧
+        ∃ heap, entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+          (kind.ofValue (value.eval entry.locals)) = .ok heap ∧ normal ⟨entry.locals, heap⟩ := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | write bufferFits indexFits valueFits written =>
+        exact ⟨bufferFits, indexFits, valueFits, _, written, post⟩
+  · rintro ⟨bufferFits, indexFits, valueFits, heap, written, post⟩
+    exact ⟨⟨entry.locals, heap⟩, .normal,
+      .write bufferFits indexFits valueFits written, post⟩
+
+/-- A slice retains its actual object identity and offset; range conditions do
+not assign a physical address to that view. -/
+@[simp] theorem slice_iff {kind : CellTy} (buffer : Atom Γ (.buffer kind))
+    (offset length : Atom Γ .nat)
+    (continuation : Complexity.Language.Stmt signatures (.buffer kind :: Γ) result) :
+    RealizationWP program w depth (.slice buffer offset length continuation)
+        normal returned entry ↔
+      ValueFits w (buffer.eval entry.locals) ∧ offset.eval entry.locals < 2 ^ w ∧
+        length.eval entry.locals < 2 ^ w ∧
+        ∃ view, (buffer.eval entry.locals).slice (offset.eval entry.locals)
+          (length.eval entry.locals) = .ok view ∧ ValueFits w (τ := .buffer kind) view ∧
+          RealizationWP program w depth continuation (fun finish => normal finish.tail)
+            (fun value finish => returned value finish.tail)
+            (Complexity.Language.State.cons view entry) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | slice bufferFits offsetFits lengthFits sliced viewFits body =>
+        exact ⟨bufferFits, offsetFits, lengthFits, _, sliced, viewFits, _, control, body, post⟩
+  · rintro ⟨bufferFits, offsetFits, lengthFits, view, sliced, viewFits,
+      finish, control, body, post⟩
+    exact ⟨finish.tail, control,
+      .slice bufferFits offsetFits lengthFits sliced viewFits body, post⟩
+
+/-- Separate mathematical read success from the continuation's actual cell.
+The latter may use both the successful read equation and the cell's range. -/
+theorem read_of_success {kind : CellTy} {buffer : Atom Γ (.buffer kind)}
+    {index : Atom Γ .nat}
+    {continuation : Complexity.Language.Stmt signatures (kind.toTy :: Γ) result}
+    (bufferFits : ValueFits w (buffer.eval entry.locals))
+    (indexFits : index.eval entry.locals < 2 ^ w)
+    (loaded : ∃ value, entry.heap.read (buffer.eval entry.locals)
+      (index.eval entry.locals) = .ok value ∧ ValueFits w (kind.toValue value))
+    (body : ∀ value, entry.heap.read (buffer.eval entry.locals)
+      (index.eval entry.locals) = .ok value → ValueFits w (kind.toValue value) →
+      RealizationWP program w depth continuation (fun finish => normal finish.tail)
+        (fun value finish => returned value finish.tail)
+        (Complexity.Language.State.cons (kind.toValue value) entry)) :
+    RealizationWP program w depth (.read buffer index continuation) normal returned entry := by
+  obtain ⟨value, found, fits⟩ := loaded
+  exact (read_iff buffer index continuation).mpr
+    ⟨bufferFits, indexFits, value, found, fits, body value found fits⟩
+
+/-- Separate a successful source update from reasoning about its actual heap. -/
+theorem write_of_success {kind : CellTy} {buffer : Atom Γ (.buffer kind)}
+    {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
+    (bufferFits : ValueFits w (buffer.eval entry.locals))
+    (indexFits : index.eval entry.locals < 2 ^ w)
+    (valueFits : ValueFits w (value.eval entry.locals))
+    (written : ∃ heap, entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+      (kind.ofValue (value.eval entry.locals)) = .ok heap)
+    (post : ∀ heap, entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+      (kind.ofValue (value.eval entry.locals)) = .ok heap → normal ⟨entry.locals, heap⟩) :
+    RealizationWP program w depth (.write buffer index value) normal returned entry := by
+  obtain ⟨heap, found⟩ := written
+  exact (write_iff buffer index value).mpr
+    ⟨bufferFits, indexFits, valueFits, heap, found, post heap found⟩
+
+/-- A fitting relative extent identifies the actual sliced descriptor without
+requiring users to choose an existential handle. -/
+theorem slice_of_bound {kind : CellTy} {buffer : Atom Γ (.buffer kind)}
+    {offset length : Atom Γ .nat}
+    {continuation : Complexity.Language.Stmt signatures (.buffer kind :: Γ) result}
+    (bufferFits : ValueFits w (buffer.eval entry.locals))
+    (offsetFits : offset.eval entry.locals < 2 ^ w)
+    (lengthFits : length.eval entry.locals < 2 ^ w)
+    (bound : offset.eval entry.locals + length.eval entry.locals ≤
+      (buffer.eval entry.locals).length)
+    (body : RealizationWP program w depth continuation (fun finish => normal finish.tail)
+      (fun value finish => returned value finish.tail)
+      (Complexity.Language.State.cons
+        (τ := .buffer kind)
+        ⟨(buffer.eval entry.locals).object,
+          (buffer.eval entry.locals).offset + offset.eval entry.locals, length.eval entry.locals⟩
+        entry)) :
+    RealizationWP program w depth (.slice buffer offset length continuation)
+      normal returned entry :=
+  (slice_iff buffer offset length continuation).mpr
+    ⟨bufferFits, offsetFits, lengthFits, _, Buffer.slice_eq _ bound, lengthFits, body⟩
 
 /-- Sequential siblings reuse the same nesting capacity; returns skip the tail. -/
 @[simp] theorem seq_iff (first second : Complexity.Language.Stmt signatures Γ result) :
@@ -291,7 +454,7 @@ theorem mono_depth (h : RealizationWP program w depth stmt normal returned entry
 end RealizationWP
 
 /-- A function's source-level admissibility conditions suffice for its actual
-successful execution with the selected scalar ranges and call capacity. The
+successful execution with the selected value ranges and call capacity. The
 mathematical behavior remains in the independent source `FunctionTotal`. -/
 def FunctionRealizable {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (w depth : Nat)
@@ -360,7 +523,7 @@ theorem call {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (hfeasible : feasible (args.eval entry.locals) entry.heap)
     (hpre : pre (args.eval entry.locals) entry.heap)
     (body : ∀ value finalHeap, post (args.eval entry.locals) entry.heap value finalHeap →
-      valueToNat value < 2 ^ w →
+      ValueFits w value →
       RealizationWP program w depth continuation (fun finish => normal finish.tail)
         (fun result finish => returned result finish.tail)
         (Complexity.Language.State.cons value ⟨entry.locals, finalHeap⟩)) :
@@ -394,7 +557,7 @@ theorem call_of_eval {signatures : List Signature} {Γ : List Ty} {result : Ty}
       Part.some (.ok value, finalHeap))
     (arguments : EnvFits w (args.eval entry.locals)) (nesting : calleeDepth + 1 ≤ depth)
     (hfeasible : feasible (args.eval entry.locals) entry.heap)
-    (body : valueToNat value < 2 ^ w →
+    (body : ValueFits w value →
       RealizationWP program w depth continuation (fun finish => normal finish.tail)
         (fun result finish => returned result finish.tail)
         (Complexity.Language.State.cons value ⟨entry.locals, finalHeap⟩)) :

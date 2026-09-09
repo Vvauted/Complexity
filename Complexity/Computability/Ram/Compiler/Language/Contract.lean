@@ -24,10 +24,10 @@ post-state. A word-range premise permits exact mathematical decoding, rather
 than silently identifying modular arithmetic with unbounded natural arithmetic.
 There is no instruction budget, new source syntax or new execution relation.
 
-The current scalar source vocabulary preserves its heap by execution. The total
-contract rule below uses that proved fact for its source postcondition; it does
-not identify the mathematical heap with RAM memory. Adding heap operations will
-require a genuine representation bridge, not inheritance of scalar preservation.
+Input and output heaps are related to their actual RAM states under a fixed
+placement. Source heap identity is not inferred from returned descriptors, which
+need not encode handles injectively. The source postcondition concerns the actual
+updated heap; caller-local restoration does not undo shared writes.
 -/
 
 namespace Ram.LanguageCompiler
@@ -39,6 +39,7 @@ from source realization. Both its returned fields and shared final state belong
 to that same invocation. -/
 theorem RealizedExec.post_of_contract {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {w depth heapLimit : Nat}
+    {placement : Nat → Word w}
     {fn : Fin signatures.length} {args : Env signatures[fn].params} {initialHeap : Heap}
     {finish : Complexity.Language.State signatures[fn].params}
     {value : Value signatures[fn].result}
@@ -49,14 +50,16 @@ theorem RealizedExec.post_of_contract {signatures : List Signature}
     (contract : Source.FunctionContract (lowerProgram program) heapLimit depth
       (lowerFunc program fn) lowPre lowPost)
     (hw : 0 < w) (arguments : EnvFits w args) (entry : Source.State w)
-    (input : lowPre (envWords w args) entry) :
+    (represented : HeapRep placement heapLimit initialHeap entry)
+    (input : lowPre (envWords placement args) entry) :
     ∃ targetFinish,
       Source.FunctionExec (lowerProgram program) heapLimit depth (lowerFunc program fn)
-        (envWords w args) entry (valueWords w value) targetFinish ∧
-      lowPost (envWords w args) entry (valueWords w value) targetFinish := by
-  obtain ⟨targetFinish, invocation⟩ := execution.functionExec hw arguments entry
-    (heapLimit := heapLimit)
-  exact ⟨targetFinish, invocation, contract.post input invocation⟩
+        (envWords placement args) entry (valueWords placement value) targetFinish ∧
+      lowPost (envWords placement args) entry (valueWords placement value) targetFinish ∧
+      HeapRep placement heapLimit finish.heap targetFinish := by
+  obtain ⟨targetFinish, invocation, representedFinal⟩ :=
+    execution.functionExec hw arguments entry represented
+  exact ⟨targetFinish, invocation, contract.post input invocation, representedFinal⟩
 
 /-- Reuse a lowered function's existing mathematical contract to establish the
 high-level source contract. Realization provides source termination and ranges;
@@ -64,6 +67,7 @@ the supplied result implication decodes the actual returned value. Its input
 conditions are explicit and do not change the source precondition. -/
 theorem FunctionRealizable.functionTotal_of_contract {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {w depth heapLimit : Nat}
+    {placement : Nat → Word w}
     {fn : Fin signatures.length} {feasible pre : Env signatures[fn].params → Heap → Prop}
     {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
     {lowPre : List (Word w) → Source.State w → Prop}
@@ -73,20 +77,23 @@ theorem FunctionRealizable.functionTotal_of_contract {signatures : List Signatur
       (lowerFunc program fn) lowPre lowPost)
     (hw : 0 < w) (entry : Env signatures[fn].params → Heap → Source.State w)
     (input : ∀ args heap, pre args heap →
-      feasible args heap ∧ EnvFits w args ∧ lowPre (envWords w args) (entry args heap))
+      feasible args heap ∧ EnvFits w args ∧
+      HeapRep placement heapLimit heap (entry args heap) ∧
+      lowPre (envWords placement args) (entry args heap))
     (output : ∀ (args : Env signatures[fn].params) (heap : Heap)
-      (value : Value signatures[fn].result) (targetFinish : Source.State w),
-      pre args heap → valueToNat value < 2 ^ w →
-      lowPost (envWords w args) (entry args heap) (valueWords w value) targetFinish →
-      post args heap value heap) :
+      (value : Value signatures[fn].result) (finalHeap : Heap) (targetFinish : Source.State w),
+      pre args heap → ValueFits w value →
+      HeapRep placement heapLimit finalHeap targetFinish →
+      lowPost (envWords placement args) (entry args heap) (valueWords placement value) targetFinish →
+      post args heap value finalHeap) :
     FunctionTotal program fn pre post := by
   intro args heap hpre
-  obtain ⟨feasibleArgs, arguments, lowInput⟩ := input args heap hpre
+  obtain ⟨feasibleArgs, arguments, represented, lowInput⟩ := input args heap hpre
   obtain ⟨finish, value, execution⟩ := realizable args heap feasibleArgs
-  obtain ⟨targetFinish, _, property⟩ :=
-    execution.post_of_contract contract hw arguments (entry args heap) lowInput
-  refine ⟨finish, value, execution.erase, ?_⟩
-  rw [execution.heap_eq]
-  exact output args heap value targetFinish hpre execution.returned_fits property
+  obtain ⟨targetFinish, _, property, representedFinal⟩ :=
+    execution.post_of_contract contract hw arguments (entry args heap) represented lowInput
+  exact ⟨finish, value, execution.erase,
+    output args heap value finish.heap targetFinish hpre execution.returned_fits
+      representedFinal property⟩
 
 end Ram.LanguageCompiler

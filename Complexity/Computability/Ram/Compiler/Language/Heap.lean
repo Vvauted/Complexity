@@ -81,6 +81,17 @@ namespace HeapRep
 variable {w heapLimit : Nat} {placement : Nat → Word w}
 variable {heap finish : Complexity.Language.Heap} {target : Source.State w}
 
+/-- The empty source heap imposes no restriction on placement, capacity or RAM memory. -/
+theorem empty (placement : Nat → Word w) (heapLimit : Nat) (target : Source.State w) :
+    HeapRep placement heapLimit ⟨#[]⟩ target := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro τ object values found
+    exact (Nat.not_lt_zero object (Complexity.Language.Heap.object_lt_size found)).elim
+  · intro τ object values found
+    exact (Nat.not_lt_zero object (Complexity.Language.Heap.object_lt_size found)).elim
+  · intro τ σ object other values otherValues found
+    exact (Nat.not_lt_zero object (Complexity.Language.Heap.object_lt_size found)).elim
+
 /-- Parameter binding retains the same complete shared-heap representation. -/
 theorem enter (represented : HeapRep placement heapLimit heap target)
     (args : List (Word w)) : HeapRep placement heapLimit heap (target.enter args) := by
@@ -95,6 +106,12 @@ theorem setRegs (represented : HeapRep placement heapLimit heap target)
   refine ⟨?_, represented.ranges, represented.separated⟩
   intro τ object contents found
   simpa only [Source.ArrayAt, Source.State.setRegs_mem] using represented.objects found
+
+/-- Updating one local register changes no represented shared object. -/
+theorem setReg (represented : HeapRep placement heapLimit heap target)
+    (dst : Reg) (value : Word w) :
+    HeapRep placement heapLimit heap (target.setReg dst value) := by
+  simpa only [Source.State.setRegs_singleton] using represented.setRegs [dst] [value]
 
 /-- Caller restoration keeps the callee's final heap, not the caller's old heap. -/
 theorem restore (represented : HeapRep placement heapLimit heap target)

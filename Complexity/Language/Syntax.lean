@@ -10,15 +10,21 @@ import Lean.Elab.Do
 import Lean.Parser.Do
 
 /-!
-# Named scalar source programs
+# Named source programs with borrowed buffers
 
 `source_program P where` declares an independent typed source program from
-Lean-style function headers and `do` blocks. The scalar subset supports
-`Nat`, `Bool`, `Unit`, immutable lexical `let`, named first-order calls,
+Lean-style function headers and `do` blocks. The supported types are
+`Nat`, `Bool`, `Unit`, `Buffer Nat` and `Buffer Bool`, with immutable lexical `let`, named first-order calls,
 `if`/`then`/`else` and `return`. Natural arithmetic and comparisons may be nested
 in bindings, return values, conditions and call arguments. Their operands are
 normalized left to right into actual lexical primitive bindings; no host
 computation replaces the generated operations.
+
+Borrowed buffers expose `xs.length`, `let x ← xs.get i`, `xs.set i value` and
+`let ys ← xs.slice offset length`. Reads and writes observe the current shared
+heap; copying, passing or returning a buffer does not copy its contents. Buffer
+parameters and results use the existing `Buffer .nat`/`Buffer .bool` Lean types.
+There are no buffer literals, object-identifier constructors or host callbacks.
 
 The declaration exports `P.signatures`, `P.fId`, `P.fBody` and `P.program`,
 together with the ordinary curried observation `P.f` and its equation `P.f_eq`.
@@ -48,11 +54,11 @@ open Lean.Parser.Term
 declare_syntax_cat sourceParameter
 syntax "(" ident " : " term ")" : sourceParameter
 
-/-- A scalar source function uses an ordinary parsed Lean `do` body. -/
+/-- A source function uses an ordinary parsed Lean `do` body. -/
 declare_syntax_cat sourceFunction
 syntax "def " ident sourceParameter* " : " term " := " term : sourceFunction
 
-/-- Declare a finite family of named, independently interpreted scalar functions. -/
+/-- Declare a finite family of named, independently interpreted source functions. -/
 syntax (name := sourceProgram) "source_program " ident " where" ppLine
   many1Indent(sourceFunction) : command
 
@@ -111,23 +117,31 @@ private def typeName : Ty → String
   | .nat => "Nat"
   | .bool => "Bool"
   | .unit => "Unit"
+  | .buffer .nat => "Buffer Nat"
+  | .buffer .bool => "Buffer Bool"
 
 private def parseType (stx : TSyntax `term) : MacroM Ty := do
   match stx with
   | `(Nat) => return .nat
   | `(Bool) => return .bool
   | `(Unit) => return .unit
-  | _ => Macro.throwErrorAt stx "supported source types are Nat, Bool and Unit"
+  | `(Buffer Nat) => return .buffer .nat
+  | `(Buffer Bool) => return .buffer .bool
+  | _ => Macro.throwErrorAt stx "supported source types are Nat, Bool, Unit, Buffer Nat and Buffer Bool"
 
 private def typeTerm : Ty → MacroM (TSyntax `term)
   | .nat => `(Complexity.Language.Ty.nat)
   | .bool => `(Complexity.Language.Ty.bool)
   | .unit => `(Complexity.Language.Ty.unit)
+  | .buffer .nat => `(Complexity.Language.Ty.buffer Complexity.Language.CellTy.nat)
+  | .buffer .bool => `(Complexity.Language.Ty.buffer Complexity.Language.CellTy.bool)
 
 private def valueTypeTerm : Ty → MacroM (TSyntax `term)
   | .nat => `(Nat)
   | .bool => `(Bool)
   | .unit => `(Unit)
+  | .buffer .nat => `(Complexity.Language.Buffer Complexity.Language.CellTy.nat)
+  | .buffer .bool => `(Complexity.Language.Buffer Complexity.Language.CellTy.bool)
 
 private def expectType (stx : Syntax) (actual expected : Ty) : MacroM Unit := do
   unless actual == expected do
@@ -181,6 +195,25 @@ private partial def parseAtom (scope : Scope) (stx : TSyntax `term) : MacroM Ato
       Macro.throwErrorAt stx
         "expected a source variable or scalar literal; name a compound operand with 'let' first"
 
+-- Lean parses `xs.length` as a dotted identifier and `(xs).length` as a
+-- projection. Both refer to the same lexical receiver, not a host declaration.
+private def fieldAccess? (stx : TSyntax `term) : Option (TSyntax `term × Name) :=
+  match stx with
+  | `($receiver.$field:ident) => some (receiver, field.getId)
+  | `($name:ident) =>
+      match name.getId with
+      | .str receiver field =>
+          if receiver.isAnonymous then none
+          else some (⟨(mkIdentFrom name receiver).raw⟩, Name.mkSimple field)
+      | _ => none
+  | _ => none
+
+private def parseBuffer (scope : Scope) (stx : TSyntax `term) : MacroM (CellTy × Atomic) := do
+  let buffer ← parseAtom scope stx
+  match buffer.type with
+  | .buffer kind => return (kind, buffer)
+  | _ => Macro.throwErrorAt stx s!"expected a source buffer, found {typeName buffer.type}"
+
 private def binaryPrimitive (scope : Scope) (left right : TSyntax `term)
     (result : Ty) (constructor native : Name) : MacroM Primitive := do
   let lhs ← parseAtom scope left
@@ -193,6 +226,11 @@ private def binaryPrimitive (scope : Scope) (left right : TSyntax `term)
   return ⟨result, ← `($op $(lhs.term) $(rhs.term)), none, value⟩
 
 private partial def parsePrimitive (scope : Scope) (stx : TSyntax `term) : MacroM Primitive := do
+  if let some (receiver, field) := fieldAccess? stx then
+    if field == `length then
+      let (_, buffer) ← parseBuffer scope receiver
+      return ⟨.nat, ← `(Complexity.Language.Prim.length $(buffer.term)), none,
+        ← `(Complexity.Language.Buffer.length $(buffer.value))⟩
   match stx with
   | `(($value:term)) => parsePrimitive scope value
   | `($left + $right) => binaryPrimitive scope left right .nat ``Prim.add ``Nat.add
@@ -219,9 +257,31 @@ private def lookupFunction (functions : Array Function) (name : TSyntax `ident) 
     | Macro.throwErrorAt name s!"unknown source function '{name.getId}'; calls must name this program's functions"
   return fn
 
-private def parseCall (family : TSyntax `ident) (functions : Array Function)
+private def parseBinding (family : TSyntax `ident) (functions : Array Function)
     (scope : Scope) (stx : TSyntax `term) :
-    MacroM (Function × TSyntax `term × TSyntax `term) := do
+    MacroM (Ty × TSyntax `term × TSyntax `term) := do
+  if let `($head:term $operands:term*) := stx then
+    if let some (receiver, field) := fieldAccess? head then
+      if field == `get || field == `slice then
+        let (kind, buffer) ← parseBuffer scope receiver
+        if field == `get then
+          unless operands.size == 1 do
+            Macro.throwErrorAt stx "a buffer read expects one index"
+          let index ← parseAtom scope operands[0]!
+          expectType operands[0]! index.type .nat
+          return (kind.toTy,
+            ← `(Complexity.Language.Stmt.read $(buffer.term) $(index.term)),
+            ← `(Complexity.Language.Buffer.readM $(buffer.value) $(index.value)))
+        else
+          unless operands.size == 2 do
+            Macro.throwErrorAt stx "a buffer slice expects an offset and a length"
+          let offset ← parseAtom scope operands[0]!
+          let length ← parseAtom scope operands[1]!
+          expectType operands[0]! offset.type .nat
+          expectType operands[1]! length.type .nat
+          return (.buffer kind,
+            ← `(Complexity.Language.Stmt.slice $(buffer.term) $(offset.term) $(length.term)),
+            ← `(Complexity.Language.Buffer.sliceM $(buffer.value) $(offset.value) $(length.value)))
   let (name, operands) ← match stx with
     | `($name:ident $operands:term*) => pure (name, operands)
     | `($name:ident) => pure (name, #[])
@@ -240,7 +300,27 @@ private def parseCall (family : TSyntax `ident) (functions : Array Function)
   for atom in atoms.reverse do
     args ← `(Complexity.Language.Args.cons $atom $args)
   let name := generatedName family fn.name ""
-  return (fn, args, Lean.Syntax.mkApp ⟨name.raw⟩ values)
+  let id := generatedName family fn.name "Id"
+  return (fn.result, ← `(Complexity.Language.Stmt.call $id:ident $args),
+    Lean.Syntax.mkApp ⟨name.raw⟩ values)
+
+private def writeCode (scope : Scope) (stx : TSyntax `term) : MacroM LoweredBlock := do
+  let `($head:term $operands:term*) := stx
+    | Macro.throwErrorAt stx "expected a buffer write 'buffer.set index value'"
+  let some (receiver, field) := fieldAccess? head
+    | Macro.throwErrorAt stx "expected a buffer write 'buffer.set index value'"
+  unless field == `set do
+    Macro.throwErrorAt head "only buffer.set is supported as a standalone source action"
+  let (kind, buffer) ← parseBuffer scope receiver
+  unless operands.size == 2 do
+    Macro.throwErrorAt stx "a buffer write expects an index and a value"
+  let index ← parseAtom scope operands[0]!
+  let value ← parseAtom scope operands[1]!
+  expectType operands[0]! index.type .nat
+  expectType operands[1]! value.type kind.toTy
+  return ⟨← `(Complexity.Language.Stmt.write $(buffer.term) $(index.term) $(value.term)),
+    #[← `(doElem| Complexity.Language.Buffer.writeM $(buffer.value) $(index.value) $(value.value))],
+    true⟩
 
 private def returnCode (scope : Scope) (result : Ty) (value : TSyntax `term) :
     MacroM LoweredBlock := do
@@ -281,7 +361,7 @@ private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool) :
     | `($left < $right) => binary left right fun a b => `($a < $b)
     | `($left ≤ $right) => binary left right fun a b => `($a ≤ $b)
     | `($left <= $right) => binary left right fun a b => `($a <= $b)
-    | _ => pure ⟨#[], stx, true⟩)
+    | _ => pure ⟨#[], stx, !(fieldAccess? stx).any (fun access => access.2 == `length)⟩)
   if atomize && !normalized.atomic then
     let name := mkIdentFrom stx (← Macro.addMacroScope `operand)
     let binding ← `(doElem| let $name:ident := $(normalized.value))
@@ -292,14 +372,14 @@ private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool) :
 private def normalizeCall (stx : TSyntax `term) :
     MacroM (Array (TSyntax `doElem) × TSyntax `term) := withRef stx do
   match stx with
-  | `($name:ident $operands:term*) =>
+  | `($head:term $operands:term*) =>
       let mut bindings := #[]
       let mut arguments := #[]
       for operand in operands do
         let normalized ← normalizeValue operand true
         bindings := bindings ++ normalized.bindings
         arguments := arguments.push normalized.value
-      return (bindings, Lean.Syntax.mkApp ⟨name.raw⟩ arguments)
+      return (bindings, Lean.Syntax.mkApp head arguments)
   | _ => return (#[], stx)
 
 private def normalizeElement (element : TSyntax `doElem) :
@@ -319,6 +399,9 @@ private def normalizeElement (element : TSyntax `doElem) :
       let normalized ← normalizeValue condition false
       return (normalized.bindings,
         ← `(doElem| if $(normalized.value) then $yes:doSeq else $no:doSeq))
+  | `(doElem| $action:term) =>
+      let (bindings, action) ← normalizeCall action
+      return (bindings, ← `(doElem| $action:term))
   | _ => return (#[], element)
 
 private partial def blockCode (family : TSyntax `ident) (functions : Array Function)
@@ -340,13 +423,12 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Funct
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough⟩
       | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
-          let (fn, args, invocation) ← parseCall family functions scope action
-          checkAnnotation annotation fn.result
-          let body ← blockCode family functions ((some name.getId, fn.result) :: scope) result rest
-          let id := generatedName family fn.name "Id"
-          let type ← valueTypeTerm fn.result
+          let (bindingType, statement, invocation) ← parseBinding family functions scope action
+          checkAnnotation annotation bindingType
+          let body ← blockCode family functions ((some name.getId, bindingType) :: scope) result rest
+          let type ← valueTypeTerm bindingType
           let binding ← `(doElem| let $name:ident : $type ← $invocation:term)
-          return ⟨← `(Complexity.Language.Stmt.call $id:ident $args $(body.term)),
+          return ⟨← `($statement $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough⟩
       | _ =>
           -- A term-valued match keeps its local `return` from exiting this block's translation.
@@ -373,9 +455,10 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Funct
                 let branch ← `(doElem|
                   if $(parsed.value) then $yesBody:doSeq else $noBody:doSeq)
                 return ⟨term, #[branch], yesCode.fallsThrough || noCode.fallsThrough⟩
+            | `(doElem| $action:term) => writeCode scope action
             | _ =>
                 Macro.throwErrorAt element
-                  "unsupported source statement; use immutable let, a named call, if/then/else, or return")
+                  "unsupported source statement; use immutable let, a named call, buffer access, if/then/else, or return")
           if rest.isEmpty then
             return statement
           else
@@ -440,7 +523,10 @@ private def equationDeclaration (family programName : TSyntax `ident)
       Complexity.Language.Stmt.evalWith_skip, Complexity.Language.Stmt.evalWith_ret,
       Complexity.Language.Stmt.evalWith_letPrim, Complexity.Language.Stmt.evalWith_seq,
       Complexity.Language.Stmt.evalWith_ite, Complexity.Language.Stmt.evalWith_call,
+      Complexity.Language.Stmt.evalWith_read, Complexity.Language.Stmt.evalWith_write,
+      Complexity.Language.Stmt.evalWith_slice,
       Complexity.Language.Atom.eval, Complexity.Language.Prim.eval, Complexity.Language.Args.eval,
+      Complexity.Language.CellTy.toValue, Complexity.Language.CellTy.ofValue,
       Complexity.Language.Env.cons_here, Complexity.Language.Env.cons_there,
       Complexity.Language.Env.tail_cons, Complexity.Language.Env.get_tail, pure_bind]
     all_goals rfl)
