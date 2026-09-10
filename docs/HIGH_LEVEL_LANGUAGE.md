@@ -2,7 +2,7 @@
 
 Status: `source_program (pure)` generates native total functions over scalars
 and their products/options with checked source correspondence; self-recursion and acyclic calls are supported,
-but pure `while`, mutual recursion and buffers are not. Effectful declarations
+but pure `for`/`while`, mutually recursive pure families and buffers are not. Effectful declarations
 retain their partial heap-action interface. Named `Buffer.alloc` has a checked
 allocating-callee/using-caller path to RAM, including resource-import transport.
 Scoped scratch reclamation now has a checked same-source runner and physical
@@ -88,6 +88,52 @@ proof interfaces for new lowering cases and low-level primitives. Source-cursor
 navigation can improve that workflow; its metadata is neither a semantic proof
 nor a prerequisite for using the low-level rules.
 
+### Reducing proof work at the abstraction boundary
+
+Interface work starts with the program authors can express, not with
+abbreviations for a backend theorem. Ordinary product patterns and bounded
+`for` loops should elaborate to the existing core. A pattern evaluates its
+right-hand side once; a range retains its entry-time endpoints; iteration over
+a borrowed buffer reads each cell from the current heap. These are semantic
+requirements, not permission to replace mutation by an entry-time snapshot.
+Native total-loop correspondence is a separate obligation from supporting a
+finite-looking loop in the effectful surface.
+
+Three kinds of mechanical work belong in the library:
+
+1. **Local bookkeeping.** Generate the lossless local views, fixed-capture
+   proofs, pattern scopes and return propagation. Public block contracts take
+   ordinary parameters and mathematical pre/postconditions, without asking an
+   author to reconstruct `Control`, `Env` or nested output tuples.
+2. **Contract composition.** The author supplies guard and body contracts
+   separately. A shared loop rule passes the actual post-guard state to the
+   body, retains the complete round's starting state for descent, and handles
+   false guards and early returns. Heap frames follow proved operation/callee
+   facts, not a global no-aliasing assumption. The generated API must be used
+   by the existing traversal, not merely accompanied by an equally long
+   private adapter.
+3. **Backend publication.** A shared boundary connects a mathematical result
+   and independent resource argument to the same actual execution. Input
+   layout, output observation and word-width policy belong to that boundary,
+   not to each problem's solution. Mathematical correctness must not require
+   a proposed instruction budget, and a conditional cost bound alone must not
+   count as successful compiled execution.
+
+Algorithmic invariants, genuine data/range assumptions and asymptotic analysis
+remain mathematical proof obligations. Their established consequences should
+be available to correctness, realizability and resource reasoning at the same
+program point; opening a lower-level goal must not force a second proof of the
+algorithm.
+
+The benchmark exercise is deliberately statement-only: one fixed source
+implementation must meet the mathematical answer relation and a uniform
+word-instruction bound. A public logarithmic input-width rule may have a fixed
+implementation overhead, but not an arbitrary input-dependent admissibility
+predicate selected by the candidate. Preloaded calls remain explicitly distinct
+from a complete input-stream loader. The top-tree work independently develops
+mathematical clusters and decomposition rules; a cluster datatype is not yet a
+balanced dynamic implementation or a RAM complexity theorem.
+
 ## 2. Decision: a typed core with independent semantics
 
 Use a typed, first-order core language with a Lean-like programming surface.
@@ -150,8 +196,12 @@ leaving that binding retains changes to outer locals and the actual heap.
 `none` requires an expected Option type or an explicit type annotation. Pure
 mode permits recursively buffer-free products/options; hiding a borrowed buffer
 inside either constructor does not make an effectful function pure.
-The current match syntax has explicit `none` and `some name` branches (in either
-order); general nested patterns and user-defined inductive types are not implemented.
+The current match syntax has explicit `none` and `some pattern` branches (in either
+order). Immutable lets, call-result bindings and `some` payloads accept nested
+product patterns and `_`. They evaluate the supplied expression or call once,
+then project the used fields through actual source primitives. Duplicate binders
+are rejected. General constructor matching and user-defined inductive types
+are not implemented.
 
 The [imported structured client](../Examples/Language/OptionalBuffer.lean) uses
 a pure `Option (Nat × Nat)` helper and a library returning
@@ -185,6 +235,17 @@ unless the corresponding computation is present in the program.
 Support lexical `let`, `let mut`, assignment, sequencing, conditionals,
 indexed array traversal, `while`, first-order calls and recursive functions.
 The core records actual scope and binding, not a flat map of display names.
+
+Effectful `for i in [:stop]` and `for i in [start:stop]` use half-open ranges
+and unit steps, with an immutable iteration index. Endpoints retain their
+entry values: a literal or lexically immutable local/length can be reused;
+other expressions are captured once. `for x in xs` retains the entry buffer
+view but reads each cell from the current heap, so earlier writes through an
+alias are visible. Both forms elaborate to the existing while semantics;
+an early return leaves the enclosing function. Explicit steps, `break` and
+`continue` are not yet supported. The checked mutable traversal uses
+the same generated loop-contract interface; this is not native total-loop
+correspondence for `(pure)` declarations.
 
 The mutable extension uses one source state containing typed local values and
 the shared heap. Assignment changes a lexical value, not a named machine
@@ -319,44 +380,30 @@ shared update correspondence. Buffer self-assignment is a safe sequential copy,
 not an implicit snapshot or an extra no-alias requirement. Its real moves are
 still charged. Ordinary source proofs never supply these layout arguments.
 
-The indexed `for` notation below remains a design sketch. The checked
-[while traversal](../Examples/Language/Traversal.lean) already expresses the
-read/helper/branch/write body with an explicit mutable index. Its complete
-correctness and termination proof reuses native `Array.mapIdx`, `Array.set` and
-`Array.map` facts. The generated `boundedMap_loop1.variant_spec` needs an
-invariant and descent measure only on `i` and the heap; `xs` and `limit` are fixed
-by generated lexical preservation proofs. This preserves the buffer descriptor,
-not its contents. The complete source proof now composes native `Std.Do`
-operation rules and uses the strict `StateT` adequacy interface to recover actual
-result equations. It no longer unfolds WP, `Part.bind`, environments or control
-execution trees. Selecting the loop contract and mathematical contents remains
-explicit. The [compiled traversal](../Examples/Language/TraversalCompiled.lean)
-now reuses this source proof and establishes the same final array contents and
-a linear instruction bound for the actual halted invocation. Word ranges,
-preloaded heap representation and code/stack capacity remain explicit. Shared
-realization rules reuse source termination rather than requiring a second
-decreasing measure, and cost composition reuses the source array invariant.
-Fixed-capture realization and cost rules now reuse the generated lexical frame,
-so their invariants and potentials need only the mutable index and heap. A single
-native `round_spec` retains the mathematical guard result and the body contract
-at that guard's actual final locals and heap. Source correctness composes its
-native triple; the separate resource proofs extract its facts through
-`Part.TotalCorrectness.stateT_post_of_eq`. This removes repeated index/heap
-substitutions and guard-to-array-bound reasoning from the compiled consumer;
-no additional specification wrapper or execution relation is needed. Choosing
-the generated views/frames and applying the supplied contract remain explicit.
-The source function contract also exports `xs.PreservesOutside initial final`:
-every initially valid disjoint view retains its contents, including another slice
-of the same object. The strengthened compiled theorem retains this property at
-the same represented final heap without changing the program or its cost bound.
-Further named-loop automation remains separate work.
+The checked [traversal](../Examples/Language/Traversal.lean) writes its
+read/helper/branch/write loop as `for i in [:xs.length]`. Its mathematical proof
+uses native `Array.mapIdx`, `Array.set` and `Array.map` facts. Separate
+`guard_contract` and `body_contract` theorems supply the same actual iteration
+facts to `variant_contract`; no nested round triple or private execution adapter
+is needed. A generated `spec` applies the chosen loop contract directly in native
+`mvcgen`. The library restores fixed lexical captures and propagates control;
+the author supplies the prefix invariant, descent and actual heap-frame facts.
 
-The shared [native consequence rule](../Complexity/Control/Triple.lean),
-`Std.Do.Triple.mono`, directly reuses WP monotonicity. Combined with Std's
-`Triple.and`, it lets `loop_spec` and `loop_frame_spec` compose result and frame
-facts about the same guard/body action without unpacking `Part` execution
-witnesses. Their public statements, `round_spec`, source program and costs are
-unchanged; invariants, descent and genuine frame consequences remain explicit.
+The [compiled traversal](../Examples/Language/TraversalCompiled.lean) reuses
+those contracts through `StmtCostBound.while_contract_fixed` and
+`RealizationWP.while_contract_fixed_of_total`. The library obtains their
+postconditions from the actual guard/body executions. The cost proof supplies
+potential inequalities; the realization proof supplies finite-word ranges and
+reuses successful source termination, with no second decreasing argument.
+Generated views and compiler cost names remain visible in this connection-layer
+consumer; further work should hide those routine choices and infer structural
+budget expressions from the existing cost solver, not another operation table.
+
+The source and RAM results retain `xs.PreservesOutside initial final`: initially
+valid disjoint views keep their contents, including slices of one shared object.
+No global no-aliasing rule or unchanged-heap assumption replaces these facts.
+The shared `BlockSpec.mono` consequence rule reuses native WP monotonicity while
+keeping the initial condition available to mathematical postcondition reasoning.
 
 The [recursive factorial](../Examples/Language/Factorial.lean) makes a real
 source self-call on `n - 1`. Its native theorem is
@@ -562,6 +609,19 @@ Extending this fragment must retain the shared correspondence, not require
 a second author-written implementation induction. A domain-restricted
 total view needs explicit domain arguments or an implemented error result;
 neither backend range premises nor an invented default value replaces this.
+
+The next finite-loop extension must preserve its range origin during elaboration.
+The current effectful `for` immediately becomes a while block; removing the pure
+frontend's rejection alone would leave a noncomputable observer in the supposed
+native function. Retain the captured endpoints, private cursor and the same
+normalized body, emit a genuine native finite `for`, and prove its correspondence
+to the existing source while once in the library. The shared induction follows
+the number of remaining indices and propagates both outer-local updates and
+early function returns. The author should neither write a recursive replacement
+nor repeat a termination argument for an inherently finite range. Native body
+calls must use their existing checked correspondences, including supplied
+recursive hypotheses. This extension is planned, not implemented by the present
+effectful loop contracts.
 
 This does not accept arbitrary Lean definitions as runtime primitives. The
 frontend still controls the executable subset, supported operations and actual

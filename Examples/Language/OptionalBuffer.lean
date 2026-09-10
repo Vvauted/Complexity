@@ -37,19 +37,19 @@ source_program Library importing Metadata where
     let summary ← Metadata.classifyLength xs.length
     match summary with
     | none => return (0, none)
-    | some bounds =>
-      let view ← xs.slice bounds.2 bounds.1
-      return (bounds.1, some view)
+    | some (length, offset) =>
+      let view ← xs.slice offset length
+      return (length, some view)
 
 source_program Implementation importing Library where
   def bump (xs : Buffer Nat) : Nat × Option (Buffer Nat) := do
-    let info ← Library.inspect xs
-    match info.2 with
-    | none => return (info.1, none)
+    let (length, present) ← Library.inspect xs
+    match present with
+    | none => return (length, none)
     | some view =>
       let head ← view.get 0
       view.set 0 (head + 1)
-      return (info.1, some view)
+      return (length, some view)
 
 /-- The library returns the original borrowed handle exactly when nonempty. -/
 def inspectResult (xs : Buffer .nat) : Nat × Option (Buffer .nat) :=

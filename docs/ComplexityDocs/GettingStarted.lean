@@ -77,17 +77,37 @@ No time budget or word width appears in this mathematical theorem.
 Products and options are ordinary values too. The
 [structured client](##Examples.Language.OptionalBuffer) imports a helper returning
 `Option (Nat × Nat)`, then returns a length and optional borrowed buffer to its
-caller. That caller matches the result and modifies the first cell only when
+caller. Ordinary bindings such as `let (length, present) ← Library.inspect xs`
+and patterns such as `some (length, offset)` destructure that same actual result;
+the right-hand side is evaluated once. That caller modifies the first cell only when
 present. Its specification uses an ordinary `Array.modify` result and preservation
 of outside views, not register identities. Effectful programs use mathematical
 contracts rather than pretending that borrowed mutation is a pure operation.
 
 The [high-level proof guide](##ComplexityDocs.Verification) explains both modes.
 The pure subset supports scalars and their products/options, self-recursion and
-acyclic calls; pure `while`, mutual recursion and buffers remain unsupported.
-General effectful declarations support `while`, borrowed buffers, allocation and
+acyclic calls; pure `for`/`while`, mutually recursive pure families and buffers remain unsupported.
+General effectful declarations support `while`, bounded `for`, borrowed buffers, allocation and
 scoped scratch reclamation. This is a checked executable subset, not a compiler
 for arbitrary Lean definitions.
+
+The [mutable traversal](##Examples.Language.Traversal) writes its actual loop as:
+
+```lean
+for i in [:xs.length] do
+  let x ← xs.get i
+  let y ← increment x
+  if y ≤ limit then
+    xs.set i y
+  else
+    xs.set i limit
+```
+
+The mathematical specification is still an ordinary `Array.map`. The author
+supplies a processed-prefix invariant; generated loop contracts retain the
+actual heap and distinguish normal completion from function return. Buffer
+iteration reads current cells, not an entry-time snapshot. General aliasing is
+not disabled to simplify the proof.
 
 ## Connect the same function to RAM
 
@@ -108,6 +128,28 @@ The [scratch client](##Examples.Language.ScopeCompiled) adds its mathematical
 array contents and a physical workspace bound independent of repetition count.
 These invocation guarantees assume preloaded inputs; host loading and conversion
 are not silently included in the instruction count.
+
+## State a correctness-and-complexity task
+
+An array task can keep its mathematical specification separate from its runtime
+requirement, asking for one fixed implementation:
+
+```lean
+def Task : Prop :=
+  ∃ solve : Complexity.Language.ArrayFunction,
+    solve.Correct isLegal answer ∧
+    solve.TimeO isLegal (fun n => n + 1)
+```
+
+The [shared array interface](##Complexity.Computability.Ram.Compiler.Language.ArrayFunction)
+fixes input representation and result observation. `Correct` requires successful
+source evaluation on every legal array without a time budget. `TimeO` uses
+mathlib's `IsBigO` and requires actual halted executions of that same compiled
+function, uniformly over all admitted word widths. The width rule is a fixed
+constant multiple of logarithmic input size/value width; a candidate cannot
+replace it by a predicate that excludes inconvenient inputs. The shared result
+rule connects the mathematical answer and instruction bound to one execution.
+This is explicitly a preloaded-array invocation boundary, not an input loader.
 
 ## Work directly with word-RAM source
 

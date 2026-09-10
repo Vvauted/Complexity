@@ -4,7 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.CostBound
-import Complexity.Language.Eval.Locals
+import Complexity.Language.Eval.Locals.Specification
 
 /-!
 # Loop cost bounds in ordinary local coordinates
@@ -251,6 +251,90 @@ theorem while_observe_fixed {signatures : List Signature} {Γ : List Ty} {result
     · exact ⟨by simp, by simpa only [Equiv.apply_symm_apply] using initial⟩
   simp only [Equiv.apply_symm_apply] at bound
   exact @bound
+
+/-- Bound a loop directly from its independent guard and body contracts.
+The fixed-capture view is the generated ordinary-local view. Mathematical
+postconditions, not execution equations, supply the invariant and potential
+obligations. The contracts remain budget-free; this rule only transports the
+existing loop cost rule and its actual false-exit and early-return charges. -/
+theorem while_contract_fixed {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    {Mutable Captured : Type} (view : Env Γ ≃ Mutable × Captured)
+    {program : Complexity.Language.Program signatures}
+    {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    (guardFrame : ∀ {entry finish : Complexity.Language.State Γ} {control : Control .bool},
+      Complexity.Language.Exec program guard entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (bodyFrame : ∀ {entry finish : Complexity.Language.State Γ} {control : Control result},
+      Complexity.Language.Exec program body entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (captures : Captured)
+    {invariant bodyPre : Mutable → Heap → Prop}
+    {guardPost : Mutable → Heap → Bool → Mutable × Captured → Heap → Prop}
+    {bodyNormal : Mutable → Heap → Mutable × Captured → Heap → Prop}
+    {bodyReturned : Mutable → Heap → Value result → Mutable × Captured → Heap → Prop}
+    {potential guardBound : Mutable → Heap → Nat}
+    {bodyBound : Mutable → Heap → Mutable → Heap → Nat}
+    (guardSpec : Complexity.Language.Stmt.BlockSpec
+      (fun mutable => Complexity.Language.Stmt.observe view guard program (mutable, captures))
+      invariant (fun _ _ _ _ => False) guardPost)
+    (bodySpec : Complexity.Language.Stmt.BlockSpec
+      (fun mutable => Complexity.Language.Stmt.observe view body program (mutable, captures))
+      bodyPre bodyNormal bodyReturned)
+    (enterBody : ∀ mutable heap afterGuard afterGuardHeap, invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      bodyPre afterGuard afterGuardHeap)
+    (guardCost : ∀ mutable heap, invariant mutable heap →
+      StmtCostBound program guard ⟨view.symm (mutable, captures), heap⟩
+        (guardBound mutable heap))
+    (bodyCost : ∀ mutable heap afterGuard afterGuardHeap, invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      StmtCostBound program body ⟨view.symm (afterGuard, captures), afterGuardHeap⟩
+        (bodyBound mutable heap afterGuard afterGuardHeap))
+    (preserve : ∀ mutable heap afterGuard afterGuardHeap afterBody afterBodyHeap,
+      invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      bodyNormal afterGuard afterGuardHeap (afterBody, captures) afterBodyHeap →
+      invariant afterBody afterBodyHeap)
+    (falseExit : ∀ mutable heap afterGuard afterGuardHeap, invariant mutable heap →
+      guardPost mutable heap false (afterGuard, captures) afterGuardHeap →
+      guardBound mutable heap + 11 ≤ potential mutable heap)
+    (normalStep : ∀ mutable heap afterGuard afterGuardHeap afterBody afterBodyHeap,
+      invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      bodyNormal afterGuard afterGuardHeap (afterBody, captures) afterBodyHeap →
+      guardBound mutable heap + bodyBound mutable heap afterGuard afterGuardHeap +
+        potential afterBody afterBodyHeap + 10 ≤ potential mutable heap)
+    (returnExit : ∀ mutable heap afterGuard afterGuardHeap finalMutable finalHeap value,
+      invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      bodyReturned afterGuard afterGuardHeap value (finalMutable, captures) finalHeap →
+      guardBound mutable heap + bodyBound mutable heap afterGuard afterGuardHeap + 17 ≤
+        potential mutable heap)
+    {mutable : Mutable} {heap : Heap} (initial : invariant mutable heap) :
+    StmtCostBound program (.while guard body) ⟨view.symm (mutable, captures), heap⟩
+      (potential mutable heap) := by
+  apply while_observe_fixed view (Equiv.refl _) guardFrame bodyFrame captures
+    (invariant := invariant) (potential := potential) (guardBound := guardBound)
+    (bodyBound := bodyBound)
+  · exact guardCost
+  · intro mutable heap afterGuard afterGuardHeap current tested
+    exact bodyCost _ _ _ _ current (guardSpec.post_of_eq current tested)
+  · intro mutable heap afterGuard afterGuardHeap afterBody afterBodyHeap current tested iterated
+    have ready := guardSpec.post_of_eq current tested
+    exact preserve _ _ _ _ _ _ current ready
+      (bodySpec.post_of_eq (enterBody _ _ _ _ current ready) iterated)
+  · intro mutable heap afterGuard afterGuardHeap current tested
+    exact falseExit _ _ _ _ current (guardSpec.post_of_eq current tested)
+  · intro mutable heap afterGuard afterGuardHeap afterBody afterBodyHeap current tested iterated
+    have ready := guardSpec.post_of_eq current tested
+    exact normalStep _ _ _ _ _ _ current ready
+      (bodySpec.post_of_eq (enterBody _ _ _ _ current ready) iterated)
+  · intro mutable heap afterGuard afterGuardHeap finalMutable finalHeap value current tested iterated
+    have ready := guardSpec.post_of_eq current tested
+    exact returnExit _ _ _ _ _ _ value current ready
+      (bodySpec.post_of_eq (enterBody _ _ _ _ current ready) iterated)
+  · exact initial
 
 end StmtCostBound
 

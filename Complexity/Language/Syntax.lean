@@ -41,6 +41,18 @@ use `none`, `some value` and an exhaustive `match` with `none` and `some value`
 branches. The payload exists only in the latter branch; leaving it preserves
 the actual heap and outer mutable locals. Expected parameter, binding and
 return types supply the type of `none`; otherwise give an ordinary type annotation.
+Immutable bindings also accept nested product patterns and `_`, including
+`let (x, y) ← call` and `some (x, y)` branches. The right-hand side is evaluated
+once; named fields are obtained by actual primitive projections and copies.
+
+Effectful source functions support `for i in [:stop]` and `for i in [start:stop]`
+with frozen bound values, unit step and an immutable index. A literal, immutable
+Nat local or immutable buffer's length may be reused directly in the guard;
+the actual repeated guard work remains counted. Other bounds are captured once.
+`for x in xs` borrows a
+fixed buffer view and reads its current cell on each iteration, not a snapshot.
+These constructs lower to the existing while semantics and named-loop rules.
+Pure `for`, explicit range steps, `break` and `continue` are not supported yet.
 
 A named function returning `Unit` may be called directly as a `do` statement.
 Other return types require an explicit binding; results are not silently discarded.
@@ -770,7 +782,7 @@ private def loopProofBody (site : BlockSite) : MacroM (Array (TSyntax `doElem)) 
   let error ← freshProofName site.name `error
   let invocation := scopeApplication site.scope site.name
   let mut elements := #[← `(doElem|
-    let ($control:ident, $locals:ident) ← ExceptT.lift $invocation),
+    let ($control:ident, $locals:ident) ← MonadLift.monadLift $invocation),
     ← `(doElem| match $control:ident with
       | .normal => pure ()
       | .returned $value:ident => return $value:ident
@@ -880,10 +892,65 @@ private def nonePattern (pattern : TSyntax `term) : Bool :=
   | `(none) | `(Option.none) | `(.none) => true
   | _ => false
 
-private def somePattern? (pattern : TSyntax `term) : Option (TSyntax `ident) :=
+private def somePattern? (pattern : TSyntax `term) : Option (TSyntax `term) :=
   match pattern with
-  | `(some $name:ident) | `(Option.some $name:ident) | `(.some $name:ident) => some name
+  | `(some $payload) | `(Option.some $payload) | `(.some $payload) => some payload
   | _ => none
+
+private inductive BindingPattern where
+  | wildcard
+  | name (value : TSyntax `ident)
+  | pair (left right : BindingPattern)
+  | typed (pattern : BindingPattern) (type : Ty)
+
+private instance : Nonempty BindingPattern := ⟨.wildcard⟩
+
+private partial def parseBindingPattern (pattern : TSyntax `term) : MacroM BindingPattern := do
+  match pattern with
+  | `(_) => return .wildcard
+  | `(($pattern:term : $type:term)) =>
+      return .typed (← parseBindingPattern pattern) (← parseType type)
+  | `(($pattern:term)) => parseBindingPattern pattern
+  | `(($left, $right)) | `(Prod.mk $left $right) =>
+      return .pair (← parseBindingPattern left) (← parseBindingPattern right)
+  | `($name:ident) => return .name name
+  | _ => Macro.throwErrorAt pattern "expected a name, _, or a nested product pattern"
+
+private def BindingPattern.names : BindingPattern → List Name
+  | .wildcard => []
+  | .name binder => [binder.getId]
+  | .pair left right => left.names ++ right.names
+  | .typed pattern _ => pattern.names
+
+private def checkedBindingPattern (pattern : TSyntax `term) : MacroM BindingPattern := do
+  let parsed ← parseBindingPattern pattern
+  unless parsed.names.Nodup do
+    Macro.throwErrorAt pattern "a source pattern cannot bind the same name twice"
+  return parsed
+
+-- The value supplied here has already been evaluated once. Project only used
+-- fields, sharing each nested product projection; even ignored patterns are
+-- checked against their actual source type.
+private def patternBindings (pattern : BindingPattern) (type : Ty)
+    (value : TSyntax `term) : MacroM (Array (TSyntax `doElem)) := do
+  match pattern with
+  | .wildcard => return #[]
+  | .name name =>
+      return #[← `(doElem| let $name:ident : $(← valueTypeTerm type) := $value)]
+  | .typed pattern expected =>
+      expectType value type expected
+      patternBindings pattern type value
+  | .pair left right =>
+      let .prod leftType rightType := type
+        | Macro.throwErrorAt value "a product pattern requires a source product"
+      let (bindings, base) ← if value.raw.isIdent then pure (#[], value) else do
+        let name ← freshProofName value `pattern
+        pure (#[← `(doElem| let $name:ident : $(← valueTypeTerm type) := $value)],
+          (⟨name.raw⟩ : TSyntax `term))
+      let leftBindings ← patternBindings left leftType (← `(Prod.fst $base))
+      let rightBindings ← patternBindings right rightType (← `(Prod.snd $base))
+      let fields := leftBindings ++ rightBindings
+      return if fields.isEmpty then #[] else bindings ++ fields
 
 private def normalizeElement (functions : Array Callee) (scope : Scope) (result : Ty)
     (element : TSyntax `doElem) :
@@ -908,6 +975,27 @@ private def normalizeElement (functions : Array Callee) (scope : Scope) (result 
   | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
       let (bindings, action) ← normalizeCall functions action
       return (bindings, ← `(doElem| let $name:ident $[: $annotation:term]? ← $action:term))
+  | `(doElem| let $pattern:term := $value:term) =>
+      let normalized ← normalizeValue value false
+      if !normalized.bindings.isEmpty then
+        return (normalized.bindings,
+          ← `(doElem| let $pattern:term := $(normalized.value)))
+      let pattern ← checkedBindingPattern pattern
+      let parsed ← parsePrimitive scope normalized.value
+      let name ← freshProofName value `pattern
+      let initial ← `(doElem| let $name:ident : $(← valueTypeTerm parsed.type) := $(normalized.value))
+      let expanded := #[initial] ++ (← patternBindings pattern parsed.type ⟨name.raw⟩)
+      return (expanded.pop, expanded.back!)
+  | `(doElem| let $pattern:term ← $action:term) =>
+      let (bindings, action) ← normalizeCall functions action
+      if !bindings.isEmpty then
+        return (bindings, ← `(doElem| let $pattern:term ← $action:term))
+      let pattern ← checkedBindingPattern pattern
+      let (type, _, _) ← parseBinding functions scope action
+      let name ← freshProofName action `pattern
+      let initial ← `(doElem| let $name:ident ← $action:term)
+      let expanded := #[initial] ++ (← patternBindings pattern type ⟨name.raw⟩)
+      return (expanded.pop, expanded.back!)
   | `(doElem| $name:ident := $value:term) =>
       let (binding, _) ← lookupBinding scope name
       let normalized ← normalizeValue value false (some binding.type)
@@ -929,6 +1017,23 @@ private def normalizeElement (functions : Array Callee) (scope : Scope) (result 
       return (bindings, ← `(doElem| $action:term))
   | _ => return (#[], element)
 
+private partial def stableRangeBound (scope : Scope) (value : TSyntax `term) : MacroM Bool := do
+  match value with
+  | `(($value:term)) => stableRangeBound scope value
+  | `($_:num) => return true
+  | _ =>
+      if let some (receiver, field) := fieldAccess? value then
+        if field == `length then
+          if let `($name:ident) := receiver then
+            let (binding, _) ← lookupBinding scope name
+            return !binding.isMutable && match binding.type with
+              | .buffer _ => true
+              | _ => false
+      if let `($name:ident) := value then
+        let (binding, _) ← lookupBinding scope name
+        return !binding.isMutable && binding.type == .nat
+      return false
+
 private def statementCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident)
     (recurse : Scope → Ty → List (TSyntax `doElem) → Nat → MacroM LoweredBlock)
@@ -939,19 +1044,24 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       if nonePattern first then
         match somePattern? second with
         | some payload => pure (firstBody, payload, secondBody)
-        | none => Macro.throwErrorAt second "expected a 'some name' option pattern"
+        | none => Macro.throwErrorAt second "expected a 'some pattern' option branch"
       else if nonePattern second then
         match somePattern? first with
         | some payload => pure (secondBody, payload, firstBody)
-        | none => Macro.throwErrorAt first "expected a 'some name' option pattern"
+        | none => Macro.throwErrorAt first "expected a 'some pattern' option branch"
       else Macro.throwErrorAt element "an option match needs exactly none and some branches"
     let option ← parseAtom scope value
     let .option payloadType := option.type
       | Macro.throwErrorAt value "source matching currently supports Option values"
-    let payloadName ← freshProofName payload payload.getId
+    let pattern ← checkedBindingPattern payload
+    let payloadName ← freshProofName payload `payload
+    let (sourceName, bindings) ← match pattern with
+      | .name name => pure (name.getId, #[])
+      | _ => do
+          pure (payloadName.getId, ← patternBindings pattern payloadType ⟨payloadName.raw⟩)
     let noneCode ← recurse scope result (getDoElems noneBody).toList nextIndex
-    let someCode ← recurse (⟨some payload.getId, payloadName, payloadType, false⟩ :: scope)
-      result (getDoElems someBody).toList (nextIndex + noneCode.sites.size)
+    let someCode ← recurse (⟨some sourceName, payloadName, payloadType, false⟩ :: scope)
+      result (bindings.toList ++ (getDoElems someBody).toList) (nextIndex + noneCode.sites.size)
     let normal ← `(doElem| pure ())
     let noneBody := noneCode.proofSequence normal
     let someBody := someCode.proofSequence normal
@@ -1001,6 +1111,45 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       let code := loopMember site "Code"
       return ⟨⟨code.raw⟩, ← loopProofBody site, true,
         guardCode.sites ++ bodyCode.sites |>.push site⟩
+  | `(doElem| for $pattern:term in $collection:term do $body:doSeq) =>
+      let isRange := match collection with
+        | `([ : $_stop]) | `([ $_start : $_stop ]) => true
+        | _ => false
+      let cursorName := if isRange then match pattern with
+          | `($name:ident) => name.getId.eraseMacroScopes
+          | _ => `index
+        else `index
+      let cursor ← freshProofName element cursorName
+      let limit ← freshProofName element `stop
+      let rangeInitial (start stop : TSyntax `term) := do
+        let cursorBinding ← `(doElem| let mut $cursor:ident : Nat := $start)
+        if ← stableRangeBound scope stop then
+          pure (#[cursorBinding], stop)
+        else
+          pure (#[cursorBinding, ← `(doElem| let $limit:ident : Nat := $stop)],
+            (⟨limit.raw⟩ : TSyntax `term))
+      let (initial, stop, elementBinding) ← match collection with
+        | `([ : $stop]) => do
+            let (initial, stop) ← rangeInitial (← `(0)) stop
+            pure (initial, stop,
+              ← `(doElem| let $pattern:term := $cursor:ident))
+        | `([ $start : $stop ]) => do
+            let (initial, stop) ← rangeInitial start stop
+            pure (initial, stop,
+              ← `(doElem| let $pattern:term := $cursor:ident))
+        | `([ $_start : $_stop : $_step ]) | `([ : $_stop : $_step ]) =>
+            Macro.throwErrorAt collection "source for currently supports unit-step bounded ranges"
+        | _ => do
+            let buffer ← freshProofName collection `buffer
+            pure (#[← `(doElem| let $buffer:ident := $collection),
+              ← `(doElem| let $limit:ident : Nat := ($buffer:ident).length),
+              ← `(doElem| let mut $cursor:ident : Nat := 0)],
+              (⟨limit.raw⟩ : TSyntax `term),
+              ← `(doElem| let $pattern:term ← ($buffer:ident).get $cursor:ident))
+      let advance ← `(doElem| $cursor:ident := $cursor:ident + 1)
+      let iteration := doSequence (#[elementBinding] ++ getDoElems body ++ #[advance])
+      let loop ← `(doElem| while $cursor:ident < $stop do $iteration:doSeq)
+      recurse scope result (initial.toList ++ [loop]) nextIndex
   | `(doElem| with_scratch do $body:doSeq) =>
       let name := generatedName family owner s!"_scope{nextIndex}"
       let bodyCode ← recurse scope result (getDoElems body).toList (nextIndex + 1)
@@ -1013,7 +1162,7 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
   | `(doElem| $action:term) => actionCode functions scope action
   | _ =>
       Macro.throwErrorAt element
-        "unsupported source statement; use let, let mut, assignment, a named call, buffer access or allocation, with_scratch, if/then/else, Option match, while, or return"
+        "unsupported source statement; use let, let mut, assignment, a named call, buffer access or allocation, with_scratch, if/then/else, Option match, while, bounded for, or return"
 
 private partial def blockCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident) (scope : Scope) (result : Ty)
@@ -1245,7 +1394,9 @@ private def loopCaptureFrameDeclarations (program : TSyntax `ident) (site : Bloc
           (by simp [$preservedArgs,*])) $capturesProof)
   let mut declarations := #[]
   for (suffix, codeSuffix, result) in
-      [("guard_preservesCaptures", "Guard", Ty.bool), ("body_preservesCaptures", "Body", site.result)] do
+      [("guard_preservesCaptures", "Guard", Ty.bool),
+       ("body_preservesCaptures", "Body", site.result),
+       ("preservesCaptures", "Code", site.result)] do
     let name := loopMember site suffix
     let code := loopMember site codeSuffix
     let result ← typeTerm result
@@ -1259,6 +1410,182 @@ private def loopCaptureFrameDeclarations (program : TSyntax `ident) (site : Bloc
             ($captureView:ident ($entry:ident).locals).2 := by
         simp only [$captureViewApply:ident]
         exact $capturesProof)).raw
+  return declarations
+
+private def loopContractDeclarations (program : TSyntax `ident) (site : BlockSite) :
+    MacroM (Array Syntax) := do
+  let mutableScope := site.scope.filter (·.isMutable)
+  let capturedScope := site.scope.filter (! ·.isMutable)
+  let afterScope := (← freshMutableScope site "after_").filter (·.isMutable)
+  let mutableType := loopMember site "Mutable"
+  let capturedType := loopMember site "Captured"
+  let localsType := loopMember site "Locals"
+  let captureView := loopMember site "CaptureView"
+  let captures ← scopeTuple capturedScope
+  let before ← freshProofName site.name `before
+  let after ← freshProofName site.name `after
+  let heap ← freshProofName site.name `heap
+  let finish ← freshProofName site.name `finish
+  let current ← freshProofName site.name `current
+  let value ← freshProofName site.name `value
+  let pre ← freshProofName site.name `pre
+  let normal ← freshProofName site.name `normal
+  let returned ← freshProofName site.name `returned
+  let beforeFields ← tupleFields mutableScope ⟨before.raw⟩
+  let mutableAfterFields ← tupleFields mutableScope ⟨after.raw⟩
+  let afterFields ← tupleFields mutableScope (← `(($after:ident).1))
+  let nativeAfterFields := (splitScopeFields site.scope
+    (← tupleFields site.scope ⟨after.raw⟩)).1
+  let sourceBefore := mutableScope.toArray.map fun binding => (⟨binding.proofName.raw⟩ : TSyntax `term)
+  let app (name : TSyntax `ident) (arguments : Array (TSyntax `term)) :=
+    Lean.Syntax.mkApp ⟨name.raw⟩ arguments
+  let preType ← quantifyScope mutableScope (← `(Complexity.Language.Heap → Prop))
+  let normalType ← quantifyScope mutableScope (← `(Complexity.Language.Heap →
+    $(← quantifyScope afterScope (← `(Complexity.Language.Heap → Prop)))))
+  let rawPre ← `(fun ($before:ident : $mutableType:ident)
+    ($heap:ident : Complexity.Language.Heap) => $(app pre (beforeFields.push ⟨heap.raw⟩)))
+  let rawNormal ← `(fun ($before:ident : $mutableType:ident)
+    ($heap:ident : Complexity.Language.Heap)
+    ($after:ident : $mutableType:ident × $capturedType:ident)
+    ($finish:ident : Complexity.Language.Heap) =>
+      $(app normal (beforeFields ++ #[⟨heap.raw⟩] ++ afterFields ++ #[⟨finish.raw⟩])))
+  let mutableNormal ← `(fun ($before:ident : $mutableType:ident)
+    ($heap:ident : Complexity.Language.Heap) ($after:ident : $mutableType:ident)
+    ($finish:ident : Complexity.Language.Heap) =>
+      $(app normal (beforeFields ++ #[⟨heap.raw⟩] ++ mutableAfterFields ++ #[⟨finish.raw⟩])))
+  let mut declarations := #[]
+  for (suffix, observationSuffix, codeSuffix, result) in
+      [("guard_contract", "guard", "Guard", Ty.bool),
+       ("body_contract", "body", "Body", site.result),
+       ("contract", "", "Code", site.result)] do
+    let name := loopMember site suffix
+    let iffName := loopMember site (suffix ++ "_iff")
+    let observation := if observationSuffix.isEmpty then site.name
+      else loopMember site observationSuffix
+    let observed := loopMember site
+      (if observationSuffix.isEmpty then "observe" else observationSuffix ++ "_observe")
+    let code := loopMember site codeSuffix
+    let resultType ← typeTerm result
+    let result ← valueTypeTerm result
+    let returnedType ← quantifyScope mutableScope (← `(Complexity.Language.Heap → $result →
+      $(← quantifyScope afterScope (← `(Complexity.Language.Heap → Prop)))))
+    let rawReturned ← `(fun ($before:ident : $mutableType:ident)
+      ($heap:ident : Complexity.Language.Heap) ($value:ident : $result)
+      ($after:ident : $mutableType:ident × $capturedType:ident)
+      ($finish:ident : Complexity.Language.Heap) =>
+        $(app returned (beforeFields ++ #[⟨heap.raw⟩, ⟨value.raw⟩] ++
+          afterFields ++ #[⟨finish.raw⟩])))
+    let mutableReturned ← `(fun ($before:ident : $mutableType:ident)
+      ($heap:ident : Complexity.Language.Heap) ($value:ident : $result)
+      ($after:ident : $mutableType:ident) ($finish:ident : Complexity.Language.Heap) =>
+        $(app returned (beforeFields ++ #[⟨heap.raw⟩, ⟨value.raw⟩] ++
+          mutableAfterFields ++ #[⟨finish.raw⟩])))
+    let type ← quantifyScope capturedScope
+      (← `($preType → $normalType → $returnedType → Prop))
+    let definition ← curryScope capturedScope (← `(fun $pre:ident $normal:ident $returned:ident =>
+      Complexity.Language.Stmt.BlockSpec
+        (fun ($before:ident : $mutableType:ident) =>
+          Complexity.Language.Stmt.observe $captureView:ident $code:ident $program:ident
+            ($before:ident, $captures)) $rawPre $rawNormal $rawReturned))
+    declarations := declarations.push (← `(command|
+      /-- Relational total correctness with ordinary mutable parameters and fixed captures.
+      The existing block contract retains both actual heaps and excludes faults. -/
+      abbrev $name:ident : $type := $definition)).raw
+    let contract := app name
+      ((capturedScope.toArray.map fun binding => ⟨binding.proofName.raw⟩) ++
+        #[⟨pre.raw⟩, ⟨normal.raw⟩, ⟨returned.raw⟩])
+    let normalPost := app normal (sourceBefore ++ #[⟨heap.raw⟩] ++
+      nativeAfterFields ++ #[⟨finish.raw⟩])
+    let returnedPost := app returned (sourceBefore ++ #[⟨heap.raw⟩, ⟨value.raw⟩] ++
+      nativeAfterFields ++ #[⟨finish.raw⟩])
+    let ordinary ← quantifyScope mutableScope (← `(∀ ($heap:ident : Complexity.Language.Heap),
+      $(app pre (sourceBefore.push ⟨heap.raw⟩)) →
+      Std.Do.Triple (m := StateT Complexity.Language.Heap Part) (ps := .arg _ .pure)
+        $(scopeApplication site.scope observation)
+        (fun $current:ident => ⟨$current:ident = $heap:ident⟩)
+        (fun outcome $finish:ident => ⟨match outcome.1 with
+          | .normal => let $after:ident : $localsType:ident := outcome.2; $normalPost
+          | .returned $value:ident =>
+              let $after:ident : $localsType:ident := outcome.2; $returnedPost
+          | .fault _ => False⟩, ⟨⟩)))
+    let iffType ← quantifyScope capturedScope (← `(∀ ($pre:ident : $preType)
+      ($normal:ident : $normalType) ($returned:ident : $returnedType), $contract ↔ $ordinary))
+    let regroup := loopMember site "regroup_apply"
+    let regroupSymm := loopMember site "regroup_symm_apply"
+    let outcome ← freshProofName site.name `outcome
+    -- The generic and declaration-specialized matches have distinct motives.
+    -- Compare only their actual control branches, leaving the action opaque.
+    let postProof ← `(by
+      apply Iff.of_eq
+      congr 1
+      apply Prod.ext
+      · funext $outcome:ident $finish:ident
+        rcases $outcome:ident with ⟨control, locals⟩
+        cases control <;> rfl
+      · rfl)
+    let mut matchProof ← `(forall_congr' (fun ($heap:ident : Complexity.Language.Heap) =>
+      imp_congr_right (fun _ => $postProof)))
+    for binding in mutableScope.reverse do
+      let type ← valueTypeTerm binding.type
+      matchProof ← `(forall_congr' (fun ($(binding.proofName):ident : $type) => $matchProof))
+    let proof ← curryScope capturedScope (← `(fun $pre:ident $normal:ident $returned:ident => by
+      simp only [$name:ident, $captureView:ident, Complexity.Language.Stmt.observe_reindex]
+      simp only [Complexity.Language.Stmt.BlockSpec.map_iff]
+      simp only [$observed:ident, $regroup:ident, $regroupSymm:ident,
+        Complexity.Language.Stmt.BlockSpec,
+        $mutableType:ident, Prod.forall, forall_const]
+      exact $matchProof))
+    declarations := declarations.push (← `(command|
+      open scoped Part.TotalCorrectness in
+      /-- Introduce named mutable variables directly, without unpacking internal coordinates. -/
+      theorem $iffName:ident : $iffType := $proof)).raw
+    let specName := loopMember site
+      (if observationSuffix.isEmpty then "spec" else observationSuffix ++ "_spec")
+    let frame := loopMember site
+      (if observationSuffix.isEmpty then "preservesCaptures"
+       else observationSuffix ++ "_preservesCaptures")
+    let view := loopMember site "View"
+    let regroupName := loopMember site "Regroup"
+    let specification ← freshProofName site.name `specification
+    let post ← freshProofName site.name `post
+    let postType ← `(Std.Do.PostCond
+      (Complexity.Language.Control $resultType × $localsType:ident)
+      (.arg Complexity.Language.Heap .pure))
+    let finalValues := afterScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+    let capturedValues := capturedScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+    let finalLocals ← fieldsTuple (mergeScopeFields site.scope finalValues capturedValues)
+    let normalConsequence ← quantifyScope afterScope
+      (← `(∀ ($finish:ident : Complexity.Language.Heap),
+        $(app normal (sourceBefore ++ #[⟨heap.raw⟩] ++ finalValues ++ #[⟨finish.raw⟩])) →
+        (($post:ident).1 (.normal, $finalLocals) $finish:ident).down))
+    let returnedConsequenceBody ← quantifyScope afterScope
+      (← `(∀ ($finish:ident : Complexity.Language.Heap),
+        $(app returned (sourceBefore ++ #[⟨heap.raw⟩, ⟨value.raw⟩] ++
+          finalValues ++ #[⟨finish.raw⟩])) →
+        (($post:ident).1 (.returned $value:ident, $finalLocals) $finish:ident).down))
+    let returnedConsequence ← `(∀ ($value:ident : $result), $returnedConsequenceBody)
+    let nativeSpec ← quantifyScope mutableScope (← `(∀ ($post:ident : $postType),
+      Std.Do.Triple (m := StateT Complexity.Language.Heap Part) (ps := .arg _ .pure)
+        $(scopeApplication site.scope observation)
+        (fun $heap:ident => ⟨$(app pre (sourceBefore.push ⟨heap.raw⟩)) ∧
+          $normalConsequence ∧ $returnedConsequence⟩) $post:ident))
+    let specType ← quantifyScope capturedScope (← `(∀ {$pre:ident : $preType}
+      {$normal:ident : $normalType} {$returned:ident : $returnedType}
+      ($specification:ident : $contract), $nativeSpec))
+    let specProof ← curryScope mutableScope (← `(fun $post:ident => by
+      simpa only [$regroupSymm:ident, $observed:ident, Prod.forall, forall_const] using
+        Complexity.Language.Stmt.observe_fixed_spec $view:ident $regroupName:ident
+          $program:ident $code:ident $frame:ident $captures
+          (pre := $rawPre) (normal := $mutableNormal) (returned := $mutableReturned)
+          $specification:ident
+          $(← scopeTuple mutableScope) $post:ident))
+    let specProof ← curryScope capturedScope
+      (← `(fun {$pre:ident} {$normal:ident} {$returned:ident} $specification:ident => $specProof))
+    declarations := declarations.push (← `(command|
+      open scoped Part.TotalCorrectness in
+      /-- Apply a chosen mathematical contract to the native block action.
+      Continuations see ordinary mutable outputs; proved frames restore the fixed captures. -/
+      theorem $specName:ident : $specType := $specProof)).raw
   return declarations
 
 private def loopTerminationStepType (site : BlockSite)
@@ -1307,6 +1634,128 @@ private def loopTerminationStepType (site : BlockSite)
       $guardInvocation (fun $currentHeap:ident => ⟨$currentHeap:ident = $startHeap:ident⟩)
       (fun $guardOutcome:ident $afterGuardHeap:ident => ⟨$guardPost⟩, ⟨⟩))
   quantifyScope (site.scope.filter (·.isMutable)) step
+
+private def loopIndependentContractDeclaration (program : TSyntax `ident) (site : BlockSite)
+    (wellFoundedMode : Bool) : MacroM Syntax := do
+  let name := loopMember site
+    (if wellFoundedMode then "wellFounded_contract" else "variant_contract")
+  let mutableScope := site.scope.filter (·.isMutable)
+  let capturedScope := site.scope.filter (! ·.isMutable)
+  let afterScope := (← freshMutableScope site "after_").filter (·.isMutable)
+  let mutableType := loopMember site "Mutable"
+  let captureView := loopMember site "CaptureView"
+  let invariant ← freshProofName site.name `invariant
+  let progress ← freshProofName site.name (if wellFoundedMode then `relation else `variant)
+  let wellFounded ← freshProofName site.name `wellFounded
+  let ready ← freshProofName site.name `ready
+  let normal ← freshProofName site.name `normal
+  let returned ← freshProofName site.name `returned
+  let guardSpec ← freshProofName site.name `guardSpec
+  let bodySpec ← freshProofName site.name `bodySpec
+  let before ← freshProofName site.name `before
+  let after ← freshProofName site.name `after
+  let heap ← freshProofName site.name `heap
+  let finish ← freshProofName site.name `finish
+  let value ← freshProofName site.name `value
+  let again ← freshProofName site.name `again
+  let initial ← freshProofName site.name `initial
+  let captures ← scopeTuple capturedScope
+  let capturedValues := capturedScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+  let beforeValues := mutableScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+  let afterValues := afterScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+  let app (function : TSyntax `ident) (arguments : Array (TSyntax `term)) :=
+    Lean.Syntax.mkApp ⟨function.raw⟩ arguments
+  let contract (suffix : String) (pre normal returned : TSyntax `term) :=
+    app (loopMember site suffix) (capturedValues ++ #[pre, normal, returned])
+  let ignoreStart (body : TSyntax `term) : MacroM (TSyntax `term) := do
+    let mut result ← `(fun _ => $body)
+    for _ in mutableScope do result ← `(fun _ => $result)
+    return result
+  let predicateType ← quantifyScope mutableScope (← `(Complexity.Language.Heap → Prop))
+  let readyType ← quantifyScope mutableScope (← `(Complexity.Language.Heap →
+    $(← quantifyScope afterScope (← `(Complexity.Language.Heap → Prop)))))
+  let result ← valueTypeTerm site.result
+  let returnedType ← `($result → $predicateType)
+  let progressType ← if wellFoundedMode then
+      `(($mutableType:ident × Complexity.Language.Heap) →
+        ($mutableType:ident × Complexity.Language.Heap) → Prop)
+    else quantifyScope mutableScope (← `(Complexity.Language.Heap → Nat))
+  let falseNormal ← ignoreStart
+    (← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) => False)))
+  let guardReturned ← curryScope mutableScope
+    (← `(fun ($heap:ident : Complexity.Language.Heap) ($again:ident : Bool) =>
+      $(← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+        if $again:ident then
+          $(app ready (beforeValues ++ #[⟨heap.raw⟩] ++ afterValues ++ #[⟨finish.raw⟩]))
+        else $(app normal (afterValues.push ⟨finish.raw⟩)))))))
+  let guardType := contract "guard_contract" ⟨invariant.raw⟩ falseNormal guardReturned
+  let decrease ← if wellFoundedMode then
+      `($progress:ident ($(← scopeTuple afterScope), $finish:ident)
+        ($(← scopeTuple mutableScope), $heap:ident))
+    else
+      `($(app progress (afterValues.push ⟨finish.raw⟩)) <
+        $(app progress (beforeValues.push ⟨heap.raw⟩)))
+  let bodyNormal ← ignoreStart
+    (← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+      $(app invariant (afterValues.push ⟨finish.raw⟩)) ∧ $decrease)))
+  let finalReturnedBody ← curryScope afterScope
+    (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+      $(app returned (#[⟨value.raw⟩] ++ afterValues ++ #[⟨finish.raw⟩]))))
+  let finalReturned ← ignoreStart (← `(fun ($value:ident : $result) => $finalReturnedBody))
+  let bodyType ← quantifyScope mutableScope (← `(∀ ($heap:ident : Complexity.Language.Heap),
+    $(app invariant (beforeValues.push ⟨heap.raw⟩)) →
+    $(contract "body_contract" (app ready (beforeValues.push ⟨heap.raw⟩))
+      bodyNormal finalReturned)))
+  let finalNormal ← ignoreStart
+    (← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+      $(app normal (afterValues.push ⟨finish.raw⟩)))))
+  let conclusion := contract "contract" ⟨invariant.raw⟩ finalNormal finalReturned
+  let mut type ← `(∀ ($ready:ident : $readyType) ($normal:ident : $predicateType)
+    ($returned:ident : $returnedType) ($guardSpec:ident : $guardType)
+    ($bodySpec:ident : $bodyType), $conclusion)
+  if wellFoundedMode then
+    type ← `(∀ ($wellFounded:ident : WellFounded $progress:ident), $type)
+  type ← quantifyScope capturedScope (← `(∀ ($invariant:ident : $predicateType)
+    ($progress:ident : $progressType), $type))
+  let beforeFields ← tupleFields mutableScope ⟨before.raw⟩
+  let afterFields ← tupleFields mutableScope ⟨after.raw⟩
+  let rawPredicate (predicate : TSyntax `ident) :=
+    `(fun ($before:ident : $mutableType:ident) ($heap:ident : Complexity.Language.Heap) =>
+      $(app predicate (beforeFields.push ⟨heap.raw⟩)))
+  let rawReady ← `(fun ($before:ident : $mutableType:ident)
+    ($heap:ident : Complexity.Language.Heap) ($after:ident : $mutableType:ident)
+    ($finish:ident : Complexity.Language.Heap) =>
+      $(app ready (beforeFields ++ #[⟨heap.raw⟩] ++ afterFields ++ #[⟨finish.raw⟩])))
+  let rawReturned ← `(fun ($value:ident : $result) ($after:ident : $mutableType:ident)
+    ($finish:ident : Complexity.Language.Heap) =>
+      $(app returned (#[⟨value.raw⟩] ++ afterFields ++ #[⟨finish.raw⟩])))
+  let rawBody ← `(fun ($before:ident : $mutableType:ident)
+    ($heap:ident : Complexity.Language.Heap) $initial:ident =>
+      $(app bodySpec (beforeFields ++ #[⟨heap.raw⟩, ⟨initial.raw⟩])))
+  let guard := loopMember site "Guard"
+  let body := loopMember site "Body"
+  let guardFrame := loopMember site "guard_preservesCaptures"
+  let bodyFrame := loopMember site "body_preservesCaptures"
+  let specification ← if wellFoundedMode then
+      `(Complexity.Language.Stmt.observe_while_fixed_contract
+        $captureView:ident $program:ident $guard:ident $body:ident
+        $guardFrame:ident $bodyFrame:ident $captures $(← rawPredicate invariant)
+        $progress:ident $wellFounded:ident $rawReady $(← rawPredicate normal)
+        $rawReturned $guardSpec:ident $rawBody)
+    else
+      `(Complexity.Language.Stmt.observe_while_fixed_variant_contract
+        $captureView:ident $program:ident $guard:ident $body:ident
+        $guardFrame:ident $bodyFrame:ident $captures $(← rawPredicate invariant)
+        $(← rawPredicate progress) $rawReady $(← rawPredicate normal)
+        $rawReturned $guardSpec:ident $rawBody)
+  let mut proof ← `(fun $ready:ident $normal:ident $returned:ident
+    $guardSpec:ident $bodySpec:ident => $specification)
+  if wellFoundedMode then proof ← `(fun $wellFounded:ident => $proof)
+  proof ← curryScope capturedScope (← `(fun $invariant:ident $progress:ident => $proof))
+  return (← `(command|
+    /-- Prove a named loop from independent mathematical guard and body contracts.
+    Actual guard effects and early body returns are retained; only normal iterations decrease. -/
+    theorem $name:ident : $type := $proof)).raw
 
 private def loopVariantPost (site : BlockSite) (normal returned : TSyntax `ident)
     (fullScope : Bool) : MacroM (TSyntax `term) := do
@@ -1566,7 +2015,7 @@ private def loopContinuationDeclaration (program : TSyntax `ident) (site : Block
         ($next:ident : Complexity.Language.Env $types →
           ExceptT Complexity.Language.Fault (StateT Complexity.Language.Heap Part) $result) :
         Complexity.Language.Stmt.evalWith $code:ident $program:ident $entry:ident $next:ident = (do
-          let ($control:ident, $locals:ident) ← ExceptT.lift $invocation
+          let ($control:ident, $locals:ident) ← MonadLift.monadLift $invocation
           match $control:ident with
           | .normal => $next:ident $restored
           | .returned $value:ident => pure $value:ident
@@ -2155,7 +2604,7 @@ private def programDeclarations (family : TSyntax `ident)
           "scratch allocation scopes are effectful and are not supported by 'source_program (pure)'"
       unless body.sites.isEmpty do
         Macro.throwErrorAt fn.name
-          "the pure frontend currently supports recursive calls, not while loops"
+          "the pure frontend currently supports recursive calls, not while or for loops"
       if body.fallsThrough then
         Macro.throwErrorAt fn.name "every pure source function path must return a value"
     loweredBodies := loweredBodies.push body
@@ -2202,6 +2651,9 @@ private def programDeclarations (family : TSyntax `ident)
     declarations := declarations.push (← loopContinuationDeclaration programName site loopSites)
     if site.guard.isSome then
       declarations := declarations ++ (← loopCaptureFrameDeclarations programName site loopSites)
+      declarations := declarations ++ (← loopContractDeclarations programName site)
+      declarations := declarations.push (← loopIndependentContractDeclaration programName site false)
+      declarations := declarations.push (← loopIndependentContractDeclaration programName site true)
       declarations := declarations.push (← loopTerminationDeclaration programName site false)
       declarations := declarations.push (← loopTerminationDeclaration programName site true)
     else

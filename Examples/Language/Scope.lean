@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Syntax
+import Complexity.Language.Eval.Simp
 import Complexity.Language.Heap.Restriction
 import Complexity.Control.Part.StateT
 import Complexity.Control.Triple
@@ -173,9 +174,7 @@ theorem work_eval (out : Buffer .nat) (n value previous : Nat)
   obtain ⟨finish, executed, updated⟩ := outer_eval out n value previous heap observed
   refine ⟨finish, ?_, updated⟩
   rw [Implementation.work_eq]
-  simp only [ExceptT.lift, ExceptT.bind, ExceptT.pure, ExceptT.mk, ExceptT.bindCont,
-    Bind.bind, Pure.pure, Functor.map, StateT.bind, StateT.pure, StateT.map,
-    executed, Part.bind_some]
+  simp [source_eval, executed]
 
 /-- A source call reuses the worker's mathematical contents contract at its
 actual entry and final heaps, through the generated ordinary-argument bridge. -/
@@ -304,8 +303,6 @@ theorem make_spec (count n value : Nat) :
   rw [Implementation.make_eq]
   mvcgen [loopSpec]
   intro out finish allocated initialized growth fresh
-  mvcgen [loopSpec]
-  rw [Std.Do.WP.lift_ExceptT, Std.Do.WP.monadLift_ExceptT]
   mvcgen [loopSpec]
   all_goals
     simp_all only [invariant, Nat.le_refl, Nat.lt_irrefl, false_and,

@@ -4,7 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Realization
-import Complexity.Language.Eval.Locals
+import Complexity.Language.Eval.Locals.Specification
 
 /-!
 # Realizing a loop whose source termination is already proved
@@ -291,6 +291,73 @@ theorem while_observe_fixed_of_total
   · constructor
     · simp only [Equiv.apply_symm_apply]
     · simpa only [Equiv.apply_symm_apply] using initial
+
+/-- Reuse source block contracts when adding realization to an already total
+loop. The contracts provide the actual guard and normal-body facts, so the
+range and nesting proof does not reopen source observation equations. Fixed
+captures are restored by the existing frames. Source totality and mathematical
+postconditions remain independent of any instruction budget. -/
+theorem while_contract_fixed_of_total
+    {signatures : List Signature} {program : Complexity.Language.Program signatures}
+    {w depth : Nat} {Γ : List Ty} {result : Ty} {Mutable Captured : Type}
+    (view : Env Γ ≃ Mutable × Captured)
+    {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    (guardFrame : ∀ {entry finish : Complexity.Language.State Γ} {control : Control .bool},
+      Complexity.Language.Exec program guard entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (bodyFrame : ∀ {entry finish : Complexity.Language.State Γ} {control : Control result},
+      Complexity.Language.Exec program body entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (captures : Captured)
+    {invariant : Mutable → Heap → Prop}
+    {guardPost : Mutable → Heap → Bool → Mutable × Captured → Heap → Prop}
+    {bodyPre : Mutable → Heap → Prop}
+    {bodyNormal : Mutable → Heap → Mutable × Captured → Heap → Prop}
+    {bodyReturned : Mutable → Heap → Value result → Mutable × Captured → Heap → Prop}
+    (guardSpec : Complexity.Language.Stmt.BlockSpec
+      (fun current => Complexity.Language.Stmt.observe view guard program (current, captures))
+      invariant (fun _ _ _ _ => False) guardPost)
+    (bodySpec : Complexity.Language.Stmt.BlockSpec
+      (fun current => Complexity.Language.Stmt.observe view body program (current, captures))
+      bodyPre bodyNormal bodyReturned)
+    (enterBody : ∀ current currentHeap afterGuard guardHeap,
+      invariant current currentHeap →
+      guardPost current currentHeap true (afterGuard, captures) guardHeap →
+      bodyPre afterGuard guardHeap)
+    {normal : Complexity.Language.State Γ → Prop}
+    {returned : Value result → Complexity.Language.State Γ → Prop}
+    {mutable : Mutable} {heap : Heap}
+    (total : Complexity.Language.TotalWP program (.while guard body) normal returned
+      ⟨view.symm (mutable, captures), heap⟩)
+    (guardRealizable : ∀ current currentHeap, invariant current currentHeap →
+      RealizationWP program w depth guard (fun _ => False) (fun _ _ => True)
+        ⟨view.symm (current, captures), currentHeap⟩)
+    (bodyRealizable : ∀ current currentHeap afterGuard guardHeap,
+      invariant current currentHeap →
+      guardPost current currentHeap true (afterGuard, captures) guardHeap →
+      RealizationWP program w depth body (fun _ => True) (fun _ _ => True)
+        ⟨view.symm (afterGuard, captures), guardHeap⟩)
+    (preserve : ∀ current currentHeap afterGuard guardHeap afterBody bodyHeap,
+      invariant current currentHeap →
+      guardPost current currentHeap true (afterGuard, captures) guardHeap →
+      bodyNormal afterGuard guardHeap (afterBody, captures) bodyHeap →
+      invariant afterBody bodyHeap)
+    (initial : invariant mutable heap) :
+    RealizationWP program w depth (.while guard body) normal returned
+      ⟨view.symm (mutable, captures), heap⟩ := by
+  refine while_observe_fixed_of_total view (Equiv.refl _) guardFrame bodyFrame captures
+    total guardRealizable ?_ ?_ initial
+  · intro current currentHeap afterGuard guardHeap currentInvariant tested
+    exact bodyRealizable current currentHeap afterGuard guardHeap currentInvariant
+      (guardSpec.post_of_eq currentInvariant tested)
+  · intro current currentHeap afterGuard guardHeap afterBody bodyHeap
+      currentInvariant tested iterated
+    have guarded := guardSpec.post_of_eq currentInvariant tested
+    exact preserve current currentHeap afterGuard guardHeap afterBody bodyHeap
+      currentInvariant guarded
+      (bodySpec.post_of_eq
+        (enterBody current currentHeap afterGuard guardHeap currentInvariant guarded) iterated)
 
 end RealizationWP
 

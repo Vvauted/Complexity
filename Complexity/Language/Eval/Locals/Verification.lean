@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Language.Eval.Locals
+import Complexity.Language.Eval.Locals.Specification
 
 /-!
 # Loop correctness with ordinary local values
@@ -19,6 +19,11 @@ runs the body from that state; only normal completion must restore the invariant
 and decrease relative to the state before the guard. Early body returns instead
 establish their result postcondition, while faults and missing guard returns
 cannot prove these strict specifications.
+
+`observe_while_contract` separates the guard and body into ordinary relational
+`BlockSpec` contracts. Its `ready` predicate retains the complete iteration's
+starting state, so the body can establish well-founded progress without a
+nested native triple or manual control-outcome transport in the author's proof.
 -/
 
 namespace Complexity.Language.Stmt
@@ -144,5 +149,81 @@ theorem observe_while_variant_spec (view : Env Γ ≃ Locals) (program : Program
   observe_while_spec view program guard body invariant
     (measure fun current : Locals × Heap => variant current.1 current.2).rel
     (measure fun current : Locals × Heap => variant current.1 current.2).wf post step locals
+
+/-- Compose independent mathematical contracts for a loop guard and body.
+The guard exposes its actual result and final state. A true result establishes
+`ready`, which relates that state to the complete iteration's starting state;
+a false result establishes the normal postcondition at the guard's actual exit.
+
+The body contract starts at this real intermediate state. Only normal body
+completion restores the invariant and decreases the well-founded relation;
+early returns establish their own postcondition. The contracts and conclusion
+refer to the existing observations, without outcome-tuple or nested-WP work in
+the mathematical premises. -/
+theorem observe_while_contract (view : Env Γ ≃ Locals) (program : Program signatures)
+    (guard : Stmt signatures Γ .bool) (body : Stmt signatures Γ result)
+    (invariant : Locals → Heap → Prop)
+    (relation : (Locals × Heap) → (Locals × Heap) → Prop) (wellFounded : WellFounded relation)
+    (ready : Locals → Heap → Locals → Heap → Prop)
+    (normal : Locals → Heap → Prop) (returned : Value result → Locals → Heap → Prop)
+    (guardSpec : BlockSpec (fun locals => observe view guard program locals) invariant
+      (fun _ _ _ _ => False)
+      (fun start startHeap again afterGuard afterGuardHeap =>
+        if again then ready start startHeap afterGuard afterGuardHeap
+        else normal afterGuard afterGuardHeap))
+    (bodySpec : ∀ start startHeap, invariant start startHeap →
+      BlockSpec (fun locals => observe view body program locals) (ready start startHeap)
+        (fun _ _ finish heap => invariant finish heap ∧
+          relation (finish, heap) (start, startHeap))
+        (fun _ _ => returned)) :
+    BlockSpec (fun locals => observe view (.while guard body) program locals) invariant
+      (fun _ _ => normal) (fun _ _ => returned) := by
+  intro locals heap initial
+  have specification := observe_while_spec view program guard body invariant relation wellFounded
+    (fun outcome heap => ⟨match outcome.1 with
+      | .normal => normal outcome.2 heap
+      | .returned value => returned value outcome.2 heap
+      | .fault _ => False⟩, ⟨⟩)
+    (by
+      intro start startHeap input
+      refine (guardSpec start startHeap input).mono (fun _ same => same) ?_
+      constructor
+      · rintro ⟨control, afterGuard⟩ afterGuardHeap property
+        cases control with
+        | normal => exact property
+        | fault error => exact property
+        | returned again =>
+            cases again with
+            | false => exact property
+            | true => exact bodySpec start startHeap input afterGuard afterGuardHeap property
+      · trivial)
+    locals
+  exact specification.mono (fun _ same => same.symm ▸ initial)
+    ⟨fun _ _ property => property, trivial⟩
+
+/-- Use a natural mathematical variant with the same separate guard and body
+contracts. Its strict decrease is measured across a complete guard/body round,
+so an effectful guard cannot silently change the comparison's starting state. -/
+theorem observe_while_variant_contract (view : Env Γ ≃ Locals) (program : Program signatures)
+    (guard : Stmt signatures Γ .bool) (body : Stmt signatures Γ result)
+    (invariant : Locals → Heap → Prop) (variant : Locals → Heap → Nat)
+    (ready : Locals → Heap → Locals → Heap → Prop)
+    (normal : Locals → Heap → Prop) (returned : Value result → Locals → Heap → Prop)
+    (guardSpec : BlockSpec (fun locals => observe view guard program locals) invariant
+      (fun _ _ _ _ => False)
+      (fun start startHeap again afterGuard afterGuardHeap =>
+        if again then ready start startHeap afterGuard afterGuardHeap
+        else normal afterGuard afterGuardHeap))
+    (bodySpec : ∀ start startHeap, invariant start startHeap →
+      BlockSpec (fun locals => observe view body program locals) (ready start startHeap)
+        (fun _ _ finish heap => invariant finish heap ∧
+          variant finish heap < variant start startHeap)
+        (fun _ _ => returned)) :
+    BlockSpec (fun locals => observe view (.while guard body) program locals) invariant
+      (fun _ _ => normal) (fun _ _ => returned) :=
+  observe_while_contract view program guard body invariant
+    (measure fun current : Locals × Heap => variant current.1 current.2).rel
+    (measure fun current : Locals × Heap => variant current.1 current.2).wf
+    ready normal returned guardSpec bodySpec
 
 end Complexity.Language.Stmt

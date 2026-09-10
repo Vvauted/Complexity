@@ -66,9 +66,9 @@ call overhead. The remaining instructions are the two normal sequence guards,
 Unit return and enclosing function-body initialization. -/
 def boundedMapPairBodyBound (leftSize rightSize : Nat) : Nat :=
   callCost Implementation.program Implementation.boundedMapId
-      ((callCost Implementation.program Implementation.incrementId 10 + 43) * leftSize + 29) +
+      ((callCost Implementation.program Implementation.incrementId 10 + 47) * leftSize + 29) +
     callCost Implementation.program Implementation.boundedMapId
-      ((callCost Implementation.program Implementation.incrementId 10 + 43) * rightSize + 29) + 8
+      ((callCost Implementation.program Implementation.incrementId 10 + 47) * rightSize + 29) + 8
 
 /-- The source frame is reused only to justify the second callee's input at the
 actual intermediate heap. Existing traversal bounds count both effectful calls;

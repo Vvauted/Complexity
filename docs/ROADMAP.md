@@ -21,16 +21,23 @@ effectful proof.
 
 ## What the current programs actually show
 
-The review baseline is commit `89479f7`. The source-to-RAM path already handles
+The source-to-RAM path handles
 scalar arithmetic, mutable borrowed buffers, while loops, recursive calls and
 imports. Correctness, realizability and counted execution compose across those
 imports, including two effectful calls at their actual intermediate heap.
 These results are retained; we do not need another execution model or backend.
 
+**Checked integration:** effectful range `for`, nested product patterns,
+independent named loop contracts, their shared resource rules, the mathematical
+array-task interface and top-tree foundations build together on 0v0 with the
+complete library, Examples and manual. The buffer-element `for` lowering is
+implemented but has not yet been exercised by a dedicated verified consumer.
+Pure finite loops and dynamic top-tree operations remain separate work.
+
 | Evidence | Working capability | Remaining author-facing problem |
 | --- | --- | --- |
-| [Factorial](../Examples/Language/Factorial.lean), [Scalar](../Examples/Language/Scalar.lean) and [Remainder](../Examples/Language/Remainder.lean) | Generated native scalar functions; ordinary equality proofs, one native termination argument for self-recursion, automatic source correspondence and total-contract conversion | Pure `while`, mutually recursive families and buffers are not supported; mathematical proofs and separate resource arguments remain author work. |
-| [Traversal](../Examples/Language/Traversal.lean) | Real read/helper/branch/write loop, native `Array.map` result and outside-buffer frame | Public guard/body/round proofs still manipulate `Control`, local tuples and nested triples. Named variables alone have not completed the loop interface. |
+| [Factorial](../Examples/Language/Factorial.lean), [Scalar](../Examples/Language/Scalar.lean) and [Remainder](../Examples/Language/Remainder.lean) | Generated native scalar functions; ordinary equality proofs, one native termination argument for self-recursion, automatic source correspondence and total-contract conversion | The pure frontend does not support `while`/`for`, mutually recursive families or buffers; this is not a restriction on the effectful function table. Mathematical proofs and separate resource arguments remain author work. |
+| [Traversal](../Examples/Language/Traversal.lean) | Actual range `for`, native `Array.map` result and outside-buffer frame; independent guard/body contracts feed correctness and resource proofs | Connection-layer consumers still select generated views and compiler budget names. Structural cost inference and ordinary-parameter resource entry points can remove those choices. |
 | [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts preserve both actual results, including disjoint slices of one object | Routine contents/frame consequences are manually transferred between calls. This is an automation gap, not permission to assume all buffers are independent. |
 | [Structured values](../Examples/Language/OptionalBuffer.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Native products/options across imports and actual RAM returns; initialized allocation, non-escaping reclamation and repeated-workspace bounds | General sums/recursive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
 | [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner; factorial uses the shared typed execution result | Compiler cost names and traversal's loop-view/publication transport still need work. |
@@ -40,6 +47,12 @@ These results are retained; we do not need another execution model or backend.
 There are three different kinds of work: remove routine proof bookkeeping;
 design a better function/data abstraction; add genuinely missing language and
 runtime operations. More tactics address only the first kind.
+
+The proof-experience target is concrete: authors supply mathematical invariants,
+descent, representation/alias facts, numerical ranges and potentials. Shared rules
+should supply lexical-environment transport, control plumbing, callee-contract
+composition and publication of the same actual execution. A new short theorem
+does not meet this target if an equally long private adapter is still required.
 
 ## M0 — Decisions and questions to settle
 
@@ -101,9 +114,10 @@ and charged. Do not select an empty heap and call this heap independence.
 **Status:** `source_program (pure)` generates native total functions over scalars
 and their products/options, checked action correspondence and total source contracts.
 Scalar, Remainder, self-recursive Factorial and OptionalBuffer's nested metadata
-helper pass on 0v0. The supported call graph is
-self-recursion plus acyclic calls; pure `while`, mutual recursion and buffers
-remain unsupported.
+helper pass on 0v0. In this pure frontend, the supported call graph is
+self-recursion plus acyclic calls; pure `while`/`for`, mutual recursion and buffers
+remain unsupported. Effectful declarations already resolve forward and mutually
+recursive calls through their shared signature table.
 
 All source declarations expose ordinary-parameter `f_contract`, `f_args` and
 `f_onArgs` interfaces. They reuse the existing source contract and argument
@@ -145,11 +159,19 @@ each function. A small alias or an additional `simp` lemma does not meet this ga
 
 ## M2 — Mutable algorithms with mathematical data contracts
 
-**Status:** shared objects, aliases, operation specifications and complete
-traversal proofs exist; modular proof automation remains incomplete. Named loops
-now expose `wellFounded_spec` for Lean relations on their mutable locals and heap;
-the existing Nat `variant_spec` is retained as a measure specialization. The
-scoped scratch consumer uses this general rule, and Traversal remains compatible.
+**Status:** shared objects, aliases, operation specifications and the original
+complete traversal proofs are checked. Named `wellFounded_spec` and its Nat
+`variant_spec` specialization separate source termination from resources.
+The frontend supplies independent `guard_contract`, `body_contract` and
+loop `contract`, composed by `wellFounded_contract` or `variant_contract`.
+They expose mathematical mutable variables and actual endpoint heaps, keep
+immutable captures fixed, and retain separate normal/early-return postconditions.
+Traversal uses them through the actual halted RAM result, including its two-call
+and imported clients. Generated `spec` rules handle native continuations;
+`while_contract_fixed` and `while_contract_fixed_of_total` reuse the same source
+facts inside cost and realization proofs. Their shared implementation extracts
+actual postconditions and preserves fixed captures. No nested round contract,
+per-example execution adapter or repeated termination proof is required.
 
 The checked [source-frame rule](../Complexity/Language/Effects/Heap.lean) uses `NoCellWrites` for the
 statement and every callee preserves an exact heap-object prefix and existing
@@ -162,10 +184,11 @@ specifications should expose ordinary contents, lengths, results and permitted
 updates. Library rules retain the actual heap internally; clients must not
 confuse an old contents observation with the state after a mutating call.
 
-1. Give the existing traversal a generated loop-contract entry point over its
-   source locals and mathematical invariant. Public rules should handle the
-   lexical tuple, guard/body composition and impossible control exits when
-   justified by that block. Keep the general effectful-guard semantics intact.
+1. Preserve the checked source/resource contract reuse while hiding remaining
+   view selection and compiler-derived budget plumbing. Lexical tuples,
+   guard/body sequencing and impossible control exits belong in shared rules,
+   not repeated algorithm proofs. Keep general effectful guards and genuine
+   early-return behavior intact.
 2. Compose supplied callee contracts and transport their proven frame
    consequences. Reuse `Buffer.Contents`, `Disjoint`, `PreservesOutside` and
    native `Std.Do` rules before adding new proof machinery. Contract content,
@@ -176,9 +199,11 @@ confuse an old contents observation with the state after a mutating call.
    Abstract callees may export a callable upper-bound function with an `IsBigO`
    theorem. Its useful monotonicity is a property of the selected bound, not an
    assumption that exact runtime must be monotone.
-4. Provide captured-index traversal using existing range/iterator infrastructure
-   after proving its correspondence. Each iteration reads current contents;
-   a fixed-list snapshot is not the semantics of a mutable loop.
+4. Complete the current captured-index traversal integration rather than add
+   another iterator model. Effectful `for i in [start:stop]` freezes its bounds
+   and uses an immutable index; `for x in xs` borrows a fixed view and reads its
+   current cell each round. Both lower to the existing while semantics, with
+   actual guard/read/update costs. A snapshot is not mutable-loop semantics.
 
 **Advance when:** the current Traversal and two-call/imported clients are proved
 using a prefix invariant, Array mathematics, descent and actual frame facts,
@@ -189,12 +214,16 @@ global no-aliasing or a special initial heap do not qualify.
 
 ## M3 — A language that can express structured algorithms
 
-**Status:** first-order calls, while, self-recursion and the first structured-value
+**Status:** first-order calls, while, recursion and the first structured-value
 layer are implemented. Native Lean `Prod` and `Option` values now pass through
 constructors, projections, assignment, real matching, calls, returns and imports.
 Their source contracts, word ranges, actual lowering and instruction counts use
-the same execution. Option patterns currently bind the payload by name; general
-nested patterns, sums and recursive data representations remain open.
+the same execution. The frontend supports nested product patterns
+and `_` in immutable bindings, including `let (x, y) ← call` and `some (x, y)`
+branches. The right-hand side runs once; projections and copies are real generated
+operations. This does not implement general algebraic patterns, sums or recursive
+data representations. The revised structured consumer's source and actual RAM
+theorems are checked together with the whole library.
 
 The existing multi-field ABI concatenates product fields and places an option
 tag before its fixed payload. `none` has canonical zero padding, not a default
@@ -213,10 +242,11 @@ the real RAM result, four return words and a compiler-derived instruction bound.
 The public execution theorem states the mathematical postcondition and time bound;
 physical encoding consequences are separate projections of that same result.
 
-Mutually recursive functions with different signatures and source
-`break/continue` remain intended capabilities. Their proof interfaces and real
-control-flow/cost connections must be supplied, not inferred from self-recursion
-or ordinary function return; they are not prerequisites for the first M1 exercise.
+Effectful functions already share a typed table supporting different signatures
+and mutual calls; the pure native-function frontend has the narrower restriction
+described in M1. Pure loops, explicit range steps and source `break/continue`
+remain open. Their semantics and proof/cost interfaces must be supplied, not
+inferred from existing effectful loops or ordinary function return.
 
 Then add the pattern/recursion and collection interfaces justified by actual
 algorithms, reusing upstream data types as mathematical views. Structural
@@ -224,11 +254,21 @@ recursion over a collection requires a real representation and operations;
 adding a `List` type name does not provide them. Higher-order notation may use
 proved static specialization before dynamic closures are considered.
 
-Search should challenge the new proof interface with a different loop shape;
-recursive sorting should challenge structured data, multiple buffers and
-recursive composition. First reuse the old implementations' mathematical
-lemmas through the connection layer. Do not create a catalog of new example
-algorithms or claim old register-level examples are already high-level programs.
+Use existing consumers to select the next missing operation or representation.
+Reuse old implementations' mathematical lemmas through the connection layer;
+do not create an algorithm catalog or call old register-level examples
+high-level programs merely because their theorem names are accessible.
+
+The checked [top-tree foundation](TOP_TREE.md) is mathematical work,
+using mathlib's graphs, subgraphs, paths and finiteness. It supplies clusters,
+legal joins, edge decompositions, reusable fold specifications and path-composition
+lemmas. Legal local rotations preserve the root, exact leaf order and additive
+summaries; their new intermediate cluster must satisfy its real boundary bound.
+The unconditional height bound is linear; this supplies neither a maintained mutable
+top tree nor logarithmic dynamic operations. Node representation, expose/link/cut,
+balancing/amortization and source-to-RAM implementation are separate remaining
+obligations. Keep this mathematics independent of RAM and use it to avoid
+reproving decomposition facts, not to expand the current compiler work queue.
 
 **Advance when:** those constructs let one declaration express the intended
 algorithm, and mathematical contracts compose without per-algorithm register
@@ -383,6 +423,21 @@ shared result and its actual access-set bounds instead of assembling a large
 runner tuple. Concise loop-resource interfaces, further consumer migration,
 general live-space observations and problem-level composition remain unfinished.
 
+**Array-task integration:** the shared
+[`ArrayFunction`](../Complexity/Language/ArrayFunction.lean) interface selects one
+declared `Buffer Nat → Nat` source function. `Correct valid answer` states ordinary
+`Array Nat` input/output correctness and successful termination without resources;
+the [RAM `TimeO` interface](../Complexity/Computability/Ram/Compiler/Language/ArrayFunction.lean)
+uses that same implementation and the existing allocation-aware execution result.
+It fixes input layout and a logarithmic input-width scale, permits one uniform
+constant width factor, and requires actual executions for every legal input at
+every admitted width. Capacity is proved for those executions, not a premise
+that silently excludes inputs. Its bound uses mathlib `IsBigO`.
+This is a preloaded single-array/natural-result interface, not general I/O,
+input loading, a persistent pure container API or a replacement cost semantics.
+The interface and actual RAM connection are checked; existing clients can reuse
+them through the fixed-type program wrapper below.
+
 Keep three layers distinct: mathematical behavior; resource arguments over the
 same source implementation; and a concrete backend adequacy theorem. Ordinary
 function equality belongs to the first, not a way to recover the other two.
@@ -405,7 +460,8 @@ capacity and invariants are part of the proof, not missing compiler automation.
 3. Reuse mathlib `IsBigO`, sums and recurrence results and the library's existing
    potential/composition tools. Derived asymptotic interfaces should hide exact
    implementation constants without hiding actual work or the admitted domain.
-   Connect the existing [uniform time](../Complexity/Computability/Ram/Time/Basic.lean)
+   Finish the shared array-task consumer and connect the existing
+   [uniform time](../Complexity/Computability/Ram/Time/Basic.lean)
    and [problem certificates](../Complexity/Computability/Ram/Problem/Basic.lean)
    to the high-level declaration rather than creating another certificate system.
 4. State the model early: current bounds count word-RAM instructions, including
@@ -555,31 +611,39 @@ Scoped reclamation and its same-source physical workspace guarantee are checked;
 see [RECLAMATION_TODO.md](RECLAMATION_TODO.md). General lifetime inference and
 encapsulation are not consequences of those theorems. The first bottom-up allocation queue is complete; see
 [FOUNDATIONS_TODO.md](FOUNDATIONS_TODO.md) for its scope and checked builds.
-Allocation, linking, scalar pure correspondence, Examples and the complete manual
-now build together. The priorities below extend the supported fragments toward
-the longer-term proof-experience goals.
+Allocation, linking, scalar pure correspondence, the revised frontend and loop
+contracts, array-task statements and top-tree mathematics build together with
+all Examples and the complete manual. This validates the current supported
+interfaces, not the missing pure loops, richer containers or dynamic algorithms.
 
-The complete splay path above now uses shared mathematical input/output
-contracts, named cost selection and a typed runner result. Traversal's body
-contents and frame are proved together, and its unframed loop contract reuses
-the framed one rather than repeating a loop proof. Explicit result/heap-dependent
-call bounds now use the same named interface. Remaining work includes concise
-loop-resource contracts, migration of older compiled clients to the shared fixed
-or allocation-aware execution results, and general source-space observations. Keep improving those
-actual authors' proofs rather than starting another algorithm catalog.
+The complete splay path already uses shared mathematical input/output contracts,
+named cost selection and a typed runner result. Its tree descent, representation
+and logarithmic potential arguments remain genuine mathematical work. The next
+improvement should make another author reuse these interfaces without learning
+environment encodings or repeating source facts in a second resource proof.
 
-1. Preserve the checked shared contracts and terminating correspondence for
-   Factorial, Scalar and Remainder (M1), then address the unsupported pure
-   constructs without duplicating the author's termination argument.
-2. In parallel, exercise their mutable/VCG mode against Traversal and its
-   two-call/imported clients (M2). Reuse the checked allocating client and
-   arena/return protocol when improving the mathematical contract interface (M4);
-   a pure scalar example cannot settle these abstraction questions.
-3. Preserve the checked product/option path, then build container operations and
-   the data representations justified by actual algorithms. Frame automation and
-   dependent-call cost interfaces support those tasks, not substitute for them.
-4. Keep M5's publication/model boundary in each consumer; do not defer the
-   meaning of a cost or space claim until after its proof is written.
+1. Extend the native total frontend to finite ranges while preserving their
+   origin during elaboration. Generate a genuine native `for` from the same
+   normalized body, then prove correspondence to the existing source while
+   through one shared finite-iteration theorem. Preserve early returns and
+   outer-local updates; do not ask the author for a recursive replacement or
+   a second termination argument.
+2. Infer uniform structural budget expressions through the existing checked
+   cost solver and publish them under names reused by callers. A surface binding
+   should not require hand-editing repeated numeric constants across clients.
+   Keep dependent numerical bounds and algorithmic potentials mathematical;
+   do not introduce an independent operation-price table. Further ordinary-argument
+   resource rules should hide generated views without losing the shared contracts.
+3. Add container operations and lifetime/encapsulation interfaces only where
+   existing proofs reveal a missing representation or operation. Reuse mathlib
+   mathematical views; neither tuples/options nor scoped reclamation already
+   provide a persistent pure collection. Keep richer pure constructs tied to a
+   single source declaration and termination argument.
+4. Develop source-facing space observations and composition over the actual
+   execution, separating sufficient capacity, reserved storage and peak live
+   data. Keep input loading, query drivers, width policy and word-versus-bit cost
+   boundaries explicit; neither a bigger capacity assumption nor a theorem about
+   isolated preloaded calls supplies these missing claims.
 
 Before broadening an interface, review the complete author proof: what
 mathematical work remains, what bookkeeping disappeared, and what assumptions

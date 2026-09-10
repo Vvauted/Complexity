@@ -50,7 +50,7 @@ initial heap; `f_total` supplies the corresponding total source contract.
 There is no second user-written implementation or manual heap conversion.
 The pure fragment supports Nat, Bool, Unit and their recursively nested products
 and options, self-recursion and acyclic calls,
-but not buffers, `while` or mutually recursive families.
+but not buffers, `for`/`while` or mutually recursive pure families.
 
 The [structured client](##Examples.Language.OptionalBuffer) uses these as actual
 source values: a pure helper returns `Option (Nat × Nat)`, a library returns
@@ -58,7 +58,10 @@ source values: a pure helper returns `Option (Nat × Nat)`, a library returns
 before reading and updating a cell. Its `bump_contract` statement uses ordinary
 buffer parameters, an `Array.modify` contents relation and a frame on the real
 final heap. Constructors and projections are normalized left to right; matching
-exposes a payload only in the selected `some` branch. Source correctness, imported
+exposes a payload only in the selected `some` branch. A binding such as
+`let (length, present) ← Library.inspect xs` or `some (length, offset)` uses
+ordinary product patterns. The expression or call is evaluated once, and its
+used fields are extracted by actual compiled projections. Source correctness, imported
 contracts and the [compiled result](##Examples.Language.OptionalBufferCompiled)
 all concern that one declared implementation.
 
@@ -326,27 +329,32 @@ invariant and well-founded relation, or a natural-valued variant, on those value
 and the current heap. The [continuation bridge](##Complexity.Language.Eval.Locals.Continuation)
 runs the remaining function only on normal completion. These are proved changes
 of view of the same source execution, not another implementation.
-Named `while` syntax generates actual guard/body/loop observations, one-step
-equations, normal-continuation proofs and two termination entries. Use
-`variant_spec` for a natural-valued measure over named mutable locals and the
-heap. `wellFounded_spec` instead accepts a relation on the generated
-`Loop.Mutable × Heap` and its ordinary Lean `WellFounded` proof. Invariants and
-normal/return postconditions still take named mutable arguments. Its
-`Stmt.observe_while_fixed_spec` foundation reuses the ordinary-local loop rule
-through `InvImage.wf`; the variant rule is just its `measure` specialization.
-Only normal body completion must decrease relative to the pre-guard state;
-false guards and early returns need no descent. Neither interface supplies fuel
-or an instruction budget. Immutable captures are fixed by lexical preservation
-proofs; this preserves a buffer descriptor, not its contents. The
-[read/helper/branch/write traversal](##Examples.Language.Traversal) uses this rule
-and native array identities to prove termination and its complete `Array.map`
-result. Its author-supplied invariant describes the processed prefix and unread
-suffix; generated frames keep `xs` and `limit` out of its changing locals.
-Native read/write specifications and the
-[partial-state adequacy rules](##Complexity.Control.Part.StateT) now supply its
-actual step result without unfolding WP or `Part.bind`. The function's final
-continuation uses the native lift/bind rules and the same loop contract.
-Selecting these contracts and mathematical contents remains explicit. The
+Named `while` and bounded `for` generate actual guard/body/loop observations,
+one-step equations and mathematical block contracts. A `guard_contract` describes
+the Boolean decision and actual state after testing; a separate `body_contract`
+describes normal completion or early return. Their predicates take ordinary
+mutable arguments and initial/final heaps. They are native strict triples,
+packaged by [BlockSpec](##Complexity.Language.Eval.Locals.Specification), not a
+second operational semantics.
+
+Use `variant_contract` to compose these facts with a natural-valued measure,
+or `wellFounded_contract` with an ordinary Lean well-founded relation. The body
+starts at the actual post-guard state; a normal iteration must decrease relative
+to the state before the guard. False exits and early returns need no descent.
+Generated `guard_spec`, `body_spec` and `spec` apply a chosen contract to a native
+continuation. Immutable captures are restored internally from proved execution
+frames; preserving a buffer descriptor does not preserve its contents.
+The older `variant_spec` and `wellFounded_spec` rules remain available for direct
+native round proofs, as used by the scoped-allocation consumer. None of these
+source rules asks for fuel or an instruction budget.
+
+The [read/helper/branch/write traversal](##Examples.Language.Traversal) writes
+`for i in [:xs.length]`. Its invariant describes the processed prefix and unread
+suffix of an ordinary array. Independent guard/body contracts feed the loop
+contract; the author proves array identities, actual frames and descent rather
+than constructing a nested triple for a whole iteration. The generated `spec`
+then composes that contract with the function's continuation. Selecting these
+contracts and mathematical contents remains explicit. The
 [compiled traversal](##Examples.Language.TraversalCompiled) reuses this source
 proof to establish the same array result and an independent linear instruction
 bound for the actual halted invocation. Its word ranges, preloaded heap
@@ -356,18 +364,17 @@ reuse source termination without a second decreasing measure, and the
 [ordinary-local cost rules](##Complexity.Computability.Ram.Compiler.Language.CostBound.Locals)
 compose actual guard/body bounds and the source invariant. Their fixed-capture
 rules reuse generated lexical preservation, leaving only mutable locals and the
-heap in the author's invariant and potential. One native `round_spec` records
-the guard's mathematical decision and the body contract at its actual final
-locals and heap. The source loop proof combines this contract with the actual
-guard result and body frame using the native `Std.Do.Triple.and` rule. The
-[consequence rule](##Complexity.Control.Triple), `Std.Do.Triple.mono`, strengthens
-the input and weakens the combined postcondition through the existing WP
-monotonicity. It applies to any native postcondition shape, including exceptions;
-it does not introduce a separate partial-state or loop framework. Neither loop
-proof needs to extract and reconstruct an execution witness to combine these
-facts. Mathematical invariants, frame composition and variant descent remain
-explicit. Resource proofs still reuse the same round contract through
-`Part.TotalCorrectness.stateT_post_of_eq`.
+heap in the author's invariant and potential. `StmtCostBound.while_contract_fixed`
+and `RealizationWP.while_contract_fixed_of_total` consume the same independent
+guard/body contracts. The library extracts their mathematical facts at the
+actual execution points using `BlockSpec.post_of_eq`; authors do not reconstruct
+operational observation equations. They supply the logical connection from a
+true guard to the body's precondition, range evidence and numerical potential
+inequalities. The source invariant and termination proof are reused. The
+`BlockSpec.mono` consequence rule strengthens the input and weakens either
+successful relation, while retaining the original precondition as a usable
+fact. Mathematical invariants, frame composition and potential inequalities
+remain explicit; correctness contracts themselves contain no instruction budget.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every
@@ -613,10 +620,10 @@ The [remainder example](##Examples.Language.Remainder) implements
 `n - (n / d) * d`, reuses the ordinary Nat identity, and derives the actual
 compiled result with a separate instruction bound. Divisor zero is included;
 no artificial subtraction-order condition is required.
-Named `while`, option matching and initialized allocation are supported as
+Named `while`, bounded effectful `for`, option matching and initialized allocation are supported as
 described above. Product/option construction, projection and local assignment
 are covered by the same structural realization and cost tactics. General sums,
-recursive data representations, pure loops, mutual recursion and richer
+recursive data representations, pure loops, mutually recursive pure families and richer
 callee selection, recursive proofs and data-dependent bound automation remain
 unfinished. Costs are currently derived
 for successfully realized executions, not an instrumentation theorem for

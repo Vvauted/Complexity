@@ -88,6 +88,8 @@ import Complexity.Computability.Ram.Compiler.Effects
 import Complexity.Computability.Ram.Compiler.Exact
 import Complexity.Computability.Ram.Compiler.Expr.Basic
 import Complexity.Computability.Ram.Compiler.Expr.Memory
+import Complexity.Computability.Ram.Compiler.Language.ArrayFunction
+import Complexity.Computability.Ram.Compiler.Language.ArrayFunction.Input
 import Complexity.Computability.Ram.Compiler.Language.Arena.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Basic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Call
@@ -323,7 +325,12 @@ import Complexity.Data.List.Fold
 import Complexity.Data.List.InsertIdx
 import Complexity.Data.List.StateM
 import Complexity.Data.Nat.Log
+import Complexity.Data.TopTree.Basic
+import Complexity.Data.TopTree.Decomposition
+import Complexity.Data.TopTree.Paths
+import Complexity.Data.TopTree.Rotation
 import Complexity.Data.Tree.Basic
+import Complexity.Language.ArrayFunction
 import Complexity.Language.Basic
 import Complexity.Language.Effects
 import Complexity.Language.Effects.Heap
@@ -336,6 +343,7 @@ import Complexity.Language.Eval.Locals.Captures
 import Complexity.Language.Eval.Locals.Composition
 import Complexity.Language.Eval.Locals.Continuation
 import Complexity.Language.Eval.Locals.Effects
+import Complexity.Language.Eval.Locals.Specification
 import Complexity.Language.Eval.Locals.Verification
 import Complexity.Language.Eval.Loop
 import Complexity.Language.Eval.Simp

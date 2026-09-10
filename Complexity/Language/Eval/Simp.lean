@@ -24,6 +24,7 @@ namespace Complexity.Language
 
 attribute [source_eval] ExceptT.bind ExceptT.bindCont ExceptT.pure ExceptT.mk
   Bind.bind Pure.pure StateT.bind StateT.pure Part.bind_some
+  MonadLift.monadLift ExceptT.lift Functor.map StateT.map
   Buffer.allocM Buffer.readM Buffer.writeM Buffer.sliceM
 
 end Complexity.Language

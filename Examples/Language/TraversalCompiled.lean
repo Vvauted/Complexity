@@ -63,10 +63,11 @@ update. Its uniform bound needs no second contents or termination proof. -/
 theorem body_costBound (locals : Implementation.boundedMap_loop1.Locals) (heap : Heap) :
     StmtCostBound Implementation.program Implementation.boundedMap_loop1.Body
       ⟨Implementation.boundedMap_loop1.View.symm locals, heap⟩
-      (callCost Implementation.program Implementation.incrementId 10 + 23) := by
+      (callCost Implementation.program Implementation.incrementId 10 + 27) := by
   apply StmtCostBound.mono
   · ram_source_cost_step using increment_costBound
-  · ram_source_cost_step; omega
+  · ram_source_cost_step
+    omega
 
 /-- The real loop has a linear potential: every round pays for its guard,
 body and loop control, and the remaining constant pays for the final false
@@ -76,46 +77,38 @@ theorem loop_costBound (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     (i : Nat) (heap : Heap) (current : invariant xs limit contents i heap) :
     StmtCostBound Implementation.program Implementation.boundedMap_loop1.Code
       ⟨Implementation.boundedMap_loop1.View.symm (i, xs, limit, ()), heap⟩
-      ((callCost Implementation.program Implementation.incrementId 10 + 43) *
+      ((callCost Implementation.program Implementation.incrementId 10 + 47) *
         (contents.size - i) + 21) := by
-  apply StmtCostBound.while_observe_fixed Implementation.boundedMap_loop1.View
-    Implementation.boundedMap_loop1.Regroup
+  apply StmtCostBound.while_contract_fixed Implementation.boundedMap_loop1.CaptureView
     Implementation.boundedMap_loop1.guard_preservesCaptures
     Implementation.boundedMap_loop1.body_preservesCaptures (xs, limit, ())
+    (guard_contract xs limit contents) (body_contract xs limit contents)
+    (fun _ _ _ _ _ ready => ⟨ready.2.2.1, ready.2.2.2.mp rfl⟩)
     (mutable := (i, ())) (heap := heap)
     (invariant := fun mutable => invariant xs limit contents mutable.1)
     (guardBound := fun _ _ => 10)
-    (bodyBound := fun _ _ _ _ => callCost Implementation.program Implementation.incrementId 10 + 23)
+    (bodyBound := fun _ _ _ _ => callCost Implementation.program Implementation.incrementId 10 + 27)
     (potential := fun locals _ =>
-      (callCost Implementation.program Implementation.incrementId 10 + 43) *
+      (callCost Implementation.program Implementation.incrementId 10 + 47) *
         (contents.size - locals.1) + 21)
-  all_goals simp (config := { failIfUnchanged := false }) only
-    [Implementation.boundedMap_loop1.regroup_symm_apply]
   · intro mutable heap _
     exact guard_costBound (mutable.1, xs, limit, ()) heap
   · intro mutable heap afterGuard afterHeap _ _
     exact body_costBound (afterGuard.1, xs, limit, ()) afterHeap
-  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial tested iterated
-    have ready := Part.TotalCorrectness.stateT_post_of_eq
-      (round_spec xs limit contents initial) rfl tested
-    have completed := Part.TotalCorrectness.stateT_post_of_eq ready.2 rfl iterated
-    exact completed.2
+  · intro _ _ _ _ _ _ _ _ completed
+    exact completed.2.1
   · intro mutable heap afterGuard afterHeap _ _
+    dsimp only
     omega
-  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial tested iterated
-    have ready := Part.TotalCorrectness.stateT_post_of_eq
-      (round_spec xs limit contents initial) rfl tested
-    have completed := Part.TotalCorrectness.stateT_post_of_eq ready.2 rfl iterated
-    have next : l = j + 1 := completed.1
-    have nextBound : l ≤ contents.size := completed.2.1
+  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial ready completed
+    have next : l = j + 1 := completed.1.trans (congrArg (· + 1) ready.1)
+    have nextBound : l ≤ contents.size := completed.2.1.1
     have remaining : contents.size - j = contents.size - (j + 1) + 1 := by omega
     dsimp (config := { failIfUnchanged := false }) only
     rw [next, remaining, Nat.mul_add, Nat.mul_one]
     omega
-  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ finalHeap value initial tested iterated
-    have ready := Part.TotalCorrectness.stateT_post_of_eq
-      (round_spec xs limit contents initial) rfl tested
-    exact False.elim (Part.TotalCorrectness.stateT_post_of_eq ready.2 rfl iterated)
+  · intro _ _ _ _ _ _ _ _ _ impossible
+    exact False.elim impossible
   · exact current
 
 /-- Guard realization only needs the compared natural values and its Boolean
@@ -180,40 +173,29 @@ theorem loop_realizable {w : Nat} (hw : 0 < w) (xs : Buffer .nat) (limit : Nat)
   have total : TotalWP Implementation.program Implementation.boundedMap_loop1.Code
       (fun _ => True) (fun _ _ => False)
       ⟨Implementation.boundedMap_loop1.View.symm (i, xs, limit, ()), heap⟩ := by
-    apply (TotalWP.iff_triple_observe Implementation.boundedMap_loop1.View).mpr
-    obtain ⟨⟨control, locals⟩, finish, executed, property⟩ :=
-      (Part.TotalCorrectness.stateT_triple_iff _ _ _).mp
-        (loop_spec xs limit contents i) heap current
-    refine Part.TotalCorrectness.stateT_triple_of_eq
-      (value := (control, locals)) (finish := finish) ?_ ?_
-    · simpa only [Implementation.boundedMap_loop1.observe] using executed
-    · cases control with
-      | normal => trivial
-      | returned value => exact property
-      | fault error => exact property
-  apply RealizationWP.while_observe_fixed_of_total Implementation.boundedMap_loop1.View
-    Implementation.boundedMap_loop1.Regroup
+    apply (TotalWP.iff_triple_observe Implementation.boundedMap_loop1.CaptureView
+      (locals := ((i, ()), xs, limit, ()))).mpr
+    exact (Stmt.BlockSpec.mono (loop_contract xs limit contents heap)
+      (fun _ _ initial => initial) (fun _ _ _ _ _ _ => True.intro)
+      (fun _ _ _ _ _ _ impossible => impossible)).«at» (i, ()) heap
+        ⟨current, Buffer.PreservesOutside.refl xs heap⟩
+  apply RealizationWP.while_contract_fixed_of_total Implementation.boundedMap_loop1.CaptureView
     Implementation.boundedMap_loop1.guard_preservesCaptures
     Implementation.boundedMap_loop1.body_preservesCaptures (xs, limit, ())
+    (guard_contract xs limit contents) (body_contract xs limit contents)
+    (fun _ _ _ _ _ ready => ⟨ready.2.2.1, ready.2.2.2.mp rfl⟩)
     (mutable := (i, ())) (heap := heap)
     (invariant := fun mutable => invariant xs limit contents mutable.1) total
-  all_goals simp (config := { failIfUnchanged := false }) only
-    [Implementation.boundedMap_loop1.regroup_symm_apply]
   · rintro ⟨j, ⟨⟩⟩ entry initial
     have size : contents.size = xs.length := by
       simpa only [Array.size_mapIdx] using initial.2.size_eq
     exact guard_realizable hw xs limit j entry (by have := initial.1; omega) lengthFits
-  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap initial tested
-    have ready := Part.TotalCorrectness.stateT_post_of_eq
-      (round_spec xs limit contents initial) rfl tested
-    have available : k < contents.size := ready.1.2.mp rfl
-    exact body_realizable hw xs limit contents k afterHeap ready.1.1 available lengthFits limitFits
+  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap initial ready
+    have available : k < contents.size := ready.2.2.2.mp rfl
+    exact body_realizable hw xs limit contents k afterHeap ready.2.2.1 available lengthFits limitFits
       (incrementsFit k available)
-  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial tested iterated
-    have ready := Part.TotalCorrectness.stateT_post_of_eq
-      (round_spec xs limit contents initial) rfl tested
-    have completed := Part.TotalCorrectness.stateT_post_of_eq ready.2 rfl iterated
-    exact completed.2
+  · intro _ _ _ _ _ _ _ _ completed
+    exact completed.2.1
   · exact current
 
 /-- The traversal uses one call level for its helper. Its original values'
@@ -244,11 +226,11 @@ theorem boundedMap_costBound (contents : Array Nat) :
     FunctionCostBound Implementation.program Implementation.boundedMapId
       (fun args heap => args.head.Contents heap contents)
       (fun _ _ =>
-        (callCost Implementation.program Implementation.incrementId 10 + 43) * contents.size + 29) := by
+        (callCost Implementation.program Implementation.incrementId 10 + 47) * contents.size + 29) := by
   ram_source_cost (xs limit)
   · have bound : StmtCostBound Implementation.program Implementation.boundedMap_loop1.Code
         ⟨Implementation.boundedMap_loop1.View.symm (0, xs, limit, ()), _⟩
-        ((callCost Implementation.program Implementation.incrementId 10 + 43) *
+        ((callCost Implementation.program Implementation.incrementId 10 + 47) *
           (contents.size - 0) + 21) :=
       @loop_costBound xs limit contents 0 _
         (invariant_zero xs limit contents ‹xs.Contents _ contents›)
@@ -294,12 +276,12 @@ theorem boundedMap_runUntil_le_frame {w heapLimit : Nat} (hw : 0 < w)
           (envWords placement (Env.cons (τ := .buffer .nat) xs
             (Env.cons (τ := .nat) limit Env.empty))) entry = Part.some bodySteps ∧
       bodySteps ≤
-        (callCost Implementation.program Implementation.incrementId 10 + 43) * contents.size + 29 ∧
+        (callCost Implementation.program Implementation.incrementId 10 + 47) * contents.size + 29 ∧
       Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.boundedMapId) bodySteps + 1 ≤
         Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.boundedMapId)
-          ((callCost Implementation.program Implementation.incrementId 10 + 43) *
+          ((callCost Implementation.program Implementation.incrementId 10 + 47) *
             contents.size + 29) + 1 := by
   let args : Env [.buffer .nat, .nat] :=
     Env.cons (τ := .buffer .nat) xs (Env.cons (τ := .nat) limit Env.empty)
@@ -353,12 +335,12 @@ theorem boundedMap_runUntil_le {w heapLimit : Nat} (hw : 0 < w)
           (envWords placement (Env.cons (τ := .buffer .nat) xs
             (Env.cons (τ := .nat) limit Env.empty))) entry = Part.some bodySteps ∧
       bodySteps ≤
-        (callCost Implementation.program Implementation.incrementId 10 + 43) * contents.size + 29 ∧
+        (callCost Implementation.program Implementation.incrementId 10 + 47) * contents.size + 29 ∧
       Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.boundedMapId) bodySteps + 1 ≤
         Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.boundedMapId)
-          ((callCost Implementation.program Implementation.incrementId 10 + 43) *
+          ((callCost Implementation.program Implementation.incrementId 10 + 47) *
             contents.size + 29) + 1 := by
   obtain ⟨finalHeap, targetFinish, bodySteps, target, executed, updated, _, rest⟩ :=
     boundedMap_runUntil_le_frame hw placement xs limit sourceHeap contents observed
