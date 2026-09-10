@@ -33,9 +33,9 @@ These results are retained; we do not need another execution model or backend.
 | [Traversal](../Examples/Language/Traversal.lean) | Real read/helper/branch/write loop, native `Array.map` result and outside-buffer frame | Public guard/body/round proofs still manipulate `Control`, local tuples and nested triples. Named variables alone have not completed the loop interface. |
 | [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts preserve both actual results, including disjoint slices of one object | Routine contents/frame consequences are manually transferred between calls. This is an automation gap, not permission to assume all buffers are independent. |
 | [Source types](../Complexity/Language/Basic.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Named initialized allocation, non-escaping scoped reclamation, resource linking and actual repeated-workspace bounds | Products/sums/inductive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
-| [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner | Authors still see compiler cost names, loop-view transport and large representation/ABI-shaped publication theorems. |
+| [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner; factorial uses the shared typed execution result | Compiler cost names and traversal's loop-view/publication transport still need work. |
 | [Imported compiled traversal](../Examples/Language/ImportsTraversalCompiled.lean) | Existing behavior and resource contracts are reused without a new loop proof | Import transport is implemented. Its existence does not finish frame automation, total-function interfaces or data-dependent numerical bounds. |
-| [Splay](../Examples/Language/Splay/Sequence.lean) | One in-place recursive source, mathematical tree correctness and actual RAM amortized sequence costs | Finite callee tables, cost-entry packing and the final runner witness still need manual transport. |
+| [Splay](../Examples/Language/Splay/Sequence.lean) | One in-place recursive source, a shared mathematical contract and typed RAM results with amortized sequence costs | Mathematical tree descent and potential analysis remain author obligations. Complete container APIs and source-facing peak-space claims remain open. |
 
 There are three different kinds of work: remove routine proof bookkeeping;
 design a better function/data abstraction; add genuinely missing language and
@@ -103,6 +103,14 @@ their checked action correspondence and total source contracts. Scalar,
 Remainder and self-recursive Factorial pass on 0v0. The supported call graph is
 self-recursion plus acyclic calls; pure `while`, mutual recursion and buffers
 remain unsupported.
+
+All source declarations expose ordinary-parameter `f_contract`, `f_args` and
+`f_onArgs` interfaces. They reuse the existing source contract and argument
+environment, not another semantics or a cost inferred from an extensional
+function. Public splay and traversal contracts no longer repeat environment
+projections. Splay uses a standard `Std.Do` triple with shared `Input`/`Post`;
+ordinary inorder/search properties and their BST/frame consequences remain
+inspectable in its specification module.
 
 These declarations establish the first pure source-proof gate. Preserve their
 single-body, single-termination-argument construction while improving the interface:
@@ -188,6 +196,20 @@ ordinary multi-result helpers and optional search outcomes without inventing
 sentinel words. Their field/tag encodings must work through calls, returns,
 imports, source proofs and resource transfer. A proof-local tuple used by a
 loop is not an implemented product value.
+
+Implement the first structured-value layer with native Lean `Prod` and `Option`
+as mathematical values. Reuse the existing multi-field ABI: products concatenate
+their fields, and options add a tag to a fixed payload layout. A real option
+match must expose a payload only in the `some` branch; it must not manufacture a
+default buffer. Borrowed views inside either type retain their existing aliasing
+and lifetime obligations, including the prohibition on escaping reclaimed scratch
+objects. Keep object cells scalar initially; this does not require a new allocator
+or a global inverse of the existing buffer encoding.
+
+The first complete consumer should return structured values through an imported
+call and use an optional borrowed view in its caller. Its source contract, actual
+RAM return fields and compiler-derived costs must describe that same execution.
+A source-only tuple example does not complete this layer.
 
 Mutually recursive functions with different signatures and source
 `break/continue` remain intended capabilities. Their proof interfaces and real
@@ -346,7 +368,14 @@ It is a sufficient physical workspace bound, not exact peak-live-space analysis.
 ## M5 — Source-level complexity and complete published claims
 
 **Status:** compiler-derived step counts and independent conditional bounds
-exist. Their public abstraction and problem-level composition are unfinished.
+exist. The shared `FunctionCapacity`/`FunctionLaunch` and `FunctionExecution`
+interfaces now separate admissible preloaded inputs from the actual typed
+runner result. Factorial and splay use the same `execute_le` rule; neither
+reconstructs the old runner witness tuple. Named calls accept an explicit
+result/heap-dependent continuation bound; the scalar consumer checks a
+returned-value-sensitive bound, and traversal checks actual heap/frame transport.
+Concise loop-resource interfaces, allocation-aware publication, migration of
+other consumers and problem-level composition remain unfinished.
 
 Keep three layers distinct: mathematical behavior; resource arguments over the
 same source implementation; and a concrete backend adequacy theorem. Ordinary
@@ -464,26 +493,33 @@ general-purpose framework project:
   consumers. These are shared elaboration fixes, not a new evaluator or pricing
   table. Ordinary compiler-generated index bounds should reuse `Fin.isLt`
   rather than search a large algorithm/ABI context again.
-- [ ] **Keep callee results and heap facts in cost automation.** The current
-  structural pass now retains successful read equations even for a uniform
-  numeric continuation bound; existing traversal and factorial consumers still
-  check. Splay needs those prefix reads to identify its recursive subtree, but
-  its remaining rotation bound is uniform: do not repeat final-tree correctness
-  to price that tail. When a bound genuinely depends on returned data or state,
-  expose the existing dependent `read`, `seq_of_post` and `call` rules through
-  the same named interface.
-- [ ] **Named recursive and cost contracts.** The generated total-contract
-  equivalence now handles splay's ordinary source parameters. Its cost proof
-  still manually packs the argument environment and constructs a finite table
-  from the recursive and rotation bounds. Generate this transport from the
-  declaration and supplied contracts, retaining the author's subtree descent
-  and mathematical bound rather than re-proving functional correctness.
-- [ ] **Publish the same execution without ABI-shaped boilerplate.** The shared
-  finite-fragment rule now reuses source termination and instruction bounds
-  without another tree induction. The final invocation still requires a manual
-  witness-tuple wrapper. Generate that transport from the existing contracts,
-  preserving actual returned memory and explicit ranges/capacity. A time-derived
-  stack capacity is conservative, not a tight stack-space theorem.
+- [x] **Keep callee results and heap facts in cost automation.** Successful
+  reads retain their equations, and named calls reuse the supplied source
+  contract for the actual returned value and heap. An explicit `next` function
+  exposes the existing dependent call rules through the same interface. Scalar
+  uses the returned increment to select different numerical bounds; traversal
+  transports the actual final heap and frame to its next call. The general rule
+  permits heap-dependent numbers, but these consumers do not demonstrate an
+  allocating algorithm with a heap-size-dependent remainder. Splay's rotation
+  tail remains uniformly bounded without repeating its tree-correctness proof.
+- [x] **Named recursive and cost contracts.** Generated ordinary-parameter
+  contracts and argument transport remove the repeated `Env` projections.
+  The cost pass matches supplied recursive/rotation contracts at the actual
+  callee, replacing the hand-written finite table. Its introduction rule handles
+  the function-body wrapper and ordinary parameters. Tree descent and the
+  mathematical bound remain the author's obligations.
+- [x] **Publish the same execution without ABI-shaped boilerplate.** The shared
+  typed execution rule constructs the actual result once. Splay and factorial
+  state their mathematical result and independent cost bound against it;
+  consecutive splay calls resume its actual complete memory. Range and capacity
+  conditions remain explicit named fields, not hidden assumptions.
+- [x] **Separate sufficient call depth from time.** `FunctionDepthBound`
+  reconstructs the same realized execution at a smaller nesting allowance.
+  Sequential calls reuse capacity, and only entering a callee adds a frame.
+  Splay's grandchild descent gives `tree.height / 2` internal levels, with one
+  outer frame. The sequence uses the uniform `initialTree.numNodes / 2` bound.
+  This gives a tighter sufficient stack capacity, not a standalone exact
+  peak-access or reachable-live-space theorem.
 
 The access lemma, BST invariant and genuine non-aliasing/descent arguments are
 mathematical obligations, not defects to hide with automation. The standard
@@ -517,11 +553,14 @@ Allocation, linking, scalar pure correspondence, Examples and the complete manua
 now build together. The priorities below extend the supported fragments toward
 the longer-term proof-experience goals.
 
-The complete splay path above is now checked. Its shared frames and source
-simplification remove the old per-example operational branch wrappers; its
-full cost proof still exposes finite-callee and environment transport. The next
-interface work should remove those concrete author obligations and improve the
-existing mutable clients, rather than start another example catalog.
+The complete splay path above now uses shared mathematical input/output
+contracts, named cost selection and a typed runner result. Traversal's body
+contents and frame are proved together, and its unframed loop contract reuses
+the framed one rather than repeating a loop proof. Explicit result/heap-dependent
+call bounds now use the same named interface. Remaining work includes concise
+loop-resource contracts, allocation-aware publication and migration of the
+older compiled clients. Keep improving those
+actual authors' proofs rather than starting another algorithm catalog.
 
 1. Preserve the checked shared contracts and terminating correspondence for
    Factorial, Scalar and Remainder (M1), then address the unsupported pure
@@ -532,7 +571,7 @@ existing mutable clients, rather than start another example catalog.
    a pure scalar example cannot settle these abstraction questions.
 3. Implement the shared interfaces justified by those exercises, then add the
    required structured values and container operations. Frame automation and
-   dependent-call cost syntax are supporting tasks, not substitutes for them.
+   dependent-call cost interfaces support those tasks, not substitute for them.
 4. Keep M5's publication/model boundary in each consumer; do not defer the
    meaning of a cost or space claim until after its proof is written.
 

@@ -46,8 +46,8 @@ theorem factorial_eq (n : Nat) : Implementation.factorial n = Nat.factorial n :=
 /-- Generated correspondence transfers the mathematical result to total source
 correctness without a second recursive proof or manual heap conversion. -/
 theorem factorial_total :
-    FunctionTotal Implementation.program Implementation.factorialId (fun _ _ => True)
-      (fun args heap value finish => value = Nat.factorial (Env.head args) ∧ finish = heap) := by
+    Implementation.factorial_contract (fun _ _ => True)
+      (fun n heap value finish => value = Nat.factorial n ∧ finish = heap) := by
   simpa only [factorial_eq] using Implementation.factorial_total
 
 end Complexity.Language.Examples.Factorial

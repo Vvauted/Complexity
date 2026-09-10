@@ -29,8 +29,11 @@ The history passes the actual returned machine memory and I/O to the next call,
 including private stack words. Counts include each call, return and halt.
 Initial loading, query supply and host scheduling remain outside the preloaded
 function-call boundary. Word ranges, represented inputs and code/stack capacity
-are explicit; the instruction-derived stack envelope is conservative, not an
-exact peak-space analysis. Source correctness and termination use no time budget.
+are explicit. A separate call-depth proof bounds internal nesting by
+`tree.height / 2`, with one additional outer frame; the sequence uses the uniform
+bound `initialTree.numNodes / 2`. Sequential calls reuse this capacity. This is a
+sufficient physical stack bound, not an exact peak-live-space analysis. Source
+correctness and termination use no time budget.
 
 ## Keep correctness separate
 

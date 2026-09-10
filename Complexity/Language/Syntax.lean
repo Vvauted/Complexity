@@ -91,8 +91,11 @@ The declaration exports `P.signatures`, `P.fId`, `P.fBody` and `P.program`,
 together with the ordinary curried observation `P.f` and its equation `P.f_eq`.
 The equation exposes one body using ordinary `ExceptT Fault (StateT Heap Part)` notation,
 keeping named callee observations opaque. It is not a global simp rule.
-`P.f_total_iff` connects arbitrary ordinary curried preconditions and
-postconditions, including initial and final heaps, to the source contract without
+`P.f_args` supplies the declared argument environment from ordinary parameters;
+`P.f_contract` states a source contract with ordinary curried preconditions and
+postconditions. Neither requires callers to write environment projections.
+`P.f_onArgs` applies an ordinary curried predicate or bound to that environment.
+`P.f_total_iff` connects those contracts to successful source evaluation without
 manual environment decomposition. `P.f_spec contract` applies a supplied source
 contract with the function's ordinary named arguments in a native `Std.Do` proof.
 The caller can pass this specialized theorem to `mvcgen`; no callee body is
@@ -1550,9 +1553,30 @@ private def equationDeclaration (family programName : TSyntax `ident)
     theorem $name:ident : $type := $proof)
   return declaration.raw
 
+private def argumentsDeclaration (family : TSyntax `ident) (fn : Function) : MacroM Syntax := do
+  let name := generatedName family fn.name "_args"
+  let params ← parameterTypes fn.params
+  let mut type ← `(Complexity.Language.Env $params)
+  let mut value ← `(Complexity.Language.Env.empty)
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let sourceType ← typeTerm param.type
+    value ← `(Complexity.Language.Env.cons (τ := $sourceType) $parameter:ident $value)
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let parameterType ← valueTypeTerm param.type
+    type ← `(∀ ($parameter:ident : $parameterType), $type)
+    value ← `(fun ($parameter:ident : $parameterType) => $value)
+  return (← `(command|
+    /-- The actual declared argument environment, constructed from ordinary source parameters.
+    This is proof-side parameter transport, not an additional runtime operation. -/
+    abbrev $name:ident : $type := $value)).raw
+
 private def totalDeclaration (family programName : TSyntax `ident)
-    (fn : Function) (pureMode : Bool) : MacroM Syntax := do
+    (fn : Function) (pureMode : Bool) : MacroM (Array Syntax) := do
   let name := generatedName family fn.name "_total_iff"
+  let contractName := generatedName family fn.name "_contract"
+  let onArgsName := generatedName family fn.name "_onArgs"
   let observation := actionName family fn.name pureMode
   let id := generatedName family fn.name "Id"
   let pre := mkIdent (← Macro.addMacroScope `pre)
@@ -1574,9 +1598,20 @@ private def totalDeclaration (family programName : TSyntax `ident)
   for _ in fn.params do
     envArguments := envArguments.push (← `(Complexity.Language.Env.head $remaining))
     remaining ← `(Complexity.Language.Env.tail $remaining)
-  let sourcePre := Lean.Syntax.mkApp ⟨pre.raw⟩ (envArguments.push ⟨initialHeap.raw⟩)
-  let sourcePost := Lean.Syntax.mkApp ⟨post.raw⟩
-    (envArguments ++ #[⟨initialHeap.raw⟩, ⟨value.raw⟩, ⟨finalHeap.raw⟩])
+  let codomain := mkIdent (← Macro.addMacroScope `α)
+  let function := mkIdent (← Macro.addMacroScope `function)
+  let mut functionType : TSyntax `term := ⟨codomain.raw⟩
+  for param in fn.params.reverse do
+    let type ← valueTypeTerm param.type
+    functionType ← `($type → $functionType)
+  let applied := Lean.Syntax.mkApp ⟨function.raw⟩ envArguments
+  let params ← parameterTypes fn.params
+  let onArgsDeclaration ← `(command|
+    /-- Apply a predicate, postcondition or bound with ordinary source parameters
+    to the actual argument environment. No new contract or execution is introduced. -/
+    abbrev $onArgsName:ident {$codomain:ident : Sort _}
+        ($function:ident : $functionType) ($env:ident : Complexity.Language.Env $params) :
+        $codomain:ident := $applied)
   let ordinaryPre := Lean.Syntax.mkApp ⟨pre.raw⟩ (arguments.push ⟨initialHeap.raw⟩)
   let ordinaryPost := Lean.Syntax.mkApp ⟨post.raw⟩
     (arguments ++ #[⟨initialHeap.raw⟩, ⟨value.raw⟩, ⟨finalHeap.raw⟩])
@@ -1610,17 +1645,20 @@ private def totalDeclaration (family programName : TSyntax `ident)
     backward ← `((Complexity.Language.Env.forall_cons (τ := $sourceType)
       (Γ := $remainingTypes) _).mpr (fun ($parameter:ident : $type) => $backward))
   backward ← `(fun $hypothesis:ident => $backward)
+  let contractDeclaration ← `(command|
+    /-- Budget-free total correctness with ordinary source parameters and relational
+    initial/final heap postconditions. This is the existing source function contract. -/
+    abbrev $contractName:ident ($pre:ident : $preType) ($post:ident : $postType) : Prop :=
+      Complexity.Language.FunctionTotal $programName:ident $id:ident
+        ($onArgsName:ident $pre:ident) ($onArgsName:ident $post:ident))
   let declaration ← `(command|
     /-- The source contract is equivalent to ordinary curried preconditions and
     successful result/heap postconditions, including termination and absence of faults. -/
     theorem $name:ident ($pre:ident : $preType) ($post:ident : $postType) :
-        Complexity.Language.FunctionTotal $programName:ident $id:ident
-          (fun $env:ident $initialHeap:ident => $sourcePre)
-          (fun $env:ident $initialHeap:ident $value:ident $finalHeap:ident => $sourcePost) ↔
-          $ordinary := by
-      rw [Complexity.Language.FunctionTotal.iff_eval]
+        $contractName:ident $pre:ident $post:ident ↔ $ordinary := by
+      rw [$contractName:ident, Complexity.Language.FunctionTotal.iff_eval]
       exact ⟨$forward, $backward⟩)
-  return declaration.raw
+  return #[onArgsDeclaration.raw, contractDeclaration.raw, declaration.raw]
 
 private def specificationDeclaration (family programName : TSyntax `ident)
     (fn : Function) (pureMode : Bool) : MacroM Syntax := do
@@ -1979,6 +2017,8 @@ private def programDeclarations (family : TSyntax `ident)
   declarations := declarations.push programDeclaration.raw
   declarations := declarations ++ importedProofs ++ importedObservations
   for fn in functions do
+    declarations := declarations.push (← argumentsDeclaration family fn)
+  for fn in functions do
     declarations := declarations.push (← observationDeclaration family programName fn pureMode)
   for fn in functions do
     declarations := declarations.push (← calleeObservationDeclaration family programName fn pureMode)
@@ -2001,7 +2041,7 @@ private def programDeclarations (family : TSyntax `ident)
     declarations := declarations.push
       (← equationDeclaration family programName fn body importFolds pureMode)
   for fn in functions do
-    declarations := declarations.push (← totalDeclaration family programName fn pureMode)
+    declarations := declarations ++ (← totalDeclaration family programName fn pureMode)
     declarations := declarations.push (← specificationDeclaration family programName fn pureMode)
   if pureMode then
     let order ← pureFunctionOrder family functions loweredBodies

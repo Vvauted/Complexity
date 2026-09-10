@@ -145,12 +145,40 @@ theorem increment_costBound :
   ram_source_cost (n)
 
 /-- The caller reuses the helper's complete call bound. Local initialization,
+comparison, assignment and return retain the actual branch selected by the
+helper's result. The true branch pays one more dispatch transition. -/
+theorem boundedIncrement_costBound_by_branch :
+    FunctionCostBound program (1 : Fin 2) (fun _ _ => True)
+      (Implementation.boundedIncrement_onArgs fun n limit _ =>
+        callCost program (0 : Fin 2) 10 + if n + 1 ≤ limit then 19 else 18) := by
+  ram_source_cost (n limit)
+  · ram_source_call (next := fun (value : Nat) _ => if value ≤ limit then 15 else 14)
+      using increment_costBound, increment_total
+    · rename_i value finish returned
+      apply Classical.byCases (p := value ≤ limit)
+      · intro within
+        apply StmtCostBound.mono
+        · ram_source_cost_step
+        · norm_num [primCodeSize, fieldCount, if_pos within]
+      · intro within
+        apply StmtCostBound.mono
+        · ram_source_cost_step
+        · norm_num [primCodeSize, fieldCount, if_neg within]
+    · rename_i value finish returned
+      rcases returned with ⟨rfl, _⟩
+      exact Nat.le_refl _
+  · simp only [Implementation.boundedIncrement_onArgs, Env.head_cons, Env.tail_cons]
+    split_ifs <;> omega
+
+/-- The caller reuses the helper's complete call bound. Local initialization,
 comparison, the selected assignment, dispatch and return add at most nineteen transitions. -/
 theorem boundedIncrement_costBound :
     FunctionCostBound program (1 : Fin 2) (fun _ _ => True)
       (fun _ _ => callCost program (0 : Fin 2) 10 + 19) := by
-  ram_source_cost (n limit) using increment_costBound
-  all_goals omega
+  apply boundedIncrement_costBound_by_branch.mono_bound
+  intro args heap input
+  simp only [Implementation.boundedIncrement_onArgs]
+  split_ifs <;> omega
 
 /-- The same halted machine invocation returns the mathematical minimum and
 satisfies the independent source cost bound, including the outer call and halt. -/

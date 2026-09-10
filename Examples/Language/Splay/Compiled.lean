@@ -5,7 +5,8 @@ Authors: vvauted
 -/
 import Examples.Language.Splay.Correctness
 import Examples.Language.Splay.Cost
-import Complexity.Computability.Ram.Compiler.Language.CostExecution
+import Examples.Language.Splay.Depth
+import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.Realization.Finite
 
 /-!
@@ -52,12 +53,12 @@ theorem root_fits {w : Nat} {key : Nat → Nat} {keys left right : Buffer .nat}
 
 /-- The ordinary buffer lengths and query range suffice for the generated
 argument environment; root range is inherited from the represented input. -/
-theorem splayArgs_fits {w : Nat} {key : Nat → Nat} {keys left right : Buffer .nat}
+theorem splay_args_fits {w : Nat} {key : Nat → Nat} {keys left right : Buffer .nat}
     {heap : Heap} {tree : Tree Nat} (represented : Rep key keys left right heap tree)
     {query : Nat} (keysFit : keys.length < 2 ^ w) (leftFit : left.length < 2 ^ w)
     (rightFit : right.length < 2 ^ w) (queryFit : query < 2 ^ w) :
-    EnvFits w (splayArgs keys left right (root tree) query) := by
-  simp only [splayArgs, EnvFits.cons_buffer_iff, EnvFits.cons_nat_iff, EnvFits.empty,
+    EnvFits w (Implementation.splay_args keys left right (root tree) query) := by
+  simp only [Implementation.splay_args, EnvFits.cons_buffer_iff, EnvFits.cons_nat_iff, EnvFits.empty,
     keysFit, leftFit, rightFit, root_fits represented keysFit, queryFit, and_self]
 
 /-- A convenient name for the independently proved full function-body bound. -/
@@ -68,25 +69,24 @@ def splayBodyBound (key : Nat → Nat) (query : Nat) (tree : Tree Nat) : Nat :=
 field of the target representation; alias restrictions are those of splay itself. -/
 def splayFeasible (w : Nat) (key : Nat → Nat) (query : Nat) (tree : Tree Nat)
     (args : Env Implementation.signatures[Implementation.splayId].params) (heap : Heap) : Prop :=
-  splayCostPre key query tree args heap ∧
-    args.head.Disjoint args.tail.head ∧ args.head.Disjoint args.tail.tail.head ∧
-    args.tail.head.Disjoint args.tail.tail.head ∧ EnvFits w args ∧ HeapFits w heap
+  args.tail.tail.tail.head = root tree ∧ args.tail.tail.tail.tail.head = query ∧
+    Input key args.head args.tail.head args.tail.tail.head tree heap ∧
+    EnvFits w args ∧ HeapFits w heap
 
 /-- The shared finite-execution rule supplies realization without another tree
-induction. The established instruction bound is a conservative stack capacity,
-not a fuel argument used to prove source termination. -/
+correctness induction. The separate nesting bound follows recursive calls, not
+the instruction count, and is not fuel for source termination. -/
 theorem splay_realizable {w : Nat} (hw : 0 < w) (key : Nat → Nat) (query : Nat)
-    (tree : Tree Nat) (unique : tree.inorder.Nodup) :
-    FunctionRealizable Implementation.program w (splayBodyBound key query tree)
+    (tree : Tree Nat) :
+    FunctionRealizable Implementation.program w (splayDepthBound tree)
       Implementation.splayId (splayFeasible w key query tree) := by
-  have lifted := FunctionRealizable.of_rangePreserving hw (program_rangePreserving w)
-    (splay_total key query tree unique) (splay_costBound_at key query tree)
-    (depth := splayBodyBound key query tree) (fun _ _ _ _ => Nat.le_refl _)
+  have lifted := FunctionRealizable.of_rangePreserving_depth hw (program_rangePreserving w)
+    (splay_total key query tree) (splay_depthBound_at key query tree)
+    (depth := splayDepthBound tree) (fun _ _ _ _ => Nat.le_refl _)
   intro args heap input
-  rcases input with ⟨priced, keysLeft, keysRight, leftRight, arguments, cells⟩
+  rcases input with ⟨rootEq, queryEq, input, arguments, cells⟩
   exact lifted args heap
-    ⟨⟨priced.1, priced.2.1, priced.2.2, keysLeft, keysRight, leftRight⟩,
-      priced, arguments, cells⟩
+    ⟨⟨rootEq, queryEq, input⟩, ⟨rootEq, queryEq, input.represented⟩, arguments, cells⟩
 
 /-- The complete invocation bound includes the actual outer call and halt. -/
 def splayInvocationBound (key : Nat → Nat) (query : Nat) (tree : Tree Nat) : Nat :=
@@ -115,58 +115,29 @@ theorem splayInvocationBound_le (key : Nat → Nat) (query : Nat) (tree : Tree N
     Ram.LocalCompiler.Function.callSteps_eq, Nat.add_mul] at overhead ⊢
   omega
 
-/-- Execute the same verified access on the word RAM. The returned count is
-the actual halted runner's count, including calls, returns and the final halt.
-The tree certificate and memory frame concern that execution's actual result.
-Storage is preloaded; source termination has no resource premise, while this
-finite-word realization requires the stated ranges and code/stack capacity. -/
-theorem splay_runUntil {w heapLimit : Nat} {placement : Nat → Ram.Word w}
-    (hw : 0 < w) (key : Nat → Nat) (keys left right : Buffer .nat)
-    (query : Nat) (tree : Tree Nat) {heap : Heap}
-    (represented : Rep key keys left right heap tree) (unique : tree.inorder.Nodup)
-    (keysLeft : keys.Disjoint left) (keysRight : keys.Disjoint right)
-    (leftRight : left.Disjoint right)
-    (keysFit : keys.length < 2 ^ w) (leftFit : left.length < 2 ^ w)
-    (rightFit : right.length < 2 ^ w) (queryFit : query < 2 ^ w)
-    (entry : Ram.Source.State w) (memory : HeapRep placement heapLimit heap entry)
-    (codeCapacity : (lowerCode Implementation.program Implementation.splayId).length < 2 ^ w)
-    (stackCapacity : heapLimit + (splayBodyBound key query tree + 1) *
-      Ram.ABI.frameSize (programControl Implementation.program) < 2 ^ w) :
-    ∃ (final : Tree Nat) (finish : Heap) (targetFinish : Ram.Source.State w)
-        (steps : Nat) (target : Ram.State w),
-      Implementation.splay keys left right (root tree) query heap =
-        Part.some (.ok (root final), finish) ∧
-      Rep key keys left right finish final ∧
-      SplayTrace (searchFocus key query tree) tree final (searchDepth key query tree) ∧
-      Heap.PreservesOutside (linkCells left right tree) heap finish ∧
-      HeapRep placement heapLimit finish targetFinish ∧
-      Ram.LocalCompiler.Function.runUntil (programControl Implementation.program)
-          (lowerProgram Implementation.program) Implementation.splayId.val
-          (contextSize (Implementation.signatures[Implementation.splayId.val]'
-            Implementation.splayId.isLt).params)
-          heapLimit (envWords placement (splayArgs keys left right (root tree) query)) entry =
-        some ⟨target, steps, .halted⟩ ∧
-      Ram.LocalCompiler.Function.returnedValues 1 target =
-        valueWords placement (τ := .nat) (root final) ∧
-      Ram.Source.State.Observes heapLimit 0 targetFinish target ∧
-      steps ≤ splayInvocationBound key query tree ∧
-      steps ≤ splayInstructionFactor * (searchDepth key query tree + 1) := by
-  have arguments : EnvFits w (splayArgs keys left right (root tree) query) :=
-    splayArgs_fits represented keysFit leftFit rightFit queryFit
+/-- Execute the verified access with the shared typed RAM publication interface.
+The outcome owns the actual halted runner result, source result and final memory;
+the mathematical tree postcondition and independent step bounds describe it.
+Launch conditions expose word ranges and code/stack capacity, not a time budget.
+The preloaded-call boundary includes the call, return and final halt. -/
+theorem splay_execute {w heapLimit : Nat} {placement : Nat → Ram.Word w}
+    (key : Nat → Nat) (keys left right : Buffer .nat) (query : Nat) (tree : Tree Nat)
+    {heap : Heap} (input : Input key keys left right tree heap) {entry : Ram.Source.State w}
+    (launch : FunctionLaunch Implementation.program Implementation.splayId
+      (splayDepthBound tree) heapLimit placement
+      (Implementation.splay_args keys left right (root tree) query) heap entry) :
+    ∃ outcome : FunctionExecution Implementation.program Implementation.splayId heapLimit placement
+        (Implementation.splay_args keys left right (root tree) query) heap entry,
+      Post key keys left right query tree heap outcome.value outcome.heap ∧
+      outcome.result.steps ≤ splayInvocationBound key query tree ∧
+      outcome.result.steps ≤ splayInstructionFactor * (searchDepth key query tree + 1) := by
   have priced : splayCostPre key query tree
-      (splayArgs keys left right (root tree) query) heap := ⟨rfl, rfl, represented⟩
-  obtain ⟨value, finish, targetFinish, bodySteps, target, evaluated, property,
-      _, finalMemory, execution, returned, observed, _, _, bounded⟩ :=
-    (splay_realizable hw key query tree unique).runUntil_le
-      (splay_total key query tree unique) (splay_costBound_at key query tree) hw
-      (splayArgs keys left right (root tree) query) heap arguments
-      ⟨priced, keysLeft, keysRight, leftRight, arguments, memory.heapFits⟩
-      ⟨rfl, rfl, represented, keysLeft, keysRight, leftRight⟩ priced entry memory
-      codeCapacity stackCapacity
-  obtain ⟨final, rfl, finalRep, trace, frame⟩ := property
-  refine ⟨final, finish, targetFinish, _, target, ?_, finalRep, trace, frame,
-    finalMemory, execution, returned, observed, bounded,
-    bounded.trans (splayInvocationBound_le key query tree)⟩
-  simpa only [Implementation.splay, splayArgs] using evaluated
+      (Implementation.splay_args keys left right (root tree) query) heap :=
+    ⟨rfl, rfl, input.represented⟩
+  obtain ⟨outcome, property, bounded⟩ :=
+    (splay_realizable launch.positive key query tree).execute_le
+      (splay_total key query tree) (splay_costBound_at key query tree) launch
+      ⟨rfl, rfl, input, launch.arguments, launch.memory.heapFits⟩ ⟨rfl, rfl, input⟩ priced
+  exact ⟨outcome, property, bounded, bounded.trans (splayInvocationBound_le key query tree)⟩
 
 end Complexity.Language.Examples.Splay

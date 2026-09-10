@@ -66,15 +66,14 @@ theorem boundedIncrement_eq (n limit : Nat) :
 
 /-- Ordinary addition specifies the actual source helper. -/
 theorem increment_total :
-    FunctionTotal program (0 : Fin 2) (fun _ _ => True)
-      (fun args heap value finish => value = Env.head args + 1 ∧ finish = heap) := by
+    Implementation.increment_contract (fun _ _ => True)
+      (fun n heap value finish => value = n + 1 ∧ finish = heap) := by
   simpa only [increment_eq] using Implementation.increment_total
 
 /-- The caller's source proof composes the helper contract and the actual branch. -/
 theorem boundedIncrement_total :
-    FunctionTotal program (1 : Fin 2) (fun _ _ => True)
-      (fun args heap value finish =>
-        value = min (Env.head args + 1) (Env.head (Env.tail args)) ∧ finish = heap) := by
+    Implementation.boundedIncrement_contract (fun _ _ _ => True)
+      (fun n limit heap value finish => value = min (n + 1) limit ∧ finish = heap) := by
   simpa only [boundedIncrement_eq] using Implementation.boundedIncrement_total
 
 /-- A successful invocation exists for every pair of natural inputs, and its

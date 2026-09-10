@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Language.Heap
 import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Compiler.Language.ExecutionCost.Depth
+import Complexity.Computability.Ram.Compiler.Language.DepthBound
 import Complexity.Language.Heap.Frame
 
 /-!
@@ -270,5 +271,29 @@ theorem FunctionRealizable.of_rangePreserving {signatures : List Signature}
   have instructionBound := timeBound args heap priced realized cost
   have nestingBound := capacity args heap input priced
   exact ⟨finish, value, cost.realized_at_steps.mono_depth (by omega)⟩
+
+/-- Source total correctness and an independent nesting bound give a finite-word
+realization without using instruction count as a call-stack allowance. The depth
+certificate changes only the capacity of the same source execution; correctness,
+heap access safety and word ranges still come from the existing contracts. -/
+theorem FunctionRealizable.of_rangePreserving_depth {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w depth : Nat}
+    {fn : Fin signatures.length}
+    {pre depthPre : Env signatures[fn].params → Heap → Prop}
+    {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
+    {bound : Env signatures[fn].params → Heap → Nat}
+    (hw : 0 < w) (bodies : ∀ fn, RangePreserving w (program.body fn))
+    (specification : FunctionTotal program fn pre post)
+    (nesting : FunctionDepthBound program fn depthPre bound)
+    (capacity : ∀ args heap, pre args heap → depthPre args heap → bound args heap ≤ depth) :
+    FunctionRealizable program w depth fn
+      (fun args heap => pre args heap ∧ depthPre args heap ∧
+        EnvFits w args ∧ HeapFits w heap) := by
+  intro args heap ⟨input, bounded, locals, cells⟩
+  obtain ⟨finish, value, execution, _⟩ := specification args heap input
+  obtain ⟨actualDepth, realized, _, _⟩ :=
+    RealizedExec.exists_of_exec hw bodies execution (bodies fn) trivial locals cells
+  exact ⟨finish, value,
+    (nesting args heap bounded realized).mono_depth (capacity args heap input bounded)⟩
 
 end Ram.LanguageCompiler

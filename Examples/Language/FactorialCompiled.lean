@@ -4,7 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Examples.Language.Factorial
-import Complexity.Computability.Ram.Compiler.Language.CostExecution
+import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.CostBound
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
@@ -98,59 +98,33 @@ theorem factorial_costBound :
   intro args heap _
   exact factorial_costBound_at (Env.head args) args heap rfl
 
-/-- The actual compiled invocation returns factorial and preserves the entry
-state, with a linear body and complete invocation bound. The stack premise
-includes the outer call in addition to the `n` recursive call levels. -/
-theorem factorial_runUntil_le {w heapLimit : Nat} (hw : 0 < w) (n : Nat)
+/-- The complete invocation bound includes the actual outer call and final halt. -/
+def factorialInvocationBound (n : Nat) : Nat :=
+  Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
+    (lowerFunc Implementation.program Implementation.factorialId) (factorialBodyBound n) + 1
+
+/-- The actual compiled result is the ordinary mathematical factorial.
+Shared publication retains the runner, body-time equation and returned words;
+the independent frame and cost theorems concern that same result. Capacity
+includes the outer call and the `n` recursive call levels. -/
+theorem factorial_execute {w heapLimit : Nat} (n : Nat)
     (fits : Nat.factorial n < 2 ^ w) (entry : Ram.Source.State w)
-    (codeCapacity : (lowerCode Implementation.program Implementation.factorialId).length < 2 ^ w)
-    (stackCapacity : heapLimit + (n + 1) * Ram.ABI.frameSize
-      (programControl Implementation.program) < 2 ^ w) :
-    ∃ (bodySteps : Nat) (target : Ram.State w),
-      Ram.LocalCompiler.Function.runUntil (programControl Implementation.program)
-          (lowerProgram Implementation.program) Implementation.factorialId.val 1 heapLimit
-          (envWords (fun _ => 0) (Env.cons (τ := .nat) n Env.empty)) entry =
-        some ⟨target,
-          Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-            (lowerFunc Implementation.program Implementation.factorialId) bodySteps + 1, .halted⟩ ∧
-      Ram.LocalCompiler.Function.returnedValues 1 target =
-        valueWords (fun _ => 0) (τ := .nat) (Nat.factorial n) ∧
-      Ram.Source.State.Observes heapLimit 0 entry target ∧
-      (lowerFunc Implementation.program Implementation.factorialId).bodyTime
-          (lowerProgram Implementation.program) heapLimit
-          (envWords (fun _ => 0) (Env.cons (τ := .nat) n Env.empty)) entry =
-        Part.some bodySteps ∧
-      bodySteps ≤ factorialBodyBound n ∧
-      Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-          (lowerFunc Implementation.program Implementation.factorialId) bodySteps + 1 ≤
-        factorialBodyBound n +
-          Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-            (lowerFunc Implementation.program Implementation.factorialId) 0 + 1 := by
-  let args : Env [.nat] := Env.cons (τ := .nat) n Env.empty
-  have arguments : EnvFits w args := by
-    simp only [args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
+    (capacity : FunctionCapacity Implementation.program Implementation.factorialId w n heapLimit) :
+    ∃ outcome : FunctionExecution Implementation.program Implementation.factorialId heapLimit
+        (fun _ => 0) (Implementation.factorial_args n) ⟨#[]⟩ entry,
+      outcome.value = Nat.factorial n ∧
+      Ram.Source.State.Observes heapLimit 0 entry outcome.result.state ∧
+      outcome.bodySteps ≤ factorialBodyBound n ∧
+      outcome.result.steps ≤ factorialInvocationBound n := by
+  have arguments : EnvFits w (Implementation.factorial_args n) := by
+    simp only [Implementation.factorial_args, EnvFits.cons_nat_iff, EnvFits.empty, and_true]
     exact Nat.lt_of_le_of_lt (Nat.self_le_factorial n) fits
-  obtain ⟨value, _, targetFinish, bodySteps, target, _, result, invocation, _, execution,
-      values, observed, time, bodyBound, invocationBound⟩ :=
-    (factorial_realizable n).runUntil_le factorial_total factorial_costBound hw args ⟨#[]⟩ arguments
-      ⟨rfl, fits⟩ trivial trivial entry (HeapRep.empty (fun _ => 0) heapLimit entry)
-      codeCapacity stackCapacity
-  have unchanged : targetFinish = entry := invocation.finish_eq_of_noSharedWrites
-    (lowerProgram_noSharedWrites Implementation.program program_noHeapWrites)
-    (lowerBody_noSharedWrites Implementation.program _ (program_noHeapWrites _))
-  subst targetFinish
-  have actualValue : (value : Nat) = Nat.factorial n := result.1
-  refine ⟨bodySteps, target, execution, actualValue ▸ values, observed, time, bodyBound, ?_⟩
-  calc
-    Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-        (lowerFunc Implementation.program Implementation.factorialId) bodySteps + 1 ≤
-      Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-        (lowerFunc Implementation.program Implementation.factorialId) (factorialBodyBound n) + 1 :=
-      invocationBound
-    _ = factorialBodyBound n +
-        Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-          (lowerFunc Implementation.program Implementation.factorialId) 0 + 1 := by
-      simp only [Ram.LocalCompiler.Function.callSteps_eq]
-      omega
+  obtain ⟨outcome, result, bounded⟩ :=
+    (factorial_realizable n).execute_le factorial_total factorial_costBound
+      { toFunctionCapacity := capacity, arguments := arguments,
+        memory := HeapRep.empty (fun _ => 0) heapLimit entry }
+      ⟨rfl, fits⟩ trivial trivial
+  exact ⟨outcome, result.1, outcome.observes_of_noHeapWrites program_noHeapWrites,
+    outcome.bodySteps_le bounded, bounded⟩
 
 end Complexity.Language.Examples.Factorial

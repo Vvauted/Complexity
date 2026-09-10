@@ -72,6 +72,34 @@ combines this interface with a mathematical `Tree`, subtree-local memory frames
 and one well-founded induction. Its representation supplies access bounds;
 no proposed running time or RAM capacity is needed for source correctness.
 
+State a mutable contract using standard `Std.Do` notation, rather than spelling
+out the exception/state transformer and a large execution tuple. For example,
+the splay theorem's conclusion is:
+
+```lean
+⦃fun heap => ⌜heap = initial ∧ Input key keys left right tree heap⌝⦄
+  Implementation.splay keys left right (root tree) query
+⦃⇓ result finish => ⌜Post key keys left right query tree initial result finish⌝⦄
+```
+
+Use `open scoped Std.Do Part.TotalCorrectness`. The standard `⇓` requires
+successful return; it does not allow an exceptional outcome. `Input` states
+the represented tree, unique node identities and actual buffer separation.
+`Post` keeps the returned root, represented output tree, rotation certificate
+and frame on the actual final heap. Its ordinary `Access` consequence states
+inorder preservation and the search-selected root; BST order, unique identities
+and complete key-array preservation have separate proved projection lemmas.
+The [specification](##Examples.Language.Splay.Specification) is shared with the
+RAM theorem, not a second implementation or an unchecked summary.
+
+Every declaration also generates `P.f_contract pre post`, with the function's
+ordinary curried parameters followed by the initial/final heaps. This is the
+existing `FunctionTotal` contract, not another correctness interpretation.
+`P.f_total_iff` proves its equivalence to actual successful evaluation.
+For resource contracts, `P.f_onArgs bound` applies an ordinary parameter function
+to the actual environment; `P.f_args` constructs that environment for a call.
+These generated operations replace hand-written `Env.head`/`tail` chains.
+
 Mutable bindings use ordinary Lean `do` in the generated equation. `x := value`
 updates an existing local, and `x ← action` rebinds it to the result of a real
 source call, read, slice or allocation. Branch joins retain outer updates;
@@ -460,21 +488,56 @@ the source bound with the original correctness and realization contracts.
 The complete invocation bound adds the outer calling convention and final halt
 exactly once.
 
+The [typed execution interface](##Complexity.Computability.Ram.Compiler.Language.FunctionExecution)
+publishes the result without rebuilding that runner tuple for every example.
+`FunctionCapacity` contains the existing positive-width, code and stack
+conditions; `FunctionLaunch` adds the actual argument ranges and represented
+starting memory. Neither contains the algorithm's correctness predicate or a
+proposed time bound. `FunctionRealizable.execute` composes source correctness
+and realizability; `execute_le` adds a separately proved instruction bound.
+Its `FunctionExecution` result retains actual source evaluation, returned words,
+halted runner state, body time and complete step count. `nextEntry` carries the
+entire returned physical memory into a later invocation. The factorial and
+splay consumers use the same interface, including factorial's preservation of
+arbitrary initial RAM memory below the heap boundary.
+
 Use the [structural bound rules](##Complexity.Computability.Ram.Compiler.Language.CostBound)
 to compose source costs. `StmtCostBound` bounds the existing execution observation;
 its primitive, sequence, branch, return and call rules hide case analysis on
 `ExecutionCost`. `FunctionCostBound.of_stmt` adds the returning-body wrapper once.
 `ram_source_cost (n limit) using increment_costBound` applies these rules to the
 scalar consumer and compares the inferred bound with its requested bound.
+For several callees, `using [recursiveBound, rotateRightBound, rotateLeftBound]`
+selects among the supplied contracts at the actual call. Their own preconditions
+remain proof obligations; the author need not construct a dependent function
+table. `ram_source_cost_intro (names)` opens only the function-body rule and
+ordinary parameters, leaving mathematical case analysis before the structural
+pass. It expects the existing body wrapper's `core + 2` bound shape.
 Its uniform bound needs no proof of the minimum;
 result-dependent bounds can reuse an existing source contract through the call
 rule. A guard proved from source values and local facts selects only its actual
 branch through `StmtCostBound.ite_true` or `ite_false`. If neither decision can
-be proved, the tactic retains the uniform maximum of both branches. Automated
-call continuations use uniform numerical bounds; genuinely result/state-dependent
-numerical bounds retain the explicit rule interface. A uniform bound may still
-need a callee's postcondition to establish a later call's input.
+be proved, the tactic retains the uniform maximum of both branches. The default
+call form infers a uniform numerical continuation bound. A uniform bound may
+still need a callee's postcondition to establish a later call's input.
 Neither instruction prices nor mathematical correctness proofs are duplicated.
+
+For a numerical bound depending on the actual result and final heap, provide
+the ordinary bound function explicitly:
+
+```lean
+ram_source_call (next := fun (value : Nat) finish => remainingBound value finish)
+  using callee_cost, callee_total
+```
+
+The command leaves the continuation's cost proof and the final numerical
+comparison under the supplied callee postcondition. It reuses
+`StmtCostBound.call_of_spec_le` or `call_seq`, according to the actual source
+statement; no hypothetical returned value or unchanged-heap premise is added.
+The scalar consumer uses the returned increment to select different branch
+bounds. The two-buffer consumer separately demonstrates transport of the actual
+final heap and its frame facts. An author still supplies the mathematical bound;
+the command does not infer arbitrary result-dependent recurrences.
 
 `StmtCostBound.call_seq` handles a standalone call followed by another statement.
 It reuses the supplied callee contract to pass the actual final heap and ordinary
@@ -505,8 +568,9 @@ simplifies its generated constants in the remaining inequality; ordinary
 arithmetic proves the requested budget. Argument packing, scope restoration and
 intermediate structural bounds are inferred by shared rules. The same command works after `ram_source_realize`,
 with a realizability contract in place of the cost contract.
-No contract is selected automatically. The original single `using` mode still
-reuses its supplied contract throughout the pass. Loops remain explicit proof
+Contracts are never invented or searched for globally. Multiple explicitly
+supplied contracts are matched against the actual callee; the original single
+`using` mode reuses its supplied contract throughout the pass. Loops remain explicit proof
 boundaries in either mode, and neither mode invents an invariant or a frame fact.
 
 For typed loops, `StmtCostBound.while` uses a state-dependent potential. The

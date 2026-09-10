@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Examples.Language.Splay.CorrectnessLeft
 import Examples.Language.Splay.CorrectnessRight
+import Examples.Language.Splay.Specification
 
 /-!
 # Correctness and successful termination of the in-place splay access
@@ -23,6 +24,7 @@ the separate compiler-cost and amortized proofs.
 namespace Complexity.Language.Examples.Splay
 
 open BufferTree
+open scoped Std.Do Part.TotalCorrectness
 
 /-- Every uniquely represented finite tree admits a successful splay access.
 The recursive hypotheses range over strictly smaller original subtrees, not
@@ -84,62 +86,35 @@ theorem splay_eval (key : Nat → Nat) (keys left right : Buffer .nat) (query : 
               · exact .right_eq represented unique keysLeft keysRight leftRight goRight (by omega)
         · exact .of_eq represented (by omega)
 
-/-- The actual result has the ordinary mathematical BST properties and the
-same complete key-array contents. The frame also protects unrelated node slots
-inside the child buffers and the surrounding heap. -/
+/-- The ordinary source contract: a legal represented input terminates without
+fault and satisfies the shared mathematical and storage postcondition.
+`Post.access` exposes inorder/search correctness; `Access.ordered`, `Access.nodup`
+and `Post.keys_contents` give the usual BST, identity and key-array consequences. -/
 theorem splay_correct (key : Nat → Nat) (keys left right : Buffer .nat) (query : Nat)
-    (tree : Tree Nat) {heap : Heap} (represented : Rep key keys left right heap tree)
-    (unique : tree.inorder.Nodup) (ordered : (tree.inorder.map key).Pairwise (· < ·))
-    (keysLeft : keys.Disjoint left) (keysRight : keys.Disjoint right)
-    (leftRight : left.Disjoint right) :
-    ∃ final finish,
-      Implementation.splay keys left right (root tree) query heap =
-        Part.some (.ok (root final), finish) ∧
-      Rep key keys left right finish final ∧
-      final.inorder = tree.inorder ∧ final.inorder.Nodup ∧
-      (final.inorder.map key).Pairwise (· < ·) ∧
-      final.root? = (searchFocus key query tree).root? ∧
-      (∀ values, keys.Contents heap values → keys.Contents finish values) ∧
-      Heap.PreservesOutside (linkCells left right tree) heap finish := by
+    (tree : Tree Nat) (initial : Heap) :
+    ⦃fun heap => ⌜heap = initial ∧ Input key keys left right tree heap⌝⦄
+      Implementation.splay keys left right (root tree) query
+    ⦃⇓ result finish => ⌜Post key keys left right query tree initial result finish⌝⦄ := by
+  apply (triple_iff_eval _ _ _).mpr
+  rintro heap ⟨same, input⟩
+  subst heap
   obtain ⟨final, finish, executed, finalRep, trace, preserved⟩ :=
-    splay_eval key keys left right query tree represented unique keysLeft keysRight leftRight
-  refine ⟨final, finish, executed, finalRep, trace.inorder_eq,
-    trace.inorder_eq.symm ▸ unique, ?_, trace.root_eq, ?_, preserved⟩
-  · simpa only [trace.inorder_eq] using ordered
-  · intro values observed
-    exact preserved.contents observed (fun _ bound =>
-      represented.key_not_mem_linkCells keysLeft keysRight bound)
-
-/-- The same successful execution is a callable source contract, suitable for
-independent realizability and compiler-cost arguments. The generated ordinary-
-argument bridge handles environment packing; the proof only reuses `splay_eval`.
-Uniqueness is a property of the fixed mathematical input, while the three buffer
-views may vary and may occupy disjoint slices of one heap object. -/
-theorem splay_total (key : Nat → Nat) (query : Nat) (tree : Tree Nat)
-    (unique : tree.inorder.Nodup) :
-    FunctionTotal Implementation.program Implementation.splayId
-      (fun args heap =>
-        args.tail.tail.tail.head = root tree ∧ args.tail.tail.tail.tail.head = query ∧
-        Rep key args.head args.tail.head args.tail.tail.head heap tree ∧
-        args.head.Disjoint args.tail.head ∧ args.head.Disjoint args.tail.tail.head ∧
-        args.tail.head.Disjoint args.tail.tail.head)
-      (fun args heap result finish => ∃ final,
-        result = root final ∧ Rep key args.head args.tail.head args.tail.tail.head finish final ∧
-        SplayTrace (searchFocus key query tree) tree final (searchDepth key query tree) ∧
-        Heap.PreservesOutside (linkCells args.tail.head args.tail.tail.head tree) heap finish) := by
-  apply (Implementation.splay_total_iff
-    (fun keys left right currentRoot currentQuery heap =>
-      currentRoot = root tree ∧ currentQuery = query ∧ Rep key keys left right heap tree ∧
-        keys.Disjoint left ∧ keys.Disjoint right ∧ left.Disjoint right)
-    (fun keys left right _ _ heap result finish => ∃ final,
-      result = root final ∧ Rep key keys left right finish final ∧
-        SplayTrace (searchFocus key query tree) tree final (searchDepth key query tree) ∧
-        Heap.PreservesOutside (linkCells left right tree) heap finish)).mpr
-  rintro keys left right currentRoot currentQuery heap
-    ⟨rootEq, queryEq, represented, keysLeft, keysRight, leftRight⟩
-  subst currentRoot currentQuery
-  obtain ⟨final, finish, executed, finalRep, trace, preserved⟩ :=
-    splay_eval key keys left right query tree represented unique keysLeft keysRight leftRight
+    splay_eval key keys left right query tree input.represented input.unique
+      input.keysLeft input.keysRight input.leftRight
   exact ⟨root final, finish, executed, final, rfl, finalRep, trace, preserved⟩
+
+/-- The same `Input`/`Post` contract is callable by source and compiler rules.
+The generated declaration handles argument packing; this proof transports the
+native triple without repeating the tree proof or its mathematical predicates. -/
+theorem splay_total (key : Nat → Nat) (query : Nat) (tree : Tree Nat) :
+    Implementation.splay_contract
+    (fun keys left right currentRoot currentQuery heap =>
+      currentRoot = root tree ∧ currentQuery = query ∧ Input key keys left right tree heap)
+    (fun keys left right _ _ => Post key keys left right query tree) := by
+  apply (Implementation.splay_total_iff _ _).mpr
+  rintro keys left right currentRoot currentQuery heap ⟨rootEq, queryEq, input⟩
+  subst currentRoot currentQuery
+  exact (triple_iff_eval _ _ _).mp (splay_correct key keys left right query tree heap)
+    heap ⟨rfl, input⟩
 
 end Complexity.Language.Examples.Splay

@@ -15,11 +15,12 @@ next invocation uses the previous result's entire actual memory and I/O state,
 including private stack contents, and the returned mathematical root. It is
 not a second interpreter or a sum of independently reset executions.
 
-The sequence theorem constructs this history from the verified single-access
-theorem. Its instruction bounds are conclusions of those actual calls, not an
+The sequence theorem constructs this history from shared typed execution
+outcomes. Its instruction bounds are conclusions of those actual calls, not an
 assumed price for mathematical rotations. Telescoping retains the initial and
 final logarithmic potentials. The fixed stack capacity is a conservative bound
-uniform over all trees with the initial node count.
+uniform over all trees with the initial node count. This is a sufficient launch
+condition, not a separate theorem about exact peak or reachable live storage.
 
 The invocation boundary is the existing preloaded function trampoline. Every
 call includes its call/return and halt instructions. Host scheduling, supplying
@@ -32,10 +33,10 @@ namespace Complexity.Language.Examples.Splay
 open BufferTree Ram.LanguageCompiler
 
 /-- A sufficient address envelope for every access to a tree of this size.
-The instruction-derived nesting allowance is conservative, not an exact stack
-peak or a bit-space bound. It does not depend on the number of accesses. -/
+The nesting allowance follows two-level recursive descent, independently of
+the instruction bound. It is not a bit-space or exact live-storage bound. -/
 def splaySequenceCapacity (heapLimit nodes : Nat) : Nat :=
-  heapLimit + (splayLayerBound * (nodes + 1) + 3) *
+  heapLimit + (nodes / 2 + 1) *
     Ram.ABI.frameSize (programControl Implementation.program)
 
 /-- Witnesses of actual calls, with source meaning and target state linked at
@@ -74,7 +75,8 @@ structure SplayRunHistory {w : Nat} (heapLimit : Nat) (placement : Nat → Ram.W
         (contextSize
           (Implementation.signatures[Implementation.splayId.val]' Implementation.splayId.isLt).params)
         heapLimit
-        (envWords placement (splayArgs keys left right (root (trees i)) (queries i))) (entries i) =
+        (envWords placement
+          (Implementation.splay_args keys left right (root (trees i)) (queries i))) (entries i) =
       some ⟨targets i, steps i, .halted⟩
   returned : ∀ i, i < count →
     Ram.LocalCompiler.Function.returnedValues 1 (targets i) =
@@ -85,22 +87,19 @@ structure SplayRunHistory {w : Nat} (heapLimit : Nat) (placement : Nat → Ram.W
 
 /-- Consecutive actual runner invocations admit the logarithmic amortized
 bound. Only initial representation and explicit word/code/stack capacities are
-assumed; every per-access instruction bound is proved by `splay_runUntil`.
+assumed; every per-access instruction bound is proved by `splay_execute`.
 The initial potential is charged and final potential retained, including for
 empty trees and zero accesses. -/
 theorem splay_sequence_runUntil {w heapLimit : Nat} {placement : Nat → Ram.Word w}
-    (hw : 0 < w) (key : Nat → Nat) (keys left right : Buffer .nat)
+    (key : Nat → Nat) (keys left right : Buffer .nat)
     (queries : Nat → Nat) (count : Nat) (initialTree : Tree Nat) {initialHeap : Heap}
-    (represented : Rep key keys left right initialHeap initialTree)
-    (unique : initialTree.inorder.Nodup)
-    (keysLeft : keys.Disjoint left) (keysRight : keys.Disjoint right)
-    (leftRight : left.Disjoint right)
+    (input : Input key keys left right initialTree initialHeap)
+    (capacity : FunctionCapacity Implementation.program Implementation.splayId w
+      (initialTree.numNodes / 2) heapLimit)
     (keysFit : keys.length < 2 ^ w) (leftFit : left.length < 2 ^ w)
     (rightFit : right.length < 2 ^ w) (queriesFit : ∀ i, i < count → queries i < 2 ^ w)
     (initialEntry : Ram.Source.State w)
-    (memory : HeapRep placement heapLimit initialHeap initialEntry)
-    (codeCapacity : (lowerCode Implementation.program Implementation.splayId).length < 2 ^ w)
-    (stackCapacity : splaySequenceCapacity heapLimit initialTree.numNodes < 2 ^ w) :
+    (memory : HeapRep placement heapLimit initialHeap initialEntry) :
     ∃ history : SplayRunHistory heapLimit placement key keys left right queries count
         initialTree initialHeap initialEntry,
       ((∑ i ∈ Finset.range count, history.steps i : Nat) : ℝ) +
@@ -111,52 +110,44 @@ theorem splay_sequence_runUntil {w heapLimit : Nat} {placement : Nat → Ram.Wor
   classical
   let Data := Tree Nat × Heap × Ram.Source.State w
   let valid : Data → Prop := fun state =>
-    Rep key keys left right state.2.1 state.1 ∧
+    Input key keys left right state.1 state.2.1 ∧
       HeapRep placement heapLimit state.2.1 state.2.2 ∧
       state.1.inorder = initialTree.inorder ∧ state.1.numNodes = initialTree.numNodes
-  let advances (i : Nat) (before after : Data) (outcome : Ram.State w × Nat) : Prop :=
-    Implementation.splay keys left right (root before.1) (queries i) before.2.1 =
-        Part.some (.ok (root after.1), after.2.1) ∧
+  let advances (i : Nat) (before after : Data)
+      (outcome : FunctionExecution Implementation.program Implementation.splayId heapLimit placement
+        (Implementation.splay_args keys left right (root before.1) (queries i))
+        before.2.1 before.2.2) : Prop :=
+    outcome.value = root after.1 ∧ outcome.heap = after.2.1 ∧
+      after.2.2 = outcome.nextEntry ∧
       SplayTrace (searchFocus key (queries i) before.1) before.1 after.1
         (searchDepth key (queries i) before.1) ∧
       Heap.PreservesOutside (linkCells left right before.1) before.2.1 after.2.1 ∧
-      Ram.LocalCompiler.Function.runUntil (programControl Implementation.program)
-          (lowerProgram Implementation.program) Implementation.splayId.val
-          (contextSize
-            (Implementation.signatures[Implementation.splayId.val]' Implementation.splayId.isLt).params)
-          heapLimit
-          (envWords placement (splayArgs keys left right (root before.1) (queries i))) before.2.2 =
-        some ⟨outcome.1, outcome.2, .halted⟩ ∧
-      Ram.LocalCompiler.Function.returnedValues 1 outcome.1 =
-        valueWords placement (τ := .nat) (root after.1) ∧
-      after.2.2 = Ram.Source.State.ofRam outcome.1 ∧
-      outcome.2 ≤ splayInstructionFactor * (searchDepth key (queries i) before.1 + 1)
+      outcome.result.steps ≤ splayInstructionFactor * (searchDepth key (queries i) before.1 + 1)
   have nextExists (i : Nat) (hi : i < count) (before : Data) (current : valid before) :
-      ∃ after : Data, valid after ∧ ∃ outcome : Ram.State w × Nat,
+      ∃ after : Data, valid after ∧
+        ∃ outcome : FunctionExecution Implementation.program Implementation.splayId heapLimit placement
+          (Implementation.splay_args keys left right (root before.1) (queries i))
+          before.2.1 before.2.2,
         advances i before after outcome := by
-    have treeUnique : before.1.inorder.Nodup := current.2.2.1.symm ▸ unique
-    have depthBound : searchDepth key (queries i) before.1 ≤ initialTree.numNodes :=
-      (searchDepth_le_numNodes key (queries i) before.1).trans_eq current.2.2.2
-    have bodyBound : splayBodyBound key (queries i) before.1 ≤
-        splayLayerBound * (initialTree.numNodes + 1) + 2 :=
-      Nat.add_le_add_right
-        (Nat.mul_le_mul_left splayLayerBound (Nat.add_le_add_right depthBound 1)) 2
-    have enough : heapLimit + (splayBodyBound key (queries i) before.1 + 1) *
-        Ram.ABI.frameSize (programControl Implementation.program) < 2 ^ w := by
-      apply lt_of_le_of_lt _ stackCapacity
-      exact Nat.add_le_add_left
-        (Nat.mul_le_mul_right _ (Nat.add_le_add_right bodyBound 1)) heapLimit
-    obtain ⟨final, finish, sourceFinish, steps, target, source, finalRep, trace, frame,
-      finalMemory, run, returned, observed, _, bounded⟩ :=
-      splay_runUntil hw key keys left right (queries i) before.1 current.1 treeUnique
-        keysLeft keysRight leftRight keysFit leftFit rightFit (queriesFit i hi)
-        before.2.2 current.2.1 codeCapacity enough
-    refine ⟨(final, finish, Ram.Source.State.ofRam target), ?_, (target, steps),
-      source, trace, frame, run, returned, rfl, bounded⟩
-    exact ⟨finalRep, finalMemory.of_observes observed,
+    have depthBound : splayDepthBound before.1 ≤ initialTree.numNodes / 2 :=
+      (splayDepthBound_le_numNodes before.1).trans_eq
+        (congrArg (fun nodes => nodes / 2) current.2.2.2)
+    let launch : FunctionLaunch Implementation.program Implementation.splayId
+        (splayDepthBound before.1) heapLimit placement
+        (Implementation.splay_args keys left right (root before.1) (queries i))
+        before.2.1 before.2.2 := {
+      toFunctionCapacity := capacity.mono_depth depthBound
+      arguments := splay_args_fits current.1.represented keysFit leftFit rightFit (queriesFit i hi)
+      memory := current.2.1 }
+    obtain ⟨outcome, ⟨final, valueEq, finalRep, trace, frame⟩, _, bounded⟩ :=
+      splay_execute key keys left right (queries i) before.1 current.1 launch
+    refine ⟨(final, outcome.heap, outcome.nextEntry), ?_, outcome,
+      valueEq, rfl, rfl, trace, frame, bounded⟩
+    exact ⟨⟨finalRep, trace.inorder_eq.symm ▸ current.1.unique,
+        input.keysLeft, input.keysRight, input.leftRight⟩, outcome.memory,
       trace.inorder_eq.trans current.2.2.1, trace.numNodes_eq.trans current.2.2.2⟩
   let initial : {state : Data // valid state} :=
-    ⟨(initialTree, initialHeap, initialEntry), represented, memory, rfl, rfl⟩
+    ⟨(initialTree, initialHeap, initialEntry), input, memory, rfl, rfl⟩
   -- Choice selects witnesses of already proved runner equations; it does not
   -- define an evaluator or extract a runtime count from a proposed bound.
   let advance (i : Nat) (before : {state : Data // valid state}) :
@@ -173,34 +164,46 @@ theorem splay_sequence_runUntil {w heapLimit : Nat} {placement : Nat → Ram.Wor
     rw [states_succ]
     simp only [advance, dif_pos hi]
   have transitions (i : Nat) (hi : i < count) :
-      ∃ outcome : Ram.State w × Nat, advances i (states i).val (states (i + 1)).val outcome := by
+      ∃ outcome : FunctionExecution Implementation.program Implementation.splayId heapLimit placement
+        (Implementation.splay_args keys left right (root (states i).val.1) (queries i))
+        (states i).val.2.1 (states i).val.2.2,
+        advances i (states i).val (states (i + 1)).val outcome := by
     rw [next_state i hi]
     exact (Classical.choose_spec (nextExists i hi (states i).val (states i).property)).2
-  let outcomes (i : Nat) : Ram.State w × Nat :=
-    if hi : i < count then Classical.choose (transitions i hi) else (Ram.State.initial [], 0)
+  let invocations (i : Nat) (hi : i < count) := Classical.choose (transitions i hi)
+  let outcomes (i : Nat) : Ram.RunResult (Ram.State w) :=
+    if hi : i < count then (invocations i hi).result else ⟨Ram.State.initial [], 0, .halted⟩
+  have outcomeEq (i : Nat) (hi : i < count) : outcomes i = (invocations i hi).result := by
+    simp only [outcomes, dif_pos hi]
   have properties (i : Nat) (hi : i < count) :
-      advances i (states i).val (states (i + 1)).val (outcomes i) := by
-    simpa only [outcomes, dif_pos hi] using Classical.choose_spec (transitions i hi)
+      advances i (states i).val (states (i + 1)).val (invocations i hi) :=
+    Classical.choose_spec (transitions i hi)
   let history : SplayRunHistory heapLimit placement key keys left right queries count
       initialTree initialHeap initialEntry := {
     trees := fun i => (states i).val.1
     heaps := fun i => (states i).val.2.1
     entries := fun i => (states i).val.2.2
-    targets := fun i => (outcomes i).1
-    steps := fun i => (outcomes i).2
+    targets := fun i => (outcomes i).state
+    steps := fun i => (outcomes i).steps
     initial_tree := rfl
     initial_heap := rfl
     initial_entry := rfl
-    represented := fun i _ => (states i).property.1
+    represented := fun i _ => (states i).property.1.represented
     memory := fun i _ => (states i).property.2.1
     inorder := fun i _ => (states i).property.2.2.1
-    source := fun i hi => (properties i hi).1
-    trace := fun i hi => (properties i hi).2.1
-    frame := fun i hi => (properties i hi).2.2.1
-    run := fun i hi => (properties i hi).2.2.2.1
-    returned := fun i hi => (properties i hi).2.2.2.2.1
-    resumed := fun i hi => (properties i hi).2.2.2.2.2.1
-    instruction_bound := fun i hi => (properties i hi).2.2.2.2.2.2 }
+    source := fun i hi => by
+      simpa only [Implementation.splay, Implementation.splay_args,
+        (properties i hi).1, (properties i hi).2.1] using (invocations i hi).source
+    trace := fun i hi => (properties i hi).2.2.2.1
+    frame := fun i hi => (properties i hi).2.2.2.2.1
+    run := fun i hi => by
+      simpa only [outcomeEq i hi] using (invocations i hi).run_halted
+    returned := fun i hi => by
+      simpa only [outcomeEq i hi, (properties i hi).1] using (invocations i hi).returned
+    resumed := fun i hi => by
+      simpa only [FunctionExecution.nextEntry, outcomeEq i hi] using (properties i hi).2.2.1
+    instruction_bound := fun i hi => by
+      simpa only [outcomeEq i hi] using (properties i hi).2.2.2.2.2 }
   refine ⟨history, ?_⟩
   have bound := sum_steps_add_potential_le
     (trees := history.trees)
@@ -214,18 +217,15 @@ theorem splay_sequence_runUntil {w heapLimit : Nat} {placement : Nat → Ram.Wor
 history. The initial tree contributes its `n log₂ (n + 1)` credit; final credit
 is nonnegative and discarded. No per-call cost assumption is an input. -/
 theorem splay_sequence_runUntil_log {w heapLimit : Nat} {placement : Nat → Ram.Word w}
-    (hw : 0 < w) (key : Nat → Nat) (keys left right : Buffer .nat)
+    (key : Nat → Nat) (keys left right : Buffer .nat)
     (queries : Nat → Nat) (count : Nat) (initialTree : Tree Nat) {initialHeap : Heap}
-    (represented : Rep key keys left right initialHeap initialTree)
-    (unique : initialTree.inorder.Nodup)
-    (keysLeft : keys.Disjoint left) (keysRight : keys.Disjoint right)
-    (leftRight : left.Disjoint right)
+    (input : Input key keys left right initialTree initialHeap)
+    (capacity : FunctionCapacity Implementation.program Implementation.splayId w
+      (initialTree.numNodes / 2) heapLimit)
     (keysFit : keys.length < 2 ^ w) (leftFit : left.length < 2 ^ w)
     (rightFit : right.length < 2 ^ w) (queriesFit : ∀ i, i < count → queries i < 2 ^ w)
     (initialEntry : Ram.Source.State w)
-    (memory : HeapRep placement heapLimit initialHeap initialEntry)
-    (codeCapacity : (lowerCode Implementation.program Implementation.splayId).length < 2 ^ w)
-    (stackCapacity : splaySequenceCapacity heapLimit initialTree.numNodes < 2 ^ w) :
+    (memory : HeapRep placement heapLimit initialHeap initialEntry) :
     ∃ history : SplayRunHistory heapLimit placement key keys left right queries count
         initialTree initialHeap initialEntry,
       ((∑ i ∈ Finset.range count, history.steps i : Nat) : ℝ) ≤
@@ -233,9 +233,8 @@ theorem splay_sequence_runUntil_log {w heapLimit : Nat} {placement : Nat → Ram
           (3 * Real.logb 2 ((initialTree.numNodes + 1 : Nat) : ℝ) + 2) +
           (initialTree.numNodes : ℝ) *
             Real.logb 2 ((initialTree.numNodes + 1 : Nat) : ℝ)) := by
-  obtain ⟨history, _⟩ := splay_sequence_runUntil hw key keys left right queries count initialTree
-    represented unique keysLeft keysRight leftRight keysFit leftFit rightFit queriesFit
-    initialEntry memory codeCapacity stackCapacity
+  obtain ⟨history, _⟩ := splay_sequence_runUntil key keys left right queries count initialTree
+    input capacity keysFit leftFit rightFit queriesFit initialEntry memory
   refine ⟨history, ?_⟩
   have bound := sum_steps_le_log
     (trees := history.trees)

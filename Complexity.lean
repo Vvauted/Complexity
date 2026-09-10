@@ -122,11 +122,14 @@ import Complexity.Computability.Ram.Compiler.Language.CostBound
 import Complexity.Computability.Ram.Compiler.Language.CostBound.Locals
 import Complexity.Computability.Ram.Compiler.Language.CostDeterministic
 import Complexity.Computability.Ram.Compiler.Language.CostExecution
+import Complexity.Computability.Ram.Compiler.Language.DepthBound
+import Complexity.Computability.Ram.Compiler.Language.DepthTactic
 import Complexity.Computability.Ram.Compiler.Language.Effects
 import Complexity.Computability.Ram.Compiler.Language.Encoding
 import Complexity.Computability.Ram.Compiler.Language.Execution
 import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.ExecutionCost.Depth
+import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.Heap
 import Complexity.Computability.Ram.Compiler.Language.Heap.Observation
 import Complexity.Computability.Ram.Compiler.Language.HeapOperation

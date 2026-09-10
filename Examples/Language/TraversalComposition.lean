@@ -17,23 +17,21 @@ No traversal body or second implementation is unfolded here.
 
 namespace Complexity.Language.Examples.Traversal
 
-open scoped Part.TotalCorrectness
+open scoped Std.Do Part.TotalCorrectness
 
 /-- Two ordinary calls compose their array results and heap frames, including
 when the disjoint buffers are borrowed slices of one shared object. -/
 theorem boundedMapPair_spec (xs ys : Buffer .nat) (limit : Nat)
     (leftContents rightContents : Array Nat) (initial : Heap)
     (separated : xs.Disjoint ys) :
-    Std.Do.Triple (m := ExceptT Fault (StateT Heap Part))
-      (ps := .except Fault (.arg Heap .pure)) (Implementation.boundedMapPair xs ys limit)
-      (fun heap => ⟨heap = initial ∧ xs.Contents heap leftContents ∧
-        ys.Contents heap rightContents⟩)
-      (fun _ finish => ⟨xs.Contents finish (leftContents.map fun x => min (x + 1) limit) ∧
+    ⦃fun heap => ⌜heap = initial ∧ xs.Contents heap leftContents ∧
+      ys.Contents heap rightContents⌝⦄
+      Implementation.boundedMapPair xs ys limit
+    ⦃⇓ _ finish => ⌜xs.Contents finish (leftContents.map fun x => min (x + 1) limit) ∧
         ys.Contents finish (rightContents.map fun x => min (x + 1) limit) ∧
         ∀ {kind : CellTy} (other : Buffer kind) (contents : Array (CellValue kind)),
           xs.Disjoint other → ys.Disjoint other →
-            other.Contents initial contents → other.Contents finish contents⟩,
-        (fun _ _ => ⟨False⟩, ⟨⟩)) := by
+            other.Contents initial contents → other.Contents finish contents⌝⦄ := by
   have leftSpec := Implementation.boundedMap_spec (boundedMap_total_frame leftContents) xs limit
   have rightSpec := Implementation.boundedMap_spec (boundedMap_total_frame rightContents) ys limit
   rw [Implementation.boundedMapPair_eq]
@@ -72,26 +70,16 @@ theorem boundedMapPair_eval (xs ys : Buffer .nat) (limit : Nat)
 /-- The composed function exposes the same ordinary two-array result and
 outside-both frame through its generated named argument interface. -/
 theorem boundedMapPair_total (leftContents rightContents : Array Nat) :
-    FunctionTotal Implementation.program Implementation.boundedMapPairId
-      (fun args heap => args.head.Contents heap leftContents ∧
-        args.tail.head.Contents heap rightContents ∧ args.head.Disjoint args.tail.head)
-      (fun args initial _ finish =>
-        args.head.Contents finish
-          (leftContents.map fun x => min (x + 1) args.tail.tail.head) ∧
-        args.tail.head.Contents finish
-          (rightContents.map fun x => min (x + 1) args.tail.tail.head) ∧
+    Implementation.boundedMapPair_contract
+      (fun xs ys _ heap => xs.Contents heap leftContents ∧
+        ys.Contents heap rightContents ∧ xs.Disjoint ys)
+      (fun xs ys limit initial _ finish =>
+        xs.Contents finish (leftContents.map fun x => min (x + 1) limit) ∧
+        ys.Contents finish (rightContents.map fun x => min (x + 1) limit) ∧
         ∀ {kind : CellTy} (other : Buffer kind) (contents : Array (CellValue kind)),
-          args.head.Disjoint other → args.tail.head.Disjoint other →
+          xs.Disjoint other → ys.Disjoint other →
             other.Contents initial contents → other.Contents finish contents) := by
-  apply (Implementation.boundedMapPair_total_iff
-    (fun xs ys _ heap => xs.Contents heap leftContents ∧
-      ys.Contents heap rightContents ∧ xs.Disjoint ys)
-    (fun xs ys limit initial _ finish =>
-      xs.Contents finish (leftContents.map fun x => min (x + 1) limit) ∧
-      ys.Contents finish (rightContents.map fun x => min (x + 1) limit) ∧
-      ∀ {kind : CellTy} (other : Buffer kind) (contents : Array (CellValue kind)),
-        xs.Disjoint other → ys.Disjoint other →
-          other.Contents initial contents → other.Contents finish contents)).mpr
+  apply (Implementation.boundedMapPair_total_iff _ _).mpr
   rintro xs ys limit heap ⟨observedLeft, observedRight, separated⟩
   obtain ⟨finish, executed, mappedLeft, mappedRight, frame⟩ :=
     boundedMapPair_eval xs ys limit observedLeft observedRight separated

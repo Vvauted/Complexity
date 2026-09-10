@@ -378,6 +378,33 @@ theorem call_uniform {fn : Fin signatures.length} {args : Args Γ signatures[fn]
   call (post := fun _ _ => True) (nextBound := fun _ _ => nextBound) callee hpre
     (fun _ => trivial) (fun value heap _ => body value heap) (fun _ _ _ => Nat.le_refl _)
 
+/-- A supplied source contract connects the actual returned value and heap to
+a dependent continuation bound. The final comparison uses that same proven
+postcondition; it need not bound impossible callee outcomes. -/
+theorem call_of_spec_le {fn : Fin signatures.length} {args : Args Γ signatures[fn].params}
+    {continuation : Complexity.Language.Stmt signatures (signatures[fn].result :: Γ) result}
+    {costPre pre : Env signatures[fn].params → Heap → Prop}
+    {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
+    {calleeBound : Env signatures[fn].params → Heap → Nat}
+    {nextBound : Value signatures[fn].result → Heap → Nat}
+    (callee : FunctionCostBound program fn costPre calleeBound)
+    (specification : FunctionTotal program fn pre post)
+    (costInput : costPre (args.eval entry.locals) entry.heap)
+    (input : pre (args.eval entry.locals) entry.heap)
+    (nextCost : ∀ value heap, post (args.eval entry.locals) entry.heap value heap →
+      StmtCostBound program continuation
+        (Complexity.Language.State.cons value ⟨entry.locals, heap⟩) (nextBound value heap))
+    (combine : ∀ value heap, post (args.eval entry.locals) entry.heap value heap →
+      callCost program fn (calleeBound (args.eval entry.locals) entry.heap) +
+        nextBound value heap ≤ bound) :
+    StmtCostBound program (.call fn args continuation) entry bound := by
+  apply call (post := post (args.eval entry.locals) entry.heap)
+    (nextBound := nextBound) callee costInput
+  · intro finish value executed
+    exact specification.postcondition input executed
+  · exact nextCost
+  · exact combine
+
 /-- Reuse a supplied source contract while inferring a uniform continuation
 bound. Uniformity concerns the cost bound, not the returned value, heap or
 postcondition: the continuation retains all actual callee effects. -/
@@ -394,14 +421,9 @@ theorem call_of_spec {fn : Fin signatures.length} {args : Args Γ signatures[fn]
       StmtCostBound program continuation
         (Complexity.Language.State.cons value ⟨entry.locals, heap⟩) nextBound) :
     StmtCostBound program (.call fn args continuation) entry
-      (callCost program fn (calleeBound (args.eval entry.locals) entry.heap) + nextBound) := by
-  apply call (post := post (args.eval entry.locals) entry.heap)
-    (nextBound := fun _ _ => nextBound) callee costInput
-  · intro finish value executed
-    exact specification.postcondition input executed
-  · exact body
-  · intro value heap property
-    exact Nat.le_refl _
+      (callCost program fn (calleeBound (args.eval entry.locals) entry.heap) + nextBound) :=
+  call_of_spec_le (nextBound := fun _ _ => nextBound) callee specification costInput input body
+    (fun _ _ _ => Nat.le_refl _)
 
 /-- A standalone call resumes the next statement with the caller's locals and
 the callee's actual final heap. Its supplied contract transports contents and
