@@ -64,7 +64,7 @@ variable {execution : RealizedExec program w depth stmt entry finish outcome}
 
 /-- A redundant initialization in an induction hypothesis is not an extra
 instruction in the loop tail: retain its actual count separately. -/
-private theorem drop_initialized_one
+theorem drop_initialized_one
     {control count : Nat} {code : Ram.Program} {r : Reg} {body : Ram.Stmt}
     {s t : Source.State w}
     (run : Source.LocalMeasuredExec control code heapLimit depth

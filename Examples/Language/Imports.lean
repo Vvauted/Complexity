@@ -35,14 +35,15 @@ source_program Implementation importing Factorial.Implementation, Traversal.Impl
 
 /-- The client makes a real library call and returns its actual result. -/
 theorem factorial_eq_original (n : Nat) :
-    Implementation.factorial n = Factorial.Implementation.factorial n := by
+    Implementation.factorial n = Factorial.Implementation.factorial_action n := by
   rw [Implementation.factorial_eq, bind_pure]
 
 /-- The existing recursive proof supplies the client's mathematical result. -/
 theorem factorial_eval (n : Nat) :
     Implementation.factorial n =
-      (pure (Nat.factorial n) : ExceptT Fault (StateT Heap Part) Nat) :=
-  (factorial_eq_original n).trans (Factorial.factorial_eval n)
+      (pure (Nat.factorial n) : ExceptT Fault (StateT Heap Part) Nat) := by
+  rw [factorial_eq_original, Factorial.Implementation.factorial_action_eq_pure,
+    Factorial.factorial_eq]
 
 /-- The imported recursive call terminates and preserves every initial shared heap. -/
 theorem factorial_eval_heap (n : Nat) (heap : Heap) :

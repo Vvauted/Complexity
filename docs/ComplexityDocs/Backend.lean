@@ -181,8 +181,9 @@ A heap boundary bounds addresses; a visited-address set is a cumulative footprin
 Neither is automatically peak live storage. Saved-frame and partial save/restore lemmas
 describe the actual calling protocol, but a complete tight nested-call live-space result
 is still missing. In particular, `SP - H` is not enough: setup writes before advancing `SP`,
-and return retreats it before restoration finishes. General allocation and reclamation
-also need their own semantics before supporting live-heap bounds.
+and return retreats it before restoration finishes. The verified monotone arena
+tracks cumulative allocation and preserves its cursor across calls; this does not
+establish peak live storage. Reclamation still needs a separate lifetime semantics.
 
 See [execution footprints](##Complexity.Computability.Ram.Execution.Memory),
 [saved frames](##Complexity.Computability.Ram.Compiler.Local.ABI.Stack) and

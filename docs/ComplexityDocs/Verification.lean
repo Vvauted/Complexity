@@ -25,7 +25,7 @@ returned value, with no proposed instruction bound. See the
 The [named frontend](##Complexity.Language.Syntax) accepts scalar programs such as:
 
 ```lean
-source_program Bounded where
+source_program (pure) Bounded where
   def increment (n : Nat) : Nat := do
     return n + 1
 
@@ -39,24 +39,29 @@ source_program Bounded where
     return result
 ```
 
-It generates typed source bodies, ordinary curried semantic functions and one-step
-equations such as `Bounded.boundedIncrement_eq`. Each equation exposes that function's
-body in native `ExceptT Fault (StateT Heap Part)` `do` notation, retaining named callee actions.
-It is deliberately not a simp rule: unfold one body explicitly, then reuse a
-callee's specification instead of recursively expanding its implementation.
-A result statement can be written as
-`Bounded.boundedIncrement n limit = pure (min (n + 1) limit)`.
-This is the actual source program's result, not a separately implemented answer.
-The action equation quantifies over every initial heap and preserves its value;
-it does not select an empty heap or assert zero execution cost.
-These `Part` functions are noncomputable mathematical observations, not host
-executables for `#eval`; execution still uses the compiled RAM runner.
+It generates typed source bodies and executable curried Lean functions from the
+same declaration. `Bounded.boundedIncrement n limit` has type `Nat`; its result
+statement is the ordinary equality
+`Bounded.boundedIncrement n limit = min (n + 1) limit`.
+The generated `f_action` retains the independent source observation, and
+`f_action_eq` exposes one source body in `ExceptT Fault (StateT Heap Part)` notation.
+`f_action_eq_pure` proves that action equals `pure` of the native result for every
+initial heap; `f_total` supplies the corresponding total source contract.
+There is no second user-written implementation or manual heap conversion.
+The pure fragment supports Nat, Bool and Unit, self-recursion and acyclic calls,
+but not buffers, `while` or mutually recursive families.
+
+Without `(pure)`, the existing `P.f` and `P.f_eq` interface still exposes
+effectful, possibly partial actions with actual heaps and finite faults.
+Those `Part` observations remain noncomputable, while the pure native functions
+can be evaluated by Lean. Native execution and certified RAM instruction costs
+are different runtimes; ordinary result equality assigns no execution cost.
 
 Mutable bindings use ordinary Lean `do` in the generated equation. `x := value`
 updates an existing local, and `x ← action` rebinds it to the result of a real
-source call, read or slice. Branch joins retain outer updates; leaving a scope
+source call, read, slice or allocation. Branch joins retain outer updates; leaving a scope
 drops only its inner bindings. Ordinary `let` and parameters are immutable.
-Changing a buffer handle does not copy its contents or alter the heap.
+Copying an existing buffer handle does not copy its contents or alter the heap.
 
 [Evaluation adequacy](##Complexity.Language.Eval.Basic) distinguishes finite
 faults from absence of a finite result. The
@@ -68,13 +73,15 @@ only after a normal outcome. Return and fault bypass it; function fallthrough is
 the defined `.missingReturn` error. These proved rules justify the generated
 function equations, without a second interpreter or a user-supplied host algorithm.
 
-For example, the helper proof begins directly at its generated equation:
+For example, the pure helper has an ordinary mathematical equation:
 
 ```lean
-theorem increment_eval (n : Nat) :
-    Bounded.increment n = pure (n + 1) := by
-  rw [Bounded.increment_eq]
+theorem increment_eq (n : Nat) : Bounded.increment n = n + 1 := rfl
 ```
+
+The [remainder example](##Examples.Language.Remainder) similarly proves
+`Implementation.remainder n d = n % d` using `Nat.mod_eq_sub_div_mul`, including
+divisor zero, then transfers it through the generated total source contract.
 
 For native `Std.Do` reasoning, `open scoped Part.TotalCorrectness` activates the
 [strict partial-value WP adapter](##Complexity.Control.Part). It requires an actual
@@ -289,11 +296,27 @@ For recursion, the [source contract rule](##Complexity.Language.Verification.Rec
 supplies complete callable specifications at smaller mathematical indices through
 ordinary well-founded induction. It supports a fixed function or a family of
 mutually recursive functions without imposing a runtime budget or stack depth.
-Convenient generated recursive hypotheses over named parameters remain separate
-frontend work. The [named factorial](##Examples.Language.Factorial) demonstrates
-the ordinary-induction route instead: rewriting the generated one-step equation
-and using `Nat` induction proves the real recursive action equals
-`pure (Nat.factorial n)` for every input, with every initial heap preserved.
+For the supported pure fragment, the [named factorial](##Examples.Language.Factorial)
+uses Lean's native termination machinery:
+
+```lean
+source_program (pure) Recursive where
+  def factorial (n : Nat) : Nat := do
+    if n == 0 then
+      return 1
+    else
+      let previous ← factorial (n - 1)
+      return n * previous
+    termination_by n
+    decreasing_by simp_wf; simp_all +zetaDelta; omega
+```
+
+The author supplies this decreasing argument once. Generated correspondence
+reuses the native recursion principle to prove successful source execution with
+the same result and unchanged initial heap, without a second implementation
+induction. Ordinary `Nat` induction separately proves the mathematical equation
+`Recursive.factorial n = Nat.factorial n`; the generated `_total` contract then
+transfers that result to the actual source program.
 The [compiled factorial](##Examples.Language.FactorialCompiled) reuses that same
 source theorem. Its separate realization proof uses `ram_source_realize (input)`
 with the recursive realizability and source contracts. It bounds intermediate
@@ -307,9 +330,8 @@ and the final arithmetic inequality remain the author's proof.
 The resulting halted-runner theorem returns factorial, preserves shared entry
 memory and retains the generated code and stack-capacity premises. The linear
 word-RAM instruction bound is in the numeric argument `n`, not its binary bit
-length or the cost of arbitrary-precision multiplication. Mutual recursion,
-an effectful recursive consumer and convenient generated recursive hypotheses
-remain open.
+length or the cost of arbitrary-precision multiplication. Pure mutually recursive
+families and a convenient named proof interface for effectful recursion remain open.
 
 The [compiled buffer invocation](##Examples.Language.BufferCompiled) reuses this
 source proof and derives the read cell's range from the input heap representation.
@@ -319,13 +341,14 @@ the example does not establish a general mutable-loop proof interface.
 
 The [scalar example](##Examples.Language.Scalar) calls a real increment helper,
 assigns a local in the selected branch, then proves its returned value equals `min (n + 1) limit`
-using ordinary Nat facts. Its primary `increment_eval` and `boundedIncrement_eval`
-proofs rewrite the generated equations; the latter reuses the helper result and
-splits the mathematical comparison. The generated `P.f_total_iff` accepts ordinary
-curried preconditions and postconditions and derives the contract required by
-compilation. It uses `FunctionTotal.iff_eval` and the generic environment rules
-internally; the caller does not manually open `Env` or repeat the correctness
-proof. Direct source-WP rules remain available when a
+using ordinary Nat facts. Its `increment_eq` and `boundedIncrement_eq` proofs
+reason about native values; the latter unfolds its definition, simplifies
+`Id.run` and `Id.instMonad`, reuses the helper result and splits the mathematical
+comparison. Rewriting the generated `P.f_total` contract with these equalities
+supplies the source contract required by compilation, without a second
+implementation induction. Default effectful declarations retain `P.f_total_iff`
+for ordinary curried preconditions and actual initial/final heaps.
+Direct source-WP rules remain available when a
 compositional contract is the preferred starting point. The
 [compiled invocation](##Examples.Language.ScalarCompiled) supplies only source-level
 range and call-nesting facts, then reuses that mathematical proof. In particular,

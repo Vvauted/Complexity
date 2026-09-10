@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Semantics
+import Complexity.Language.Heap.Allocation
 import Mathlib.Data.Part
 import Init.Control.State
 
@@ -136,6 +137,20 @@ def Control.toExcept {result : Ty} : Control result → Except Fault (Value resu
   cases control <;> simp [Control.toExcept]
 
 namespace Buffer
+
+/-- Allocate the actual fresh initialized object in the current heap. Source
+allocation always succeeds; finite-machine capacity belongs to realization,
+not to this independent action. Even an empty array receives a fresh identity. -/
+def allocM {kind : CellTy} (length : Nat) (initial : CellValue kind) :
+    ExceptT Fault (StateT Heap Part) (Buffer kind) := fun heap =>
+  let allocated := heap.alloc length initial
+  Part.some (.ok allocated.1, allocated.2)
+
+/-- The native action returns exactly the handle and heap produced by allocation. -/
+theorem allocM_eq_ok {kind : CellTy} (length : Nat) (initial : CellValue kind)
+    (heap : Heap) :
+    allocM length initial heap =
+      Part.some (.ok (heap.alloc length initial).1, (heap.alloc length initial).2) := rfl
 
 /-- Lift the existing checked heap read into the native exception/state action.
 The cell is read from the current heap; neither outcome changes that heap. -/

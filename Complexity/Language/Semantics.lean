@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.State
+import Complexity.Language.Heap.Allocation
 
 /-!
 # Independent finite source execution
@@ -28,6 +29,10 @@ their relative extent and bind another view of the same object, not a snapshot.
 Assignment evaluates its right-hand side in the current locals once, then updates
 the selected local without changing the heap. Scope exit preserves assignments
 to outer locals; caller restoration is lexical, not heap rollback.
+
+Allocation appends a fresh initialized source object and binds its complete
+view in the continuation. Returns and faults retain that continuation's actual
+heap. Source allocation has no word capacity, out-of-memory result or cost.
 
 A loop evaluates its Boolean guard block anew before every iteration. The guard's
 returned Boolean is local to that block; its actual final locals and heap feed
@@ -113,6 +118,16 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
       (failed : (buffer.eval entry.locals).slice (offset.eval entry.locals)
         (length.eval entry.locals) = .error error) :
       Exec program (.slice buffer offset length continuation) entry entry (.fault (.heap error))
+  | alloc {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {length : Atom Γ .nat} {initial : Atom Γ kind.toTy}
+      {continuation : Stmt signatures (.buffer kind :: Γ) result}
+      {entry : State Γ} {finish : State (.buffer kind :: Γ)} {control : Control result}
+      (body : Exec program continuation
+        (let allocated := entry.heap.alloc (τ := kind) (length.eval entry.locals)
+          (kind.ofValue (initial.eval entry.locals))
+         State.cons allocated.1 ⟨entry.locals, allocated.2⟩)
+        finish control) :
+      Exec program (.alloc length initial continuation) entry finish.tail control
   | seqNormal {Γ : List Ty} {result : Ty} {first second : Stmt signatures Γ result}
       {entry middle finish : State Γ} {control : Control result}
       (head : Exec program first entry middle .normal)
@@ -225,6 +240,10 @@ theorem locals_eq {signatures : List Signature} {program : Program signatures}
       simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
         congrArg Env.tail (ih unchanged)
   | sliceFault => intro _; rfl
+  | alloc body ih =>
+      intro unchanged
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
+        congrArg Env.tail (ih unchanged)
   | seqNormal head tail ihHead ihTail =>
       intro unchanged
       exact (ihTail unchanged.2).trans (ihHead unchanged.1)
@@ -309,6 +328,11 @@ theorem deterministic {signatures : List Signature} {program : Program signature
       | slice sliced body => cases failed.symm.trans sliced
       | sliceFault failed' =>
           cases Except.error.inj (failed.symm.trans failed')
+          exact ⟨rfl, rfl⟩
+  | alloc body ih =>
+      cases second with
+      | alloc body' =>
+          obtain ⟨rfl, rfl⟩ := ih body'
           exact ⟨rfl, rfl⟩
   | seqNormal head tail ihHead ihTail =>
       cases second with

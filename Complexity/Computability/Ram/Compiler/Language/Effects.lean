@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Lowering
+import Complexity.Computability.Ram.Compiler.Language.Arena.Lowering
 import Complexity.Computability.Ram.Compiler.Language.Control
 import Complexity.Computability.Ram.Source.Effects
 
@@ -11,11 +12,11 @@ import Complexity.Computability.Ram.Source.Effects
 # Heap and stream effects of lowering
 
 The source fragment without heap writes lowers to local assignments, reads,
-branches, sequences and actual calls. Buffer stores are explicitly excluded
+branches, sequences and actual calls. Buffer stores and allocation are explicitly excluded
 from its preservation theorem. The generic source effect theorem applies when
 every actual function body satisfies this condition, including recursive calls.
 All supported source operations are free of input/output stream operations,
-including buffer writes. Their generated program therefore satisfies the
+including buffer writes and initialization. Their generated program therefore satisfies the
 separate stream-preservation condition without a read-only premise.
 
 The statement lemma retains its continuation premise: arbitrary appended IR
@@ -35,7 +36,7 @@ def NoHeapWrites {signatures : List Signature} {Γ : List Ty} {result : Ty} :
   | .skip | .assign .. | .ret _ => True
   | .letPrim _ body | .read _ _ body | .slice _ _ _ body | .call _ _ body =>
       NoHeapWrites body
-  | .write .. => False
+  | .write .. | .alloc .. => False
   | .seq first second => NoHeapWrites first ∧ NoHeapWrites second
   | .ite _ yes no => NoHeapWrites yes ∧ NoHeapWrites no
   | .while guard body => NoHeapWrites guard ∧ NoHeapWrites body
@@ -88,6 +89,7 @@ theorem lowerStmtCore_noSharedWrites {signatures : List Signature} {Γ : List Ty
   | slice buffer offset length body ih =>
     intro condition
     exact ⟨⟨trivial, trivial⟩, ih _ _ _ _ condition⟩
+  | alloc length initial body ih => exact False.elim
   | call fn args body ih =>
     intro condition
     exact ⟨trivial, ih _ _ _ _ condition⟩
@@ -187,6 +189,7 @@ theorem lowerStmtCore_noIOWrites {signatures : List Signature} {Γ : List Ty} {r
   | write buffer index value => exact lowerWrite_noIOWrites _ _ _ _
   | slice buffer offset length body ih =>
       exact ⟨lowerSlice_noIOWrites _ _ _ _ _, ih _ _ _ _⟩
+  | alloc length initial body ih => exact ⟨lowerAlloc_noIOWrites _ _ _ _, ih _ _ _ _⟩
   | call fn args body ih => exact ⟨trivial, ih _ _ _ _⟩
   | seq first second firstIH secondIH => exact ⟨firstIH _ _ _ _, trivial, secondIH _ _ _ _⟩
   | ite test yes no yesIH noIH => exact ⟨yesIH _ _ _ _, noIH _ _ _ _⟩
@@ -300,6 +303,14 @@ theorem lowerStmtCore_not_mem_writtenRegs {signatures : List Signature} {Γ : Li
       exact ih _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
         (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
         outsideResult differentFlag
+  | alloc length initial body ih =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨?_, ?_⟩
+      · rw [lowerAlloc_mem_writtenRegs]
+        exact fun written => Nat.not_lt_of_ge written.1 before
+      · exact ih _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
+          (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
+          outsideResult differentFlag
   | call fn args body ih =>
       intro regular bounded avoids before outsideResult differentFlag
       refine not_or.mpr ⟨flag_not_mem_valueRegs_of_lt _ next r before, ?_⟩

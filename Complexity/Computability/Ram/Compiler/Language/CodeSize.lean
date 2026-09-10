@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Lowering
+import Complexity.Computability.Ram.Compiler.Language.Arena.Lowering
 import Complexity.Computability.Ram.Compiler.Local.Basic
 
 /-!
@@ -53,6 +54,7 @@ def sourceCodeSize {signatures : List Signature} {Γ : List Ty} {result : Ty}
   | .read _ _ body => readCodeSize + sourceCodeSize localsTable body
   | .write .. => writeCodeSize
   | .slice _ _ _ body => sliceCodeSize + sourceCodeSize localsTable body
+  | .alloc _ _ body => 30 + sourceCodeSize localsTable body
   | .call fn _ body =>
       2 * contextSize signatures[fn].params + 4 * localsTable fn.val + 5 +
         fieldCount signatures[fn].result + sourceCodeSize localsTable body
@@ -184,6 +186,9 @@ theorem lowerStmtCore_stmtSize {signatures : List Signature} {Γ : List Ty} {res
   | write buffer index value => exact lowerWrite_stmtSize control localsTable layout _ _ _
   | slice buffer offset length body ih =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerSlice_stmtSize,
+        ih, sourceCodeSize]
+  | alloc length initial body ih =>
+      simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerAlloc_stmtSize,
         ih, sourceCodeSize]
   | call fn args body ih =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerCall_stmtSize,

@@ -81,6 +81,7 @@ theorem renameCalls {source target : List Signature}
   | skip => exact .skip _
   | assign => exact .assign _ _ _
   | letPrim _ ih => exact .letPrim ih
+  | alloc _ ih => exact .alloc ih
   | read loaded _ ih => exact .read loaded ih
   | readFault failed => exact .readFault failed
   | write written => exact .write written

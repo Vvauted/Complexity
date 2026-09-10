@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Layout
+import Complexity.Computability.Ram.Memory.Arena.Registers
 import Complexity.Computability.Ram.Source.Bounds
 
 /-!
@@ -15,6 +16,8 @@ actual fields; Unit has no fields. Calls flatten typed arguments and receive
 actual results using the existing calling convention. Buffer reads, writes and
 slices emit ordinary address arithmetic and memory instructions. Successful
 source access and realization justify safety; no runtime check is added here.
+Allocation uses the shared arena cursor and the existing initialization loop;
+its capacity, placement growth and behavior need allocation-aware simulation.
 
 Each statement child is lowered once. An internal return flag records whether
 the function returned; sequence tails and the final normal continuation inspect
@@ -104,6 +107,15 @@ def lowerSlice (layout : RegisterMap Γ) (dst : Reg) (buffer : Atom Γ (.buffer 
   .seq (.assign dst (.bin .add (atomFieldExpr layout buffer ⟨0, by change 0 < 2; decide⟩)
     (atomExpr layout offset .nat))) (.assign (dst + 1) (atomExpr layout length .nat))
 
+/-- Materialize both source operands before reserving and initializing storage.
+The live source layout must lie below `next`. Scratch after the two returned
+fields can be reused once initialization has completed. -/
+def lowerAlloc {kind : CellTy} (layout : RegisterMap Γ) (next : Reg)
+    (length : Atom Γ .nat) (initial : Atom Γ kind.toTy) : Ram.Stmt :=
+  .seq (.assign (next + 1) (atomExpr layout length .nat))
+    (.seq (.assign (next + 2) (atomExpr layout initial (Scalar.cell kind)))
+      (Source.Arena.inlineRegisters next).allocate)
+
 /-- Lower each source child once, with an initialized, separate return flag.
 Calls restore the caller's flag before assigning their fresh result fields.
 This internal lowering requires its register-separation invariants; `lowerStmt`
@@ -124,6 +136,10 @@ def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
   | .write buffer index value => lowerWrite layout buffer index value
   | .slice (kind := kind) buffer offset length body =>
       .seq (lowerSlice layout next buffer offset length)
+        (lowerStmtCore (RegisterMap.extend layout (.buffer kind) next)
+          (next + fieldCount (.buffer kind)) resultSlot flag body)
+  | .alloc (kind := kind) length initial body =>
+      .seq (lowerAlloc layout next length initial)
         (lowerStmtCore (RegisterMap.extend layout (.buffer kind) next)
           (next + fieldCount (.buffer kind)) resultSlot flag body)
   | .call fn args body =>

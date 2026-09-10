@@ -215,6 +215,9 @@ inductive Stmt (signatures : List Signature) : List Ty → Ty → Type where
   | slice {Γ : List Ty} {result : Ty} {kind : CellTy}
       (buffer : Atom Γ (.buffer kind)) (offset length : Atom Γ .nat)
       (continuation : Stmt signatures (.buffer kind :: Γ) result) : Stmt signatures Γ result
+  | alloc {Γ : List Ty} {result : Ty} {kind : CellTy}
+      (length : Atom Γ .nat) (initial : Atom Γ kind.toTy)
+      (continuation : Stmt signatures (.buffer kind :: Γ) result) : Stmt signatures Γ result
   | call {Γ : List Ty} {result : Ty} (fn : Fin signatures.length)
       (args : Args Γ signatures[fn].params)
       (continuation : Stmt signatures (signatures[fn].result :: Γ) result) :
@@ -240,6 +243,7 @@ conservatively rejects assignments even to a binding that will leave scope. -/
   | .read _ _ continuation => continuation.NoLocalWrites
   | .write _ _ _ => True
   | .slice _ _ _ continuation => continuation.NoLocalWrites
+  | .alloc _ _ continuation => continuation.NoLocalWrites
   | .call _ _ continuation => continuation.NoLocalWrites
   | .seq first second => first.NoLocalWrites ∧ second.NoLocalWrites
   | .ite _ yes no => yes.NoLocalWrites ∧ no.NoLocalWrites

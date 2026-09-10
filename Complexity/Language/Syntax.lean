@@ -13,14 +13,16 @@ import Complexity.Language.Eval.Locals.Captures
 import Complexity.Language.Linking.Eval
 import Complexity.Language.Linking.Extension
 import Complexity.Language.Syntax.Imports
+import Complexity.Language.Syntax.Pure
 import Std.Do.WP.SimpLemmas
 import Lean.Elab.Command
 import Lean.Elab.Do
+import Lean.Elab.PreDefinition.TerminationHint
 import Lean.Meta.Closure
 import Lean.Parser.Do
 
 /-!
-# Named source programs with borrowed buffers
+# Named source programs with shared buffers and allocation
 
 `source_program P where` declares an independent typed source program from
 Lean-style function headers and `do` blocks. The supported types are
@@ -28,7 +30,7 @@ Lean-style function headers and `do` blocks. The supported types are
 `let mut`, assignment, named first-order calls, `if`/`then`/`else`, `while` and `return`.
 Only the nearest mutable binding may be assigned; ordinary `let` bindings and
 parameters are immutable. `x ← action` rebinds a mutable local to the actual
-result of a supported named call, buffer read or slice. Natural arithmetic and
+result of a supported named call, buffer read, slice or allocation. Natural arithmetic and
 comparisons may be nested in bindings, assignments, return values, conditions
 and call arguments. Their operands are normalized left to right into actual
 lexical primitive bindings; no host
@@ -60,11 +62,21 @@ Immutable lexical captures are fixed by generated preservation proofs, not
 additional author-maintained invariant fields. This does not infer the
 mathematical invariant or turn descriptor preservation into a heap frame.
 
-Borrowed buffers expose `xs.length`, `let x ← xs.get i`, `xs.set i value` and
+Buffers expose `xs.length`, `let x ← xs.get i`, `xs.set i value` and
 `let ys ← xs.slice offset length`. Reads and writes observe the current shared
 heap; copying, passing or returning a buffer does not copy its contents. Buffer
 parameters and results use the existing `Buffer .nat`/`Buffer .bool` Lean types.
 There are no buffer literals, object-identifier constructors or host callbacks.
+
+`let xs ← Buffer.alloc length initial` creates a fresh initialized object in the
+actual source heap. The initial scalar determines its Nat or Bool element type;
+both operands use the same left-to-right expression normalization as calls.
+The generated core uses `Stmt.alloc`, and its monadic equation uses `Buffer.allocM`.
+Allocation also supports `let mut` and rebinding an existing mutable buffer.
+Even an empty allocation has a fresh identity; returning does not remove its
+storage, and a later fault does not roll the heap back. Allocation is effectful
+and is rejected by `source_program (pure)`. Finite target capacity and counted
+initialization remain separate compilation obligations.
 
 The declaration exports `P.signatures`, `P.fId`, `P.fBody` and `P.program`,
 together with the ordinary curried observation `P.f` and its equation `P.f_eq`.
@@ -101,7 +113,8 @@ syntax "(" ident " : " term ")" : sourceParameter
 
 /-- A source function uses an ordinary parsed Lean `do` body. -/
 declare_syntax_cat sourceFunction
-syntax "def " ident sourceParameter* " : " term " := " term : sourceFunction
+syntax "def " ident sourceParameter* " : " term " := " term
+  Lean.Parser.Termination.suffix : sourceFunction
 
 /-- Declare a finite family of named, independently interpreted source functions. -/
 syntax (name := sourceProgram) "source_program " ident " where" ppLine
@@ -109,6 +122,15 @@ syntax (name := sourceProgram) "source_program " ident " where" ppLine
 
 /-- Declare source functions with qualified calls into previously declared source programs. -/
 syntax (name := importingSourceProgram) "source_program " ident " importing " ident,+ " where" ppLine
+  many1Indent(sourceFunction) : command
+
+/-- Generate a native total value function and a proved corresponding scalar source program. -/
+syntax (name := pureSourceProgram) "source_program " "(" &"pure" ") " ident " where" ppLine
+  many1Indent(sourceFunction) : command
+
+/-- A pure source family may call previously proved pure source functions. -/
+syntax (name := importingPureSourceProgram)
+  "source_program " "(" &"pure" ") " ident " importing " ident,+ " where" ppLine
   many1Indent(sourceFunction) : command
 
 -- Internal emission point: infer an equation from its checked proof instead of
@@ -148,6 +170,7 @@ private structure Function where
   params : Array Parameter
   result : Ty
   body : TSyntax `term
+  termination : TSyntax ``Lean.Parser.Termination.suffix
 
 private structure Callee where
   name : TSyntax `ident
@@ -156,6 +179,7 @@ private structure Callee where
   id : TSyntax `ident
   observation : TSyntax `ident
   fold : TSyntax `ident
+  native : Option (TSyntax `ident) := none
 
 private structure ImportedProgram where
   name : TSyntax `ident
@@ -269,6 +293,9 @@ private def parameterTypes (params : Array Parameter) : MacroM (TSyntax `term) :
 private def generatedName (family : TSyntax `ident) (fn : TSyntax `ident)
     (suffix : String) : TSyntax `ident :=
   mkIdentFrom fn (family.getId ++ Name.mkSimple (fn.getId.toString ++ suffix))
+
+private def actionName (family fn : TSyntax `ident) (pureMode : Bool) : TSyntax `ident :=
+  generatedName family fn (if pureMode then "_action" else "")
 
 private def freshProofName (ref : Syntax) (name : Name) : MacroM (TSyntax `ident) :=
   withFreshMacroScope do
@@ -405,7 +432,8 @@ private def tupleApplication (scope : Scope) (name : TSyntax `ident) (tuple : TS
 
 private def parseFunction (stx : TSyntax `sourceFunction) : MacroM Function := do
   match stx with
-  | `(sourceFunction| def $name:ident $parameters:sourceParameter* : $result:term := $body:term) =>
+  | `(sourceFunction| def $name:ident $parameters:sourceParameter* : $result:term := $body:term
+      $termination:suffix) =>
       let mut params : Array Parameter := #[]
       for parameter in parameters do
         match parameter with
@@ -414,7 +442,7 @@ private def parseFunction (stx : TSyntax `sourceFunction) : MacroM Function := d
               Macro.throwErrorAt param "duplicate source parameter name"
             params := params.push ⟨param, ← parseType type⟩
         | _ => Macro.throwErrorAt parameter "expected a source parameter '(name : type)'"
-      return ⟨name, params, ← parseType result, body⟩
+      return ⟨name, params, ← parseType result, body, termination⟩
   | _ => Macro.throwErrorAt stx "expected 'def name (argument : type) : type := do ...'"
 
 private def variableTerm (index : Nat) : MacroM (TSyntax `term) := do
@@ -513,6 +541,25 @@ private def parseBinding (functions : Array Callee)
     (scope : Scope) (stx : TSyntax `term) :
     MacroM (Ty × TSyntax `term × TSyntax `term) := do
   if let `($head:term $operands:term*) := stx then
+    if head.raw.getId == `Buffer.alloc &&
+        !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+      unless operands.size == 2 do
+        Macro.throwErrorAt stx "buffer allocation expects a length and an initial scalar"
+      let length ← parseAtom scope operands[0]!
+      let initial ← parseAtom scope operands[1]!
+      expectType operands[0]! length.type .nat
+      let kind : CellTy ← match initial.type with
+        | .nat => pure CellTy.nat
+        | .bool => pure CellTy.bool
+        | _ => Macro.throwErrorAt operands[1]! "buffer allocation requires a Nat or Bool initial scalar"
+      let kindTerm ← match kind with
+        | CellTy.nat => `(Complexity.Language.CellTy.nat)
+        | CellTy.bool => `(Complexity.Language.CellTy.bool)
+      let allocate := mkCIdent ``Complexity.Language.Stmt.alloc
+      return (Ty.buffer kind,
+        ← `($allocate:ident (kind := $kindTerm) $(length.term) $(initial.term)),
+        ← `(Complexity.Language.Buffer.allocM (kind := $kindTerm)
+          $(length.value) $(initial.value)))
     if let some (receiver, field) := fieldAccess? head then
       if (field == `get || field == `slice) &&
           !functions.any (fun fn => fn.name.getId == head.raw.getId) then
@@ -783,7 +830,7 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
   | `(doElem| $action:term) => actionCode functions scope action
   | _ =>
       Macro.throwErrorAt element
-        "unsupported source statement; use let, let mut, assignment, a named call, buffer access, if/then/else, while, or return"
+        "unsupported source statement; use let, let mut, assignment, a named call, buffer access or allocation, if/then/else, while, or return"
 
 private partial def blockCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident) (scope : Scope) (result : Ty)
@@ -1183,7 +1230,7 @@ private def loopEquationDeclarations (site : LoopSite) (sites : Array LoopSite)
     ``Complexity.Language.Stmt.observe_seq, ``Complexity.Language.Stmt.observe_ite,
     ``Complexity.Language.Stmt.observe_letPrim, ``Complexity.Language.Stmt.observe_read,
     ``Complexity.Language.Stmt.observe_write, ``Complexity.Language.Stmt.observe_slice,
-    ``Complexity.Language.Stmt.observe_call]
+    ``Complexity.Language.Stmt.observe_alloc, ``Complexity.Language.Stmt.observe_call]
   let sharedArgs := compositionArgs ++ nestedLoops ++ viewNames ++ calleeFolds ++
     (← viewSimpArgs) ++ (← valueSimpArgs)
   let mut declarations := #[]
@@ -1292,8 +1339,8 @@ private def loopContinuationDeclaration (program : TSyntax `ident) (site : LoopS
   return declaration.raw
 
 private def observationDeclaration (family programName : TSyntax `ident)
-    (fn : Function) : MacroM Syntax := do
-  let name := generatedName family fn.name ""
+    (fn : Function) (pureMode : Bool) : MacroM Syntax := do
+  let name := actionName family fn.name pureMode
   let id := generatedName family fn.name "Id"
   let mut arguments ← `(Complexity.Language.Env.empty)
   for param in fn.params.reverse do
@@ -1316,9 +1363,9 @@ private def observationDeclaration (family programName : TSyntax `ident)
   return declaration.raw
 
 private def calleeObservationDeclaration (family program : TSyntax `ident)
-    (fn : Function) : MacroM Syntax := do
+    (fn : Function) (pureMode : Bool) : MacroM Syntax := do
   let name := generatedName family fn.name "_observe"
-  let observation := generatedName family fn.name ""
+  let observation := actionName family fn.name pureMode
   let id := generatedName family fn.name "Id"
   let params ← parameterTypes fn.params
   let env ← freshProofName fn.name `arguments
@@ -1343,9 +1390,9 @@ private def calleeObservationDeclaration (family program : TSyntax `ident)
 
 private def equationDeclaration (family programName : TSyntax `ident)
     (fn : Function) (lowered : LoweredBlock)
-    (importFolds : Array (TSyntax `ident)) : MacroM Syntax := do
-  let name := generatedName family fn.name "_eq"
-  let observation := generatedName family fn.name ""
+    (importFolds : Array (TSyntax `ident)) (pureMode : Bool) : MacroM Syntax := do
+  let name := generatedName family fn.name (if pureMode then "_action_eq" else "_eq")
+  let observation := actionName family fn.name pureMode
   let bodyName := generatedName family fn.name "Body"
   let id := generatedName family fn.name "Id"
   let arguments : Array (TSyntax `term) := fn.params.map fun param => ⟨param.name.raw⟩
@@ -1361,7 +1408,7 @@ private def equationDeclaration (family programName : TSyntax `ident)
     ``Complexity.Language.Stmt.evalWith_letPrim, ``Complexity.Language.Stmt.evalWith_seq,
     ``Complexity.Language.Stmt.evalWith_ite, ``Complexity.Language.Stmt.evalWith_call,
     ``Complexity.Language.Stmt.evalWith_read, ``Complexity.Language.Stmt.evalWith_write,
-    ``Complexity.Language.Stmt.evalWith_slice]
+    ``Complexity.Language.Stmt.evalWith_slice, ``Complexity.Language.Stmt.evalWith_alloc]
   let allArgs := (← namedSimpArgs (#[bodyName] ++ importFolds)) ++ loopContinuations ++ loopViews ++
     (← viewSimpArgs) ++ compositionArgs ++ (← valueSimpArgs) ++
     (← constantSimpArgs #[``Complexity.Language.Env.tail_set_here,
@@ -1387,9 +1434,9 @@ private def equationDeclaration (family programName : TSyntax `ident)
   return declaration.raw
 
 private def totalDeclaration (family programName : TSyntax `ident)
-    (fn : Function) : MacroM Syntax := do
+    (fn : Function) (pureMode : Bool) : MacroM Syntax := do
   let name := generatedName family fn.name "_total_iff"
-  let observation := generatedName family fn.name ""
+  let observation := actionName family fn.name pureMode
   let id := generatedName family fn.name "Id"
   let pre := mkIdent (← Macro.addMacroScope `pre)
   let post := mkIdent (← Macro.addMacroScope `post)
@@ -1459,9 +1506,9 @@ private def totalDeclaration (family programName : TSyntax `ident)
   return declaration.raw
 
 private def specificationDeclaration (family programName : TSyntax `ident)
-    (fn : Function) : MacroM Syntax := do
+    (fn : Function) (pureMode : Bool) : MacroM Syntax := do
   let name := generatedName family fn.name "_spec"
-  let observation := generatedName family fn.name ""
+  let observation := actionName family fn.name pureMode
   let id := generatedName family fn.name "Id"
   let params ← parameterTypes fn.params
   let result ← valueTypeTerm fn.result
@@ -1562,14 +1609,134 @@ private def importedObservationDeclaration (program map embedded : TSyntax `iden
       rw [Complexity.Language.Program.Embeds.eval_eq $embedded:ident]
       exact $originalFold:ident $env:ident)).raw
 
+private def scalarType : Ty → Bool
+  | .nat | .bool | .unit => true
+  | .buffer _ => false
+
+-- These identifiers were resolved by the source parser, and local proof
+-- variables have fresh names. Replacing them cannot capture a source binder.
+private def pureBody (callees : Array Callee) (body : LoweredBlock) :
+    MacroM (TSyntax ``doSeq) := do
+  let mut elements := #[]
+  for element in body.proofBody do
+    let replaced ← element.raw.replaceM fun node => do
+      if node.isIdent then
+        if let some callee := callees.find? (fun fn => fn.observation.getId == node.getId) then
+          let some native := callee.native
+            | Macro.throwErrorAt node
+                "a pure source function can only call another proved pure source function"
+          return some native.raw
+      return none
+    elements := elements.push (⟨replaced⟩ : TSyntax `doElem)
+  return ⟨Lean.Elab.Term.Do.mkDoSeq (elements.map (·.raw))⟩
+
+-- Native Lean checks each self-recursive definition. Acyclic inter-function
+-- calls are emitted in dependency order, including forward source references.
+private def pureFunctionOrder (family : TSyntax `ident) (functions : Array Function)
+    (bodies : Array LoweredBlock) : MacroM (Array (Function × LoweredBlock)) := do
+  let mut pending := (functions.zip bodies).toList
+  let mut ordered : Array (Function × LoweredBlock) := #[]
+  while !pending.isEmpty do
+    let some next := pending.find? (fun (fn, body) =>
+        pending.all fun (dependency, _) => dependency.name.getId == fn.name.getId ||
+          !body.proofBody.any
+            (fun element => element.raw.hasIdent
+              (actionName family dependency.name true).getId))
+      | Macro.throwErrorAt family
+          "the pure frontend currently supports self recursion and acyclic named calls, not mutually recursive families"
+    ordered := ordered.push next
+    pending := pending.filter (fun entry => entry.1.name.getId != next.1.name.getId)
+  return ordered
+
+private def nativeDeclaration (family : TSyntax `ident) (fn : Function)
+    (callees : Array Callee) (body : LoweredBlock) : MacroM Syntax := do
+  let name := generatedName family fn.name ""
+  let parameters ← fn.params.mapM fun param => do
+    let parameterType ← valueTypeTerm param.type
+    `(bracketedBinder| ($(param.name):ident : $parameterType))
+  let result ← valueTypeTerm fn.result
+  let nativeBody ← pureBody callees body
+  return (← `(command|
+    /-- Executable total value function generated from the same scalar source block. -/
+    def $name:ident $parameters:bracketedBinder* : $result :=
+      Id.run (do $nativeBody:doSeq)
+      $(fn.termination):suffix)).raw
+
+private def pureCorrespondenceDeclaration (family : TSyntax `ident) (fn : Function)
+    (callees : Array Callee) (body : LoweredBlock) : MacroM Syntax := do
+  let name := generatedName family fn.name "_action_eq_pure"
+  let action := actionName family fn.name true
+  let equation := generatedName family fn.name "_action_eq"
+  let native := generatedName family fn.name ""
+  let arguments : Array (TSyntax `term) := fn.params.map fun param => ⟨param.name.raw⟩
+  let actual := Lean.Syntax.mkApp ⟨action.raw⟩ arguments
+  let value := Lean.Syntax.mkApp ⟨native.raw⟩ arguments
+  let result ← valueTypeTerm fn.result
+  let dependencies := callees.filter fun callee =>
+    callee.observation.getId != action.getId &&
+      body.proofBody.any (fun element => element.raw.hasIdent callee.observation.getId)
+  let equations := dependencies.map fun callee =>
+    mkIdentFrom callee.observation
+      (callee.observation.getId.getPrefix ++
+        Name.mkSimple (callee.observation.getId.getString! ++ "_eq_pure"))
+  let mut type ← `($actual = (pure $value : ExceptT Complexity.Language.Fault
+    (StateT Complexity.Language.Heap Part) $result))
+  let mut proof ← `(by
+    source_pure_correspondence $value using $equation:ident [$equations:ident,*])
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let parameterType ← valueTypeTerm param.type
+    type ← `(∀ ($parameter:ident : $parameterType), $type)
+    proof ← `(fun ($parameter:ident : $parameterType) => $proof)
+  return (← `(command|
+    /-- The actual source action terminates with the generated native result and
+    preserves every initial heap. Lean's native recursion principle proves this once. -/
+    theorem $name:ident : $type := $proof)).raw
+
+private def pureTotalDeclaration (family program : TSyntax `ident)
+    (fn : Function) : MacroM Syntax := do
+  let name := generatedName family fn.name "_total"
+  let native := generatedName family fn.name ""
+  let observed := generatedName family fn.name "_observe"
+  let correspondence := generatedName family fn.name "_action_eq_pure"
+  let id := generatedName family fn.name "Id"
+  let params ← parameterTypes fn.params
+  let env ← freshProofName fn.name `arguments
+  let initial ← freshProofName fn.name `initialHeap
+  let finalHeap ← freshProofName fn.name `finalHeap
+  let returned ← freshProofName fn.name `value
+  let mut remaining ← `($env:ident)
+  let mut values := #[]
+  for _ in fn.params do
+    values := values.push (← `(Complexity.Language.Env.head $remaining))
+    remaining ← `(Complexity.Language.Env.tail $remaining)
+  let value := Lean.Syntax.mkApp ⟨native.raw⟩ values
+  return (← `(command|
+    /-- Exact total source contract inherited from the generated native function. -/
+    theorem $name:ident :
+        Complexity.Language.FunctionTotal $program:ident $id:ident (fun _ _ => True)
+          (fun $env:ident $initial:ident $returned:ident $finalHeap:ident =>
+            $returned:ident = $value ∧ $finalHeap:ident = $initial:ident) := by
+      apply Complexity.Language.FunctionTotal.of_eval_eq_pure
+        (program := $program:ident) (fn := $id:ident)
+        (fun ($env:ident : Complexity.Language.Env $params) => $value)
+      · intro $env:ident
+        rw [$observed:ident, $correspondence:ident]
+      · intro _ _ _
+        exact ⟨rfl, rfl⟩)).raw
+
 private def programDeclarations (family : TSyntax `ident)
-    (sources : Array (TSyntax `sourceFunction)) (imports : Array ImportedProgram) :
+    (sources : Array (TSyntax `sourceFunction)) (imports : Array ImportedProgram)
+    (pureMode : Bool) :
     MacroM (Syntax × Array FunctionInfo) := do
   let mut functions : Array Function := #[]
   for source in sources do
     let fn ← parseFunction source
     if functions.any (fun previous => previous.name.getId == fn.name.getId) then
       Macro.throwErrorAt fn.name "duplicate source function name"
+    if pureMode then
+      unless scalarType fn.result && fn.params.all (scalarType ·.type) do
+        Macro.throwErrorAt fn.name "pure source functions currently have only Nat, Bool and Unit parameters and results"
     functions := functions.push fn
   let signaturesName := mkIdentFrom family (family.getId ++ `signatures)
   let localSignaturesName := mkIdentFrom family (family.getId ++ `localSignatures)
@@ -1602,7 +1769,8 @@ private def programDeclarations (family : TSyntax `ident)
     declarations := declarations.push declaration.raw
   let mut callees : Array Callee := functions.map fun fn =>
     ⟨fn.name, fn.params, fn.result, generatedName family fn.name "Id",
-      generatedName family fn.name "", generatedName family fn.name "_observe"⟩
+      actionName family fn.name pureMode, generatedName family fn.name "_observe",
+      if pureMode then some (generatedName family fn.name "") else none⟩
   let mut importedProofs : Array Syntax := #[]
   let mut importedObservations : Array Syntax := #[]
   let mut importFolds : Array (TSyntax `ident) := #[]
@@ -1641,7 +1809,9 @@ private def programDeclarations (family : TSyntax `ident)
         let callee : Callee := ⟨name,
           fn.params.map (fun param => ⟨mkIdentFrom entry.source.name param.1, param.2⟩),
           fn.result, id,
-          mkCIdent (entry.source.family ++ Name.mkSimple fn.name.toString), fold⟩
+          mkCIdent (entry.source.family ++
+            Name.mkSimple (fn.name.toString ++ if fn.pure then "_action" else "")), fold,
+          if fn.pure then some (mkCIdent (entry.source.family ++ fn.name)) else none⟩
         callees := callees.push callee
         importFolds := importFolds.push fold
         importedObservations := importedObservations.push (← importedObservationDeclaration
@@ -1652,6 +1822,15 @@ private def programDeclarations (family : TSyntax `ident)
     let params ← parameterTypes fn.params
     let result ← typeTerm fn.result
     let body ← functionCode family callees fn
+    if pureMode && body.term.raw.hasIdent ``Complexity.Language.Stmt.alloc then
+      Macro.throwErrorAt fn.name
+        "buffer allocation is effectful and is not supported by 'source_program (pure)'"
+    if pureMode then
+      unless body.loops.isEmpty do
+        Macro.throwErrorAt fn.name
+          "the pure frontend currently supports recursive calls, not while loops"
+      if body.fallsThrough then
+        Macro.throwErrorAt fn.name "every pure source function path must return a value"
     loweredBodies := loweredBodies.push body
     for site in body.loops do
       declarations := declarations ++ (← loopCodeDeclarations signaturesName site)
@@ -1680,9 +1859,9 @@ private def programDeclarations (family : TSyntax `ident)
   declarations := declarations.push programDeclaration.raw
   declarations := declarations ++ importedProofs ++ importedObservations
   for fn in functions do
-    declarations := declarations.push (← observationDeclaration family programName fn)
+    declarations := declarations.push (← observationDeclaration family programName fn pureMode)
   for fn in functions do
-    declarations := declarations.push (← calleeObservationDeclaration family programName fn)
+    declarations := declarations.push (← calleeObservationDeclaration family programName fn pureMode)
   let calleeFolds := callees.map (·.fold)
   let loopSites := loweredBodies.flatMap (·.loops)
   for site in loopSites do
@@ -1694,16 +1873,35 @@ private def programDeclarations (family : TSyntax `ident)
     declarations := declarations ++ (← loopCaptureFrameDeclarations programName site loopSites)
     declarations := declarations.push (← loopVariantDeclaration programName site)
   for fn in functions, body in loweredBodies do
-    declarations := declarations.push (← equationDeclaration family programName fn body importFolds)
+    declarations := declarations.push
+      (← equationDeclaration family programName fn body importFolds pureMode)
   for fn in functions do
-    declarations := declarations.push (← totalDeclaration family programName fn)
-    declarations := declarations.push (← specificationDeclaration family programName fn)
+    declarations := declarations.push (← totalDeclaration family programName fn pureMode)
+    declarations := declarations.push (← specificationDeclaration family programName fn pureMode)
+  if pureMode then
+    let order ← pureFunctionOrder family functions loweredBodies
+    for (fn, body) in order do
+      declarations := declarations.push
+        (← nativeDeclaration family fn callees body)
+      declarations := declarations.push
+        (← pureCorrespondenceDeclaration family fn callees body)
+      declarations := declarations.push
+        (← pureTotalDeclaration family programName fn)
   return (mkNullNode declarations, functions.map fun fn =>
-    ⟨fn.name.getId, fn.params.map (fun param => (param.name.getId, param.type)), fn.result⟩)
+    ⟨fn.name.getId, fn.params.map (fun param => (param.name.getId, param.type)), fn.result, pureMode⟩)
 
 private def elaborateProgram (family : TSyntax `ident)
-    (functions : Array (TSyntax `sourceFunction)) (libraries : Array (TSyntax `ident)) :
+    (functions : Array (TSyntax `sourceFunction)) (libraries : Array (TSyntax `ident))
+    (pureMode : Bool := false) :
     Lean.Elab.Command.CommandElabM Unit := do
+  for source in functions do
+    let fn ← Lean.Elab.liftMacroM (parseFunction source)
+    let hints ← Lean.Elab.elabTerminationHints fn.termination
+    if pureMode then
+      if hints.partialFixpoint?.isSome then
+        Lean.throwErrorAt fn.termination "pure source functions must terminate; partial fixed points are not supported"
+    else if hints.isNotNone then
+      Lean.throwErrorAt fn.termination "termination hints are checked by 'source_program (pure)'"
   let mut imports : Array ImportedProgram := #[]
   for library in libraries do
     let (name, functions) ← getProgramInfo library
@@ -1711,7 +1909,7 @@ private def elaborateProgram (family : TSyntax `ident)
       Lean.throwErrorAt library "duplicate source program import"
     imports := imports.push ⟨library, name, functions⟩
   let (declarations, information) ←
-    Lean.Elab.liftMacroM (programDeclarations family functions imports)
+    Lean.Elab.liftMacroM (programDeclarations family functions imports pureMode)
   Lean.Elab.Command.elabCommand declarations
   registerProgramInfo family information
 
@@ -1721,5 +1919,10 @@ elab_rules : command
   | `(command| source_program $family:ident importing $libraries:ident,* where
       $functions:sourceFunction*) => do
       elaborateProgram family functions libraries.getElems
+  | `(command| source_program (pure) $family:ident where $functions:sourceFunction*) => do
+      elaborateProgram family functions #[] true
+  | `(command| source_program (pure) $family:ident importing $libraries:ident,* where
+      $functions:sourceFunction*) => do
+      elaborateProgram family functions libraries.getElems true
 
 end Complexity.Language.Syntax

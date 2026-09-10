@@ -18,22 +18,21 @@ result follows from the ordinary Nat division identity, including divisor zero.
 All intermediate values fit whenever the two inputs fit; subtraction retains
 its saturating Nat meaning. The separate count concerns this division-based
 implementation, not the backend's single remainder instruction.
-Its pure source-action equation also states that every initial heap is preserved.
+Generated correspondence transfers the native function's result to source
+execution and preserves every initial heap.
 -/
 
 namespace Complexity.Language.Examples.Remainder
 
 open Ram.LanguageCompiler
 
-source_program Implementation where
+source_program (pure) Implementation where
   def remainder (n : Nat) (d : Nat) : Nat := do
     return n - (n / d) * d
 
 /-- The source implementation has Lean's remainder semantics, also at zero. -/
-theorem remainder_eval (n d : Nat) :
-    Implementation.remainder n d =
-      (pure (n % d) : ExceptT Fault (StateT Heap Part) Nat) := by
-  rw [Implementation.remainder_eq, Nat.mod_eq_sub_div_mul]
+theorem remainder_eq (n d : Nat) : Implementation.remainder n d = n % d := by
+  rw [Nat.mod_eq_sub_div_mul]
   rfl
 
 /-- An ordinary mathematical specification of the same source function. -/
@@ -41,10 +40,7 @@ theorem remainder_total :
     FunctionTotal Implementation.program (0 : Fin 1) (fun _ _ => True)
       (fun args heap value finish =>
         value = Env.head args % Env.head (Env.tail args) ∧ finish = heap) := by
-  apply (Implementation.remainder_total_iff (fun _ _ _ => True)
-    (fun n d heap value finish => value = n % d ∧ finish = heap)).mpr
-  intro n d heap _
-  exact ⟨n % d, heap, congrFun (remainder_eval n d) heap, rfl, rfl⟩
+  simpa only [remainder_eq] using Implementation.remainder_total
 
 /-- Neither a positive divisor nor a nonnegative machine subtraction premise
 is needed. The emitted code implements all mathematical inputs that fit. -/

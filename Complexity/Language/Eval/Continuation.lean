@@ -76,6 +76,26 @@ theorem evalWith_letPrim {τ : Ty} (value : Prim Γ τ)
   funext heap
   simp only [evalWith, eval_letPrim, Part.bind_map, State.cons, State.tail]
 
+/-- Allocation uses the existing native heap action and passes its actual
+fresh handle and extended heap to the scoped body. A later fault retains that
+body's final heap rather than rolling allocation back. -/
+theorem evalWith_alloc {kind : CellTy} (length : Atom Γ .nat)
+    (initial : Atom Γ kind.toTy)
+    (continuation : Stmt signatures (.buffer kind :: Γ) result) (entry : Env Γ)
+    (next : Env Γ → ExceptT Fault (StateT Heap Part) (Value result)) :
+    (Stmt.alloc length initial continuation).evalWith program entry next =
+      (do
+        let buffer ← Buffer.allocM (length.eval entry) (kind.ofValue (initial.eval entry))
+        continuation.evalWith program (Env.cons buffer entry) (fun finish => next finish.tail)) := by
+  funext heap
+  change ((Stmt.alloc length initial continuation).eval program ⟨entry, heap⟩).bind _ =
+    (Buffer.allocM (length.eval entry) (kind.ofValue (initial.eval entry)) heap).bind
+      (fun outcome => ExceptT.bindCont
+        (fun buffer => continuation.evalWith program (Env.cons buffer entry)
+          (fun finish => next finish.tail)) outcome.1 outcome.2)
+  simp only [eval_alloc, Buffer.allocM, Part.bind_some, Part.bind_map, ExceptT.bindCont,
+    evalWith, State.cons, State.tail]
+
 /-- A checked current-heap read uses the native action and binds its actual
 scalar cell. Faults bypass both the scoped body and the normal continuation. -/
 theorem evalWith_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)

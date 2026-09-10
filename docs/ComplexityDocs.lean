@@ -34,24 +34,29 @@ documentation, see [development](##ComplexityDocs.Development).
 
 ## What is available
 
-The complete executable workflow currently uses a structured word-RAM language with
-named variables, functions and recursion. Correctness proofs can use mathematical
-relations, pure Lean functions or native
-`StateM` specifications. The implementation-to-model connection is still an explicit proof;
-ordinary Lean functions are not automatically compiled into RAM programs.
+The executable backend is word-RAM. Both its structured programming interface
+and an [independent typed source language](##Complexity.Language.Basic) are available;
+shared compilation proofs connect source contracts to the same actual RAM code.
+This does not compile arbitrary Lean functions or require per-program register proofs.
 
-An [independent scalar core](##Complexity.Language.Basic) and
-[source correctness rules](##Complexity.Language.Verification) are also available.
-They support a mathematical proof of a real helper-call/branch program without
-registers. [Generic proof transfer](##Complexity.Computability.Ram.Compiler.Language.Execution)
-connects its source range and call-nesting conditions to the existing executable
-runner. See [the source example](##Examples.Language.Scalar) and its
-[compiled invocation](##Examples.Language.ScalarCompiled).
-[Separate source cost bounds](##Complexity.Computability.Ram.Compiler.Language.CostExecution)
-now apply to the same compiled invocation, with actual internal and outer-call
-overheads. The Lean-like surface, mutable source data and loops remain in
-development. Private return-flag lowering avoids continuation duplication and has
-[exact code-size formulas](##Complexity.Computability.Ram.Compiler.Language.CodeSize).
+`source_program (pure)` generates native total scalar functions and checked
+source correspondence. [Factorial](##Examples.Language.Factorial) uses ordinary
+mathematical induction and one native termination argument; Scalar and Remainder
+use the same interface. This pure subset supports self-recursion and acyclic calls,
+not pure `while`, mutual recursion or buffers.
+
+The effectful surface supports mutable locals, shared buffers, loops, calls and
+`Buffer.alloc`. Source correctness uses mathematical contents and native VCG rules,
+without a capacity or time budget. The [allocation client](##Examples.Language.Allocation)
+allocates in a callee, returns a buffer, allocates again and reads the original.
+[Generic counted transfer](##Complexity.Computability.Ram.Compiler.Language.Arena.ProgramExecution)
+reaches its halted RAM invocation with actual heap, cursor and returned contents,
+including internal and outer-call overheads. Word ranges, rooted represented inputs
+and code/stack/arena capacity remain separate backend conditions. Input preparation
+and session bootstrap are separate operations; the monotone arena has no reclamation.
+The [source-frame rule](##Complexity.Language.Effects.Heap) preserves existing contents
+through allocating code and callees without explicit cell writes, including finite faults.
+Further resource inference and richer pure data/loop interfaces remain future work.
 
 Functions can be declared without a `main` and verified through their arguments,
 returned value and shared effects. Start with the

@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Lowering
+import Complexity.Computability.Ram.Compiler.Language.Arena.Lowering
 import Complexity.Computability.Ram.Compiler.Local.Function
 
 /-!
@@ -80,6 +81,7 @@ theorem lowerStmtCore_callsValid {signatures : List Signature}
   | read buffer index body ih => exact ⟨trivial, ih _ _ _ _⟩
   | write buffer index value => trivial
   | slice buffer offset length body ih => exact ⟨⟨trivial, trivial⟩, ih _ _ _ _⟩
+  | alloc length initial body ih => exact ⟨lowerAlloc_callsValid _ _ _ _ _, ih _ _ _ _⟩
   | call fn args body ih =>
       exact ⟨call_callsValid program layout fn args next, ih _ _ _ _⟩
   | seq first second ihFirst ihSecond =>

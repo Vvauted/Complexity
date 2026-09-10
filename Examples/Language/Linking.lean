@@ -52,14 +52,15 @@ noncomputable def factorial (n : Nat) : ExceptT Fault (StateT Heap Part) Nat :=
 
 /-- Linking preserves the whole recursive action, not only an assumed result specification. -/
 theorem factorial_eq_original (n : Nat) :
-    factorial n = Factorial.Implementation.factorial n :=
+    factorial n = Factorial.Implementation.factorial_action n :=
   (Program.embeds_link_right Traversal.Implementation.program
     Factorial.Implementation.program).eval_eq _ _
 
 /-- The original ordinary induction proof applies to the relocated recursive program. -/
 theorem factorial_eval (n : Nat) :
-    factorial n = (pure (Nat.factorial n) : ExceptT Fault (StateT Heap Part) Nat) :=
-  (factorial_eq_original n).trans (Factorial.factorial_eval n)
+    factorial n = (pure (Nat.factorial n) : ExceptT Fault (StateT Heap Part) Nat) := by
+  rw [factorial_eq_original, Factorial.Implementation.factorial_action_eq_pure,
+    Factorial.factorial_eq]
 
 /-- The linked recursion terminates with factorial and preserves any initial heap. -/
 theorem factorial_eval_heap (n : Nat) (heap : Heap) :

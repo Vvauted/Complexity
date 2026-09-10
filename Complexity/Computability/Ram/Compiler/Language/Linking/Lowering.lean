@@ -48,6 +48,14 @@ private theorem lowerPrim_renameCalls {Γ : List Ty} {τ : Ty} (layout : Registe
   cases τ <;> cases value <;>
     simp only [lowerPrim, Ram.Stmt.renameCalls, copyFields_renameCalls]
 
+private theorem lowerAlloc_renameCalls {Γ : List Ty} {kind : CellTy}
+    (layout : RegisterMap Γ) (next : Reg) (length : Atom Γ .nat)
+    (initial : Atom Γ kind.toTy) (ρ : Nat → Nat) :
+    (lowerAlloc layout next length initial).renameCalls ρ =
+      lowerAlloc layout next length initial := by
+  simp only [lowerAlloc, Source.Arena.Registers.allocate, Source.Arena.Registers.prepare,
+    Source.Arena.Registers.fill, Source.Arena.Registers.fillBody, Ram.Stmt.renameCalls]
+
 private theorem lowerStmtCore_callOfEq {signatures : List Signature}
     {Γ : List Ty} {result : Ty} (layout : RegisterMap Γ) (next resultSlot flag : Reg)
     (fn : Fin signatures.length) {signature : Signature} (same : signatures[fn] = signature)
@@ -73,7 +81,7 @@ theorem lowerStmtCore_renameCalls {source target : List Signature}
   induction statement generalizing next resultSlot flag <;>
     simp_all only [Complexity.Language.Stmt.renameCalls, lowerStmtCore_callOfEq,
       lowerStmtCore, Ram.Stmt.renameCalls, lowerAssign, lowerPrim_renameCalls,
-      lowerRead, lowerWrite, lowerSlice, lowerReturn, copyFields_renameCalls]
+      lowerRead, lowerWrite, lowerSlice, lowerAlloc_renameCalls, lowerReturn, copyFields_renameCalls]
 
 private theorem lowerBody_cast {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (fn : Fin signatures.length)

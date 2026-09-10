@@ -98,6 +98,38 @@ theorem observe_letPrim {τ : Ty} (value : Prim Γ τ)
   rcases outcome with ⟨⟨scopedLocals, finalHeap⟩, control⟩
   rfl
 
+/-- Allocation runs the actual native heap action before entering its scoped
+body in ordinary local coordinates. Every exit drops only the new binding and
+retains the body's final heap, including allocation followed by a fault. -/
+theorem observe_alloc {kind : CellTy} (length : Atom Γ .nat)
+    (initial : Atom Γ kind.toTy)
+    (continuation : Stmt signatures (.buffer kind :: Γ) result) (locals : Locals) :
+    observe view (.alloc length initial continuation) program locals = (do
+      let allocated ← (Buffer.allocM (length.eval (view.symm locals))
+        (kind.ofValue (initial.eval (view.symm locals)))).run
+      match allocated with
+      | .ok buffer =>
+          let (control, scopedValues) ←
+            observe (Env.equivProd.trans (Equiv.prodCongr (Equiv.refl _) view)) continuation
+              program (buffer, locals)
+          pure (control, scopedValues.2)
+      | .error error => pure (.fault error, locals)) := by
+  funext heap
+  simp only [observe, action, eval_alloc, Prod.swap, Buffer.allocM, ExceptT.run,
+    Bind.bind, Pure.pure, StateT.bind,
+    Equiv.trans_apply, Equiv.symm_trans_apply, Equiv.prodCongr_apply,
+    Equiv.prodCongr_symm,
+    State.cons, State.tail,
+    ← Part.bind_some_eq_map, Part.bind_assoc, Part.bind_some]
+  apply congrArg ((continuation.eval program
+    ⟨Env.cons (heap.alloc (length.eval (view.symm locals))
+      (kind.ofValue (initial.eval (view.symm locals)))).1 (view.symm locals),
+      (heap.alloc (length.eval (view.symm locals))
+        (kind.ofValue (initial.eval (view.symm locals)))).2⟩).bind)
+  funext outcome
+  rcases outcome with ⟨⟨scopedLocals, finalHeap⟩, control⟩
+  rfl
+
 /-- A read uses the actual native heap action, then binds its cell in ordinary
 local coordinates. A failed read skips the continuation without rolling back. -/
 theorem observe_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)

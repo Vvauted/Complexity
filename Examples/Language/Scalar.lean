@@ -12,8 +12,8 @@ import Complexity.Language.Syntax
 The program calls an increment function, compares its actual returned natural
 number with a supplied limit, and assigns the smaller value to a local before
 returning it. Both function
-bodies are typed source syntax. Their mathematical proof uses generated monadic
-equations and ordinary natural-number facts. Shared evaluation adequacy supplies
+bodies are typed source syntax. Their mathematical proof uses the generated native
+functions and ordinary natural-number facts. Shared evaluation adequacy supplies
 the source contracts used by the compiler, without another implementation proof.
 
 This file establishes source behavior only. Realizing these unbounded natural
@@ -23,7 +23,7 @@ theorems.
 
 namespace Complexity.Language.Examples.Scalar
 
-source_program Implementation where
+source_program (pure) Implementation where
   def increment (n : Nat) : Nat := do
     return n + 1
 
@@ -52,42 +52,30 @@ def boundedIncrement : Stmt signatures [.nat, .nat] .nat :=
 def program : Program signatures := Implementation.program
 
 /-- The actual named helper has the ordinary mathematical increment value. -/
-theorem increment_eval (n : Nat) :
-    Implementation.increment n = (pure (n + 1) : ExceptT Fault (StateT Heap Part) Nat) := by
-  rw [Implementation.increment_eq]
+theorem increment_eq (n : Nat) : Implementation.increment n = n + 1 := rfl
 
 /-- The named source function has an ordinary curried mathematical result,
 obtained from the same source correctness proof. -/
-theorem boundedIncrement_eval (n limit : Nat) :
-    Implementation.boundedIncrement n limit =
-      (pure (min (n + 1) limit) : ExceptT Fault (StateT Heap Part) Nat) := by
-  have helper : Implementation.increment n =
-      (pure (n + 1) : ExceptT Fault (StateT Heap Part) Nat) := increment_eval n
-  rw [Implementation.boundedIncrement_eq, helper, pure_bind]
+theorem boundedIncrement_eq (n limit : Nat) :
+    Implementation.boundedIncrement n limit = min (n + 1) limit := by
   by_cases small : n + 1 ≤ limit
-  · simp only [decide_eq_true_eq, if_pos small, Nat.min_eq_left small, pure_bind]
-  · simp only [decide_eq_true_eq, if_neg small,
-      Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small)), pure_bind]
+  · simp [Implementation.boundedIncrement, Id.run, Id.instMonad,
+      increment_eq, small]
+  · simp [Implementation.boundedIncrement, Id.run, Id.instMonad, increment_eq, small,
+      Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small))]
 
 /-- Ordinary addition specifies the actual source helper. -/
 theorem increment_total :
     FunctionTotal program (0 : Fin 2) (fun _ _ => True)
       (fun args heap value finish => value = Env.head args + 1 ∧ finish = heap) := by
-  apply (Implementation.increment_total_iff (fun _ _ => True)
-    (fun n heap value finish => value = n + 1 ∧ finish = heap)).mpr
-  intro n heap _
-  exact ⟨n + 1, heap, congrFun (increment_eval n) heap, rfl, rfl⟩
+  simpa only [increment_eq] using Implementation.increment_total
 
 /-- The caller's source proof composes the helper contract and the actual branch. -/
 theorem boundedIncrement_total :
     FunctionTotal program (1 : Fin 2) (fun _ _ => True)
       (fun args heap value finish =>
         value = min (Env.head args + 1) (Env.head (Env.tail args)) ∧ finish = heap) := by
-  apply (Implementation.boundedIncrement_total_iff (fun _ _ _ => True)
-    (fun n limit heap value finish => value = min (n + 1) limit ∧ finish = heap)).mpr
-  intro n limit heap _
-  exact ⟨(min (n + 1) limit : Nat), heap,
-    congrFun (boundedIncrement_eval n limit) heap, rfl, rfl⟩
+  simpa only [boundedIncrement_eq] using Implementation.boundedIncrement_total
 
 /-- A successful invocation exists for every pair of natural inputs, and its
 actual returned value is the ordinary mathematical minimum. -/

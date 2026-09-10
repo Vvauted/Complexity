@@ -407,6 +407,17 @@ well-founded argument. Generated correspondence uses generic recursion rules
 and must establish an actual finite core execution, not only equality of
 results when execution happens to terminate.
 
+There is a concrete hook at the existing Lean pin: `getFunIndInfo?` exposes
+argument routing for a generated functional induction theorem, including its
+`induct_unfolding` variant. The derivation handles structural and well-founded
+definitions.[^39] Use that checked recursion structure with the motive
+`forall heap, sourceAction args heap = some (ok (nativeFunction args), heap)`.
+The generated proof discharges each branch using the source-body equation,
+callee correspondence and the supplied recursive hypotheses. This is a design
+for proof-producing elaboration, not an assumption that the two generated
+functions agree. It reuses the author's termination argument without trying to
+infer the algorithm's mathematical specification or RAM range/capacity bounds.
+
 Declared domains must be explicit. When termination is known only under
 `Pre x`, the default total interface should take a domain subtype or a proof
 argument; an executable domain check may instead produce an explicit error
@@ -707,3 +718,5 @@ roadmap rather than be hidden behind a simpler replacement problem.
 [^37]: Lean project, [Std.Do.WP.Basic](https://github.com/leanprover/lean4/blob/v4.28.0-rc1/src/Std/Do/WP/Basic.lean) and [Std.Do.WP.Monad](https://github.com/leanprover/lean4/blob/v4.28.0-rc1/src/Std/Do/WP/Monad.lean), pinned `v4.28.0-rc1`; class definitions also inspected in the installed source.
 
 [^38]: Lean project, [Lean 4.33.0 release notes](https://lean-lang.org/doc/reference/latest/releases/v4.33.0/), August 10, 2026; changes #14080, #14146 and #14167. These are not APIs claimed available at Complexity's pin.
+
+[^39]: Lean project, [FunIndInfo](https://github.com/leanprover/lean4/blob/v4.28.0-rc1/src/Lean/Meta/Tactic/FunIndInfo.lean) and [FunInd](https://github.com/leanprover/lean4/blob/v4.28.0-rc1/src/Lean/Meta/Tactic/FunInd.lean), pinned `v4.28.0-rc1`; `getFunIndInfo?`, argument routing, and `deriveInduction` for structural/well-founded definitions. Official source and installed pinned source inspected.

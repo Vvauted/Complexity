@@ -3,6 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
+import Examples.Language.Allocation
 import Examples.Language.Buffer
 import Examples.Language.BufferCompiled
 import Examples.Language.Factorial

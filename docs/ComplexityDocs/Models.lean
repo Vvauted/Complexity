@@ -53,8 +53,8 @@ Because both operations are read-only, the two references may overlap. Construct
 reference does not establish its contents, range or ownership, and it does not load or
 allocate memory. Typed local bindings and array-valued function returns carry descriptors
 for existing data. The [slice function](##Examples.Ram.ArraySlice) returns a borrowed
-`ArrayRef` that its caller passes to sum. Allocation and automatic loading of Lean lists
-remain separate work. See
+`ArrayRef` that its caller passes to sum. Those borrowed operations do not allocate;
+the arena primitive below is separate, and automatic loading of Lean lists is still missing. See
 [array references](##Complexity.Computability.Ram.Array.Ref) for the representation rules.
 
 Local descriptors can be constructed with `array(base, length)`, copied from another
@@ -88,6 +88,72 @@ stores produce the destination. Both arrays must already be represented and disj
 representation. This host-level sequencing is not a single compiled RAM program;
 returning shared state is separate from returning an array reference. This copy returns
 `Unit` while retaining its stores and shared effects; slice instead returns two descriptor fields.
+
+## Allocate an initialized object
+
+The [arena runtime](##Complexity.Computability.Ram.Memory.Arena.Function) now
+provides a real callable allocator. Address zero holds a shared cursor. The
+allocator reads it, reserves the requested interval, writes each initial value,
+then returns the base/length descriptor. Its body uses `14 * length + 14` RAM
+instructions; the complete preloaded call, return and halt uses
+`14 * length + 69`. The one-time session bootstrap is a separate three-instruction
+store. Neither count includes an implicit input loader.
+
+The [typed connection](##Complexity.Computability.Ram.Compiler.Language.Arena.Execution)
+proves that this execution implements `Heap.alloc`: the new native-array object
+has its complete initialized contents, and existing objects retain their
+addresses and contents. `ArenaRep` includes the cursor and exact scalar ranges.
+Capacity requires `next + length ≤ heapLimit < 2^w`; code and stack capacity
+remain separate runner premises. Zero-length allocation is supported and still
+returns a fresh source object identity.
+
+The [inline typed connection](##Complexity.Computability.Ram.Compiler.Language.Arena.MeasuredAllocation)
+uses the same allocator at five fresh local slots. Its two operand assignments
+and actual initialization cost `14 * length + 18`; the returned descriptor and
+extended heap are proved at that same endpoint. It adds no function-table entry
+and preserves caller locals outside those slots.
+
+Use the actual returned shared state for subsequent calls. Returning restores
+caller registers, not old heap contents or an old cursor. Later allocator calls
+preserve an existing view at its original address. This is a monotone arena:
+there is no reset, free or GC, and ordinary aliasing writes can still change
+array contents. Reserved extent is not peak reachable space.
+
+The typed core includes `Stmt.alloc`. Its evaluator and budget-free correctness
+rules retain that same initialized object; the native VCG rule exposes ordinary
+Array contents, freshness and shape growth. The
+[general measured simulation](##Complexity.Computability.Ram.Compiler.Language.Arena.MeasuredSimulation)
+composes allocating bodies through loops and recursive calls. It retains the
+actual final heap, extended placement and shared cursor, including across
+caller-register restoration; no per-program register proof is required.
+
+The [function/runner interface](##Complexity.Computability.Ram.Compiler.Language.Arena.ProgramExecution)
+combines independent source correctness with allocation readiness and reaches
+the actual halted invocation. Source correctness requires no proposed time
+budget. The RAM guarantee still requires positive word width, exact scalar
+ranges, rooted represented arguments and sufficient arena/code/stack capacity.
+Its count includes the body's two private-flag initialization instructions and
+the outer call/return/halt overhead; input preparation and the one-time bootstrap
+remain separate. Capacity tracks cumulative cursor growth, not peak live storage.
+The checked [allocation consumer](##Examples.Language.Allocation) calls `make`
+to allocate a result, allocates again, then reads the original if nonempty and
+returns it. `retain_runUntil` retains the original `ArrayRef` contents and the
+actual runner count, including empty output. Its named `Named.make` uses
+`Buffer.alloc`; `named_make_spec` proves ordinary `Array.replicate` contents
+with `mvcgen`, without source capacity or time premises. Mathematical ranges
+and loop/recursion invariants remain author work, not automatically inferred
+by the generic register/placement proofs. Allocation-aware resource transport
+through imports, the full library, all 50 Examples, the routine source-frame
+consumer and the complete manual build are checked on 0v0.
+
+For scalar code, `source_program (pure)` supplies native total functions and
+automatically proved source correspondence. The checked
+[factorial](##Examples.Language.Factorial) theorem is ordinary
+`Implementation.factorial n = Nat.factorial n`, using induction and one native
+termination proof; Scalar and Remainder use the same interface. This pure subset
+supports self-recursion and acyclic calls, not pure `while`, mutual recursion
+or buffers. Buffer programs retain their mathematical effectful contracts;
+neither interface identifies Lean runtime with certified RAM instruction cost.
 
 ## Fold through an expression or a proved function
 
@@ -235,6 +301,14 @@ coordinates does not physically transpose, copy or rearrange that memory. See
 A frame theorem says which cells an operation leaves unchanged. The shared interface uses
 ordinary `Set.EqOn` and disjointness, so different represented data structures can compose.
 Array and two-buffer frames supply these effects for their existing operations.
+
+A checked [typed-source rule](##Complexity.Language.Effects.Heap) derives
+`Exec.heap_prefix` and `Exec.contents_frame` from `Stmt.NoCellWrites` for the
+statement and every callee, even on finite faults. Contents transport uses
+[`Buffer.Contents.mono_prefix`](##Complexity.Language.Heap.Prefix) and `List.IsPrefix`, allows fresh allocation initialization
+and conservatively excludes explicit cell writes. This does not infer the
+author's mathematical range, capacity or loop-invariant arguments. The allocation
+consumer's `retained_frame` applies this shared rule.
 
 `Ram.Source.Refines.frame_heap` lifts a model `f : α → β` to
 `fun (x, z) => (f x, z)` when the other object's observed cells are disjoint from the proved

@@ -32,6 +32,9 @@ structure FunctionInfo where
   name : Name
   params : Array (Name × Ty)
   result : Ty
+  /-- The public value function has a checked pure source correspondence.
+  Its actual source observation has the explicit `_action` suffix. -/
+  pure : Bool := false
 
 private initialize programInfoExt :
     SimplePersistentEnvExtension (Name × Array FunctionInfo) (NameMap (Array FunctionInfo)) ←

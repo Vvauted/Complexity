@@ -63,6 +63,28 @@ theorem eval_letPrim {τ : Ty} (value : Prim Γ τ)
     cases same
     exact mem_eval_iff.mpr (.letPrim (mem_eval_iff.mp body))
 
+/-- Allocation binds its actual fresh handle in the extended current heap.
+Scope exit drops only the binding: all later updates remain, including effects
+preceding a return or a finite fault in the continuation. -/
+theorem eval_alloc {kind : CellTy} (length : Atom Γ .nat) (initial : Atom Γ kind.toTy)
+    (continuation : Stmt signatures (.buffer kind :: Γ) result) (entry : State Γ) :
+    (Stmt.alloc length initial continuation).eval program entry =
+      let allocated := entry.heap.alloc (length.eval entry.locals)
+        (kind.ofValue (initial.eval entry.locals))
+      (continuation.eval program (State.cons allocated.1 ⟨entry.locals, allocated.2⟩)).map
+        (fun outcome => (outcome.1.tail, outcome.2)) := by
+  apply Part.ext
+  rintro ⟨finish, control⟩
+  constructor
+  · intro member
+    cases mem_eval_iff.mp member with
+    | alloc body =>
+        exact Part.mem_map_iff _ |>.mpr ⟨(_, _), mem_eval_iff.mpr body, rfl⟩
+  · intro member
+    obtain ⟨⟨scopedFinish, scopedControl⟩, body, same⟩ := Part.mem_map_iff _ |>.mp member
+    cases same
+    exact mem_eval_iff.mpr (.alloc (mem_eval_iff.mp body))
+
 /-- Reading observes the current shared heap before binding its actual cell.
 A finite heap fault skips the scoped continuation and retains that heap. -/
 theorem eval_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)

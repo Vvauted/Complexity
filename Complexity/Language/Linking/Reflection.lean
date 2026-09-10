@@ -50,6 +50,10 @@ private theorem of_renameCalls_aux {source target : List Signature}
       intro statement same
       cases statement <;> cases same
       exact .letPrim (ih _ rfl)
+  | alloc _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .alloc (ih _ rfl)
   | read loaded _ ih =>
       intro statement same
       cases statement <;> cases same

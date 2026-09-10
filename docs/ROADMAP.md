@@ -29,10 +29,10 @@ These results are retained; we do not need another execution model or backend.
 
 | Evidence | Working capability | Remaining author-facing problem |
 | --- | --- | --- |
-| [Factorial](../Examples/Language/Factorial.lean) | One actual recursive source program; ordinary induction proves its factorial result | The theorem is still an `ExceptT/StateT/Part` action equality. A manual `change` and conversion to a total contract expose the semantic representation. |
+| [Factorial](../Examples/Language/Factorial.lean), [Scalar](../Examples/Language/Scalar.lean) and [Remainder](../Examples/Language/Remainder.lean) | Generated native scalar functions; ordinary equality proofs, one native termination argument for self-recursion, automatic source correspondence and total-contract conversion | Pure `while`, mutually recursive families and buffers are not supported; mathematical proofs and separate resource arguments remain author work. |
 | [Traversal](../Examples/Language/Traversal.lean) | Real read/helper/branch/write loop, native `Array.map` result and outside-buffer frame | Public guard/body/round proofs still manipulate `Control`, local tuples and nested triples. Named variables alone have not completed the loop interface. |
 | [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts preserve both actual results, including disjoint slices of one object | Routine contents/frame consequences are manually transferred between calls. This is an automation gap, not permission to assume all buffers are independent. |
-| [Source types](../Complexity/Language/Basic.lean) and [heap](../Complexity/Language/Heap.lean) | `Nat`, `Bool`, `Unit`, and views into existing Nat/Bool arrays | No implemented product/sum/inductive-data language, allocation or container construction. These are expressive limitations, not notation problems. |
+| [Source types](../Complexity/Language/Basic.lean) and [allocation consumer](../Examples/Language/Allocation.lean) | `Nat`, `Bool`, `Unit`, array views, named initialized allocation, an allocating-callee/using-caller path to RAM, resource linking and an allocation-preserving source frame | Products/sums/inductive data and reclamation remain missing. |
 | [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner | Authors still see compiler cost names, loop-view transport and large representation/ABI-shaped publication theorems. |
 | [Imported compiled traversal](../Examples/Language/ImportsTraversalCompiled.lean) | Existing behavior and resource contracts are reused without a new loop proof | Import transport is implemented. Its existence does not finish frame automation, total-function interfaces or data-dependent numerical bounds. |
 
@@ -74,7 +74,7 @@ Two complementary approaches share the same contract and compilation layer:
 | Generate success/result contracts, induction rules and proof views over the existing core | Removes repeated environment, outcome and contract conversion; reuses current semantics and compiler immediately | A `Part.get` projection is normally still noncomputable. If obtaining it requires the old complete correctness proof, the difficult proof has only moved. |
 | Generate a total Lean definition and corresponding core from one supported source declaration | Ordinary recursion equations and mathematical proofs can become the primary interface; Lean checks the supplied structural/well-founded recursion | Requires a shared correspondence construction, including recursion. It is not permission to compile arbitrary Lean terms or hand-maintain two function bodies. |
 
-The second remains the pure-function goal; the first is also the primary proof
+The second is checked for the scalar pure subset; the first is the primary proof
 route for genuinely mutable operations, not merely a temporary workaround.
 Their shared contracts carry mathematical results, actual intermediate contents,
 frames and successful termination. Generate both views from one supported
@@ -82,7 +82,7 @@ declaration where applicable; do not require independently written pure and
 mutable algorithms. An in-place implementation is not obtained from a persistent
 one merely by identifying their results.
 
-Before broad implementation, establish how one supplied termination argument
+Before broadening that subset, retain how one supplied termination argument
 feeds the generated definition and terminating core correspondence without
 another author-written induction. This promises proof transport, not the absence
 of internal compiler proof obligations. Pure equations and mutable invariants
@@ -97,14 +97,17 @@ and charged. Do not select an empty heap and call this heap independence.
 
 ## M1 — Function definitions and proofs that feel like Lean
 
-**Status:** independent semantics and recursive compilation work; the total
-definition and proof interface described here are not implemented.
+**Status:** `source_program (pure)` now generates native total scalar functions,
+their checked action correspondence and total source contracts. Scalar,
+Remainder and self-recursive Factorial pass on 0v0. The supported call graph is
+self-recursion plus acyclic calls; pure `while`, mutual recursion and buffers
+remain unsupported.
 
-Start with the existing Scalar, Remainder and Factorial declarations. They
-isolate the interface question without first requiring an allocator.
+These declarations establish the first pure source-proof gate. Preserve their
+single-body, single-termination-argument construction while improving the interface:
 
-1. Specify the generated public function, its one-step equations and its
-   connection to the existing core. Retain implementation identity for costs
+1. Retain the generated public function, its equations and checked
+   connection to the existing core. Keep implementation identity for costs
    even when behavior is exposed as an ordinary Lean function.
 2. Reuse Lean structural/well-founded recursion and the existing source
    [recursive contract rule](../Complexity/Language/Verification/Recursion.lean).
@@ -118,13 +121,13 @@ isolate the interface question without first requiring an allocator.
    monadic administration do not require a restatement of the whole goal.
    Keep recursive bodies opaque until deliberately opened.
 
-**Advance when:** one source body gives a total factorial function whose
-`factorial n = Nat.factorial n` proof uses ordinary induction and equations.
-The complete author work, including termination, contains no manual
-`ExceptT/Part/Heap/Env` conversion or duplicated implementation induction.
-The same declaration still reaches RAM under its original range/capacity
-conditions and has an independent cost bound. Native Lean execution and RAM
-instruction cost must not be described as the same runtime.
+**First source-proof gate — checked:** the author proves
+`Implementation.factorial n = Nat.factorial n` by ordinary induction and gives
+one native `termination_by`/`decreasing_by` argument. Generated correspondence
+and total-contract conversion remove manual `ExceptT/Part/Heap/Env` conversion
+and a second implementation induction. The generic RAM chain and separate
+resource conditions remain; all 50 Examples and both aggregate library/Examples
+builds pass. Native Lean execution and RAM instruction cost are distinct runtimes.
 
 **Reconsider when:** the new API only shortens the final theorem while requiring
 the old proof first, or the correspondence is a new hand-written adapter for
@@ -134,6 +137,12 @@ each function. A small alias or an additional `simp` lemma does not meet this ga
 
 **Status:** shared objects, aliases, operation specifications and complete
 traversal proofs exist; modular proof automation remains incomplete.
+
+The checked [source-frame rule](../Complexity/Language/Effects/Heap.lean) uses `NoCellWrites` for the
+statement and every callee preserves an exact heap-object prefix and existing
+contents through actual execution, including faults. It permits allocation
+initialization but conservatively rejects explicit cell writes; the allocation
+consumer's `retained_frame` now uses this rule.
 
 Borrowed-buffer APIs remain useful for explicitly in-place algorithms. Their
 specifications should expose ordinary contents, lengths, results and permitted
@@ -199,22 +208,49 @@ adapters. Their actual operations, storage and costs must all be accounted for.
 
 ## M4 — Allocation, lifetime and encapsulated local mutation
 
-**Status:** no allocator, reclamation or allocated-container interface is wired
-into the high-level language. Design this alongside M1/M2, not after perfecting
-all scalar tactics. It constrains what a pure-looking collection API can mean.
+**Status:** typed source allocation, its correctness/evaluator rules, general
+measured simulation through loops and recursive calls, and the halted runner
+connection are checked. Named `Buffer.alloc` and the complete allocating client
+are checked too, as is allocating resource-import transport. The complete
+library, all Examples, the routine source-frame consumer and the complete manual
+build. Reclamation remains unfinished.
+Develop this alongside M1/M2; it constrains what a pure-looking collection API can mean.
 
-Current `HeapRep` uses a fixed object placement and assumes represented arrays
-already exist. `Buffer` is an object/offset/length view; copying it or slicing
-does not allocate. `heapLimit` separates data from the call stack. These are
-sound borrowed-storage foundations, not a memory manager.
+The first bottom-up layer is now implemented and individually checked:
+[source heap allocation](../Complexity/Language/Heap/Allocation.lean),
+[actual RAM allocation](../Complexity/Computability/Ram/Memory/Arena/Allocation.lean),
+and the [typed runner connection](../Complexity/Computability/Ram/Compiler/Language/Arena/Execution.lean).
+They prove initialization, old-object preservation, cursor persistence and
+compiler-derived costs. The same allocator now has a five-slot inline instance,
+including typed operand materialization, and checked call-boundary rules for
+placement extension and explicit legacy metadata frames. `Stmt.alloc` now has
+source semantics, `TotalWP`/VCG rules, source linking and static lowering.
+The [general measured simulation](../Complexity/Computability/Ram/Compiler/Language/Arena/MeasuredSimulation.lean)
+threads the same execution's final heap, extended placement and cumulative
+cursor through calls and loops; the [runner connection](../Complexity/Computability/Ram/Compiler/Language/Arena/ProgramExecution.lean)
+includes private-flag initialization and the outer call/return/halt cost.
+Independent source correctness can supply termination to the separate readiness
+proof. Positive word width, exact values, rooted represented inputs and
+code/stack/arena capacity remain explicit conditions; input loading and the
+one-time bootstrap are separate. The [allocation consumer](../Examples/Language/Allocation.lean)
+now exercises `make` returning fresh storage, a later caller allocation and a
+real nonempty read (or empty return), with `retain_runUntil` preserving the
+returned array's contents. `Named.make` has an ordinary `Array.replicate`
+specification proved by `mvcgen`, with no source capacity or time premise.
+
+The underlying `HeapRep` describes existing objects at one placement; the arena
+simulation threads its extensions. `Buffer` is an object/offset/length view;
+copying it or slicing does not allocate. `heapLimit` separates data from the
+call stack. These borrowed-storage interfaces remain useful alongside allocation.
 
 ### Initial protocol and later lifetime extensions
 
 - **Explicit caller-supplied output/scratch buffers:** retain as a useful
   low-level library interface. It does not satisfy construction of a fresh
   returned container and must not replace that requirement.
-- **Stable-address monotone arena:** selected as the first implementation
-  target, not implemented or a complete lifetime solution. The caller/session
+- **Stable-address monotone arena:** its typed source operation and general
+  allocating execution to RAM, named construction and the allocating client
+  and resource-import transport are implemented; reclamation remains open. The caller/session
   owns a still-live arena; nested calls share allocation progress, and returned
   containers remain there. Return does not reset the arena. Capacity accounts
   for retained input and cumulative fresh allocation across calls, not only one
@@ -237,29 +273,38 @@ effects on failure. A pure facade over private mutation also needs representatio
 independence and persistent result semantics: a mutable buffer's contents
 contract describes return-time contents, not an immutable value forever.
 
-### Questions to resolve before adding an allocation statement
+### Selected protocol and implementation obligations
 
-1. **Heap growth and representation.** Can placement extend while agreeing on
-   every existing live object's address? Allocation grows the object domain
-   while retaining old object types and extents; resize needs its own semantics.
-   General execution may change old contents through writes, whereas allocation
-   alone should preserve them. Keep the no-allocation
-   fixed-placement theorems as useful special cases.
-2. **Live handles.** The surface forbids constructing object IDs, but public
-   `Buffer` inputs can still name nonexistent objects. A handle to a future ID
+The [concrete protocol](HIGH_LEVEL_LANGUAGE.md#selected-initial-allocation-protocol)
+now selects a shared cursor at reserved RAM address zero, initialized once per
+session. Allocation reserves a fresh interval, initializes it with actual stores,
+then returns its descriptor. Calls retain the actual metadata and result storage;
+the arena path is opt-in and does not reserve address zero in old RAM programs.
+The runtime, representation and general simulation are checked. Their retained
+boundaries and remaining integration/lifetime obligations are:
+
+1. **Heap growth and representation — checked.** General execution preserves
+   shape extension; allocation alone preserves exact old contents.
+   The allocating simulation returns an extended placement and representation;
+   subsequent calls encode their arguments and results with that actual
+   placement. The fixed-placement no-allocation theorems remain unchanged.
+2. **Live handles — checked.** The surface forbids constructing object IDs, but
+   public `Buffer` inputs can still name nonexistent objects. A handle to a future ID
    could become valid after allocation while its old RAM encoding is stale.
-   Establish the allocation-aware valid-handle/transport invariant or choose
-   another justified representation. Do not silently strengthen every old
-   theorem or ban legitimate aliases to avoid this issue.
-3. **Allocator state across calls.** The bump cursor is distinct from the fixed
-   `heapLimit`. Actual allocation progress must propagate across calls, through
-   shared runtime state or explicitly threaded arguments/results. Restoring
-   caller locals must not silently undo it. Returned descriptors and later
-   allocations must refer to the same current heap and allocation state.
-4. **Initialization and capacity.** New cells need initialized contents before
-   observation. Prove the actual stores and address ranges; host-side
-   `Array.replicate` is not free runtime allocation. Decide whether exhaustion
-   is an intended source result or a separate backend capacity condition.
+   The simulation tracks rooted IDs in current and suspended caller values.
+   Rootedness only requires an existing object slot, not a valid type/extent or no-aliasing.
+   Placement extension preserves these descriptors. The new rooted-input
+   condition is explicit and absent from the old no-allocation interface.
+3. **Allocator state across calls and resource imports — checked.** The bump
+   cursor is distinct from the fixed `heapLimit`. Actual shared cursor updates
+   survive caller-local restoration, and compiled object accesses avoid the
+   metadata. Raw legacy imports need a metadata frame or an allocating postcondition; `SafeExec`
+   alone does not protect the cursor. Repeated entry must not rerun bootstrap.
+4. **Initialization and capacity — checked, conditional.** Actual stores and
+   address ranges establish initialized contents before observation; host-side
+   `Array.replicate` is not free runtime allocation. Reserved and initialized
+   prefixes are connected to counted execution, including zero-length overhead.
+   Sufficient capacity remains a backend premise, not an implemented OOM result.
    Input loading and output conversion need an explicit boundary too.
 5. **Escape and abstraction.** A reset region cannot retain accessible aliases.
    Escaping aliases must not let later writes change a promised persistent pure
@@ -269,12 +314,13 @@ contract describes return-time contents, not an immutable value forever.
    represented: the current relation represents every object. Do not label
    arena occupancy as live-space analysis.
 
-**Advance when:** a source function really allocates, initializes and returns
-a container, a subsequent source call uses it, and a later allocation preserves
-that result. Behavior, target representation, capacity and actual allocation/
-initialization cost must compose. A host-created output buffer or just a
-`Heap.append` lemma does not meet this gate. Scoped reclamation additionally
-needs a non-escaping scratch consumer; it is not implied by the first allocator.
+**First allocation gate — checked:** a source callee allocates and returns a
+container; its caller allocates again, uses the original and retains its
+contents in the actual RAM result, including empty output. Behavior, capacity
+and counted initialization compose without per-program register proofs.
+This does not automatically infer mathematical ranges or loop/recursion
+invariants. Scoped reclamation still needs a non-escaping scratch consumer;
+the monotone arena is not peak-live-space analysis.
 
 ## M5 — Source-level complexity and complete published claims
 
@@ -284,6 +330,9 @@ exist. Their public abstraction and problem-level composition are unfinished.
 Keep three layers distinct: mathematical behavior; resource arguments over the
 same source implementation; and a concrete backend adequacy theorem. Ordinary
 function equality belongs to the first, not a way to recover the other two.
+Further source-level resource inference is follow-up work here, not an open-ended
+condition on the allocation foundation. Author-supplied mathematical ranges,
+capacity and invariants are part of the proof, not missing compiler automation.
 
 1. Expose proved operation/callee bounds at named functions and source arguments.
    Hide `lowerFunc`, function-table indices, register layout and ABI formulas
@@ -340,13 +389,19 @@ and should be reused, not confused with completing this different bridge.
 
 ## Next work and when to change direction
 
-1. Settle the shared typed contract and terminating correspondence rules.
-   Exercise their pure-equation mode against Factorial, Scalar and Remainder
-   (M1), including where the one author-supplied termination argument lives.
+The first bottom-up implementation queue is complete; see
+[FOUNDATIONS_TODO.md](FOUNDATIONS_TODO.md) for its scope and checked builds.
+Allocation, linking, scalar pure correspondence, Examples and the complete manual
+now build together. The priorities below extend the supported fragments toward
+the longer-term proof-experience goals.
+
+1. Preserve the checked shared contracts and terminating correspondence for
+   Factorial, Scalar and Remainder (M1), then address the unsupported pure
+   constructs without duplicating the author's termination argument.
 2. In parallel, exercise their mutable/VCG mode against Traversal and its
-   two-call/imported clients (M2). Resolve the arena/return protocol and the
-   allocation-aware representation obligations (M4); a pure scalar example
-   cannot settle these abstraction questions.
+   two-call/imported clients (M2). Reuse the checked allocating client and
+   arena/return protocol when improving the mathematical contract interface (M4);
+   a pure scalar example cannot settle these abstraction questions.
 3. Implement the shared interfaces justified by those exercises, then add the
    required structured values and container operations. Frame automation and
    dependent-call cost syntax are supporting tasks, not substitutes for them.

@@ -112,6 +112,26 @@ The normal postcondition observes that update and the same current heap. -/
   · rintro ⟨finish, control, execution, post⟩
     exact ⟨finish.tail, control, .letPrim execution, post⟩
 
+/-- Fresh allocation binds a completely initialized object in the extended
+heap. Its continuation may mutate that heap or return the new handle; leaving
+the lexical scope does not discard either effect. No machine capacity or time
+budget belongs to this source-level correctness rule. -/
+@[simp] theorem alloc_iff {kind : CellTy} (length : Atom Γ .nat)
+    (initial : Atom Γ kind.toTy)
+    (continuation : Stmt signatures (.buffer kind :: Γ) result) :
+    let allocated := entry.heap.alloc (length.eval entry.locals)
+      (kind.ofValue (initial.eval entry.locals))
+    TotalWP program (.alloc length initial continuation) normal returned entry ↔
+      TotalWP program continuation (fun finish => normal finish.tail)
+        (fun value finish => returned value finish.tail)
+        (State.cons allocated.1 ⟨entry.locals, allocated.2⟩) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | alloc body => exact ⟨_, control, body, post⟩
+  · rintro ⟨finish, control, execution, post⟩
+    exact ⟨finish.tail, control, .alloc execution, post⟩
+
 /-- A read must succeed and its actual current cell supplies the scoped value.
 The continuation may change the heap, return early or execute further calls. -/
 @[simp] theorem read_iff {kind : CellTy} (buffer : Atom Γ (.buffer kind))

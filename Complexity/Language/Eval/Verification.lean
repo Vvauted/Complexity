@@ -25,7 +25,8 @@ The native `Stmt.action` triple retains the complete final source state even
 when control returns or faults. Its postcondition is the existing source
 `Control.Satisfies`; hence faults and divergence cannot establish `TotalWP`.
 
-The buffer actions have native `@[spec]` rules for `mvcgen`. Reads and slices
+The buffer actions have native `@[spec]` rules for `mvcgen`. Allocation exposes
+its fresh identity, initialized contents and actual extended heap. Reads and slices
 retain their actual current heap. Writes automatically establish success from
 ordinary contents and an index bound; their continuation receives both the
 updated contents and the real write equation, so existing alias and frame rules
@@ -58,6 +59,26 @@ theorem triple_iff_eval {α : Type} (action : ExceptT Fault (StateT Heap Part) �
     exact ⟨(.ok value, finish), Part.eq_some_iff.mp returned, property⟩
 
 namespace Buffer
+
+/-- Allocation always terminates with its actual fresh handle and extended
+heap. The continuation receives mathematical initialized contents, freshness
+and shape growth together with the real allocation equation; no old heap is
+restored and no finite-machine capacity or time budget is assumed. -/
+@[spec] theorem allocM_spec {kind : CellTy} (length : Nat) (initial : CellValue kind)
+    (post : Std.Do.PostCond (Buffer kind) (.except Fault (.arg Heap .pure))) :
+    Std.Do.Triple (allocM length initial)
+      (fun heap => ⟨∀ buffer finish,
+        heap.alloc length initial = (buffer, finish) →
+        buffer.Contents finish (Array.replicate length initial) →
+        heap.ShapeExtends finish → buffer.object = heap.objects.size →
+        (post.1 buffer finish).down⟩) post := by
+  simp only [Std.Do.Triple, Std.Do.WP.wp, Std.Do.PredTrans.pushExcept,
+    Std.Do.PredTrans.pushArg, Part.TotalCorrectness.wp]
+  intro heap property
+  exact ⟨(.ok (heap.alloc length initial).1, (heap.alloc length initial).2),
+    Part.eq_some_iff.mp (allocM_eq_ok length initial heap),
+    property _ _ rfl (heap.alloc_contents length initial)
+      (heap.shapeExtends_alloc length initial) (heap.alloc_object length initial)⟩
 
 /-- A current-heap read binds the ordinary array element and preserves the
 entire heap. Choosing mathematical contents is a ghost verification condition. -/
@@ -200,6 +221,22 @@ theorem FunctionTotal.iff_eval {signatures : List Signature} {program : Program 
     obtain ⟨value, finalHeap, returned, property⟩ := specification args initialHeap input
     obtain ⟨finish, execution, sameHeap⟩ := Program.eval_eq_ok_iff.mp returned
     exact ⟨finish, value, execution, sameHeap.symm ▸ property⟩
+
+/-- Transfer a mathematical specification of a pure function through its proved
+source correspondence. The correspondence supplies successful termination and
+preservation of every starting heap; the specification need not reason about
+the source action or construct an execution witness. -/
+theorem FunctionTotal.of_eval_eq_pure {signatures : List Signature}
+    {program : Program signatures} {fn : Fin signatures.length}
+    {pre : Env signatures[fn].params → Heap → Prop}
+    {post : Env signatures[fn].params → Heap → Value signatures[fn].result → Heap → Prop}
+    (value : Env signatures[fn].params → Value signatures[fn].result)
+    (correspondence : ∀ args, program.eval fn args = pure (value args))
+    (specification : ∀ args heap, pre args heap → post args heap (value args) heap) :
+    FunctionTotal program fn pre post := by
+  apply FunctionTotal.iff_eval.mpr
+  intro args heap input
+  exact ⟨value args, heap, congrFun (correspondence args) heap, specification args heap input⟩
 
 /-- Native exception/state triples express the same source function contract.
 The initial heap is a ghost parameter, equated with the actual starting heap;
