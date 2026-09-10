@@ -87,6 +87,12 @@ theorem renameCalls {source target : List Signature}
       test body _ ih => exact .iteTrue (test := test) ih
   | @iteFalse Γ result w heapLimit depth next₀ next₁ condition yes no entry finish control
       test body _ ih => exact .iteFalse (test := test) ih
+  | @matchNone Γ result τ w heapLimit depth next₀ next₁ value noneBranch someBranch
+      entry finish control selected body _ ih =>
+      exact .matchNone (selected := selected) ih
+  | @matchSome Γ result τ w heapLimit depth next₀ next₁ value noneBranch someBranch
+      entry payload finish control selected body payloadFits _ ih =>
+      exact .matchSome (selected := selected) payloadFits ih
   | whileFalse _ ih => exact .whileFalse ih
   | whileTrue _ _ _ ihGuard ihBody ihRest => exact .whileTrue ihGuard ihBody ihRest
   | whileReturn _ _ ihGuard ihBody => exact .whileReturn ihGuard ihBody
@@ -189,6 +195,18 @@ private theorem of_renameCalls_aux {source target : List Signature}
       cases statement <;> cases same
       obtain ⟨_, original⟩ := ih _ rfl
       exact ⟨_, .iteFalse (test := test) original⟩
+  | @matchNone Γ result τ w heapLimit depth next₀ next₁ value noneBranch someBranch
+      entry finish control selected body _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      obtain ⟨_, original⟩ := ih _ rfl
+      exact ⟨_, .matchNone (selected := selected) original⟩
+  | @matchSome Γ result τ w heapLimit depth next₀ next₁ value noneBranch someBranch
+      entry payload finish control selected body payloadFits _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      obtain ⟨_, original⟩ := ih _ rfl
+      exact ⟨_, .matchSome (selected := selected) payloadFits original⟩
   | whileFalse _ ih =>
       intro statement same
       cases statement <;> cases same
@@ -349,6 +367,11 @@ theorem renameCalls {source target : List Signature}
       ready steps _ ih => exact .iteTrue (test := test) ih
   | @iteFalse Γ result depth next₀ next₁ condition yes no entry finish control test body
       ready steps _ ih => exact .iteFalse (test := test) ih
+  | @matchNone Γ result τ depth next₀ next₁ value noneBranch someBranch entry finish control
+      selected body ready steps _ ih => exact .matchNone (selected := selected) ih
+  | @matchSome Γ result τ depth next₀ next₁ value noneBranch someBranch entry payload finish
+      control selected payloadFits body ready steps _ ih =>
+      exact .matchSome (selected := selected) (payloadFits := payloadFits) ih
   | whileFalse _ ih => exact .whileFalse ih
   | whileTrue _ _ _ ihGuard ihBody ihRest => exact .whileTrue ihGuard ihBody ihRest
   | whileReturn _ _ ihGuard ihBody => exact .whileReturn ihGuard ihBody

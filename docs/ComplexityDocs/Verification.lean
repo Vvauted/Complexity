@@ -48,8 +48,19 @@ The generated `f_action` retains the independent source observation, and
 `f_action_eq_pure` proves that action equals `pure` of the native result for every
 initial heap; `f_total` supplies the corresponding total source contract.
 There is no second user-written implementation or manual heap conversion.
-The pure fragment supports Nat, Bool and Unit, self-recursion and acyclic calls,
+The pure fragment supports Nat, Bool, Unit and their recursively nested products
+and options, self-recursion and acyclic calls,
 but not buffers, `while` or mutually recursive families.
+
+The [structured client](##Examples.Language.OptionalBuffer) uses these as actual
+source values: a pure helper returns `Option (Nat × Nat)`, a library returns
+`Nat × Option (Buffer Nat)`, and its importing caller matches the optional view
+before reading and updating a cell. Its `bump_contract` statement uses ordinary
+buffer parameters, an `Array.modify` contents relation and a frame on the real
+final heap. Constructors and projections are normalized left to right; matching
+exposes a payload only in the selected `some` branch. Source correctness, imported
+contracts and the [compiled result](##Examples.Language.OptionalBufferCompiled)
+all concern that one declared implementation.
 
 Without `(pure)`, the existing `P.f` and `P.f_eq` interface still exposes
 effectful, possibly partial actions with actual heaps and finite faults.
@@ -501,6 +512,20 @@ entire returned physical memory into a later invocation. The factorial and
 splay consumers use the same interface, including factorial's preservation of
 arbitrary initial RAM memory below the heap boundary.
 
+For allocation and reclamation, the corresponding
+[arena execution interface](##Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution)
+uses `FunctionArenaLaunch` and `FunctionArenaExecution`. It additionally retains
+the actual final placement and cursor, rooted inputs and a measured invocation
+at the specified call depth. `ArenaReady.execute` needs no time budget;
+`FunctionArenaRealizable.execute` adds the independent source specification.
+Its `memory` is an `ArenaRep` on the actual halted machine, and `nextEntry` keeps
+that complete memory for a later call. The
+[scratch client's](##Examples.Language.ScopeCompiled) public theorem now states
+only mathematical contents, final cursor and the actual workspace conclusion.
+The runner, return-field and representation facts come from this shared result.
+The workspace rules bound all actual accesses and out-of-envelope writes at
+every prefix; they do not claim an exact reachable-live-space count.
+
 Use the [structural bound rules](##Complexity.Computability.Ram.Compiler.Language.CostBound)
 to compose source costs. `StmtCostBound` bounds the existing execution observation;
 its primitive, sequence, branch, return and call rules hide case analysis on
@@ -580,23 +605,24 @@ own remaining work. The final false guard is counted. This is a conditional
 cost rule for the same execution, separate from the well-founded termination
 rule; the structural tactic does not yet choose or apply loop invariants.
 
-The frontend currently supports `Nat`, `Bool`, `Unit`, borrowed buffers, lexical bindings, actual
-named calls, branches and returns. Nested addition, multiplication, saturating
+The frontend supports `Nat`, `Bool`, `Unit`, borrowed buffers, products, options,
+lexical bindings, actual named calls, branches and returns. Nested addition, multiplication, saturating
 subtraction, division, remainder and comparisons are normalized left to right
 into actual primitive bindings. This also applies to guards and call arguments.
 The [remainder example](##Examples.Language.Remainder) implements
 `n - (n / d) * d`, reuses the ordinary Nat identity, and derives the actual
 compiled result with a separate instruction bound. Divisor zero is included;
 no artificial subtraction-order condition is required.
-Named `while` and initialized allocation are supported as described above;
-products remain future work. Local assignment is covered by the same structural
-realization and cost tactics. Richer
+Named `while`, option matching and initialized allocation are supported as
+described above. Product/option construction, projection and local assignment
+are covered by the same structural realization and cost tactics. General sums,
+recursive data representations, pure loops, mutual recursion and richer
 callee selection, recursive proofs and data-dependent bound automation remain
 unfinished. Costs are currently derived
 for successfully realized executions, not an instrumentation theorem for
 every unrestricted source execution.
-M1 remains open: the scalar pass is useful but does not establish the complete
-source proof and specification interface needed by mutable data and recursion.
+The checked fragment does not establish the complete source proof and
+specification interface needed by general mutable collections and recursion.
 Optimizing code size does not imply every execution is faster.
 The executable word-RAM workflow and maintainer interfaces below remain available.
 
@@ -607,7 +633,10 @@ and measured simulation compose actual register updates and calling conventions.
 The same layout indexes every actual value field. Parameter packing and fresh
 receivers use those indices and the existing register-update rules; Unit has no
 dummy field. Buffers have two fields, their actual base address and length;
-arbitrary products are not enabled yet. Sequential multi-field copies preserve
+products concatenate component fields and options add a tag before their payload.
+Absent payload fields are zero padding, not a manufactured buffer. Selected
+payload copying is real emitted work, included in the exact instruction count.
+Sequential multi-field copies preserve
 their operands through proved destination separation or actual self-copy
 identities, not an assumed snapshot. `RegisterMap.Regular` proves the field
 layout needed to update an existing variable without changing another live

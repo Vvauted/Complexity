@@ -144,6 +144,28 @@ inductive ExecutionCost {signatures : List Signature}
       {body : RealizedExec program w depth no entry finish control} {steps : Nat}
       (cost : ExecutionCost body steps) :
       ExecutionCost (.iteFalse (yes := yes) test body) (steps + 2)
+  | matchNone {Γ : List Ty} {result τ : Ty} {depth : Nat}
+      {value : Atom Γ (.option τ)}
+      {noneBranch : Complexity.Language.Stmt signatures Γ result}
+      {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      {selected : value.eval entry.locals = none}
+      {body : RealizedExec program w depth noneBranch entry finish control} {steps : Nat}
+      (cost : ExecutionCost body steps) :
+      ExecutionCost (.matchNone (someBranch := someBranch) selected body) (steps + 2)
+  | matchSome {Γ : List Ty} {result τ : Ty} {depth : Nat}
+      {value : Atom Γ (.option τ)}
+      {noneBranch : Complexity.Language.Stmt signatures Γ result}
+      {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+      {entry : Complexity.Language.State Γ} {payload : Value τ}
+      {finish : Complexity.Language.State (τ :: Γ)} {control : Control result}
+      {selected : value.eval entry.locals = some payload}
+      {payloadFits : ValueFits w (τ := τ) payload}
+      {body : RealizedExec program w depth someBranch
+        (Complexity.Language.State.cons payload entry) finish control} {steps : Nat}
+      (cost : ExecutionCost body steps) :
+      ExecutionCost (.matchSome (noneBranch := noneBranch) selected payloadFits body)
+        (2 * fieldCount τ + steps + 3)
   | whileFalse {Γ : List Ty} {result : Ty} {depth : Nat}
       {guard : Complexity.Language.Stmt signatures Γ .bool}
       {body : Complexity.Language.Stmt signatures Γ result}
@@ -233,6 +255,12 @@ theorem RealizedExec.exists_cost {signatures : List Signature}
   | iteFalse test body ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .iteFalse (test := test) cost⟩
+  | matchNone selected body ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .matchNone (selected := selected) cost⟩
+  | matchSome selected payloadFits body ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .matchSome (selected := selected) (payloadFits := payloadFits) cost⟩
   | whileFalse test ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .whileFalse cost⟩

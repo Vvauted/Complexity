@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Language.Basic
 import Complexity.Computability.Ram.Array.Basic
 import Init.Data.List.OfFn
+import Mathlib.Data.List.OfFn
 
 /-!
 # Fields of source values
@@ -28,6 +29,8 @@ open Complexity.Language
   | .nat | .bool => 1
   | .unit => 0
   | .buffer _ => 2
+  | .prod left right => fieldCount left + fieldCount right
+  | .option value => fieldCount value + 1
 
 /-- Source value ranges, independently of any physical object placement.
 Buffer validity in a source heap is a separate semantic condition. -/
@@ -36,6 +39,9 @@ Buffer validity in a source heap is a separate semantic condition. -/
   | .bool, value => (if value then 1 else 0) < 2 ^ w
   | .unit, _ => True
   | .buffer _, value => value.length < 2 ^ w
+  | .prod _ _, value => ValueFits w value.1 ∧ ValueFits w value.2
+  | .option _, none => True
+  | .option _, some value => 1 < 2 ^ w ∧ ValueFits w value
 
 /-- The mathematical value of an actual representation field. -/
 def valueField (placement : Nat → Word w) : {τ : Ty} → Value τ → Fin (fieldCount τ) → Nat
@@ -44,6 +50,31 @@ def valueField (placement : Nat → Word w) : {τ : Ty} → Value τ → Fin (fi
   | .unit, _, i => Fin.elim0 i
   | .buffer _, value, i =>
       if i.val = 0 then (arrayAddr (placement value.object) value.offset).toNat else value.length
+  | .prod _ _, value, i =>
+      Fin.addCases (valueField placement value.1) (valueField placement value.2) i
+  | .option _, none, _ => 0
+  | .option _, some value, i => Fin.cases 1 (valueField placement value) i
+
+@[simp] theorem valueField_prod_left (placement : Nat → Word w)
+    (value : Value (.prod left right)) (i : Fin (fieldCount left)) :
+    valueField placement value (i.castAdd (fieldCount right)) =
+      valueField placement value.1 i := Fin.addCases_left i
+
+@[simp] theorem valueField_prod_right (placement : Nat → Word w)
+    (value : Value (.prod left right)) (i : Fin (fieldCount right)) :
+    valueField placement value (i.natAdd (fieldCount left)) =
+      valueField placement value.2 i := Fin.addCases_right i
+
+@[simp] theorem valueField_none (placement : Nat → Word w) (i : Fin (fieldCount (.option τ))) :
+    valueField placement (τ := .option τ) none i = 0 := rfl
+
+@[simp] theorem valueField_some_zero (placement : Nat → Word w) (value : Value τ) :
+    valueField placement (τ := .option τ) (some value) ⟨0, Nat.zero_lt_succ _⟩ = 1 := rfl
+
+@[simp] theorem valueField_some_succ (placement : Nat → Word w) (value : Value τ)
+    (i : Fin (fieldCount τ)) :
+    valueField placement (τ := .option τ) (some value) i.succ =
+      valueField placement value i := rfl
 
 @[simp] theorem valueField_nat (placement : Nat → Word w) (value : Nat)
     (i : Fin (fieldCount .nat)) : valueField placement (τ := .nat) value i = value := rfl
@@ -64,7 +95,7 @@ def valueField (placement : Nat → Word w) : {τ : Ty} → Value τ → Fin (fi
 The address field is already a word, even at an unused wrapping endpoint. -/
 theorem valueFits_iff (placement : Nat → Word w) {τ : Ty} (value : Value τ) :
     ValueFits w value ↔ ∀ i : Fin (fieldCount τ), valueField placement value i < 2 ^ w := by
-  cases τ with
+  induction τ with
   | nat | bool =>
       constructor
       · intro fits i
@@ -86,6 +117,31 @@ theorem valueFits_iff (placement : Nat → Word w) {τ : Ty} (value : Value τ) 
         · simpa only [valueField, if_neg zero] using fits
       · intro fields
         exact fields ⟨1, by change 1 < 2; decide⟩
+  | prod left right ihLeft ihRight =>
+      constructor
+      · rintro ⟨leftFits, rightFits⟩ i
+        refine Fin.addCases ?_ ?_ i
+        · intro j
+          simpa only [valueField_prod_left] using (ihLeft value.1).mp leftFits j
+        · intro j
+          simpa only [valueField_prod_right] using (ihRight value.2).mp rightFits j
+      · intro fields
+        exact ⟨(ihLeft value.1).mpr (fun i => by
+          simpa only [valueField_prod_left] using fields (i.castAdd (fieldCount right))),
+          (ihRight value.2).mpr (fun i => by
+            simpa only [valueField_prod_right] using fields (i.natAdd (fieldCount left)))⟩
+  | option τ ih =>
+      cases value with
+      | none => simp only [ValueFits, valueField_none, Nat.two_pow_pos, implies_true]
+      | some value =>
+          constructor
+          · rintro ⟨tagFits, payloadFits⟩ i
+            refine Fin.cases tagFits ?_ i
+            intro j
+            exact (ih value).mp payloadFits j
+          · intro fields
+            exact ⟨fields ⟨0, Nat.zero_lt_succ _⟩,
+              (ih value).mpr (fun i => fields i.succ)⟩
 
 /-- Any chosen placement exposes the same source-admissible field ranges. -/
 theorem ValueFits.fields {τ : Ty} {value : Value τ} (fits : ValueFits w value)
@@ -126,5 +182,29 @@ def valueWords (placement : Nat → Word w) {τ : Ty} (value : Value τ) : List 
     valueWords placement (τ := .buffer kind) value =
       [arrayAddr (placement value.object) value.offset, BitVec.ofNat w value.length] := by
   simp [valueWords, List.ofFn_succ, valueField]
+
+/-- Product values concatenate the actual fields of their two components. -/
+@[simp] theorem valueWords_prod (placement : Nat → Word w)
+    (left : Value α) (right : Value β) :
+    valueWords placement (τ := .prod α β) (left, right) =
+      valueWords placement left ++ valueWords placement right := by
+  simp only [valueWords, fieldCount, List.ofFn_add]
+  congr 1 <;> congr 1 <;> funext i
+  · exact congrArg (BitVec.ofNat w) (valueField_prod_left placement (left, right) i)
+  · exact congrArg (BitVec.ofNat w) (valueField_prod_right placement (left, right) i)
+
+/-- An absent optional value has a zero tag and a canonical zero-filled payload. -/
+@[simp] theorem valueWords_none (placement : Nat → Word w) (τ : Ty) :
+    valueWords placement (τ := .option τ) none =
+      List.replicate (fieldCount τ + 1) (0 : Word w) := by
+  exact List.ofFn_const (fieldCount τ + 1) (0 : Word w)
+
+/-- A present optional value preserves every payload field after its tag. -/
+@[simp] theorem valueWords_some (placement : Nat → Word w) (value : Value τ) :
+    valueWords placement (τ := .option τ) (some value) =
+      BitVec.ofNat w 1 :: valueWords placement value := by
+  unfold valueWords
+  rw [List.ofFn_succ]
+  rfl
 
 end Ram.LanguageCompiler

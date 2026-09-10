@@ -45,6 +45,24 @@ theorem copyAtom_measured (layout : RegisterMap Γ) (dst : Reg) (atom : Atom Γ 
   rw [atomExprs_eval layout atom env entry hw matched fits] at execution
   simpa only [valueRegs, atomExprs_length] using execution
 
+/-- A selected `some` branch copies only its actual payload into fresh lexical
+fields. The count is the emitted copy size, including all descriptor words. -/
+theorem copyOptionPayload_measured (layout : RegisterMap Γ) (dst : Reg)
+    (value : Atom Γ (.option τ)) (env : Env Γ) (entry : Source.State w) (_hw : 0 < w)
+    (matched : layout.Matches placement env entry.regs)
+    (selected : value.eval env = some payload) (payloadFits : ValueFits w payload)
+    (bounded : layout.Bounded dst) :
+    Source.LocalMeasuredExec control program heapLimit depth
+      (copyFields dst (optionPayloadExprs layout value)) (2 * fieldCount τ) entry
+      (entry.setRegs (valueRegs τ dst) (valueWords placement payload)) := by
+  have execution := copyFields_localMeasured entry dst (optionPayloadExprs layout value)
+    (optionPayloadExprs_readsBelow layout value entry)
+    (optionPayloadExprs_copySafe layout value dst bounded)
+    (control := control) (program := program) (heapLimit := heapLimit) (depth := depth)
+  rw [optionPayloadExprs_eval layout value env entry matched selected payloadFits] at execution
+  simpa only [copyFields_stmtSize, optionPayloadExprs_compile_lengths,
+    optionPayloadExprs_length, valueRegs, Nat.two_mul] using execution
+
 /-- Count the same primitive execution at its exact emitted size. -/
 theorem lowerPrim_measured (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ)
     (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
@@ -56,12 +74,8 @@ theorem lowerPrim_measured (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ
   rw [← lowerPrim_stmtSize control (LocalCompiler.calleeLocals program) layout dst prim]
   have execution := lowerPrim_safe layout dst prim env entry hw matched fits copySafe
     (program := program) (heapLimit := heapLimit) (depth := depth)
-  cases τ with
-  | nat | bool => exact execution.assign_localMeasured control
-  | unit => exact .skip
-  | buffer kind =>
-      cases prim with
-      | atom atom => exact copyAtom_measured layout dst atom env entry hw matched fits copySafe
+  rw [lowerPrim_eq_copyFields] at execution ⊢
+  exact copyFields_safe_localMeasured execution control
 
 /-- Existing-variable assignment retains the primitive's actual emitted cost,
 including every field of self-copies. It reuses the proved safe endpoint. -/
@@ -75,12 +89,9 @@ theorem lowerAssign_measured (layout : RegisterMap Γ) (target : Var Γ τ) (val
   rw [← lowerAssign_stmtSize control (LocalCompiler.calleeLocals program) layout target value]
   have execution := lowerAssign_safe layout target value env entry hw matched fits regular
     (program := program) (heapLimit := heapLimit) (depth := depth)
-  cases τ with
-  | nat | bool => exact execution.assign_localMeasured control
-  | unit => exact .skip
-  | buffer kind =>
-      cases value with
-      | atom atom => exact copyFields_safe_localMeasured execution control
+  dsimp only [lowerAssign] at execution ⊢
+  rw [lowerPrim_eq_copyFields] at execution ⊢
+  exact copyFields_safe_localMeasured execution control
 
 /-- Count actual result-field materialization. Unit performs no assignment. -/
 theorem lowerReturn_measured (layout : RegisterMap Γ) (resultSlot : Reg) (atom : Atom Γ τ)

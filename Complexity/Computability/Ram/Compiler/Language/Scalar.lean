@@ -38,6 +38,8 @@ def toNat : {τ : Ty} → Scalar τ → Value τ → Nat
   | .bool, _, value => if value then 1 else 0
   | .unit, impossible, _ => nomatch impossible
   | .buffer _, impossible, _ => nomatch impossible
+  | .prod _ _, impossible, _ => nomatch impossible
+  | .option _, impossible, _ => nomatch impossible
 
 /-- Every supported object cell has its ordinary scalar source type. -/
 def cell (kind : CellTy) : Scalar kind.toTy :=
@@ -182,6 +184,58 @@ def primExpr (layout : RegisterMap Γ) : {τ : Ty} → Prim Γ τ → Scalar τ 
   | _, .lt a b, _ => .bin .ult (atomExpr layout a .nat) (atomExpr layout b .nat)
   | _, .le a b, _ => .bin .ule (atomExpr layout a .nat) (atomExpr layout b .nat)
   | _, .length buffer, _ => atomFieldExpr layout buffer ⟨1, by change 1 < 2; decide⟩
+  | _, .fst pair, scalar =>
+      atomFieldExpr layout pair (scalar.index.castAdd _)
+  | _, .snd pair, scalar =>
+      atomFieldExpr layout pair (scalar.index.natAdd _)
+  | _, .pair _ _, impossible => nomatch impossible
+  | _, .none _, impossible => nomatch impossible
+  | _, .some _, impossible => nomatch impossible
+
+/-- Materialize a primitive's actual fields. Structured constructors and
+projections copy existing fields; no heap traversal or inverse encoding occurs. -/
+def primFieldExpr (layout : RegisterMap Γ) :
+    {τ : Ty} → Prim Γ τ → Fin (fieldCount τ) → Expr
+  | _, .atom atom, i => atomFieldExpr layout atom i
+  | _, .add a b, _ => primExpr layout (.add a b) .nat
+  | _, .mul a b, _ => primExpr layout (.mul a b) .nat
+  | _, .sub a b, _ => primExpr layout (.sub a b) .nat
+  | _, .div a b, _ => primExpr layout (.div a b) .nat
+  | _, .mod a b, _ => primExpr layout (.mod a b) .nat
+  | _, .eq a b, _ => primExpr layout (.eq a b) .bool
+  | _, .lt a b, _ => primExpr layout (.lt a b) .bool
+  | _, .le a b, _ => primExpr layout (.le a b) .bool
+  | _, .length buffer, _ => primExpr layout (.length buffer) .nat
+  | _, .pair left right, i =>
+      Fin.addCases (atomFieldExpr layout left) (atomFieldExpr layout right) i
+  | _, .fst pair, i => atomFieldExpr layout pair (i.castAdd _)
+  | _, .snd pair, i => atomFieldExpr layout pair (i.natAdd _)
+  | _, .none _, _ => .const 0
+  | _, .some value, i => Fin.cases (.const 1) (atomFieldExpr layout value) i
+
+/-- Ordered expressions for every field in one primitive result. -/
+def primExprs (layout : RegisterMap Γ) (prim : Prim Γ τ) : List Expr :=
+  List.ofFn (primFieldExpr layout prim)
+
+@[simp] theorem primExprs_length (layout : RegisterMap Γ) (prim : Prim Γ τ) :
+    (primExprs layout prim).length = fieldCount τ := List.length_ofFn
+
+/-- The real option tag is stored before its fixed-width payload. -/
+def optionTagExpr (layout : RegisterMap Γ) (value : Atom Γ (.option τ)) : Expr :=
+  atomFieldExpr layout value ⟨0, Nat.zero_lt_succ _⟩
+
+/-- Optional payload fields are only exposed by the selected `some` branch. -/
+def optionPayloadExprs (layout : RegisterMap Γ) (value : Atom Γ (.option τ)) : List Expr :=
+  List.ofFn fun i : Fin (fieldCount τ) => atomFieldExpr layout value i.succ
+
+@[simp] theorem optionPayloadExprs_length (layout : RegisterMap Γ)
+    (value : Atom Γ (.option τ)) :
+    (optionPayloadExprs layout value).length = fieldCount τ := List.length_ofFn
+
+@[simp] theorem optionTagExpr_compile_length (layout : RegisterMap Γ)
+    (value : Atom Γ (.option τ)) (dst : Reg) :
+    ((optionTagExpr layout value).compile dst).length = 1 :=
+  atomFieldExpr_compile_length layout value ⟨0, Nat.zero_lt_succ _⟩ dst
 
 /-- Source-level sufficient ranges for an operation. Addition and multiplication
 include their actual results, even if later code returns a smaller value. Other
@@ -200,6 +254,10 @@ def PrimFits (w : Nat) (env : Env Γ) : {τ : Ty} → Prim Γ τ → Prop
   | _, .lt a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
   | _, .le a b => a.eval env < 2 ^ w ∧ b.eval env < 2 ^ w
   | _, .length buffer => (buffer.eval env).length < 2 ^ w
+  | _, .pair left right => ValueFits w (left.eval env) ∧ ValueFits w (right.eval env)
+  | _, .fst pair | _, .snd pair => ValueFits w (pair.eval env)
+  | _, .none _ => True
+  | _, .some value => 1 < 2 ^ w ∧ ValueFits w (value.eval env)
 
 /-- The fixed lowering implements mathematical Nat/Bool semantics, not merely
 equality modulo the word width. -/
@@ -269,6 +327,17 @@ theorem primExpr_toNat (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar : S
   | length buffer =>
       exact atomFieldExpr_toNat layout buffer env regs mem matched fits
         ⟨1, by change 1 < 2; decide⟩
+  | fst pair =>
+      exact (atomFieldExpr_toNat layout pair env regs mem matched fits
+        (scalar.index.castAdd _)).trans
+          ((valueField_prod_left placement (pair.eval env) scalar.index).trans
+            (scalar.valueField placement (pair.eval env).1 scalar.index))
+  | snd pair =>
+      exact (atomFieldExpr_toNat layout pair env regs mem matched fits
+        (scalar.index.natAdd _)).trans
+          ((valueField_prod_right placement (pair.eval env) scalar.index).trans
+            (scalar.valueField placement (pair.eval env).2 scalar.index))
+  | pair | none | some => cases scalar
 
 /-- Scalar lowering requires no additional live source registers. -/
 theorem primExpr_bounded (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar : Scalar τ)
@@ -282,6 +351,9 @@ theorem primExpr_bounded (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar :
         ⟨atomExpr_bounded layout b .nat bounded, atomExpr_bounded layout a .nat bounded⟩⟩
   | length buffer =>
       exact atomFieldExpr_bounded layout buffer bounded ⟨1, by change 1 < 2; decide⟩
+  | fst pair => exact atomFieldExpr_bounded layout pair bounded _
+  | snd pair => exact atomFieldExpr_bounded layout pair bounded _
+  | pair | none | some => cases scalar
 
 /-- Atom materialization executes one emitted instruction, including variables. -/
 @[simp] theorem atomExpr_compile_length (layout : RegisterMap Γ) (atom : Atom Γ τ)
@@ -298,10 +370,110 @@ theorem primExpr_compile_length (layout : RegisterMap Γ) (prim : Prim Γ τ)
     (scalar : Scalar τ) (dst : Reg) :
     ((primExpr layout prim scalar).compile dst).length =
       match prim with
-      | .atom _ | .length _ => 1
+      | .atom _ | .length _ | .fst _ | .snd _ | .pair _ _ | .none _ | .some _ => 1
       | .add _ _ | .mul _ _ | .div _ _ | .mod _ _ | .eq _ _ | .lt _ _ | .le _ _ => 3
       | .sub _ _ => 7 := by
-  cases prim <;> simp [primExpr, Expr.compile]
+  cases prim <;> try cases scalar
+  all_goals simp [primExpr, Expr.compile]
+
+/-- Every primitive field denotes its ordinary mathematical component. -/
+theorem primFieldExpr_toNat (layout : RegisterMap Γ) (prim : Prim Γ τ)
+    (env : Env Γ) (regs : Reg → Word w) (mem : Word w → Word w)
+    (hw : 0 < w) {placement : Nat → Word w} (matched : layout.Matches placement env regs)
+    (fits : PrimFits w env prim) (i : Fin (fieldCount τ)) :
+    ((primFieldExpr layout prim i).eval regs mem).toNat =
+      valueField placement (prim.eval env) i := by
+  cases prim with
+  | atom atom => exact atomFieldExpr_toNat layout atom env regs mem matched fits i
+  | add a b | mul a b | sub a b | div a b | mod a b | length a =>
+      exact primExpr_toNat layout _ .nat env regs mem hw matched fits
+  | eq a b | lt a b | le a b =>
+      exact primExpr_toNat layout _ .bool env regs mem hw matched fits
+  | pair left right =>
+      refine Fin.addCases ?_ ?_ i
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_left, Prim.eval, valueField_prod_left] using
+          atomFieldExpr_toNat layout left env regs mem matched fits.1 j
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_right, Prim.eval, valueField_prod_right] using
+          atomFieldExpr_toNat layout right env regs mem matched fits.2 j
+  | fst pair =>
+      exact (atomFieldExpr_toNat layout pair env regs mem matched fits (i.castAdd _)).trans
+        (valueField_prod_left placement (pair.eval env) i)
+  | snd pair =>
+      exact (atomFieldExpr_toNat layout pair env regs mem matched fits (i.natAdd _)).trans
+        (valueField_prod_right placement (pair.eval env) i)
+  | none τ => exact Word.ofNat_toNat_of_lt (Nat.two_pow_pos w)
+  | some value =>
+      refine Fin.cases ?_ ?_ i
+      · exact Word.ofNat_toNat_of_lt fits.1
+      · intro j
+        exact atomFieldExpr_toNat layout value env regs mem matched fits.2 j
+
+/-- Field materialization preserves the same inferred scratch-register bound. -/
+theorem primFieldExpr_bounded (layout : RegisterMap Γ) (prim : Prim Γ τ)
+    (bounded : layout.Bounded dst) (i : Fin (fieldCount τ)) :
+    (primFieldExpr layout prim i).Bounded dst := by
+  cases prim with
+  | atom atom => exact atomFieldExpr_bounded layout atom bounded i
+  | add a b => exact primExpr_bounded layout (.add a b) .nat bounded
+  | mul a b => exact primExpr_bounded layout (.mul a b) .nat bounded
+  | sub a b => exact primExpr_bounded layout (.sub a b) .nat bounded
+  | div a b => exact primExpr_bounded layout (.div a b) .nat bounded
+  | mod a b => exact primExpr_bounded layout (.mod a b) .nat bounded
+  | length a => exact primExpr_bounded layout (.length a) .nat bounded
+  | eq a b => exact primExpr_bounded layout (.eq a b) .bool bounded
+  | lt a b => exact primExpr_bounded layout (.lt a b) .bool bounded
+  | le a b => exact primExpr_bounded layout (.le a b) .bool bounded
+  | pair left right =>
+      refine Fin.addCases ?_ ?_ i
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_left] using
+          atomFieldExpr_bounded layout left bounded j
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_right] using
+          atomFieldExpr_bounded layout right bounded j
+  | fst pair | snd pair => exact atomFieldExpr_bounded layout pair bounded _
+  | none τ => trivial
+  | some value =>
+      refine Fin.cases True.intro ?_ i
+      intro j
+      exact atomFieldExpr_bounded layout value bounded j
+
+/-- Field materialization costs come from the existing expression compiler.
+Structured construction and projection each materialize one instruction per field. -/
+theorem primFieldExpr_compile_length (layout : RegisterMap Γ) (prim : Prim Γ τ)
+    (i : Fin (fieldCount τ)) (dst : Reg) :
+    ((primFieldExpr layout prim i).compile dst).length =
+      match prim with
+      | .add .. | .mul .. | .div .. | .mod .. | .eq .. | .lt .. | .le .. => 3
+      | .sub .. => 7
+      | _ => 1 := by
+  cases prim with
+  | atom atom => exact atomFieldExpr_compile_length layout atom i dst
+  | add a b => exact primExpr_compile_length layout (.add a b) .nat dst
+  | mul a b => exact primExpr_compile_length layout (.mul a b) .nat dst
+  | sub a b => exact primExpr_compile_length layout (.sub a b) .nat dst
+  | div a b => exact primExpr_compile_length layout (.div a b) .nat dst
+  | mod a b => exact primExpr_compile_length layout (.mod a b) .nat dst
+  | length a => exact primExpr_compile_length layout (.length a) .nat dst
+  | eq a b => exact primExpr_compile_length layout (.eq a b) .bool dst
+  | lt a b => exact primExpr_compile_length layout (.lt a b) .bool dst
+  | le a b => exact primExpr_compile_length layout (.le a b) .bool dst
+  | pair left right =>
+      refine Fin.addCases ?_ ?_ i
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_left] using
+          atomFieldExpr_compile_length layout left j dst
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_right] using
+          atomFieldExpr_compile_length layout right j dst
+  | fst pair | snd pair => exact atomFieldExpr_compile_length layout pair _ dst
+  | none τ => rfl
+  | some value =>
+      refine Fin.cases rfl ?_ i
+      intro j
+      exact atomFieldExpr_compile_length layout value j dst
 
 /-- A high-level scalar operation refines an actual, counted RAM execution.
 The existing `Expr.Compiled` conclusion preserves live slots, heap, I/O and

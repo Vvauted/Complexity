@@ -283,6 +283,60 @@ theorem eval_ite (condition : Atom Γ .bool) (yes no : Stmt signatures Γ result
       | iteFalse _ body => exact body
     · exact Exec.iteFalse falseTest
 
+/-- Match the actual optional value. Only the `some` branch binds a payload;
+on every exit it drops that binding without discarding outer-local changes,
+shared-heap effects or the control outcome. -/
+theorem eval_matchOption {τ : Ty} (value : Atom Γ (.option τ))
+    (noneBranch : Stmt signatures Γ result)
+    (someBranch : Stmt signatures (τ :: Γ) result) (entry : State Γ) :
+    (Stmt.matchOption value noneBranch someBranch).eval program entry =
+      match value.eval entry.locals with
+      | none => noneBranch.eval program entry
+      | some payload =>
+          (someBranch.eval program (State.cons payload entry)).map
+            (fun outcome => (outcome.1.tail, outcome.2)) := by
+  apply Part.ext
+  rintro ⟨finish, control⟩
+  constructor
+  · intro member
+    cases mem_eval_iff.mp member with
+    | matchNone selected body =>
+        rw [selected]
+        exact mem_eval_iff.mpr body
+    | matchSome selected body =>
+        rw [selected]
+        exact Part.mem_map_iff _ |>.mpr ⟨(_, _), mem_eval_iff.mpr body, rfl⟩
+  · intro member
+    cases selected : value.eval entry.locals with
+    | none =>
+        rw [selected] at member
+        exact mem_eval_iff.mpr (.matchNone selected (mem_eval_iff.mp member))
+    | some payload =>
+        rw [selected] at member
+        obtain ⟨⟨scopedFinish, scopedControl⟩, body, same⟩ := Part.mem_map_iff _ |>.mp member
+        cases same
+        exact mem_eval_iff.mpr (.matchSome selected (mem_eval_iff.mp body))
+
+/-- A known `none` selects only its branch and introduces no lexical value. -/
+theorem eval_matchOption_none {τ : Ty} {value : Atom Γ (.option τ)}
+    (noneBranch : Stmt signatures Γ result)
+    (someBranch : Stmt signatures (τ :: Γ) result) {entry : State Γ}
+    (selected : value.eval entry.locals = none) :
+    (Stmt.matchOption value noneBranch someBranch).eval program entry =
+      noneBranch.eval program entry := by
+  simp only [eval_matchOption, selected]
+
+/-- A known `some` supplies its actual payload, including a borrowed view,
+without manufacturing a value for the absent case. -/
+theorem eval_matchOption_some {τ : Ty} {value : Atom Γ (.option τ)}
+    (noneBranch : Stmt signatures Γ result)
+    (someBranch : Stmt signatures (τ :: Γ) result) {entry : State Γ} {payload : Value τ}
+    (selected : value.eval entry.locals = some payload) :
+    (Stmt.matchOption value noneBranch someBranch).eval program entry =
+      (someBranch.eval program (State.cons payload entry)).map
+        (fun outcome => (outcome.1.tail, outcome.2)) := by
+  simp only [eval_matchOption, selected]
+
 /-- A call evaluates the selected source function and binds its actual returned
 value in the caller's continuation using the callee's actual final heap. Faults,
 including missing returns, retain that heap without running the continuation

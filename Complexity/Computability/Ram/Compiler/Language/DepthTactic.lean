@@ -43,16 +43,22 @@ private def applyDepthRule (rule : TSyntax `term) : TacticM Unit :=
 
 /-- A branch is selected only after its guard is proved; a failed attempt
 restores the original goal before trying the other branch or a uniform bound. -/
-private def depthBranch : TacticM Unit := do
+private def depthBranch (optionMatch := false) : TacticM Unit := do
   let known (rule : Name) : TacticM Unit := do
     applyDepthRule ⟨(mkIdent rule).raw⟩
     focusAndDone do
       normalizeValues
-      evalTactic (← `(tactic| all_goals simp_all only [Except.ok.injEq]))
+      evalTactic (← `(tactic| all_goals simp_all only [Except.ok.injEq, Option.some.injEq]))
       evalTactic (← `(tactic| all_goals first | assumption | (norm_num; done) | omega))
-  Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtDepthBound.ite_true) fun _ => do
-    Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtDepthBound.ite_false) fun _ => do
-      applyDepthRule (← `(Ram.LanguageCompiler.StmtDepthBound.ite_max))
+  let first := if optionMatch then ``Ram.LanguageCompiler.StmtDepthBound.match_none
+    else ``Ram.LanguageCompiler.StmtDepthBound.ite_true
+  let second := if optionMatch then ``Ram.LanguageCompiler.StmtDepthBound.match_some
+    else ``Ram.LanguageCompiler.StmtDepthBound.ite_false
+  let fallback := if optionMatch then ``Ram.LanguageCompiler.StmtDepthBound.match_max
+    else ``Ram.LanguageCompiler.StmtDepthBound.ite_max
+  Tactic.tryCatchRestore (known first) fun _ => do
+    Tactic.tryCatchRestore (known second) fun _ => do
+      applyDepthRule ⟨(mkIdent fallback).raw⟩
 
 private def depthCertificates (certificate : TSyntax `term) : List (TSyntax `term) :=
   match certificate with
@@ -106,6 +112,8 @@ private partial def depth (callees : List (TSyntax `term)) : TacticM Unit := do
           applyDepthRule (← `(Ram.LanguageCompiler.StmtDepthBound.seq))
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
           depthBranch
+        else if statement.isAppOf ``Complexity.Language.Stmt.matchOption then
+          depthBranch (optionMatch := true)
         else if statement.isAppOf ``Complexity.Language.Stmt.while then
           return
         else if statement.isAppOf ``Complexity.Language.Stmt.call then

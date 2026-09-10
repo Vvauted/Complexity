@@ -95,6 +95,8 @@ on callee-local assignments. -/
   | .call _ _ continuation => continuation.PreservesLocal (.there v)
   | .seq first second => first.PreservesLocal v ∧ second.PreservesLocal v
   | .ite _ yes no => yes.PreservesLocal v ∧ no.PreservesLocal v
+  | .matchOption _ noneBranch someBranch =>
+      noneBranch.PreservesLocal v ∧ someBranch.PreservesLocal (.there v)
   | .while guard body => guard.PreservesLocal v ∧ body.PreservesLocal v
   | .ret _ => True
 
@@ -132,6 +134,9 @@ theorem NoLocalWrites.preservesLocal {signatures : List Signature} {Γ : List Ty
   | ite condition yes no ihYes ihNo =>
       intro unchanged τ v
       exact ⟨ihYes unchanged.1 v, ihNo unchanged.2 v⟩
+  | matchOption value noneBranch someBranch ihNone ihSome =>
+      intro unchanged τ v
+      exact ⟨ihNone unchanged.1 v, ihSome unchanged.2 (.there v)⟩
   | «while» guard body ihGuard ihBody =>
       intro unchanged τ v
       exact ⟨ihGuard unchanged.1 v, ihBody unchanged.2 v⟩
@@ -185,6 +190,11 @@ theorem get_eq {signatures : List Signature} {program : Program signatures}
   | seqFault head ih => intro τ v preserved; exact ih v preserved.1
   | iteTrue test body ih => intro τ v preserved; exact ih v preserved.1
   | iteFalse test body ih => intro τ v preserved; exact ih v preserved.2
+  | matchNone selected body ih => intro τ v preserved; exact ih v preserved.1
+  | matchSome selected body ih =>
+      intro τ v preserved
+      simpa only [State.locals_tail, Env.get_tail, State.locals_cons, Env.cons_there] using
+        ih (.there v) preserved.2
   | whileFalse test ih => intro τ v preserved; exact ih v preserved.1
   | whileTrue test iteration rest ihTest ihIteration ihRest =>
       intro τ v preserved

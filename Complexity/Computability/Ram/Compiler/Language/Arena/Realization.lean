@@ -144,6 +144,29 @@ inductive ArenaReady {signatures : List Signature}
       {body : Complexity.Language.Exec program no entry finish control}
       (ready : ArenaReady body w heapLimit depth next₀ next₁) :
       ArenaReady (.iteFalse (yes := yes) test body) w heapLimit depth next₀ next₁
+  | matchNone {Γ : List Ty} {result τ : Ty} {w heapLimit depth next₀ next₁ : Nat}
+      {value : Atom Γ (.option τ)}
+      {noneBranch : Complexity.Language.Stmt signatures Γ result}
+      {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      {selected : value.eval entry.locals = none}
+      {body : Complexity.Language.Exec program noneBranch entry finish control}
+      (ready : ArenaReady body w heapLimit depth next₀ next₁) :
+      ArenaReady (.matchNone (someBranch := someBranch) selected body)
+        w heapLimit depth next₀ next₁
+  | matchSome {Γ : List Ty} {result τ : Ty} {w heapLimit depth next₀ next₁ : Nat}
+      {value : Atom Γ (.option τ)}
+      {noneBranch : Complexity.Language.Stmt signatures Γ result}
+      {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+      {entry : Complexity.Language.State Γ} {payload : Value τ}
+      {finish : Complexity.Language.State (τ :: Γ)} {control : Control result}
+      {selected : value.eval entry.locals = some payload}
+      {body : Complexity.Language.Exec program someBranch
+        (Complexity.Language.State.cons payload entry) finish control}
+      (payloadFits : ValueFits w (τ := τ) payload)
+      (ready : ArenaReady body w heapLimit depth next₀ next₁) :
+      ArenaReady (.matchSome (noneBranch := noneBranch) selected body)
+        w heapLimit depth next₀ next₁
   | whileFalse {Γ : List Ty} {result : Ty} {w heapLimit depth next₀ next₁ : Nat}
       {guard : Complexity.Language.Stmt signatures Γ .bool}
       {body : Complexity.Language.Stmt signatures Γ result}
@@ -238,6 +261,8 @@ theorem outcome_fits (ready : ArenaReady execution w heapLimit depth next₀ nex
   | seqReturn ready ih => exact ih
   | iteTrue ready ih => exact ih
   | iteFalse ready ih => exact ih
+  | matchNone ready ih => exact ih
+  | matchSome payloadFits ready ih => exact ih
   | whileFalse => trivial
   | whileTrue testReady bodyReady restReady ihTest ihBody ihRest => exact ihRest
   | whileReturn testReady bodyReady ihTest ihBody => exact ihBody
@@ -262,6 +287,8 @@ theorem cursor_mono (ready : ArenaReady execution w heapLimit depth next₀ next
   | seqReturn ready ih => exact ih
   | iteTrue ready ih => exact ih
   | iteFalse ready ih => exact ih
+  | matchNone ready ih => exact ih
+  | matchSome payloadFits ready ih => exact ih
   | whileFalse ready ih => exact ih
   | whileTrue testReady bodyReady restReady ihTest ihBody ihRest =>
       exact ihTest.trans (ihBody.trans ihRest)
@@ -295,6 +322,9 @@ theorem arenaReady {signatures : List Signature}
   | seqReturn head ih => exact .seqReturn ih
   | iteTrue test body ih => exact .iteTrue (test := test) ih
   | iteFalse test body ih => exact .iteFalse (test := test) ih
+  | matchNone selected body ih => exact .matchNone (selected := selected) ih
+  | matchSome selected payloadFits body ih =>
+      exact .matchSome (selected := selected) payloadFits ih
   | whileFalse test ih => exact .whileFalse ih
   | whileTrue test iteration rest ihTest ihIteration ihRest =>
       exact .whileTrue ihTest ihIteration ihRest

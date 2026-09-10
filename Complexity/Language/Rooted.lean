@@ -12,7 +12,8 @@ import Complexity.Language.Heap.Shape
 Rootedness only says that a buffer's object identifier denotes an existing
 slot. It imposes no type, extent, scalar-range or separation condition. In
 particular, rooted buffers may still fail a heap access. Scalars carry no
-roots. These source predicates contain no machine addresses or runtime metadata.
+roots. Products retain both fields' roots, and options retain roots only in an
+actual payload. These source predicates contain no machine addresses or runtime metadata.
 -/
 
 namespace Complexity.Language
@@ -23,14 +24,23 @@ namespace Complexity.Language
   | .bool, _ => True
   | .unit, _ => True
   | .buffer _, buffer => buffer.Rooted heap
+  | .prod _ _, value => ValueRooted heap value.1 ∧ ValueRooted heap value.2
+  | .option _, none => True
+  | .option _, some value => ValueRooted heap value
 
 /-- Heap growth preserves the object roots of a retained source value. -/
 theorem ValueRooted.mono {initial finish : Heap} {τ : Ty} {value : Value τ}
     (rooted : ValueRooted initial value) (growth : initial.ShapeExtends finish) :
     ValueRooted finish value := by
-  cases τ with
+  induction τ with
   | nat | bool | unit => trivial
   | buffer kind => exact Buffer.Rooted.mono rooted growth
+  | prod left right ihLeft ihRight =>
+      exact ⟨ihLeft rooted.1, ihRight rooted.2⟩
+  | option τ ih =>
+      cases value with
+      | none => trivial
+      | some value => exact ih rooted
 
 namespace Env
 
@@ -92,6 +102,11 @@ theorem Prim.eval_rooted {heap : Heap} {env : Env Γ} (prim : Prim Γ τ)
   cases prim with
   | atom atom => exact atom.eval_rooted rooted
   | add | mul | sub | div | mod | eq | lt | le | length => trivial
+  | pair left right => exact ⟨left.eval_rooted rooted, right.eval_rooted rooted⟩
+  | fst pair => exact (pair.eval_rooted rooted).1
+  | snd pair => exact (pair.eval_rooted rooted).2
+  | none => trivial
+  | some value => exact value.eval_rooted rooted
 
 /-- Actual call operands preserve the roots needed by the callee's environment. -/
 theorem Args.eval_rooted {heap : Heap} {env : Env Γ} (args : Args Γ params)

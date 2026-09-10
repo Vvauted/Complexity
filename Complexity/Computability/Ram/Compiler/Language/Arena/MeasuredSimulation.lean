@@ -72,6 +72,12 @@ theorem lowerCoreMeasured {signatures : List Signature}
   | @iteFalse Γ result depth next₀ next₁ condition yes no entry finish outcome
       test body ready steps cost ih =>
       exact ArenaCoreSimulates.iteFalse (test := test) ih
+  | @matchNone Γ result τ depth next₀ next₁ value noneBranch someBranch entry finish outcome
+      selected body ready steps cost ih =>
+      exact ArenaCoreSimulates.matchNone (selected := selected) ih
+  | @matchSome Γ result τ depth next₀ next₁ value noneBranch someBranch entry payload finish
+      outcome selected payloadFits body ready steps cost ih =>
+      exact ArenaCoreSimulates.matchSome (selected := selected) payloadFits ih
   | @whileFalse Γ result depth next₀ next₁ guard body entry finish test ready guardSteps
       guardCost ih =>
       exact ArenaCoreSimulates.whileFalse test ih

@@ -1,7 +1,7 @@
 # High-level language design
 
-Status: `source_program (pure)` generates native total scalar functions with
-checked source correspondence; self-recursion and acyclic calls are supported,
+Status: `source_program (pure)` generates native total functions over scalars
+and their products/options with checked source correspondence; self-recursion and acyclic calls are supported,
 but pure `while`, mutual recursion and buffers are not. Effectful declarations
 retain their partial heap-action interface. Named `Buffer.alloc` has a checked
 allocating-callee/using-caller path to RAM, including resource-import transport.
@@ -14,7 +14,7 @@ high-level programming/proof interface remains incomplete; the
 The [cross-prover research report](DESIGN_RESEARCH.md) supplies the rationale
 for the next interface: one supported implementation, a common mathematical
 contract layer, and complementary pure-equation and mutable-VCG proof modes.
-Executable pure functions are implemented for the scalar subset; extending that
+Executable pure functions are implemented for the buffer-free subset; extending that
 interface does not replace verification of genuinely effectful algorithms.
 
 The independent scalar core now has
@@ -136,11 +136,30 @@ source-to-target correspondence.
 
 ### Values and operations
 
-The initial language design includes mathematical `Nat`, `Bool`, `Unit`,
-finite products, and borrowed buffers/views of supported scalar types.
-Explicit `BitVec w` values retain modular arithmetic when that is intended.
-Products need genuine field encodings at calls and returns; the backend's
-current word/array/unit facade does not already provide arbitrary products.
+Implemented values are mathematical `Nat`, `Bool`, `Unit`, borrowed Nat/Bool
+buffers, and recursively nested native `Prod` and `Option` values. Products
+concatenate their actual fields; options place a tag before a fixed payload.
+`none` has zero padding and `some` carries its actual payload. Unit still occupies
+no fields. This encoding is used at calls, returns and assignments, not only in
+proof-local tuples. The current surface does not add an explicit `BitVec w` type;
+the backend's word representation does not change source Nat arithmetic to modular arithmetic.
+
+Constructors, `.1`/`.2` projections and option matching use the same left-to-right
+normalization as arithmetic. The selected `some` branch binds its payload once;
+leaving that binding retains changes to outer locals and the actual heap.
+`none` requires an expected Option type or an explicit type annotation. Pure
+mode permits recursively buffer-free products/options; hiding a borrowed buffer
+inside either constructor does not make an effectful function pure.
+The current match syntax has explicit `none` and `some name` branches (in either
+order); general nested patterns and user-defined inductive types are not implemented.
+
+The [imported structured client](../Examples/Language/OptionalBuffer.lean) uses
+a pure `Option (Nat × Nat)` helper and a library returning
+`Nat × Option (Buffer Nat)`. Its ordinary array/frame contract and
+[compiled result](../Examples/Language/OptionalBufferCompiled.lean) describe the
+same selected read/write and four actual RAM return fields. Nested borrowed
+views retain recursive rootedness and non-escape conditions; object cells
+remain scalar rather than gaining unchecked pointers.
 
 Use a typed context and typed variable references internally. A context position
 is a lexical binding, not a target register. Surface names and source locations
@@ -188,9 +207,9 @@ The generated loop rules take an invariant and either a natural-valued variant
 or a well-founded relation on mutable locals and the heap. Immutable captures
 are fixed by proved lexical preservation. Authors still supply the mathematical
 invariant and descent proof.
-`break/continue` and tagged
-`Option/Sum` values are subsequent supported constructs, with real control and
-tag/payload lowering, not dummy returned words.
+Option matching has checked source evaluation, branch-specific resource rules
+and real tag/payload lowering. `break/continue`, general sums and recursive data
+remain subsequent constructs; their control, representation and costs must be proved.
 
 First-order functions are sufficient for the initial recursive algorithms.
 Static specialization may later support generic combinators; dynamic closures,
@@ -532,11 +551,12 @@ these same rules. Mutable programs may use mathematical specifications and
 invariants directly, without first constructing another pure algorithm.
 
 The checked pure frontend generates a native total Lean definition and its
-typed-core implementation from one supported scalar body. It reuses Lean's
+typed-core implementation from one supported buffer-free body. It reuses Lean's
 recursion infrastructure and the author's one decreasing argument; generated
 correspondence proves finite source execution with the native result, not just
 equality conditional on successful execution. Scalar, Remainder and Factorial
-exercise this path on 0v0. Self-recursion and acyclic calls are supported;
+exercise this path on 0v0, as does OptionalBuffer's nested structured metadata
+helper. Self-recursion and acyclic calls are supported;
 pure `while`, mutually recursive families and buffers remain unsupported.
 Extending this fragment must retain the shared correspondence, not require
 a second author-written implementation induction. A domain-restricted
@@ -1143,10 +1163,12 @@ the existing theorems; ordinary arithmetic tactics finish the requested
 inequality. When the guard follows from source values and local facts, the
 tactic selects only that branch through the proved `ite_true`/`ite_false` rules.
 Otherwise it retains a uniform maximum; it does not guess a symbolic decision.
-The tactic's call-continuation bounds remain uniform numerical bounds;
-uniformity does not require an unchanged heap or discard the callee's result
-properties. Truly result/state-dependent numerical bounds use the general
-explicit call rules. `StmtCostBound.call_of_spec` and `call_seq_uniform` retain
+By default the tactic uses a uniform continuation bound; this does not require
+an unchanged heap or discard the callee's result properties. Named
+`ram_source_call (next := fun value heap => ...) using resource, specification`
+also exposes the general result/state-dependent numerical rule. The author
+supplies the numerical function, while the shared rule retains the actual
+callee result and postcondition. `StmtCostBound.call_of_spec` and `call_seq_uniform` retain
 the supplied source postcondition while inferring the continuation's uniform
 bound. The latter specializes `call_seq`, which hides standalone call/skip
 execution cases and charges the actual normal sequence dispatch.
@@ -1239,7 +1261,7 @@ Fixed semantic boundaries: independent typed core, explicit executable
 operations, actual shared-state behavior where used, budget-free correctness,
 checked lowering, backend-derived costs and preservation of real safety
 conditions. These do not fix every public function to the current heap-action
-type. Extensions beyond the checked scalar pure frontend and abstraction of
+type. Extensions beyond the checked buffer-free pure frontend and abstraction of
 local mutable storage still require the design and correspondence work above.
 
 The scalar implementation now fixes typed lexical contexts, the `source_program`

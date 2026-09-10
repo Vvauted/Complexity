@@ -9,9 +9,10 @@ import Examples
 /-!
 # Getting started
 
-This page introduces function declarations, execution and proofs from one source program.
-The current language is a structured word-RAM language; specifications can use ordinary
-Lean functions, relations and mathlib.
+Write one high-level source program and state its correctness with ordinary Lean
+values and mathlib. Verified lowering connects that implementation to word-RAM
+execution and separately proved resource bounds. The direct word-RAM language
+remains available for backend work and explicitly low-level implementations.
 
 ## Install and build
 
@@ -46,7 +47,73 @@ import Complexity.Computability.Recurrence.Basic
 The first import is for program proofs; the second provides numerical recurrence lemmas
 without a RAM dependency. Examples are separate and build with `lake build Examples`.
 
-## Define a function
+## Write a high-level function
+
+The [typed frontend](##Complexity.Language.Syntax) supports ordinary parameters,
+local variables, calls and recursion. `(pure)` also generates an executable
+native Lean function from the same body:
+
+```lean
+import Complexity.Language.Syntax
+
+source_program (pure) Implementation where
+  def factorial (n : Nat) : Nat := do
+    if n == 0 then
+      return 1
+    else
+      let previous ← factorial (n - 1)
+      return n * previous
+    termination_by n
+    decreasing_by simp_wf; simp_all +zetaDelta; omega
+```
+
+The correctness statement is simply
+`Implementation.factorial n = Nat.factorial n`. The
+[complete proof](##Examples.Language.Factorial) uses ordinary induction and
+mathlib's factorial equation. Generated correspondence transfers that result to
+the source program without a second implementation or recursion proof.
+No time budget or word width appears in this mathematical theorem.
+
+Products and options are ordinary values too. The
+[structured client](##Examples.Language.OptionalBuffer) imports a helper returning
+`Option (Nat × Nat)`, then returns a length and optional borrowed buffer to its
+caller. That caller matches the result and modifies the first cell only when
+present. Its specification uses an ordinary `Array.modify` result and preservation
+of outside views, not register identities. Effectful programs use mathematical
+contracts rather than pretending that borrowed mutation is a pure operation.
+
+The [high-level proof guide](##ComplexityDocs.Verification) explains both modes.
+The pure subset supports scalars and their products/options, self-recursion and
+acyclic calls; pure `while`, mutual recursion and buffers remain unsupported.
+General effectful declarations support `while`, borrowed buffers, allocation and
+scoped scratch reclamation. This is a checked executable subset, not a compiler
+for arbitrary Lean definitions.
+
+## Connect the same function to RAM
+
+Native Lean evaluation is not the certified cost model. For RAM execution, prove
+the source program's actual values fit the selected word width and give sufficient
+storage, separately from correctness. An independent instruction bound uses the
+compiler's operation and call costs. The
+[compiled factorial](##Examples.Language.FactorialCompiled) and
+[structured client](##Examples.Language.OptionalBufferCompiled) use the shared
+`FunctionRealizable.execute_le` rule to obtain a typed actual runner result with
+the mathematical postcondition and step bound; authors do not reconstruct a
+register-level simulation or a large runner tuple.
+
+Allocating programs use the corresponding
+[arena result](##Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution),
+which retains actual final memory, the allocation cursor and known call depth.
+The [scratch client](##Examples.Language.ScopeCompiled) adds its mathematical
+array contents and a physical workspace bound independent of repetition count.
+These invocation guarantees assume preloaded inputs; host loading and conversion
+are not silently included in the instruction count.
+
+## Work directly with word-RAM source
+
+The rest of this page describes the separately supported direct word-RAM
+interface. Its word-level arithmetic and proof obligations differ from the
+high-level mathematical Nat interface above.
 
 The source syntax supports local variables, expressions, memory operations, I/O,
 conditionals, loops, named functions and recursive calls:

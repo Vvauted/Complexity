@@ -18,7 +18,8 @@ remaining value-range proof is structural: reads obtain fitting cells, writes
 store fitting values, and calls preserve the same invariant on the shared heap.
 
 `RangePreserving` checks that restricted fragment syntactically. It supports
-copies, comparisons, lengths, reads, writes, branches, sequencing and calls.
+copies, structured values, comparisons, lengths, reads, writes, branches,
+sequencing and calls.
 Arithmetic, slicing, allocation, scratch scopes and loops are deliberately not
 covered by this interface; their existing realization rules remain available.
 In particular, this predicate does not establish index validity or termination.
@@ -108,6 +109,10 @@ def PrimBounded (w : Nat) {Γ : List Ty} : {τ : Ty} → Prim Γ τ → Prop
   | _, .eq left right | _, .lt left right | _, .le left right =>
       AtomBounded w left ∧ AtomBounded w right
   | _, .length buffer => AtomBounded w buffer
+  | _, .pair left right => AtomBounded w left ∧ AtomBounded w right
+  | _, .fst pair | _, .snd pair => AtomBounded w pair
+  | _, .none _ => True
+  | _, .some value => AtomBounded w value
   | _, .add _ _ | _, .mul _ _ | _, .sub _ _ | _, .div _ _ | _, .mod _ _ => False
 
 /-- All actual call operands are drawn from fitting locals or fitting literals. -/
@@ -129,6 +134,8 @@ def RangePreserving (w : Nat) {signatures : List Signature} :
   | _, _, .seq first second => RangePreserving w first ∧ RangePreserving w second
   | _, _, .ite condition yes no =>
       AtomBounded w condition ∧ RangePreserving w yes ∧ RangePreserving w no
+  | _, _, .matchOption value noneBranch someBranch =>
+      AtomBounded w value ∧ RangePreserving w noneBranch ∧ RangePreserving w someBranch
   | _, _, .ret value => AtomBounded w value
   | _, _, .call _ args body => ArgsBounded w args ∧ RangePreserving w body
   | _, _, .slice _ _ _ _ | _, _, .alloc _ _ _ | _, _, .scope _ | _, _, .while _ _ => False
@@ -162,6 +169,20 @@ theorem PrimBounded.fits {w : Nat} (hw : 0 < w) {Γ : List Ty} {τ : Ty}
   | le left right =>
       exact ⟨⟨bounded.1.fits fits, bounded.2.fits fits⟩, booleanFits _⟩
   | length buffer => exact ⟨AtomBounded.fits bounded fits, AtomBounded.fits bounded fits⟩
+  | pair left right =>
+      exact ⟨⟨bounded.1.fits fits, bounded.2.fits fits⟩,
+        bounded.1.fits fits, bounded.2.fits fits⟩
+  | fst pair =>
+      have represented := AtomBounded.fits bounded fits
+      exact ⟨represented, represented.1⟩
+  | snd pair =>
+      have represented := AtomBounded.fits bounded fits
+      exact ⟨represented, represented.2⟩
+  | none τ => exact ⟨trivial, trivial⟩
+  | some value =>
+      have represented := AtomBounded.fits bounded fits
+      have tag : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
+      exact ⟨⟨tag, represented⟩, tag, represented⟩
   | add _ _ | mul _ _ | sub _ _ | div _ _ | mod _ _ => exact False.elim bounded
 
 /-- A call binds the actual fitting values in parameter order. -/
@@ -230,6 +251,17 @@ theorem exists_of_exec {signatures : List Signature}
   case iteFalse test body ih =>
     obtain ⟨depth, realized, finalLocals, finalHeap⟩ := ih fragment.2.2 success locals heap
     exact ⟨depth, .iteFalse test realized, finalLocals, finalHeap⟩
+  case matchNone selected body ih =>
+    obtain ⟨depth, realized, finalLocals, finalHeap⟩ := ih fragment.2.1 success locals heap
+    exact ⟨depth, .matchNone selected realized, finalLocals, finalHeap⟩
+  case matchSome τ value noneBranch someBranch entry payload finish control selected body ih =>
+    have payloadFits : ValueFits w (τ := τ) payload := by
+      have optionFits := fragment.1.fits locals
+      rw [selected] at optionFits
+      exact optionFits.2
+    obtain ⟨depth, realized, finalLocals, finalHeap⟩ :=
+      ih fragment.2.2 success (locals.cons _ payloadFits) heap
+    exact ⟨depth, .matchSome selected payloadFits realized, finalLocals.tail, finalHeap⟩
   case ret value state => exact ⟨0, .ret value state (fragment.fits locals), locals, heap⟩
   case callReturn fn args continuation entry calleeFinish value finish control callee body
       ihCallee ihBody =>

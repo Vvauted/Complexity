@@ -28,6 +28,9 @@ and actual compiled execution. Reuse Lean's well-founded recursion machinery.
   shared proofs rather than algorithm-specific lowering adapters.
   `Scope.make_runUntil` checks the same named source declaration, with a physical
   envelope of `entryCursor + 1 + 2*n + 2*frameSize`, independent of the call count.
+- [x] Publish that same invocation through the shared `FunctionArenaExecution`,
+  retaining known depth, actual machine memory, final placement/cursor and
+  prefix/access bounds. The consumer no longer constructs a large runner tuple.
 - [x] Build changed modules, affected existing consumers, library and manual on
   0v0; update the public roadmap and push coherent verified work.
 
@@ -55,6 +58,8 @@ or arbitrary lifetime inference already exists. It must actually reuse memory:
 an abstract live-object count paired with the old never-reclaiming executable
 does not establish the intended space bound. All still-accessible aliases and
 retained caller roots remain part of the safety argument.
+Products and options propagate those roots recursively; nesting a temporary
+buffer inside either constructor does not allow it to escape reclamation.
 
 Root owns integration and server compilation; contributors own disjoint files.
 No local compilation, checksum machinery or unrelated test framework.

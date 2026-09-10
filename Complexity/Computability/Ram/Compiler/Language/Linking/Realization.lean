@@ -74,6 +74,8 @@ theorem renameCalls {source target : List Signature}
   | seqReturn _ ih => exact .seqReturn ih
   | iteTrue test _ ih => exact .iteTrue test ih
   | iteFalse test _ ih => exact .iteFalse test ih
+  | matchNone selected _ ih => exact .matchNone selected ih
+  | matchSome selected payloadFits _ ih => exact .matchSome selected payloadFits ih
   | whileFalse _ ih => exact .whileFalse ih
   | whileTrue _ _ _ ihGuard ihBody ihRest => exact .whileTrue ihGuard ihBody ihRest
   | whileReturn _ _ ihGuard ihBody => exact .whileReturn ihGuard ihBody
@@ -150,6 +152,14 @@ private theorem of_renameCalls_aux {source target : List Signature}
       intro statement same
       cases statement <;> cases same
       exact .iteFalse test (ih _ rfl)
+  | matchNone selected _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .matchNone selected (ih _ rfl)
+  | matchSome selected payloadFits _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .matchSome selected payloadFits (ih _ rfl)
   | whileFalse _ ih =>
       intro statement same
       cases statement <;> cases same

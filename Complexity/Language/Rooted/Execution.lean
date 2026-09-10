@@ -61,6 +61,8 @@ theorem heap_shapeExtends {signatures : List Signature} {program : Program signa
   | seqFault head ih => exact ih
   | iteTrue test body ih => exact ih
   | iteFalse test body ih => exact ih
+  | matchNone selected body ih => exact ih
+  | matchSome selected body ih => exact ih
   | whileFalse test ih => exact ih
   | whileTrue test iteration rest ihTest ihIteration ihRest =>
       exact (ihTest.trans ihIteration).trans ihRest
@@ -140,6 +142,14 @@ theorem rooted {signatures : List Signature} {program : Program signatures}
   | seqFault head ih => exact ih
   | iteTrue test body ih => exact ih
   | iteFalse test body ih => exact ih
+  | matchNone selected body ih => exact ih
+  | @matchSome Γ result τ value noneBranch someBranch entry payload finish control
+      selected body ih =>
+      intro initialRooted
+      have payloadRooted : ValueRooted entry.heap payload := by
+        simpa only [selected, ValueRooted] using value.eval_rooted initialRooted
+      have finalRooted := ih (Env.Rooted.cons initialRooted payload payloadRooted)
+      exact ⟨Env.Rooted.tail finalRooted.1, finalRooted.2⟩
   | whileFalse test ih =>
       intro initialRooted
       exact ⟨(ih initialRooted).1, trivial⟩

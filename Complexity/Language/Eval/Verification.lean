@@ -149,6 +149,37 @@ Successful source postconditions reduce this exit to its non-escape obligation. 
       (scopeExit entry.heap (finish, control)).1),
     Stmt.mem_action_iff.mpr ((Stmt.mem_action_iff.mp execution).scope_exit), property⟩
 
+/-- Select the native branch weakest precondition from the actual optional
+value. Only a present payload extends the lexical state, and its final tail
+retains all outer-local and heap changes on normal, returning and faulting exits. -/
+@[spec] theorem Stmt.matchOption_action_spec {signatures : List Signature} {Γ : List Ty}
+    {result τ : Ty} (program : Program signatures) (value : Atom Γ (.option τ))
+    (noneBranch : Stmt signatures Γ result)
+    (someBranch : Stmt signatures (τ :: Γ) result)
+    (post : Std.Do.PostCond (Control result) (.arg (State Γ) .pure)) :
+    Std.Do.Triple (m := StateT (State Γ) Part) (ps := .arg (State Γ) .pure)
+      ((Stmt.matchOption value noneBranch someBranch).action program)
+      (fun entry => match value.eval entry.locals with
+        | none => ((Std.Do.WP.wp (noneBranch.action program)).apply post) entry
+        | some payload =>
+            ((Std.Do.WP.wp (someBranch.action program)).apply
+              (fun control finish => post.1 control finish.tail, ⟨⟩)) (State.cons payload entry))
+      post := by
+  simp only [Std.Do.Triple, Std.Do.WP.wp, Std.Do.PredTrans.pushArg,
+    Part.TotalCorrectness.wp]
+  intro entry precondition
+  cases selected : value.eval entry.locals with
+  | none =>
+      simp only [selected] at precondition
+      obtain ⟨⟨control, finish⟩, execution, property⟩ := precondition
+      exact ⟨(control, finish),
+        Stmt.mem_action_iff.mpr (.matchNone selected (Stmt.mem_action_iff.mp execution)), property⟩
+  | some payload =>
+      simp only [selected] at precondition
+      obtain ⟨⟨control, finish⟩, execution, property⟩ := precondition
+      exact ⟨(control, finish.tail),
+        Stmt.mem_action_iff.mpr (.matchSome selected (Stmt.mem_action_iff.mp execution)), property⟩
+
 /-- Source total correctness observes a real finite result and tests its
 successful control postcondition. -/
 theorem TotalWP.iff_eval {signatures : List Signature} {Γ : List Ty} {result : Ty}

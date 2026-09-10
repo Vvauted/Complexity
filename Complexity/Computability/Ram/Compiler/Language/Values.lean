@@ -59,6 +59,61 @@ theorem primExpr_readsBelow (layout : RegisterMap Γ) (prim : Prim Γ τ)
         ⟨atomExpr_readsBelow layout right .nat entry,
           atomExpr_readsBelow layout left .nat entry⟩⟩
   | length buffer => exact atomFieldExpr_readsBelow layout buffer ⟨1, by change 1 < 2; decide⟩ entry
+  | fst pair | snd pair => exact atomFieldExpr_readsBelow layout pair _ entry
+  | pair | none | some => cases scalar
+
+/-- A primitive's fields contain no implicit heap traversal. -/
+theorem primFieldExpr_readsBelow (layout : RegisterMap Γ) (prim : Prim Γ τ)
+    (i : Fin (fieldCount τ)) (entry : Source.State w) :
+    (primFieldExpr layout prim i).ReadsBelow heapLimit entry.regs entry.mem := by
+  cases prim with
+  | atom atom => exact atomFieldExpr_readsBelow layout atom i entry
+  | add a b => exact primExpr_readsBelow layout (.add a b) .nat entry
+  | mul a b => exact primExpr_readsBelow layout (.mul a b) .nat entry
+  | sub a b => exact primExpr_readsBelow layout (.sub a b) .nat entry
+  | div a b => exact primExpr_readsBelow layout (.div a b) .nat entry
+  | mod a b => exact primExpr_readsBelow layout (.mod a b) .nat entry
+  | length a => exact primExpr_readsBelow layout (.length a) .nat entry
+  | eq a b => exact primExpr_readsBelow layout (.eq a b) .bool entry
+  | lt a b => exact primExpr_readsBelow layout (.lt a b) .bool entry
+  | le a b => exact primExpr_readsBelow layout (.le a b) .bool entry
+  | pair left right =>
+      refine Fin.addCases ?_ ?_ i
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_left] using
+          atomFieldExpr_readsBelow layout left j entry
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_right] using
+          atomFieldExpr_readsBelow layout right j entry
+  | fst pair | snd pair => exact atomFieldExpr_readsBelow layout pair _ entry
+  | none τ => trivial
+  | some value =>
+      refine Fin.cases True.intro ?_ i
+      intro j
+      exact atomFieldExpr_readsBelow layout value j entry
+
+/-- An option tag is an ordinary field observation, not a heap read. -/
+theorem optionTagExpr_readsBelow (layout : RegisterMap Γ) (value : Atom Γ (.option τ))
+    (entry : Source.State w) :
+    (optionTagExpr layout value).ReadsBelow heapLimit entry.regs entry.mem :=
+  atomFieldExpr_readsBelow layout value ⟨0, Nat.zero_lt_succ _⟩ entry
+
+/-- All fields selected for a primitive result are free of memory reads. -/
+theorem primExprs_readsBelow (layout : RegisterMap Γ) (prim : Prim Γ τ)
+    (entry : Source.State w) :
+    ∀ expr ∈ primExprs layout prim, expr.ReadsBelow heapLimit entry.regs entry.mem := by
+  intro expr member
+  obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+  exact primFieldExpr_readsBelow layout prim i entry
+
+/-- Materializing an optional payload does not read the heap. -/
+theorem optionPayloadExprs_readsBelow (layout : RegisterMap Γ) (value : Atom Γ (.option τ))
+    (entry : Source.State w) :
+    ∀ expr ∈ optionPayloadExprs layout value,
+      expr.ReadsBelow heapLimit entry.regs entry.mem := by
+  intro expr member
+  obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+  exact atomFieldExpr_readsBelow layout value i.succ entry
 
 /-- Every actual field of an atomic argument is free of memory reads. -/
 theorem atomExprs_readsBelow (layout : RegisterMap Γ) (atom : Atom Γ τ)
@@ -121,6 +176,74 @@ theorem primExpr_eval (layout : RegisterMap Γ) (prim : Prim Γ τ) (scalar : Sc
     observed ▸ (entry.eval (primExpr layout prim scalar)).isLt
   exact BitVec.eq_of_toNat_eq (observed.trans (Word.ofNat_toNat_of_lt resultFits).symm)
 
+/-- Every materialized primitive field has the exact represented word. -/
+theorem primFieldExpr_eval (layout : RegisterMap Γ) (prim : Prim Γ τ)
+    (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
+    (matched : layout.Matches placement env entry.regs) (fits : PrimFits w env prim)
+    (i : Fin (fieldCount τ)) :
+    entry.eval (primFieldExpr layout prim i) =
+      BitVec.ofNat w (valueField placement (prim.eval env) i) := by
+  have observed := primFieldExpr_toNat layout prim env entry.regs entry.mem hw matched fits i
+  have resultFits : valueField placement (prim.eval env) i < 2 ^ w :=
+    observed ▸ (entry.eval (primFieldExpr layout prim i)).isLt
+  exact BitVec.eq_of_toNat_eq (observed.trans (Word.ofNat_toNat_of_lt resultFits).symm)
+
+/-- Flattening a primitive gives exactly its mathematical result's actual fields. -/
+theorem primExprs_eval (layout : RegisterMap Γ) (prim : Prim Γ τ) (env : Env Γ)
+    (entry : Source.State w) (hw : 0 < w) (matched : layout.Matches placement env entry.regs)
+    (fits : PrimFits w env prim) :
+    (primExprs layout prim).map entry.eval = valueWords placement (prim.eval env) := by
+  simp only [primExprs, valueWords, List.map_ofFn]
+  congr 1
+  funext i
+  exact primFieldExpr_eval layout prim env entry hw matched fits i
+
+/-- The represented absent constructor has exactly the zero tag. -/
+theorem optionTagExpr_eval_none (layout : RegisterMap Γ) (value : Atom Γ (.option τ))
+    (env : Env Γ) (entry : Source.State w)
+    (matched : layout.Matches placement env entry.regs) (selected : value.eval env = none) :
+    entry.eval (optionTagExpr layout value) = 0 := by
+  cases value with
+  | var v =>
+      change env.get v = none at selected
+      apply BitVec.eq_of_toNat_eq
+      simpa only [optionTagExpr, atomFieldExpr, Source.State.eval, Expr.eval,
+        selected, valueField_none, BitVec.toNat_zero] using
+          matched v ⟨0, Nat.zero_lt_succ _⟩
+
+/-- The represented present constructor has exactly the one tag. -/
+theorem optionTagExpr_eval_some (layout : RegisterMap Γ) (value : Atom Γ (.option τ))
+    (env : Env Γ) (entry : Source.State w)
+    (matched : layout.Matches placement env entry.regs)
+    (selected : value.eval env = some payload) :
+    entry.eval (optionTagExpr layout value) = 1 := by
+  cases value with
+  | var v =>
+      change env.get v = some payload at selected
+      have tag : (entry.regs (layout v ⟨0, Nat.zero_lt_succ _⟩)).toNat = 1 := by
+        simpa only [selected, valueField_some_zero] using
+          matched v ⟨0, Nat.zero_lt_succ _⟩
+      apply BitVec.eq_of_toNat_eq
+      exact tag.trans (Word.ofNat_toNat_of_lt
+        (tag ▸ (entry.regs (layout v ⟨0, Nat.zero_lt_succ _⟩)).isLt)).symm
+
+/-- Selected payload fields retain the actual source payload, including borrowed views. -/
+theorem optionPayloadExprs_eval (layout : RegisterMap Γ) (value : Atom Γ (.option τ))
+    (env : Env Γ) (entry : Source.State w)
+    (matched : layout.Matches placement env entry.regs)
+    (selected : value.eval env = some payload) (payloadFits : ValueFits w payload) :
+    (optionPayloadExprs layout value).map entry.eval = valueWords placement payload := by
+  cases value with
+  | var v =>
+      change env.get v = some payload at selected
+      simp only [optionPayloadExprs, valueWords, List.map_ofFn]
+      congr 1
+      funext i
+      apply BitVec.eq_of_toNat_eq
+      have field := matched v i.succ
+      simp only [selected, valueField_some_succ] at field
+      exact field.trans (Word.ofNat_toNat_of_lt (payloadFits.fields placement i)).symm
+
 /-- The emitted atomic fields encode precisely the source atom, including the
 empty Unit tuple. -/
 theorem atomExprs_eval (layout : RegisterMap Γ) (atom : Atom Γ τ) (env : Env Γ)
@@ -154,6 +277,91 @@ theorem atomFieldExpr_avoidsRange (layout : RegisterMap Γ) (atom : Atom Γ τ)
   | var v => exact separated v i
   | nat | bool => trivial
   | unit => exact Fin.elim0 i
+
+/-- Scalar operations retain separation of every live operand field. -/
+theorem primExpr_avoidsRange (layout : RegisterMap Γ) (prim : Prim Γ τ)
+    (scalar : Scalar τ) (separated : layout.AvoidsRange dst count) :
+    (primExpr layout prim scalar).AvoidsRange dst count := by
+  have atom {σ : Ty} (a : Atom Γ σ) (i : Fin (fieldCount σ)) :=
+    atomFieldExpr_avoidsRange layout a i separated
+  cases prim with
+  | atom a => exact atom a scalar.index
+  | add a b | mul a b | div a b | mod a b | eq a b | lt a b | le a b =>
+      exact ⟨atom a _, atom b _⟩
+  | sub a b => exact ⟨⟨atom a _, atom b _⟩, ⟨atom b _, atom a _⟩⟩
+  | length a => exact atom a _
+  | fst a | snd a => exact atom a _
+  | pair | none | some => cases scalar
+
+/-- Primitive field copies preserve operands outside the full receiver region. -/
+theorem primFieldExpr_avoidsRange (layout : RegisterMap Γ) (prim : Prim Γ τ)
+    (i : Fin (fieldCount τ)) (separated : layout.AvoidsRange dst count) :
+    (primFieldExpr layout prim i).AvoidsRange dst count := by
+  cases prim with
+  | atom atom => exact atomFieldExpr_avoidsRange layout atom i separated
+  | add a b => exact primExpr_avoidsRange layout (.add a b) .nat separated
+  | mul a b => exact primExpr_avoidsRange layout (.mul a b) .nat separated
+  | sub a b => exact primExpr_avoidsRange layout (.sub a b) .nat separated
+  | div a b => exact primExpr_avoidsRange layout (.div a b) .nat separated
+  | mod a b => exact primExpr_avoidsRange layout (.mod a b) .nat separated
+  | length a => exact primExpr_avoidsRange layout (.length a) .nat separated
+  | eq a b => exact primExpr_avoidsRange layout (.eq a b) .bool separated
+  | lt a b => exact primExpr_avoidsRange layout (.lt a b) .bool separated
+  | le a b => exact primExpr_avoidsRange layout (.le a b) .bool separated
+  | pair left right =>
+      refine Fin.addCases ?_ ?_ i
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_left] using
+          atomFieldExpr_avoidsRange layout left j separated
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_right] using
+          atomFieldExpr_avoidsRange layout right j separated
+  | fst pair | snd pair => exact atomFieldExpr_avoidsRange layout pair _ separated
+  | none τ => trivial
+  | some value =>
+      refine Fin.cases True.intro ?_ i
+      intro j
+      exact atomFieldExpr_avoidsRange layout value j separated
+
+/-- Fresh fields or singleton results admit the actual sequential primitive copy. -/
+theorem primExprs_copySafe (layout : RegisterMap Γ) (prim : Prim Γ τ) (dst : Reg)
+    (copySafe : fieldCount τ ≤ 1 ∨ layout.AvoidsRange dst (fieldCount τ)) :
+    (primExprs layout prim).length ≤ 1 ∨ ∀ expr ∈ primExprs layout prim,
+      expr.AvoidsRange dst (primExprs layout prim).length := by
+  rcases copySafe with singleton | separated
+  · exact Or.inl (by simpa only [primExprs_length] using singleton)
+  · right
+    intro expr member
+    obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+    simpa only [primExprs_length] using primFieldExpr_avoidsRange layout prim i separated
+
+/-- Fresh payload receivers preserve the option's still-live source fields. -/
+theorem optionPayloadExprs_copySafe (layout : RegisterMap Γ) (value : Atom Γ (.option τ))
+    (dst : Reg) (bounded : layout.Bounded dst) :
+    (optionPayloadExprs layout value).length ≤ 1 ∨
+      ∀ expr ∈ optionPayloadExprs layout value,
+        expr.AvoidsRange dst (optionPayloadExprs layout value).length := by
+  right
+  intro expr member
+  obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+  exact atomFieldExpr_avoidsRange layout value i.succ
+    (fun v j => Or.inl (bounded v j))
+
+/-- Primitive execution given separation of the expressions actually emitted. -/
+theorem copyPrim_safe (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ)
+    (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
+    (matched : layout.Matches placement env entry.regs) (fits : PrimFits w env prim)
+    (copySafe : (primExprs layout prim).length ≤ 1 ∨
+      ∀ expr ∈ primExprs layout prim,
+        expr.AvoidsRange dst (primExprs layout prim).length) :
+    Source.SafeExec program heapLimit depth (lowerPrim layout dst prim) entry
+      (entry.setRegs (valueRegs τ dst) (valueWords placement (prim.eval env))) := by
+  rw [lowerPrim_eq_copyFields]
+  have execution := copyFields_safe entry dst (primExprs layout prim)
+    (primExprs_readsBelow layout prim entry) copySafe
+    (program := program) (heapLimit := heapLimit) (depth := depth)
+  rw [primExprs_eval layout prim env entry hw matched fits] at execution
+  simpa only [valueRegs, primExprs_length] using execution
 
 /-- One-field copies may overlap; otherwise every copied atom field avoids
 the complete receiver interval used by the sequential code. -/
@@ -216,22 +424,20 @@ theorem lowerPrim_safe (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ)
     (matched : layout.Matches placement env entry.regs) (fits : PrimFits w env prim)
     (copySafe : fieldCount τ ≤ 1 ∨ layout.AvoidsRange dst (fieldCount τ)) :
     Source.SafeExec program heapLimit depth (lowerPrim layout dst prim) entry
-      (entry.setRegs (valueRegs τ dst) (valueWords placement (prim.eval env))) := by
-  cases τ with
-  | nat =>
-      change Source.SafeExec _ _ _ (.assign dst (primExpr layout prim .nat)) entry
-        (entry.setReg dst (BitVec.ofNat w (Scalar.toNat .nat (prim.eval env))))
-      rw [← primExpr_eval layout prim .nat env entry hw matched fits]
-      exact .assign (primExpr_readsBelow layout prim .nat entry)
-  | bool =>
-      change Source.SafeExec _ _ _ (.assign dst (primExpr layout prim .bool)) entry
-        (entry.setReg dst (BitVec.ofNat w (Scalar.toNat .bool (prim.eval env))))
-      rw [← primExpr_eval layout prim .bool env entry hw matched fits]
-      exact .assign (primExpr_readsBelow layout prim .bool entry)
-  | unit => exact .skip
-  | buffer kind =>
-      cases prim with
-      | atom atom => exact copyAtom_safe layout dst atom env entry hw matched fits copySafe
+      (entry.setRegs (valueRegs τ dst) (valueWords placement (prim.eval env))) :=
+  copyPrim_safe layout dst prim env entry hw matched fits
+    (primExprs_copySafe layout prim dst copySafe)
+
+/-- Atomic fields of a different source type occupy a different lexical region.
+This is register separation, not a restriction on aliased borrowed buffers. -/
+theorem atomFieldExpr_avoidsTarget (layout : RegisterMap Γ) (target : Var Γ τ)
+    (atom : Atom Γ σ) (i : Fin (fieldCount σ)) (regular : layout.Regular)
+    (different : τ ≠ σ) :
+    (atomFieldExpr layout atom i).AvoidsRange (layout.base target) (fieldCount τ) := by
+  cases atom with
+  | var source => exact regular.other_type target source different i
+  | nat | bool => trivial
+  | unit => exact Fin.elim0 i
 
 /-- Assign an existing source variable through its regular field layout.
 Distinct variables have disjoint fields; self-assignment executes each field
@@ -243,34 +449,80 @@ theorem lowerAssign_safe (layout : RegisterMap Γ) (target : Var Γ τ) (value :
     Source.SafeExec program heapLimit depth (lowerAssign layout target value) entry
       (entry.setRegs (valueRegs τ (layout.base target)) (valueWords placement (value.eval env))) := by
   classical
-  cases τ with
-  | nat | bool =>
-      exact lowerPrim_safe layout (layout.base target) value env entry hw matched fits
+  cases value with
+  | add a b | mul a b | sub a b | div a b | mod a b | eq a b | lt a b | le a b | length a =>
+      exact lowerPrim_safe layout (layout.base target) _ env entry hw matched fits
         (Or.inl (by decide))
-  | unit => exact .skip
-  | buffer kind =>
-      cases value with
-      | atom atom =>
-          cases atom with
-          | var source =>
-              by_cases same : source = target
-              · subst source
-                exact copyVar_self_safe layout target (layout.base target) env entry hw
-                  matched fits (regular.fields target)
-              · have separated : ∀ expr ∈ atomExprs layout (.var source),
-                    expr.AvoidsRange (layout.base target) (atomExprs layout (.var source)).length := by
-                  intro expr member
-                  obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
-                  change layout source i < layout.base target ∨
-                    layout.base target + (atomExprs layout (.var source)).length ≤ layout source i
-                  rw [atomExprs_length]
-                  exact regular.other target source (fun equal => same (eq_of_heq equal).symm) i
-                have execution := copyFields_safe entry (layout.base target)
-                  (atomExprs layout (.var source)) (atomExprs_readsBelow layout (.var source) entry)
-                  (Or.inr separated) (program := program) (heapLimit := heapLimit) (depth := depth)
-                rw [atomExprs_eval layout (.var source) env entry hw matched fits] at execution
-                simpa only [lowerAssign, lowerPrim, Prim.eval, Atom.eval, valueRegs,
-                  atomExprs_length] using execution
+  | atom atom =>
+      dsimp only [lowerAssign]
+      rw [lowerPrim_eq_copyFields]
+      change Source.SafeExec _ _ _ (copyFields (layout.base target) (atomExprs layout atom)) _ _
+      cases atom with
+      | var source =>
+          by_cases same : source = target
+          · subst source
+            exact copyVar_self_safe layout target (layout.base target) env entry hw
+              matched fits (regular.fields target)
+          · have separated : ∀ expr ∈ atomExprs layout (.var source),
+                expr.AvoidsRange (layout.base target) (atomExprs layout (.var source)).length := by
+              intro expr member
+              obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+              change layout source i < layout.base target ∨
+                layout.base target + (atomExprs layout (.var source)).length ≤ layout source i
+              rw [atomExprs_length]
+              exact regular.other target source (fun equal => same (eq_of_heq equal).symm) i
+            have execution := copyFields_safe entry (layout.base target)
+              (atomExprs layout (.var source)) (atomExprs_readsBelow layout (.var source) entry)
+              (Or.inr separated) (program := program) (heapLimit := heapLimit) (depth := depth)
+            rw [atomExprs_eval layout (.var source) env entry hw matched fits] at execution
+            simpa only [Prim.eval, Atom.eval, valueRegs, atomExprs_length] using execution
+      | nat n => exact copyAtom_safe layout _ (.nat n) env entry hw matched fits (Or.inl (by decide))
+      | bool b => exact copyAtom_safe layout _ (.bool b) env entry hw matched fits (Or.inl (by decide))
+      | unit => exact .skip
+  | pair left right =>
+      apply copyPrim_safe layout _ _ env entry hw matched fits
+      right
+      intro expr member
+      obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+      simp only [primExprs_length]
+      refine Fin.addCases ?_ ?_ i
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_left] using
+          atomFieldExpr_avoidsTarget layout target left j regular (Ty.prod_ne_left _ _)
+      · intro j
+        simpa only [primFieldExpr, Fin.addCases_right] using
+          atomFieldExpr_avoidsTarget layout target right j regular (Ty.prod_ne_right _ _)
+  | fst pair =>
+      apply copyPrim_safe layout _ _ env entry hw matched fits
+      right
+      intro expr member
+      obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+      simpa only [primExprs_length, primFieldExpr] using
+        atomFieldExpr_avoidsTarget layout target pair (i.castAdd _) regular
+          (Ne.symm (Ty.prod_ne_left _ _))
+  | snd pair =>
+      apply copyPrim_safe layout _ _ env entry hw matched fits
+      right
+      intro expr member
+      obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+      simpa only [primExprs_length, primFieldExpr] using
+        atomFieldExpr_avoidsTarget layout target pair (i.natAdd _) regular
+          (Ne.symm (Ty.prod_ne_right _ _))
+  | none τ =>
+      apply copyPrim_safe layout _ _ env entry hw matched fits
+      right
+      intro expr member
+      obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+      trivial
+  | some value =>
+      apply copyPrim_safe layout _ _ env entry hw matched fits
+      right
+      intro expr member
+      obtain ⟨i, rfl⟩ := List.mem_ofFn.mp member
+      simp only [primExprs_length]
+      refine Fin.cases True.intro ?_ i
+      intro j
+      exact atomFieldExpr_avoidsTarget layout target value j regular (Ty.option_ne_self _)
 
 /-- A realized primitive's actual result satisfies the source value range
 condition, including a buffer's length rather than a fictitious scalar handle. -/
@@ -278,15 +530,10 @@ theorem primExpr_valueFits (layout : RegisterMap Γ) (prim : Prim Γ τ)
     (env : Env Γ) (entry : Source.State w) (hw : 0 < w)
     (matched : layout.Matches placement env entry.regs) (fits : PrimFits w env prim) :
     ValueFits w (prim.eval env) := by
-  have scalarFits (scalar : Scalar τ) : scalar.toNat (prim.eval env) < 2 ^ w := by
-    have observed := primExpr_toNat layout prim scalar env entry.regs entry.mem hw matched fits
-    exact observed ▸ (entry.eval (primExpr layout prim scalar)).isLt
-  cases τ with
-  | nat => exact (Scalar.fits_iff .nat (prim.eval env)).mpr (scalarFits .nat)
-  | bool => exact (Scalar.fits_iff .bool (prim.eval env)).mpr (scalarFits .bool)
-  | unit => trivial
-  | buffer kind => cases prim with
-      | atom atom => exact fits
+  apply (valueFits_iff placement (prim.eval env)).mpr
+  intro i
+  have observed := primFieldExpr_toNat layout prim env entry.regs entry.mem hw matched fits i
+  exact observed ▸ (entry.eval (primFieldExpr layout prim i)).isLt
 
 /-- Fresh primitive binding extends the existing environment correspondence. -/
 theorem lowerPrim_matches (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ)

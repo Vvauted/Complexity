@@ -92,6 +92,12 @@ theorem renameCalls {source target : List Signature}
       exact .iteTrue (test := test) ih
   | @iteFalse Γ result depth condition yes no entry finish control test body steps _ ih =>
       exact .iteFalse (test := test) ih
+  | @matchNone Γ result τ depth value noneBranch someBranch entry finish control
+      selected body steps _ ih =>
+      exact .matchNone (selected := selected) ih
+  | @matchSome Γ result τ depth value noneBranch someBranch entry payload finish control
+      selected payloadFits body steps _ ih =>
+      exact .matchSome (selected := selected) (payloadFits := payloadFits) ih
   | whileFalse _ ih => exact .whileFalse ih
   | whileTrue _ _ _ ihGuard ihBody ihRest => exact .whileTrue ihGuard ihBody ihRest
   | whileReturn _ _ ihGuard ihBody => exact .whileReturn ihGuard ihBody

@@ -199,6 +199,22 @@ theorem evalWith_ite (condition : Atom Γ .bool) (yes no : Stmt signatures Γ re
   · simp only [evalWith, eval_ite, if_pos test]
   · simp only [evalWith, eval_ite, if_neg test]
 
+/-- Optional values use native pattern matching. The selected `some` payload
+is an ordinary argument to its branch, and normal completion passes the actual
+updated outer locals to `next`. Returns and faults still bypass that tail. -/
+theorem evalWith_matchOption {τ : Ty} (value : Atom Γ (.option τ))
+    (noneBranch : Stmt signatures Γ result)
+    (someBranch : Stmt signatures (τ :: Γ) result) (entry : Env Γ)
+    (next : Env Γ → ExceptT Fault (StateT Heap Part) (Value result)) :
+    (Stmt.matchOption value noneBranch someBranch).evalWith program entry next =
+      match value.eval entry with
+      | none => noneBranch.evalWith program entry next
+      | some payload => someBranch.evalWith program (Env.cons payload entry)
+          (fun finish => next finish.tail) := by
+  funext heap
+  cases selected : value.eval entry <;>
+    simp only [evalWith, eval_matchOption, selected, Part.bind_map, State.cons, State.tail]
+
 /-- A source call uses the actual callee action in `ExceptT`. Only a successful
 callee return binds a value and runs the caller's scoped continuation. This
 equation is not a simp rule, so recursive callee bodies remain opaque. -/

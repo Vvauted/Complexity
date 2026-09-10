@@ -29,7 +29,7 @@ open Complexity.Language
 /-- Number of instructions materializing the primitive and assigning its fields.
 `lowerPrim_stmtSize` derives this formula from the existing expression compiler. -/
 def primCodeSize {Γ : List Ty} {τ : Ty} : Prim Γ τ → Nat
-  | .atom _ => 2 * fieldCount τ
+  | .atom _ | .pair _ _ | .fst _ | .snd _ | .none _ | .some _ => 2 * fieldCount τ
   | .add .. | .mul .. | .div .. | .mod .. | .eq .. | .lt .. | .le .. => 4
   | .sub .. => 8
   | .length _ => 2
@@ -61,6 +61,9 @@ def sourceCodeSize {signatures : List Signature} {Γ : List Ty} {result : Ty}
         fieldCount signatures[fn].result + sourceCodeSize localsTable body
   | .seq first second => sourceCodeSize localsTable first + sourceCodeSize localsTable second + 3
   | .ite _ yes no => sourceCodeSize localsTable yes + sourceCodeSize localsTable no + 3
+  | .matchOption (τ := τ) _ onNone onSome =>
+      sourceCodeSize localsTable onNone + sourceCodeSize localsTable onSome +
+        2 * fieldCount τ + 3
   | .while guard body => sourceCodeSize localsTable guard + sourceCodeSize localsTable body + 15
   | .ret _ => 2 * fieldCount result + 2
 
@@ -77,6 +80,22 @@ theorem atomExprs_compile_lengths (layout : RegisterMap Γ) (atom : Atom Γ τ) 
     exact atomFieldExpr_compile_length layout atom i dst
   rw [materialized]
   simp only [List.map_const', List.sum_replicate_nat, atomExprs_length, Nat.mul_one]
+
+/-- Every primitive's total materialization count follows its actual emitted fields. -/
+theorem primExprs_compile_lengths (layout : RegisterMap Γ) (prim : Prim Γ τ) (dst : Reg) :
+    ((primExprs layout prim).map (fun expr => (expr.compile dst).length)).sum + fieldCount τ =
+      primCodeSize prim := by
+  simp only [primExprs, List.map_ofFn, Function.comp_def, primFieldExpr_compile_length]
+  cases prim <;>
+    simp [primCodeSize, List.ofFn_const, List.sum_replicate_nat, Nat.two_mul, Nat.add_comm]
+
+/-- Optional payload extraction emits one materialization instruction per field. -/
+theorem optionPayloadExprs_compile_lengths (layout : RegisterMap Γ)
+    (value : Atom Γ (.option τ)) (dst : Reg) :
+    ((optionPayloadExprs layout value).map (fun expr => (expr.compile dst).length)).sum =
+      fieldCount τ := by
+  simp only [optionPayloadExprs, List.map_ofFn, Function.comp_def, atomFieldExpr_compile_length,
+    List.ofFn_const, List.sum_replicate_nat, Nat.mul_one]
 
 /-- Flattened argument fields retain their exact materialization length. -/
 theorem argsExprs_compile_lengths (layout : RegisterMap Γ) (args : Args Γ params) (dst : Reg) :
@@ -107,9 +126,7 @@ theorem copyFields_stmtSize (control : Nat) (localsTable : Nat → Nat)
 theorem lowerPrim_stmtSize (control : Nat) (localsTable : Nat → Nat)
     (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ) :
     LocalCompiler.stmtSize control localsTable (lowerPrim layout dst prim) = primCodeSize prim := by
-  cases τ <;> cases prim <;>
-    simp [lowerPrim, LocalCompiler.stmtSize_assign, LocalCompiler.stmtSize_skip,
-      copyFields_stmtSize, atomExprs_compile_lengths, primExpr_compile_length, primCodeSize]
+  rw [lowerPrim_eq_copyFields, copyFields_stmtSize, primExprs_length, primExprs_compile_lengths]
 
 /-- Local assignment emits the same primitive materialization at the existing
 binding's field region, with no additional control or snapshot instructions. -/
@@ -207,6 +224,11 @@ theorem lowerStmtCore_stmtSize {signatures : List Signature} {Γ : List Ty} {res
   | ite condition yes no ihYes ihNo =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_ite, atomExpr_compile_length,
         ihYes, ihNo, sourceCodeSize]
+      omega
+  | matchOption value onNone onSome ihNone ihSome =>
+      simp only [lowerStmtCore, LocalCompiler.stmtSize_ite, LocalCompiler.stmtSize_seq,
+        copyFields_stmtSize, optionPayloadExprs_compile_lengths, optionPayloadExprs_length,
+        optionTagExpr_compile_length, ihNone, ihSome, sourceCodeSize]
       omega
   | «while» guard body ihGuard ihBody =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, LocalCompiler.stmtSize_assign,

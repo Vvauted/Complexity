@@ -12,8 +12,10 @@ import Init.Data.List.Nat.Range
 # Field layouts and parameter representation
 
 The backend represents natural numbers and booleans by one word, borrowed
-buffers by address and length, and Unit by no words. Parameter layouts follow
-lexical parameter order without reserving dummy slots for Unit. The same field
+buffers by address and length, and Unit by no words. Products concatenate their
+fields; options reserve a tag followed by the payload's fixed field region.
+Parameter layouts follow lexical parameter order without reserving dummy slots
+for Unit. The same field
 lists serve argument encoding and real call
 receivers. Exact representation requires the source values to fit the chosen
 word width; the encoding alone makes no non-wrapping arithmetic claim.
@@ -57,6 +59,16 @@ theorem valueRegs_nodup (τ : Ty) (dst : Reg) : (valueRegs τ dst).Nodup := List
 
 @[simp] theorem valueRegs_buffer (kind : CellTy) (dst : Reg) :
     valueRegs (.buffer kind) dst = [dst, dst + 1] := rfl
+
+/-- Product reception concatenates both actual field regions. -/
+@[simp] theorem valueRegs_prod (left right : Ty) (dst : Reg) :
+    valueRegs (.prod left right) dst =
+      valueRegs left dst ++ valueRegs right (dst + fieldCount left) :=
+  List.range'_append_1.symm
+
+/-- Option reception places the tag before the fixed-size payload region. -/
+@[simp] theorem valueRegs_option (τ : Ty) (dst : Reg) :
+    valueRegs (.option τ) dst = dst :: valueRegs τ (dst + 1) := rfl
 
 /-- Encode the parameter environment in its declared order. -/
 def envWords (placement : Nat → Word w) : {Γ : List Ty} → Env Γ → List (Word w)
@@ -158,6 +170,25 @@ theorem set {env : Env Γ} (fits : EnvFits w env) (target : Var Γ τ)
   rw [cons_iff]
   rfl
 
+/-- Product parameter ranges are precisely the ranges of their two components. -/
+@[simp] theorem cons_prod_iff (value : Value (.prod left right)) (env : Env Γ) :
+    EnvFits w (Env.cons value env) ↔
+      (ValueFits w value.1 ∧ ValueFits w value.2) ∧ EnvFits w env := by
+  rw [cons_iff]
+  rfl
+
+/-- An absent payload uses only zero-filled fields, at every word width. -/
+@[simp] theorem cons_none_iff (τ : Ty) (env : Env Γ) :
+    EnvFits w (Env.cons (τ := .option τ) none env) ↔ EnvFits w env := by
+  simp only [cons_iff, ValueFits, true_and]
+
+/-- A present payload requires its actual fields and the nonzero tag to fit. -/
+@[simp] theorem cons_some_iff (value : Value τ) (env : Env Γ) :
+    EnvFits w (Env.cons (τ := .option τ) (some value) env) ↔
+      (1 < 2 ^ w ∧ ValueFits w value) ∧ EnvFits w env := by
+  rw [cons_iff]
+  rfl
+
 end EnvFits
 
 namespace RegisterMap
@@ -200,6 +231,26 @@ theorem Regular.other {layout : RegisterMap Γ} (regular : Regular layout)
       rw [regular.fields target j]
       exact Nat.add_sub_of_le lower
     exact different (Sigma.mk.inj (regular.injective target source j i equal)).2
+
+/-- Variables of different source types occupy disjoint field regions. A
+fieldless target needs no additional positivity or register-allocation premise. -/
+theorem Regular.other_type {layout : RegisterMap Γ} (regular : Regular layout)
+    (target : Var Γ τ) (source : Var Γ σ) (different : τ ≠ σ)
+    (i : Fin (fieldCount σ)) :
+    layout source i < base layout target ∨
+      base layout target + fieldCount τ ≤ layout source i := by
+  by_cases before : layout source i < base layout target
+  · exact Or.inl before
+  · apply Or.inr
+    by_contra after
+    have lower : base layout target ≤ layout source i := Nat.le_of_not_gt before
+    have upper : layout source i < base layout target + fieldCount τ := Nat.lt_of_not_ge after
+    let j : Fin (fieldCount τ) :=
+      ⟨layout source i - base layout target, (Nat.sub_lt_iff_lt_add' lower).mpr upper⟩
+    have equal : layout target j = layout source i := by
+      rw [regular.fields target j]
+      exact Nat.add_sub_of_le lower
+    exact different (congrArg Sigma.fst (regular.injective target source j i equal))
 
 /-- Every live source field lies outside a contiguous destination interval. -/
 def AvoidsRange (layout : RegisterMap Γ) (dst count : Reg) : Prop :=

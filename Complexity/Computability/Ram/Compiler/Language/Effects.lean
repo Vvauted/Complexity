@@ -40,6 +40,7 @@ def NoHeapWrites {signatures : List Signature} {Γ : List Ty} {result : Ty} :
   | .write .. | .alloc .. | .scope _ => False
   | .seq first second => NoHeapWrites first ∧ NoHeapWrites second
   | .ite _ yes no => NoHeapWrites yes ∧ NoHeapWrites no
+  | .matchOption _ noneBranch someBranch => NoHeapWrites noneBranch ∧ NoHeapWrites someBranch
   | .while guard body => NoHeapWrites guard ∧ NoHeapWrites body
 
 /-- Ordered field materialization only changes its local destinations. -/
@@ -55,11 +56,8 @@ theorem copyFields_noSharedWrites (dst : Reg) (fields : List Expr) :
 /-- Materializing a primitive changes only its local result fields. -/
 theorem lowerPrim_noSharedWrites (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ) :
     (lowerPrim layout dst prim).NoSharedWrites := by
-  cases τ with
-  | nat | bool | unit => trivial
-  | buffer kind =>
-      cases prim with
-      | atom atom => exact copyFields_noSharedWrites dst (atomExprs layout atom)
+  rw [lowerPrim_eq_copyFields]
+  exact copyFields_noSharedWrites dst (primExprs layout prim)
 
 /-- Reassigning a local does not write through a buffer or change either stream. -/
 theorem lowerAssign_noSharedWrites (layout : RegisterMap Γ) (target : Var Γ τ)
@@ -101,6 +99,10 @@ theorem lowerStmtCore_noSharedWrites {signatures : List Signature} {Γ : List Ty
   | ite test yes no yesIH noIH =>
     intro condition
     exact ⟨yesIH _ _ _ _ condition.1, noIH _ _ _ _ condition.2⟩
+  | matchOption value noneBranch someBranch noneIH someIH =>
+    intro condition
+    exact ⟨⟨copyFields_noSharedWrites _ _, someIH _ _ _ _ condition.2⟩,
+      noneIH _ _ _ _ condition.1⟩
   | «while» guard body guardIH bodyIH =>
     intro condition
     exact ⟨trivial, trivial, guardIH _ _ _ _ condition.1,
@@ -146,11 +148,8 @@ theorem copyFields_noIOWrites (dst : Reg) (fields : List Expr) :
 /-- Primitive materialization performs no stream operation. -/
 theorem lowerPrim_noIOWrites (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ) :
     (lowerPrim layout dst prim).NoIOWrites := by
-  cases τ with
-  | nat | bool | unit => trivial
-  | buffer kind =>
-      cases prim with
-      | atom atom => exact copyFields_noIOWrites dst (atomExprs layout atom)
+  rw [lowerPrim_eq_copyFields]
+  exact copyFields_noIOWrites dst (primExprs layout prim)
 
 /-- Updating any local value leaves the input and output streams untouched. -/
 theorem lowerAssign_noIOWrites (layout : RegisterMap Γ) (target : Var Γ τ)
@@ -196,6 +195,8 @@ theorem lowerStmtCore_noIOWrites {signatures : List Signature} {Γ : List Ty} {r
   | call fn args body ih => exact ⟨trivial, ih _ _ _ _⟩
   | seq first second firstIH secondIH => exact ⟨firstIH _ _ _ _, trivial, secondIH _ _ _ _⟩
   | ite test yes no yesIH noIH => exact ⟨yesIH _ _ _ _, noIH _ _ _ _⟩
+  | matchOption value noneBranch someBranch noneIH someIH =>
+      exact ⟨⟨copyFields_noIOWrites _ _, someIH _ _ _ _⟩, noneIH _ _ _ _⟩
   | «while» guard body guardIH bodyIH =>
       exact ⟨trivial, trivial, guardIH _ _ _ _, ⟨bodyIH _ _ _ _, trivial, trivial⟩, trivial⟩
   | ret value => exact ⟨lowerReturn_noIOWrites _ _ _, trivial⟩
@@ -246,14 +247,7 @@ theorem copyFields_writtenRegs (dst : Reg) (fields : List Expr) :
 tuple for Unit. Register effects do not require a value-range premise. -/
 theorem lowerPrim_writtenRegs (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ) :
     (lowerPrim layout dst prim).writtenRegs = {r | r ∈ valueRegs τ dst} := by
-  cases τ with
-  | nat | bool | unit =>
-      ext r
-      simp [lowerPrim, Ram.Stmt.writtenRegs, valueRegs, List.range'_succ]
-  | buffer kind =>
-      cases prim with
-      | atom atom =>
-          simp only [lowerPrim, copyFields_writtenRegs, atomExprs_length, valueRegs]
+  simp only [lowerPrim_eq_copyFields, copyFields_writtenRegs, primExprs_length, valueRegs]
 
 /-- Returning a value writes its result region, without touching any other
 caller-local register. The return flag is assigned separately by the core. -/
@@ -337,6 +331,15 @@ theorem lowerStmtCore_not_mem_writtenRegs {signatures : List Signature} {Γ : Li
       intro regular bounded avoids before outsideResult differentFlag
       exact not_or.mpr ⟨yesIH _ _ _ _ regular bounded avoids before outsideResult differentFlag,
         noIH _ _ _ _ regular bounded avoids before outsideResult differentFlag⟩
+  | matchOption value noneBranch someBranch noneIH someIH =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨not_or.mpr ⟨?_, ?_⟩, ?_⟩
+      · rw [copyFields_writtenRegs, optionPayloadExprs_length]
+        exact flag_not_mem_valueRegs_of_lt _ next r before
+      · exact someIH _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
+          (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
+          outsideResult differentFlag
+      · exact noneIH _ _ _ _ regular bounded avoids before outsideResult differentFlag
   | «while» guard body guardIH bodyIH =>
       intro regular bounded avoids before outsideResult differentFlag
       have freshBounded : layout.Bounded (next + 2) :=

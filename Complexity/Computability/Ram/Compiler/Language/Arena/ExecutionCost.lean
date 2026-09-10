@@ -15,6 +15,8 @@ termination. Cursor indices describe reserved storage, not an instruction budget
 
 The nonallocating rules retain the existing compiler-derived `ExecutionCost`
 formulas, including return flags, loop guards and actual callee-frame work.
+Option matching charges the actual tag branch and, only in the `some` branch,
+the payload's field copies before entering its lexical scope.
 Allocation charges `14 * length + 18` for the actual operand assignments and
 initialization loop, as established by `lowerAlloc_measured`. Its static code
 size is not its dynamic cost; length zero still performs the fixed overhead.
@@ -160,6 +162,31 @@ inductive ArenaExecutionCost {signatures : List Signature}
       {ready : ArenaReady body w heapLimit depth next₀ next₁}
       {steps : Nat} (cost : ArenaExecutionCost ready steps) :
       ArenaExecutionCost (.iteFalse (yes := yes) (test := test) ready) (steps + 2)
+  | matchNone {Γ : List Ty} {result τ : Ty} {depth next₀ next₁ : Nat}
+      {value : Atom Γ (.option τ)}
+      {noneBranch : Complexity.Language.Stmt signatures Γ result}
+      {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      {selected : value.eval entry.locals = none}
+      {body : Complexity.Language.Exec program noneBranch entry finish control}
+      {ready : ArenaReady body w heapLimit depth next₀ next₁}
+      {steps : Nat} (cost : ArenaExecutionCost ready steps) :
+      ArenaExecutionCost (.matchNone (someBranch := someBranch) (selected := selected) ready)
+        (steps + 2)
+  | matchSome {Γ : List Ty} {result τ : Ty} {depth next₀ next₁ : Nat}
+      {value : Atom Γ (.option τ)}
+      {noneBranch : Complexity.Language.Stmt signatures Γ result}
+      {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+      {entry : Complexity.Language.State Γ} {payload : Value τ}
+      {finish : Complexity.Language.State (τ :: Γ)} {control : Control result}
+      {selected : value.eval entry.locals = some payload}
+      {payloadFits : ValueFits w (τ := τ) payload}
+      {body : Complexity.Language.Exec program someBranch
+        (Complexity.Language.State.cons payload entry) finish control}
+      {ready : ArenaReady body w heapLimit depth next₀ next₁}
+      {steps : Nat} (cost : ArenaExecutionCost ready steps) :
+      ArenaExecutionCost (.matchSome (noneBranch := noneBranch) (selected := selected)
+        payloadFits ready) (2 * fieldCount τ + steps + 3)
   | whileFalse {Γ : List Ty} {result : Ty} {depth next₀ next₁ : Nat}
       {guard : Complexity.Language.Stmt signatures Γ .bool}
       {body : Complexity.Language.Stmt signatures Γ result}
@@ -271,6 +298,14 @@ theorem ArenaReady.exists_cost {signatures : List Signature}
       test body ready ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .iteFalse (test := test) cost⟩
+  | @matchNone Γ result τ w heapLimit depth next₀ next₁ value noneBranch someBranch
+      entry finish control selected body ready ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .matchNone (selected := selected) cost⟩
+  | @matchSome Γ result τ w heapLimit depth next₀ next₁ value noneBranch someBranch
+      entry payload finish control selected body payloadFits ready ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .matchSome (selected := selected) (payloadFits := payloadFits) cost⟩
   | whileFalse ready ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .whileFalse cost⟩
@@ -322,6 +357,11 @@ theorem ExecutionCost.arena {signatures : List Signature}
       exact .iteTrue (test := test) ih
   | @iteFalse Γ result depth condition yes no entry finish control test body steps _ ih =>
       exact .iteFalse (test := test) ih
+  | @matchNone Γ result τ depth value noneBranch someBranch entry finish control
+      selected body steps _ ih => exact .matchNone (selected := selected) ih
+  | @matchSome Γ result τ depth value noneBranch someBranch entry payload finish control
+      selected payloadFits body steps _ ih =>
+      exact .matchSome (selected := selected) (payloadFits := payloadFits) ih
   | whileFalse _ ih => exact .whileFalse ih
   | whileTrue _ _ _ ihGuard ihBody ihRest => exact .whileTrue ihGuard ihBody ihRest
   | whileReturn _ _ ihGuard ihBody => exact .whileReturn ihGuard ihBody
@@ -424,6 +464,22 @@ theorem deterministic {signatures : List Signature}
       cases second with
       | iteTrue cost' => simp_all
       | iteFalse cost' => rw [ih cost']
+  | @matchNone Γ result τ depth next₀ next₁ value noneBranch someBranch entry finish control
+      selected body ready steps cost ih =>
+      intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
+      cases second with
+      | matchNone cost' => rw [ih cost']
+      | @matchSome _ _ _ _ _ _ _ _ _ _ payload' _ _ selected' _ _ _ _ cost' =>
+          cases selected.symm.trans selected'
+  | @matchSome Γ result τ depth next₀ next₁ value noneBranch someBranch entry payload finish
+      control selected payloadFits body ready steps cost ih =>
+      intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
+      cases second with
+      | @matchNone _ _ _ _ _ _ _ _ _ _ _ _ selected' _ _ _ cost' =>
+          cases selected.symm.trans selected'
+      | @matchSome _ _ _ _ _ _ _ _ _ _ payload' _ _ selected' _ _ _ _ cost' =>
+          cases Option.some.inj (selected.symm.trans selected')
+          rw [ih cost']
   | whileFalse guardCost ihGuard =>
       intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
       cases second with

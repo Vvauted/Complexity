@@ -89,6 +89,8 @@ def renameCalls {source target : List Signature} (map : SignatureMap source targ
       callOfEq (map.toFun fn) (map.signature_eq fn) args (continuation.renameCalls map)
   | _, _, .seq first second => .seq (first.renameCalls map) (second.renameCalls map)
   | _, _, .ite condition yes no => .ite condition (yes.renameCalls map) (no.renameCalls map)
+  | _, _, .matchOption value noneBranch someBranch =>
+      .matchOption value (noneBranch.renameCalls map) (someBranch.renameCalls map)
   | _, _, .while guard body => .while (guard.renameCalls map) (body.renameCalls map)
   | _, _, .ret value => .ret value
 

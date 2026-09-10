@@ -156,8 +156,9 @@ On a safe exit, old objects keep their **current** contents while new objects
 are discarded. Returning from inside the block still returns from the enclosing
 function, after cleanup. No copying, freezing or rollback is implicit.
 
-Safety requires all surviving local and returned handles to refer to objects
-that existed at scope entry. Current array cells are scalars, so they cannot
+Safety requires all surviving local and returned handles, including handles
+nested in products and options, to refer to objects that existed at scope entry.
+Current array cells are scalars, so they cannot
 hide further handles. The source reports an escaping reference without freeing
 its heap; the compiled success theorem covers proved-safe exits, not a runtime
 escape scanner. See the [scope specification](##Complexity.Language.Verification)
@@ -185,14 +186,19 @@ mathematical contents and a workspace envelope of
 `entryCursor + 1 + 2*n + 2*frameSize`, independent of the repetition count.
 Word ranges and representation/capacity conditions remain explicit. The
 source loop's Lean well-founded proof supplies termination before resource
-readiness is considered.
+readiness is considered. Its
+[typed execution result](##Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution)
+retains the known call depth, actual complete RAM memory and final cursor;
+the public theorem does not repeat the runner's witness tuple. Shared access-set
+and prefix-frame rules derive the physical envelope for that same result.
 
-For scalar code, `source_program (pure)` supplies native total functions and
+For buffer-free scalar/product/option code, `source_program (pure)` supplies native total functions and
 automatically proved source correspondence. The checked
 [factorial](##Examples.Language.Factorial) theorem is ordinary
 `Implementation.factorial n = Nat.factorial n`, using induction and one native
 termination proof; Scalar and Remainder use the same interface. This pure subset
-supports self-recursion and acyclic calls, not pure `while`, mutual recursion
+also includes the [structured metadata helper](##Examples.Language.OptionalBuffer).
+It supports self-recursion and acyclic calls, not pure `while`, mutual recursion
 or buffers. Buffer programs retain their mathematical effectful contracts;
 neither interface identifies Lean runtime with certified RAM instruction cost.
 

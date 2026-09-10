@@ -281,6 +281,59 @@ passes directly to the enclosing return postcondition. -/
       · rintro ⟨finish, control, execution, post⟩
         exact ⟨finish, control, .iteTrue hcondition execution, post⟩
 
+/-- Optional branching follows the actual mathematical value. An absent
+payload creates no binding; a present payload is scoped to its branch, whose
+actual outer-local and heap changes survive every successful exit. -/
+@[simp] theorem matchOption_iff {τ : Ty} (value : Atom Γ (.option τ))
+    (noneBranch : Stmt signatures Γ result)
+    (someBranch : Stmt signatures (τ :: Γ) result) :
+    TotalWP program (.matchOption value noneBranch someBranch) normal returned entry ↔
+      match value.eval entry.locals with
+      | none => TotalWP program noneBranch normal returned entry
+      | some payload => TotalWP program someBranch (fun finish => normal finish.tail)
+          (fun value finish => returned value finish.tail) (State.cons payload entry) := by
+  cases selected : value.eval entry.locals with
+  | none =>
+      constructor
+      · rintro ⟨finish, control, execution, post⟩
+        cases execution with
+        | matchNone _ body => exact ⟨finish, control, body, post⟩
+        | matchSome truth _ => cases selected.symm.trans truth
+      · rintro ⟨finish, control, execution, post⟩
+        exact ⟨finish, control, .matchNone selected execution, post⟩
+  | some payload =>
+      constructor
+      · rintro ⟨finish, control, execution, post⟩
+        cases execution with
+        | matchNone truth _ => cases selected.symm.trans truth
+        | matchSome truth body =>
+            cases Option.some.inj (selected.symm.trans truth)
+            exact ⟨_, control, body, post⟩
+      · rintro ⟨finish, control, execution, post⟩
+        exact ⟨finish.tail, control, .matchSome selected execution, post⟩
+
+/-- Verify the absent branch using its actual selection equation. -/
+theorem matchNone {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Stmt signatures Γ result}
+    {someBranch : Stmt signatures (τ :: Γ) result}
+    (selected : value.eval entry.locals = none)
+    (body : TotalWP program noneBranch normal returned entry) :
+    TotalWP program (.matchOption value noneBranch someBranch) normal returned entry := by
+  rw [matchOption_iff, selected]
+  exact body
+
+/-- Verify a present payload without a default value or a second evaluation.
+The branch contract retains actual final outer locals and the current heap. -/
+theorem matchSome {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Stmt signatures Γ result}
+    {someBranch : Stmt signatures (τ :: Γ) result} {payload : Value τ}
+    (selected : value.eval entry.locals = some payload)
+    (body : TotalWP program someBranch (fun finish => normal finish.tail)
+      (fun value finish => returned value finish.tail) (State.cons payload entry)) :
+    TotalWP program (.matchOption value noneBranch someBranch) normal returned entry := by
+  rw [matchOption_iff, selected]
+  exact body
+
 /-- Unfold one iteration of an effectful guard loop. A guard must return a
 Boolean; normal guard fallthrough and faults cannot establish total correctness.
 Only a normally completing body repeats the loop at its actual final state.

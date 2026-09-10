@@ -9,7 +9,8 @@ import Complexity.Language.Heap
 /-!
 # A typed source language with shared borrowed buffers
 
-Source values are ordinary natural numbers, booleans, unit and borrowed buffers. Variables refer
+Source values are ordinary natural numbers, booleans, unit, borrowed buffers and
+nested products and options of these values. Variables refer
 to lexical bindings in a typed context, not to machine registers. Administrative
 normal form separates atoms from primitive operations: arithmetic and comparison
 results are explicitly bound before use. A primitive is a syntax constructor,
@@ -30,13 +31,33 @@ updates, writes to existing objects and the body's return or fault.
 
 namespace Complexity.Language
 
-/-- Mathematical scalars and typed borrowed views supported by the core. -/
+/-- Mathematical scalars, borrowed views and structured values supported by the core. -/
 inductive Ty where
   | nat
   | bool
   | unit
   | buffer (kind : CellTy)
+  | prod (left right : Ty)
+  | option (value : Ty)
   deriving DecidableEq, Repr
+
+/-- A product's type differs from its first component, even for zero-field values. -/
+@[simp] theorem Ty.prod_ne_left (left right : Ty) : .prod left right ≠ left := by
+  intro same
+  have : 1 + sizeOf left + sizeOf right = sizeOf left := congrArg sizeOf same
+  omega
+
+/-- A product's type differs from its second component. -/
+@[simp] theorem Ty.prod_ne_right (left right : Ty) : .prod left right ≠ right := by
+  intro same
+  have : 1 + sizeOf left + sizeOf right = sizeOf right := congrArg sizeOf same
+  omega
+
+/-- An option's type differs from the type of its payload. -/
+@[simp] theorem Ty.option_ne_self (value : Ty) : .option value ≠ value := by
+  intro same
+  have : 1 + sizeOf value = sizeOf value := congrArg sizeOf same
+  omega
 
 /-- Mathematical values, interpreted using existing Lean types. -/
 abbrev Value : Ty → Type
@@ -44,6 +65,8 @@ abbrev Value : Ty → Type
   | .bool => Bool
   | .unit => Unit
   | .buffer kind => Buffer kind
+  | .prod left right => Value left × Value right
+  | .option value => Option (Value value)
 
 /-- The ordinary source scalar type of a shared object's cells. -/
 @[simp] def CellTy.toTy : CellTy → Ty
@@ -155,7 +178,7 @@ inductive Atom (Γ : List Ty) : Ty → Type where
   | .bool value => value
   | .unit => ()
 
-/-- Explicit scalar operations in administrative normal form. Natural arithmetic
+/-- Explicit operations in administrative normal form. Natural arithmetic
 has Lean's mathematical meaning: subtraction saturates at zero, division by zero
 returns zero, and reduction modulo zero returns the dividend. -/
 inductive Prim (Γ : List Ty) : Ty → Type where
@@ -169,6 +192,11 @@ inductive Prim (Γ : List Ty) : Ty → Type where
   | lt : Atom Γ .nat → Atom Γ .nat → Prim Γ .bool
   | le : Atom Γ .nat → Atom Γ .nat → Prim Γ .bool
   | length {kind : CellTy} : Atom Γ (.buffer kind) → Prim Γ .nat
+  | pair {left right : Ty} : Atom Γ left → Atom Γ right → Prim Γ (.prod left right)
+  | fst {left right : Ty} : Atom Γ (.prod left right) → Prim Γ left
+  | snd {left right : Ty} : Atom Γ (.prod left right) → Prim Γ right
+  | none (τ : Ty) : Prim Γ (.option τ)
+  | some {τ : Ty} : Atom Γ τ → Prim Γ (.option τ)
 
 /-- The mathematical meaning of the supported, explicitly enumerated primitives. -/
 @[simp] def Prim.eval {Γ : List Ty} {τ : Ty} (prim : Prim Γ τ) (env : Env Γ) : Value τ :=
@@ -183,6 +211,11 @@ inductive Prim (Γ : List Ty) : Ty → Type where
   | .lt left right => decide (left.eval env < right.eval env)
   | .le left right => decide (left.eval env ≤ right.eval env)
   | .length buffer => (buffer.eval env).length
+  | .pair left right => (left.eval env, right.eval env)
+  | .fst value => (value.eval env).1
+  | .snd value => (value.eval env).2
+  | .none _ => Option.none
+  | .some value => Option.some (value.eval env)
 
 /-- A first-order function's parameter types and result type. -/
 structure Signature where
@@ -232,6 +265,9 @@ inductive Stmt (signatures : List Signature) : List Ty → Ty → Type where
       Stmt signatures Γ result
   | ite {Γ : List Ty} {result : Ty} (condition : Atom Γ .bool)
       (yes no : Stmt signatures Γ result) : Stmt signatures Γ result
+  | matchOption {Γ : List Ty} {result τ : Ty} (value : Atom Γ (.option τ))
+      (noneBranch : Stmt signatures Γ result)
+      (someBranch : Stmt signatures (τ :: Γ) result) : Stmt signatures Γ result
   | while {Γ : List Ty} {result : Ty} (guard : Stmt signatures Γ .bool)
       (body : Stmt signatures Γ result) : Stmt signatures Γ result
   | ret {Γ : List Ty} {result : Ty} (value : Atom Γ result) : Stmt signatures Γ result
@@ -254,6 +290,8 @@ conservatively rejects assignments even to a binding that will leave scope. -/
   | .call _ _ continuation => continuation.NoLocalWrites
   | .seq first second => first.NoLocalWrites ∧ second.NoLocalWrites
   | .ite _ yes no => yes.NoLocalWrites ∧ no.NoLocalWrites
+  | .matchOption _ noneBranch someBranch =>
+      noneBranch.NoLocalWrites ∧ someBranch.NoLocalWrites
   | .while guard body => guard.NoLocalWrites ∧ body.NoLocalWrites
   | .ret _ => True
 

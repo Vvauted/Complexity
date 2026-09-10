@@ -455,6 +455,51 @@ theorem lowerCoreMeasuredWithLocals (cost : ExecutionCost execution steps) (cont
         (atomExpr_readsBelow layout condition .bool s) conditionFalse body using 1
       simp only [atomExpr_compile_length]
       omega
+  | @matchNone Γ result τ depth value noneBranch someBranch entry finish outcome selected
+      execution steps cost ih =>
+      intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
+        represented flagZero
+      obtain ⟨t, body, property, finalHeap, finalMatches⟩ :=
+        ih layout next resultSlot flag s regular bounded matched avoids fresh resultFlag
+          copySafe represented flagZero
+      have tested := optionTagExpr_eval_none layout value entry.locals s matched selected
+      refine ⟨t, ?_, property, finalHeap, finalMatches⟩
+      convert Source.LocalMeasuredExec.iteFalse
+        (optionTagExpr_readsBelow layout value s) tested body using 1
+      simp only [optionTagExpr_compile_length]
+      omega
+  | @matchSome Γ result τ depth value noneBranch someBranch entry payload finish outcome
+      selected payloadFits execution steps cost ih =>
+      intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
+        represented flagZero
+      have first := copyOptionPayload_measured (control := controlReg)
+        (program := lowerProgram program) (heapLimit := heapLimit) (depth := depth)
+        layout next value entry.locals s hw matched selected payloadFits bounded
+      have matching : RegisterMap.Matches (RegisterMap.extend layout τ next) placement
+          (Env.cons payload entry.locals)
+          (s.setRegs (valueRegs τ next) (valueWords placement payload)).regs :=
+        matched.setRegs bounded payload payloadFits
+      have flagPreserved := (valueRegs_setRegs_other s τ next flag
+        (valueWords placement payload)
+        (flag_not_mem_valueRegs_of_lt τ next flag fresh)).trans flagZero
+      obtain ⟨t, rest, property, finalHeap, finalMatches⟩ := ih (RegisterMap.extend layout τ next)
+        (next + fieldCount τ) resultSlot flag _
+        (regular.extend bounded) (RegisterMap.extend_bounded bounded) matching
+        (RegisterMap.Avoids.extend avoids fresh)
+        (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag
+        (copySafe_extend copySafe (Nat.le_trans resultFlag (Nat.le_of_lt fresh)))
+        (represented.setRegs _ _) flagPreserved
+      have tested : s.eval (optionTagExpr layout value) ≠ 0 := by
+        rw [optionTagExpr_eval_some layout value entry.locals s matched selected]
+        exact Word.one_ne_zero hw
+      refine ⟨t, ?_, ControlMatches.tail property, finalHeap, ?_⟩
+      · convert Source.LocalMeasuredExec.iteTrue
+          (optionTagExpr_readsBelow layout value s) tested (.seq first rest) using 1
+        simp only [optionTagExpr_compile_length]
+        omega
+      · intro separate
+        exact RegisterMap.Matches.tail (finalMatches (separate.extend
+          (Nat.le_trans resultFlag (Nat.le_of_lt fresh))))
   | @whileFalse Γ result depth guard body entry finish test guardSteps guardCost ihGuard =>
       intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
         represented flagZero

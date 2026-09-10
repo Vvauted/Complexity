@@ -216,6 +216,63 @@ theorem ite_max {condition : Atom Γ .bool}
   | iteFalse test body =>
       exact .iteFalse test ((noDepth body).mono_depth (Nat.le_max_right _ _))
 
+/-- Option matching retains its actual payload and all source effects. Neither
+testing the tag nor binding its fields introduces a call frame. -/
+theorem matchOption {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    (noneDepth : value.eval entry.locals = none →
+      StmtDepthBound program noneBranch entry bound)
+    (someDepth : ∀ payload, value.eval entry.locals = some payload →
+      StmtDepthBound program someBranch (Complexity.Language.State.cons payload entry) bound) :
+    StmtDepthBound program (.matchOption value noneBranch someBranch) entry bound := by
+  intro w depth finish control execution
+  cases execution with
+  | matchNone selected branch => exact .matchNone selected (noneDepth selected branch)
+  | matchSome selected fits branch => exact .matchSome selected fits (someDepth _ selected branch)
+
+/-- A known absent value needs only its selected branch's call capacity. -/
+theorem match_none {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    (selected : value.eval entry.locals = none)
+    (body : StmtDepthBound program noneBranch entry bound) :
+    StmtDepthBound program (.matchOption value noneBranch someBranch) entry bound := by
+  apply matchOption (fun _ => body)
+  intro payload impossible
+  cases selected.symm.trans impossible
+
+/-- A present value binds its actual payload without adding a frame. -/
+theorem match_some {τ : Ty} {value : Atom Γ (.option τ)} {payload : Value τ}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    (selected : value.eval entry.locals = some payload)
+    (body : StmtDepthBound program someBranch
+      (Complexity.Language.State.cons payload entry) bound) :
+    StmtDepthBound program (.matchOption value noneBranch someBranch) entry bound := by
+  apply matchOption
+  · intro impossible
+    cases selected.symm.trans impossible
+  · intro actual same
+    cases Option.some.inj (selected.symm.trans same)
+    exact body
+
+/-- Disjoint match branches reuse the larger call capacity, retaining the
+selection equation for proofs about the actual payload. -/
+theorem match_max {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    {noneBound someBound : Nat}
+    (noneDepth : value.eval entry.locals = none →
+      StmtDepthBound program noneBranch entry noneBound)
+    (someDepth : ∀ payload, value.eval entry.locals = some payload →
+      StmtDepthBound program someBranch (Complexity.Language.State.cons payload entry) someBound) :
+    StmtDepthBound program (.matchOption value noneBranch someBranch) entry
+      (max noneBound someBound) :=
+  matchOption (fun selected => StmtDepthBound.mono (noneDepth selected) (Nat.le_max_left _ _))
+    (fun payload selected => StmtDepthBound.mono (someDepth payload selected)
+      (Nat.le_max_right _ _))
+
 /-- Compose through the first statement's actual normal post-state. Early
 return skips the second statement, and sequential frames are reused. -/
 theorem seq_of_post {first second : Complexity.Language.Stmt signatures Γ result}

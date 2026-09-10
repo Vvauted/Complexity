@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Basic
+import Complexity.Computability.Ram.Compiler.Language.MeasuredValues
 
 /-!
 # Sequential and conditional arena simulation
@@ -15,7 +16,9 @@ Returning from the first statement skips the second statement through the
 existing compiled return-flag branch.
 
 Conditionals execute the selected source branch with the same initial arena.
-All four rules use the existing measured RAM constructors and their actual
+Option matching binds the actual payload only after its tag selects `some`;
+leaving that binding retains the branch's current heap and outer locals.
+The rules use existing measured RAM constructors and their actual field copies,
 guard and jump instructions; no additional evaluator or cost table is used.
 -/
 
@@ -134,5 +137,78 @@ theorem iteFalse {condition : Atom Γ .bool}
     (atomExpr_readsBelow layout condition .bool s) conditionFalse executed using 1
   simp only [atomExpr_compile_length]
   omega
+
+/-- The absent option selects the ordinary branch without manufacturing or
+copying a payload. Its actual branch keeps its allocation effects. -/
+theorem matchNone {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    {outcome : Control result} {selected : value.eval entry.locals = none}
+    {body : Complexity.Language.Exec program noneBranch entry finish outcome}
+    (simulation : ArenaCoreSimulates body w heapLimit depth cursor finalCursor steps) :
+    ArenaCoreSimulates (.matchNone (someBranch := someBranch) selected body)
+      w heapLimit depth cursor finalCursor (steps + 2) := by
+  intro controlReg hw placement layout next resultSlot flag s regular bounded matched avoids
+    fresh resultFlag copySafe rooted arena flagZero
+  obtain ⟨finalPlacement, t, executed, property, finalArena, agreed, finalMatches⟩ :=
+    simulation controlReg hw placement layout next resultSlot flag s regular bounded
+      matched avoids fresh resultFlag copySafe rooted arena flagZero
+  have tested := optionTagExpr_eval_none layout value entry.locals s matched selected
+  refine ⟨finalPlacement, t, ?_, property, finalArena, agreed, finalMatches⟩
+  convert Source.LocalMeasuredExec.iteFalse
+    (optionTagExpr_readsBelow layout value s) tested executed using 1
+  simp only [optionTagExpr_compile_length]
+  omega
+
+/-- A present option copies its actual payload into fresh lexical fields before
+executing its branch. Nested buffer roots are retained, and the final placement,
+heap, outer-variable updates and control survive leaving the payload binding. -/
+theorem matchSome {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    {payload : Value τ} {finish : Complexity.Language.State (τ :: Γ)}
+    {outcome : Control result} {selected : value.eval entry.locals = some payload}
+    {body : Complexity.Language.Exec program someBranch
+      (Complexity.Language.State.cons payload entry) finish outcome}
+    (payloadFits : ValueFits w (τ := τ) payload)
+    (simulation : ArenaCoreSimulates body w heapLimit depth cursor finalCursor steps) :
+    ArenaCoreSimulates (.matchSome (noneBranch := noneBranch) selected body)
+      w heapLimit depth cursor finalCursor (2 * fieldCount τ + steps + 3) := by
+  intro controlReg hw placement layout next resultSlot flag s regular bounded matched avoids
+    fresh resultFlag copySafe rooted arena flagZero
+  have first := copyOptionPayload_measured (control := controlReg)
+    (program := lowerProgram program) (heapLimit := heapLimit) (depth := depth)
+    layout next value entry.locals s hw matched selected payloadFits bounded
+  have matching : RegisterMap.Matches (RegisterMap.extend layout τ next) placement
+      (Env.cons payload entry.locals)
+      (s.setRegs (valueRegs τ next) (valueWords placement payload)).regs :=
+    matched.setRegs bounded payload payloadFits
+  have payloadRooted : ValueRooted entry.heap payload := by
+    have optionRooted := value.eval_rooted rooted
+    simpa only [selected, ValueRooted] using optionRooted
+  have bodyRooted : (Env.cons payload entry.locals).Rooted entry.heap :=
+    Env.Rooted.cons rooted payload payloadRooted
+  have flagPreserved := (valueRegs_setRegs_other s τ next flag
+    (valueWords placement payload)
+    (flag_not_mem_valueRegs_of_lt τ next flag fresh)).trans flagZero
+  obtain ⟨finalPlacement, t, rest, property, finalArena, agreed, finalMatches⟩ :=
+    simulation controlReg hw placement (RegisterMap.extend layout τ next)
+      (next + fieldCount τ) resultSlot flag _
+      (regular.extend bounded) (RegisterMap.extend_bounded bounded) matching
+      (RegisterMap.Avoids.extend avoids fresh)
+      (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag
+      (copySafe_extend copySafe (Nat.le_trans resultFlag (Nat.le_of_lt fresh)))
+      bodyRooted (arena.setRegs _ _) flagPreserved
+  have tested : s.eval (optionTagExpr layout value) ≠ 0 := by
+    rw [optionTagExpr_eval_some layout value entry.locals s matched selected]
+    exact Word.one_ne_zero hw
+  refine ⟨finalPlacement, t, ?_, ControlMatches.tail property, finalArena, agreed, ?_⟩
+  · convert Source.LocalMeasuredExec.iteTrue
+      (optionTagExpr_readsBelow layout value s) tested (.seq first rest) using 1
+    simp only [optionTagExpr_compile_length]
+    omega
+  · intro separate
+    exact RegisterMap.Matches.tail (finalMatches (separate.extend
+      (Nat.le_trans resultFlag (Nat.le_of_lt fresh))))
 
 end Ram.LanguageCompiler.ArenaCoreSimulates

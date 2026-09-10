@@ -73,12 +73,21 @@ def copyFields (dst : Reg) : List Expr → Ram.Stmt
       .seq (.assign dst expr) (copyFields (dst + 1) (next :: rest))
 
 /-- Materialize the primitive's actual fields, without a dummy Unit register.
-Buffer aliases copy their descriptor into the new binding's fresh local region. -/
+Structured values copy their fields in order; buffer fields remain borrowed
+descriptors rather than copies of the underlying storage. -/
 def lowerPrim (layout : RegisterMap Γ) (dst : Reg) : {τ : Ty} → Prim Γ τ → Ram.Stmt
   | .nat, prim => .assign dst (primExpr layout prim .nat)
   | .bool, prim => .assign dst (primExpr layout prim .bool)
   | .unit, _ => .skip
-  | .buffer _, .atom atom => copyFields dst (atomExprs layout atom)
+  | .buffer _, prim => copyFields dst (primExprs layout prim)
+  | .prod _ _, prim => copyFields dst (primExprs layout prim)
+  | .option _, prim => copyFields dst (primExprs layout prim)
+
+/-- Scalar assignments and empty Unit materialization are the corresponding
+singleton and empty cases of the same ordered field-copy code. -/
+theorem lowerPrim_eq_copyFields (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ) :
+    lowerPrim layout dst prim = copyFields dst (primExprs layout prim) := by
+  cases τ <;> cases prim <;> rfl
 
 /-- Update an existing local through its actual field region. This reuses
 primitive materialization, including real descriptor copies and empty Unit
@@ -161,6 +170,12 @@ def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
       .ite (atomExpr layout condition .bool)
         (lowerStmtCore layout next resultSlot flag yes)
         (lowerStmtCore layout next resultSlot flag no)
+  | .matchOption (τ := τ) value noneBranch someBranch =>
+      .ite (optionTagExpr layout value)
+        (.seq (copyFields next (optionPayloadExprs layout value))
+          (lowerStmtCore (RegisterMap.extend layout τ next)
+            (next + fieldCount τ) resultSlot flag someBranch))
+        (lowerStmtCore layout next resultSlot flag noneBranch)
   | .while guard body =>
       .seq (.assign next (.const 1))
         (.while (.var next)

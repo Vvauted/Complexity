@@ -14,6 +14,8 @@ The named frontend records public function headers after elaborating their
 source program. Lean's persistent environment extension carries these headers
 across module imports. The key is the resolved `family.program` declaration,
 so ordinary namespace and open-name resolution determine the imported family.
+Structured headers retain the core's recursive product and option types,
+including borrowed buffers inside them; they require no separate import encoding.
 
 This metadata routes named calls; it contains no implementation, execution
 assumption or cost annotation. Actual source bodies and their embedding proofs

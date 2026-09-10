@@ -95,6 +95,8 @@ theorem renameCalls {source target : List Signature}
   | seqFault _ ih => exact .seqFault ih
   | iteTrue test _ ih => exact .iteTrue test ih
   | iteFalse test _ ih => exact .iteFalse test ih
+  | matchNone selected _ ih => exact .matchNone selected ih
+  | matchSome selected _ ih => exact .matchSome selected ih
   | whileFalse _ ih => exact .whileFalse ih
   | whileTrue _ _ _ ihGuard ihBody ihRest => exact .whileTrue ihGuard ihBody ihRest
   | whileReturn _ _ ihGuard ihBody => exact .whileReturn ihGuard ihBody

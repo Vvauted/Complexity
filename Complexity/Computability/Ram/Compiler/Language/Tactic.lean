@@ -200,6 +200,9 @@ def normalizeValues : TacticM Unit := do
         Ram.LanguageCompiler.EnvFits.cons_bool_iff,
         Ram.LanguageCompiler.EnvFits.cons_unit_iff,
         Ram.LanguageCompiler.EnvFits.cons_buffer_iff,
+        Ram.LanguageCompiler.EnvFits.cons_prod_iff,
+        Ram.LanguageCompiler.EnvFits.cons_none_iff,
+        Ram.LanguageCompiler.EnvFits.cons_some_iff,
         Ram.LanguageCompiler.EnvFits.empty,
         decide_eq_true_eq, and_true, true_and] at * <;> try assumption)))
 
@@ -234,6 +237,10 @@ private partial def realize
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
           evalTactic (← `(tactic|
             (rw [Ram.LanguageCompiler.RealizationWP.ite_iff]; split)))
+        else if statement.isAppOf ``Complexity.Language.Stmt.matchOption then
+          evalTactic (← `(tactic|
+            (rw [Ram.LanguageCompiler.RealizationWP.matchOption_iff]
+             split <;> try apply And.intro)))
         else if statement.isAppOf ``Complexity.Language.Stmt.while then
           return
         else if statement.isAppOf ``Complexity.Language.Stmt.call then
@@ -299,16 +306,22 @@ private def applyCostRule (rule : TSyntax `term) (normalizeCallBound := false) :
 /-- Select a known branch only after its guard proof is complete. An unresolved
 condition leaves the original uniform rule available, with no speculative
 branch choice or proof obligation retained from the failed attempt. -/
-private def costBranch : TacticM Unit := do
+private def costBranch (optionMatch := false) : TacticM Unit := do
   let known (rule : Name) : TacticM Unit := do
     applyCostRule ⟨(mkIdent rule).raw⟩
     focusAndDone do
       normalizeValues
-      evalTactic (← `(tactic| all_goals simp_all only [Except.ok.injEq]))
+      evalTactic (← `(tactic| all_goals simp_all only [Except.ok.injEq, Option.some.injEq]))
       evalTactic (← `(tactic| all_goals first | assumption | (norm_num; done) | omega))
-  Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtCostBound.ite_true) fun _ => do
-    Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtCostBound.ite_false) fun _ => do
-      applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.ite_max))
+  let first := if optionMatch then ``Ram.LanguageCompiler.StmtCostBound.match_none
+    else ``Ram.LanguageCompiler.StmtCostBound.ite_true
+  let second := if optionMatch then ``Ram.LanguageCompiler.StmtCostBound.match_some
+    else ``Ram.LanguageCompiler.StmtCostBound.ite_false
+  let fallback := if optionMatch then ``Ram.LanguageCompiler.StmtCostBound.match_max
+    else ``Ram.LanguageCompiler.StmtCostBound.ite_max
+  Tactic.tryCatchRestore (known first) fun _ => do
+    Tactic.tryCatchRestore (known second) fun _ => do
+      applyCostRule ⟨(mkIdent fallback).raw⟩
 
 private def costCertificates (certificate : TSyntax `term) : List (TSyntax `term) :=
   match certificate with
@@ -370,6 +383,8 @@ private partial def cost (callees : List (TSyntax `term)) : TacticM Unit := do
           applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.seq))
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
           costBranch
+        else if statement.isAppOf ``Complexity.Language.Stmt.matchOption then
+          costBranch (optionMatch := true)
         else if statement.isAppOf ``Complexity.Language.Stmt.while then
           return
         else if statement.isAppOf ``Complexity.Language.Stmt.call then

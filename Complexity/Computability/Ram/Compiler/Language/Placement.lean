@@ -69,11 +69,24 @@ theorem bufferRef (agreed : Agrees heap left right) {τ : CellTy} {buffer : Buff
 theorem valueField (agreed : Agrees heap left right) {τ : Ty} {value : Value τ}
     (rooted : ValueRooted heap value) (i : Fin (fieldCount τ)) :
     LanguageCompiler.valueField left value i = LanguageCompiler.valueField right value i := by
-  cases τ with
+  induction τ with
   | nat | bool => rfl
   | unit => exact Fin.elim0 i
   | buffer kind =>
       simp only [LanguageCompiler.valueField, agreed rooted]
+  | prod first second ihFirst ihSecond =>
+      refine Fin.addCases ?_ ?_ i
+      · intro j
+        simpa only [LanguageCompiler.valueField_prod_left] using ihFirst rooted.1 j
+      · intro j
+        simpa only [LanguageCompiler.valueField_prod_right] using ihSecond rooted.2 j
+  | option τ ih =>
+      cases value with
+      | none => rfl
+      | some value =>
+          refine Fin.cases rfl ?_ i
+          intro j
+          simpa only [LanguageCompiler.valueField_some_succ] using ih rooted j
 
 /-- All emitted argument or result words retain their original encodings. -/
 theorem valueWords (agreed : Agrees heap left right) {τ : Ty} {value : Value τ}

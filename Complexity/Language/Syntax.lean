@@ -26,7 +26,7 @@ import Lean.Parser.Do
 
 `source_program P where` declares an independent typed source program from
 Lean-style function headers and `do` blocks. The supported types are
-`Nat`, `Bool`, `Unit`, `Buffer Nat` and `Buffer Bool`, with lexical `let` and
+`Nat`, `Bool`, `Unit`, `Buffer Nat`, `Buffer Bool`, products and `Option`, with lexical `let` and
 `let mut`, assignment, named first-order calls, `if`/`then`/`else`, `while` and `return`.
 Only the nearest mutable binding may be assigned; ordinary `let` bindings and
 parameters are immutable. `x ← action` rebinds a mutable local to the actual
@@ -35,6 +35,12 @@ comparisons may be nested in bindings, assignments, return values, conditions
 and call arguments. Their operands are normalized left to right into actual
 lexical primitive bindings; no host
 computation replaces the generated operations.
+
+Products use ordinary pairs and `.1`/`.2` or `.fst`/`.snd` projections. Options
+use `none`, `some value` and an exhaustive `match` with `none` and `some value`
+branches. The payload exists only in the latter branch; leaving it preserves
+the actual heap and outer mutable locals. Expected parameter, binding and
+return types supply the type of `none`; otherwise give an ordinary type annotation.
 
 A named function returning `Unit` may be called directly as a `do` statement.
 Other return types require an explicit binding; results are not silently discarded.
@@ -267,21 +273,33 @@ private instance : Nonempty LoweredBlock :=
 private instance : Nonempty NormalizedValue :=
   ⟨⟨#[], ⟨(mkCIdent ``Unit.unit).raw⟩, true⟩⟩
 
+private instance : Nonempty Ty := ⟨.unit⟩
+
 private def typeName : Ty → String
   | .nat => "Nat"
   | .bool => "Bool"
   | .unit => "Unit"
   | .buffer .nat => "Buffer Nat"
   | .buffer .bool => "Buffer Bool"
+  | .prod left right => s!"({typeName left} × {typeName right})"
+  | .option value => s!"Option ({typeName value})"
 
-private def parseType (stx : TSyntax `term) : MacroM Ty := do
+private partial def parseType (stx : TSyntax `term) : MacroM Ty := do
   match stx with
+  | `(($type:term)) => parseType type
   | `(Nat) => return .nat
   | `(Bool) => return .bool
   | `(Unit) => return .unit
   | `(Buffer Nat) => return .buffer .nat
   | `(Buffer Bool) => return .buffer .bool
-  | _ => Macro.throwErrorAt stx "supported source types are Nat, Bool, Unit, Buffer Nat and Buffer Bool"
+  | `(Complexity.Language.Buffer Complexity.Language.CellTy.nat) => return .buffer .nat
+  | `(Complexity.Language.Buffer Complexity.Language.CellTy.bool) => return .buffer .bool
+  | `($left × $right) | `(Prod $left $right) =>
+      return .prod (← parseType left) (← parseType right)
+  | `(Option $value) => return .option (← parseType value)
+  | _ =>
+      Macro.throwErrorAt stx
+        "supported source types are Nat, Bool, Unit, Buffer Nat, Buffer Bool, products and Option"
 
 private def typeTerm : Ty → MacroM (TSyntax `term)
   | .nat => `(Complexity.Language.Ty.nat)
@@ -289,6 +307,10 @@ private def typeTerm : Ty → MacroM (TSyntax `term)
   | .unit => `(Complexity.Language.Ty.unit)
   | .buffer .nat => `(Complexity.Language.Ty.buffer Complexity.Language.CellTy.nat)
   | .buffer .bool => `(Complexity.Language.Ty.buffer Complexity.Language.CellTy.bool)
+  | .prod left right => do
+      `(Complexity.Language.Ty.prod $(← typeTerm left) $(← typeTerm right))
+  | .option value => do
+      `(Complexity.Language.Ty.option $(← typeTerm value))
 
 private def valueTypeTerm : Ty → MacroM (TSyntax `term)
   | .nat => `(Nat)
@@ -296,6 +318,10 @@ private def valueTypeTerm : Ty → MacroM (TSyntax `term)
   | .unit => `(Unit)
   | .buffer .nat => `(Complexity.Language.Buffer Complexity.Language.CellTy.nat)
   | .buffer .bool => `(Complexity.Language.Buffer Complexity.Language.CellTy.bool)
+  | .prod left right => do
+      `($(← valueTypeTerm left) × $(← valueTypeTerm right))
+  | .option value => do
+      `(Option $(← valueTypeTerm value))
 
 private def expectType (stx : Syntax) (actual expected : Ty) : MacroM Unit := do
   unless actual == expected do
@@ -479,6 +505,10 @@ private def lookupVariable (scope : Scope) (name : TSyntax `ident) : MacroM Atom
 
 private partial def parseAtom (scope : Scope) (stx : TSyntax `term) : MacroM Atomic := do
   match stx with
+  | `(($value:term : $type:term)) =>
+      let atom ← parseAtom scope value
+      expectType type atom.type (← parseType type)
+      return atom
   | `(($value:term)) => parseAtom scope value
   | `(true) => return ⟨.bool, ← `(Complexity.Language.Atom.bool true), ← `(true)⟩
   | `(false) => return ⟨.bool, ← `(Complexity.Language.Atom.bool false), ← `(false)⟩
@@ -494,6 +524,11 @@ private partial def parseAtom (scope : Scope) (stx : TSyntax `term) : MacroM Ato
 -- projection. Both refer to the same lexical receiver, not a host declaration.
 private def fieldAccess? (stx : TSyntax `term) : Option (TSyntax `term × Name) :=
   match stx with
+  | `($(receiver).$field:fieldIdx) =>
+      match field.raw.isFieldIdx? with
+      | some 1 => some (receiver, `fst)
+      | some 2 => some (receiver, `snd)
+      | _ => none
   | `($receiver.$field:ident) => some (receiver, field.getId)
   | `($name:ident) =>
       match name.getId with
@@ -520,14 +555,47 @@ private def binaryPrimitive (scope : Scope) (left right : TSyntax `term)
   let value ← if result == .bool then `(decide $nativeApp) else pure nativeApp
   return ⟨result, ← `($op $(lhs.term) $(rhs.term)), none, value⟩
 
-private partial def parsePrimitive (scope : Scope) (stx : TSyntax `term) : MacroM Primitive := do
+private partial def parsePrimitive (scope : Scope) (stx : TSyntax `term)
+    (expected : Option Ty := none) : MacroM Primitive := do
   if let some (receiver, field) := fieldAccess? stx then
     if field == `length then
       let (_, buffer) ← parseBuffer scope receiver
       return ⟨.nat, ← `(Complexity.Language.Prim.length $(buffer.term)), none,
         ← `(Complexity.Language.Buffer.length $(buffer.value))⟩
+    if field == `fst || field == `snd then
+      let pair ← parseAtom scope receiver
+      let .prod left right := pair.type
+        | Macro.throwErrorAt receiver "a product projection requires a source pair"
+      if field == `fst then
+        return ⟨left, ← `(Complexity.Language.Prim.fst $(pair.term)), none,
+          ← `(Prod.fst $(pair.value))⟩
+      else
+        return ⟨right, ← `(Complexity.Language.Prim.snd $(pair.term)), none,
+          ← `(Prod.snd $(pair.value))⟩
   match stx with
-  | `(($value:term)) => parsePrimitive scope value
+  | `(($value:term : $type:term)) =>
+      let type ← parseType type
+      let value ← parsePrimitive scope value (some type)
+      expectType stx value.type type
+      return value
+  | `(($value:term)) => parsePrimitive scope value expected
+  | `(($left, $right)) | `(Prod.mk $left $right) =>
+      let lhs ← parseAtom scope left
+      let rhs ← parseAtom scope right
+      return ⟨.prod lhs.type rhs.type,
+        ← `(Complexity.Language.Prim.pair $(lhs.term) $(rhs.term)), none,
+        ← `(($(lhs.value), $(rhs.value)))⟩
+  | `(Prod.fst $value) => parsePrimitive scope (← `(($value).1)) expected
+  | `(Prod.snd $value) => parsePrimitive scope (← `(($value).2)) expected
+  | `(none) | `(Option.none) | `(.none) =>
+      let some (.option payload) := expected
+        | Macro.throwErrorAt stx "the type of none needs an Option result, parameter or binding annotation"
+      return ⟨.option payload, ← `(Complexity.Language.Prim.none $(← typeTerm payload)), none,
+        ← `((none : Option $(← valueTypeTerm payload)))⟩
+  | `(some $value) | `(Option.some $value) | `(.some $value) =>
+      let payload ← parseAtom scope value
+      return ⟨.option payload.type, ← `(Complexity.Language.Prim.some $(payload.term)), none,
+        ← `(some $(payload.value))⟩
   | `($left + $right) => binaryPrimitive scope left right .nat ``Prim.add ``Nat.add
   | `($left * $right) => binaryPrimitive scope left right .nat ``Prim.mul ``Nat.mul
   | `($left - $right) => binaryPrimitive scope left right .nat ``Prim.sub ``Nat.sub
@@ -657,7 +725,7 @@ private def assignCode (scope : Scope) (name : TSyntax `ident) (value : TSyntax 
   let (binding, index) ← lookupBinding scope name
   unless binding.isMutable do
     Macro.throwErrorAt name s!"source variable '{name.getId}' is immutable; declare it with 'let mut'"
-  let parsed ← parsePrimitive scope value
+  let parsed ← parsePrimitive scope value (some binding.type)
   expectType value parsed.type binding.type
   return ⟨← `(Complexity.Language.Stmt.assign $(← variableTerm index) $(parsed.term)),
     #[← `(doElem| $(binding.proofName):ident := $(parsed.value))], true, #[]⟩
@@ -679,7 +747,7 @@ private def assignBindingCode (functions : Array Callee)
 
 private def returnCode (scope : Scope) (result : Ty) (value : TSyntax `term) :
     MacroM LoweredBlock := do
-  let parsed ← parsePrimitive scope value
+  let parsed ← parsePrimitive scope value (some result)
   expectType value parsed.type result
   let term ← match parsed.atom with
     | some atom => `(Complexity.Language.Stmt.ret $atom)
@@ -721,15 +789,38 @@ private partial def guardElements (condition : TSyntax `term) : MacroM (List (TS
 
 -- Normalize only the supported expression vocabulary. Fresh lexical names are
 -- consumed by the ordinary typed translator and cannot capture user bindings.
-private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool) :
+private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool)
+    (expected : Option Ty := none) :
     MacroM NormalizedValue := withRef stx do
   let binary (left right : TSyntax `term)
-      (rebuild : TSyntax `term → TSyntax `term → MacroM (TSyntax `term)) := do
-    let lhs ← normalizeValue left true
-    let rhs ← normalizeValue right true
+      (rebuild : TSyntax `term → TSyntax `term → MacroM (TSyntax `term))
+      (leftType rightType : Option Ty := none) := do
+    let lhs ← normalizeValue left true leftType
+    let rhs ← normalizeValue right true rightType
     return (⟨lhs.bindings ++ rhs.bindings, ← rebuild lhs.value rhs.value, false⟩ : NormalizedValue)
+  let unary (value : TSyntax `term)
+      (rebuild : TSyntax `term → MacroM (TSyntax `term))
+      (valueType : Option Ty := none) := do
+    let value ← normalizeValue value true valueType
+    return (⟨value.bindings, ← rebuild value.value, false⟩ : NormalizedValue)
   let normalized ← (match stx with
-    | `(($value:term)) => normalizeValue value false
+    | `(($value:term : $type:term)) => do
+        let value ← normalizeValue value false (some (← parseType type))
+        return { value with value := ← `(($(value.value) : $type)) }
+    | `(($value:term)) => normalizeValue value false expected
+    | `(($left, $right)) | `(Prod.mk $left $right) =>
+        let (leftType, rightType) := match expected with
+          | some (.prod left right) => (some left, some right)
+          | _ => (none, none)
+        binary left right (fun a b => `(($a, $b))) leftType rightType
+    | `(some $value) | `(Option.some $value) | `(.some $value) =>
+        let valueType := match expected with
+          | some (.option payload) => some payload
+          | _ => none
+        unary value (fun value => `(some $value)) valueType
+    | `(none) | `(Option.none) | `(.none) => pure ⟨#[], stx, false⟩
+    | `(Prod.fst $value) => unary value fun value => `(Prod.fst $value)
+    | `(Prod.snd $value) => unary value fun value => `(Prod.snd $value)
     | `($left + $right) => binary left right fun a b => `($a + $b)
     | `($left * $right) => binary left right fun a b => `($a * $b)
     | `($left - $right) => binary left right fun a b => `($a - $b)
@@ -740,52 +831,92 @@ private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool) :
     | `($left < $right) => binary left right fun a b => `($a < $b)
     | `($left ≤ $right) => binary left right fun a b => `($a ≤ $b)
     | `($left <= $right) => binary left right fun a b => `($a <= $b)
-    | _ => pure ⟨#[], stx, !(fieldAccess? stx).any (fun access => access.2 == `length)⟩)
+    | _ => do
+        if let some (receiver, field) := fieldAccess? stx then
+          if field == `length || field == `fst || field == `snd then
+            return ← unary receiver fun value => `($value.$(mkIdent field):ident)
+        return ⟨#[], stx, true⟩)
   if atomize && !normalized.atomic then
     let name ← freshProofName stx `operand
-    let binding ← `(doElem| let $name:ident := $(normalized.value))
+    let annotation ← expected.mapM valueTypeTerm
+    let binding ← `(doElem| let $name:ident $[: $annotation:term]? := $(normalized.value))
     return ⟨normalized.bindings.push binding, ⟨name.raw⟩, true⟩
   else
     return normalized
 
-private def normalizeCall (stx : TSyntax `term) :
+private def normalizeCall (functions : Array Callee) (stx : TSyntax `term) :
     MacroM (Array (TSyntax `doElem) × TSyntax `term) := withRef stx do
   match stx with
   | `($head:term $operands:term*) =>
       let mut bindings := #[]
       let mut arguments := #[]
-      for operand in operands do
-        let normalized ← normalizeValue operand true
+      let callee := functions.find? (fun fn => fn.name.getId == head.raw.getId)
+      let mut head := head
+      if callee.isNone then
+        if let some (receiver, field) := fieldAccess? head then
+          if field == `get || field == `set || field == `slice then
+            let normalized ← normalizeValue receiver true
+            bindings := normalized.bindings
+            head ← `($(normalized.value).$(mkIdent field):ident)
+      for operand in operands, index in [:operands.size] do
+        let expected := callee.bind fun fn => fn.params[index]?.map (·.type)
+        let normalized ← normalizeValue operand true expected
         bindings := bindings ++ normalized.bindings
         arguments := arguments.push normalized.value
       return (bindings, Lean.Syntax.mkApp head arguments)
   | _ => return (#[], stx)
 
-private def normalizeElement (element : TSyntax `doElem) :
+private def optionMatch? (element : TSyntax `doElem) :
+    Option (TSyntax `term × TSyntax `term × TSyntax ``doSeq × TSyntax `term × TSyntax ``doSeq) :=
+  match element with
+  | `(doElem| match $value:term with
+      | $first:term => $firstBody:doSeq
+      | $second:term => $secondBody:doSeq) =>
+      some (value, first, firstBody, second, secondBody)
+  | _ => none
+
+private def nonePattern (pattern : TSyntax `term) : Bool :=
+  match pattern with
+  | `(none) | `(Option.none) | `(.none) => true
+  | _ => false
+
+private def somePattern? (pattern : TSyntax `term) : Option (TSyntax `ident) :=
+  match pattern with
+  | `(some $name:ident) | `(Option.some $name:ident) | `(.some $name:ident) => some name
+  | _ => none
+
+private def normalizeElement (functions : Array Callee) (scope : Scope) (result : Ty)
+    (element : TSyntax `doElem) :
     MacroM (Array (TSyntax `doElem) × TSyntax `doElem) := withRef element do
+  if let some (value, first, firstBody, second, secondBody) := optionMatch? element then
+    let normalized ← normalizeValue value true
+    return (normalized.bindings, ← `(doElem| match $(normalized.value):term with
+      | $first:term => $firstBody:doSeq
+      | $second:term => $secondBody:doSeq))
   match element with
   | `(doElem| let mut $name:ident $[: $annotation:term]? := $value:term) =>
-      let normalized ← normalizeValue value false
+      let normalized ← normalizeValue value false (← annotation.mapM parseType)
       return (normalized.bindings,
         ← `(doElem| let mut $name:ident $[: $annotation:term]? := $(normalized.value)))
   | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
-      let normalized ← normalizeValue value false
+      let normalized ← normalizeValue value false (← annotation.mapM parseType)
       return (normalized.bindings,
         ← `(doElem| let $name:ident $[: $annotation:term]? := $(normalized.value)))
   | `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term) =>
-      let (bindings, action) ← normalizeCall action
+      let (bindings, action) ← normalizeCall functions action
       return (bindings, ← `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term))
   | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
-      let (bindings, action) ← normalizeCall action
+      let (bindings, action) ← normalizeCall functions action
       return (bindings, ← `(doElem| let $name:ident $[: $annotation:term]? ← $action:term))
   | `(doElem| $name:ident := $value:term) =>
-      let normalized ← normalizeValue value false
+      let (binding, _) ← lookupBinding scope name
+      let normalized ← normalizeValue value false (some binding.type)
       return (normalized.bindings, ← `(doElem| $name:ident := $(normalized.value)))
   | `(doElem| $name:ident ← $action:term) =>
-      let (bindings, action) ← normalizeCall action
+      let (bindings, action) ← normalizeCall functions action
       return (bindings, ← `(doElem| $name:ident ← $action:term))
   | `(doElem| return $value:term) =>
-      let normalized ← normalizeValue value false
+      let normalized ← normalizeValue value false (some result)
       return (normalized.bindings, ← `(doElem| return $(normalized.value)))
   | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) =>
       let normalized ← normalizeValue condition false
@@ -794,7 +925,7 @@ private def normalizeElement (element : TSyntax `doElem) :
   | `(doElem| while $_condition do $_body) => return (#[], element)
   | `(doElem| with_scratch do $_body:doSeq) => return (#[], element)
   | `(doElem| $action:term) =>
-      let (bindings, action) ← normalizeCall action
+      let (bindings, action) ← normalizeCall functions action
       return (bindings, ← `(doElem| $action:term))
   | _ => return (#[], element)
 
@@ -803,6 +934,33 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
     (recurse : Scope → Ty → List (TSyntax `doElem) → Nat → MacroM LoweredBlock)
     (scope : Scope) (result : Ty) (element : TSyntax `doElem) (nextIndex : Nat) :
     MacroM LoweredBlock := withRef element do
+  if let some (value, first, firstBody, second, secondBody) := optionMatch? element then
+    let (noneBody, payload, someBody) ←
+      if nonePattern first then
+        match somePattern? second with
+        | some payload => pure (firstBody, payload, secondBody)
+        | none => Macro.throwErrorAt second "expected a 'some name' option pattern"
+      else if nonePattern second then
+        match somePattern? first with
+        | some payload => pure (secondBody, payload, firstBody)
+        | none => Macro.throwErrorAt first "expected a 'some name' option pattern"
+      else Macro.throwErrorAt element "an option match needs exactly none and some branches"
+    let option ← parseAtom scope value
+    let .option payloadType := option.type
+      | Macro.throwErrorAt value "source matching currently supports Option values"
+    let payloadName ← freshProofName payload payload.getId
+    let noneCode ← recurse scope result (getDoElems noneBody).toList nextIndex
+    let someCode ← recurse (⟨some payload.getId, payloadName, payloadType, false⟩ :: scope)
+      result (getDoElems someBody).toList (nextIndex + noneCode.sites.size)
+    let normal ← `(doElem| pure ())
+    let noneBody := noneCode.proofSequence normal
+    let someBody := someCode.proofSequence normal
+    let branch ← `(doElem| match $(option.value):term with
+      | none => $noneBody:doSeq
+      | some $payloadName:ident => $someBody:doSeq)
+    return ⟨← `(Complexity.Language.Stmt.matchOption $(option.term)
+        $(noneCode.term) $(someCode.term)),
+      #[branch], noneCode.fallsThrough || someCode.fallsThrough, noneCode.sites ++ someCode.sites⟩
   match element with
   | `(doElem| $name:ident := $value:term) => assignCode scope name value
   | `(doElem| $name:ident ← $action:term) => assignBindingCode functions scope name action
@@ -855,7 +1013,7 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
   | `(doElem| $action:term) => actionCode functions scope action
   | _ =>
       Macro.throwErrorAt element
-        "unsupported source statement; use let, let mut, assignment, a named call, buffer access or allocation, with_scratch, if/then/else, while, or return"
+        "unsupported source statement; use let, let mut, assignment, a named call, buffer access or allocation, with_scratch, if/then/else, Option match, while, or return"
 
 private partial def blockCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident) (scope : Scope) (result : Ty)
@@ -863,13 +1021,13 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
   match elements with
   | [] => return ⟨← `(Complexity.Language.Stmt.skip), #[], true, #[]⟩
   | element :: rest => withRef element do
-      let (bindings, element) ← normalizeElement element
+      let (bindings, element) ← normalizeElement functions scope result element
       if !bindings.isEmpty then
         return ← blockCode family functions owner scope result
           (bindings.toList ++ element :: rest) nextIndex
       match element with
       | `(doElem| let mut $name:ident $[: $annotation:term]? := $value:term) =>
-          let parsed ← parsePrimitive scope value
+          let parsed ← parsePrimitive scope value (← annotation.mapM parseType)
           checkAnnotation annotation parsed.type
           let proofName ← freshProofName name name.getId
           let body ← blockCode family functions owner
@@ -879,7 +1037,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
       | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
-          let parsed ← parsePrimitive scope value
+          let parsed ← parsePrimitive scope value (← annotation.mapM parseType)
           checkAnnotation annotation parsed.type
           let proofName ← freshProofName name name.getId
           let body ← blockCode family functions owner
@@ -1293,6 +1451,7 @@ private def loopEquationDeclarations (site : BlockSite) (sites : Array BlockSite
   let compositionArgs ← constantSimpArgs #[``Complexity.Language.Stmt.observe_skip,
     ``Complexity.Language.Stmt.observe_assign, ``Complexity.Language.Stmt.observe_ret,
     ``Complexity.Language.Stmt.observe_seq, ``Complexity.Language.Stmt.observe_ite,
+    ``Complexity.Language.Stmt.observe_matchOption,
     ``Complexity.Language.Stmt.observe_letPrim, ``Complexity.Language.Stmt.observe_read,
     ``Complexity.Language.Stmt.observe_write, ``Complexity.Language.Stmt.observe_slice,
     ``Complexity.Language.Stmt.observe_alloc, ``Complexity.Language.Stmt.observe_call]
@@ -1526,7 +1685,8 @@ private def equationDeclaration (family programName : TSyntax `ident)
   let compositionArgs ← constantSimpArgs #[``Complexity.Language.Stmt.evalWith_skip,
     ``Complexity.Language.Stmt.evalWith_ret, ``Complexity.Language.Stmt.evalWith_assign,
     ``Complexity.Language.Stmt.evalWith_letPrim, ``Complexity.Language.Stmt.evalWith_seq,
-    ``Complexity.Language.Stmt.evalWith_ite, ``Complexity.Language.Stmt.evalWith_call,
+    ``Complexity.Language.Stmt.evalWith_ite, ``Complexity.Language.Stmt.evalWith_matchOption,
+    ``Complexity.Language.Stmt.evalWith_call,
     ``Complexity.Language.Stmt.evalWith_read, ``Complexity.Language.Stmt.evalWith_write,
     ``Complexity.Language.Stmt.evalWith_slice, ``Complexity.Language.Stmt.evalWith_alloc]
   let allArgs := (← namedSimpArgs (#[bodyName] ++ importFolds)) ++ loopContinuations ++ loopViews ++
@@ -1542,6 +1702,12 @@ private def equationDeclaration (family programName : TSyntax `ident)
       unfold $observation:ident
       rw [Complexity.Language.Program.eval_eq_evalWith, body_selected]
     simp only [$allArgs,*]
+    -- The semantic and native Option eliminators can have different motives.
+    -- Compare actual bind results and branches without unfolding any callee.
+    all_goals repeat' first
+      | rfl
+      | (split <;> simp_all only [Option.some.injEq, reduceCtorEq])
+      | (congr 1; funext value)
     all_goals rfl)
   for param in fn.params.reverse do
     let parameter := param.name
@@ -1764,9 +1930,11 @@ private def importedObservationDeclaration (program map embedded : TSyntax `iden
       rw [Complexity.Language.Program.Embeds.eval_eq $embedded:ident]
       exact $originalFold:ident $env:ident)).raw
 
-private def scalarType : Ty → Bool
+private def pureValueType : Ty → Bool
   | .nat | .bool | .unit => true
   | .buffer _ => false
+  | .prod left right => pureValueType left && pureValueType right
+  | .option value => pureValueType value
 
 -- These identifiers were resolved by the source parser, and local proof
 -- variables have fresh names. Replacing them cannot capture a source binder.
@@ -1812,7 +1980,7 @@ private def nativeDeclaration (family : TSyntax `ident) (fn : Function)
   let result ← valueTypeTerm fn.result
   let nativeBody ← pureBody callees body
   return (← `(command|
-    /-- Executable total value function generated from the same scalar source block. -/
+    /-- Executable total value function generated from the same buffer-free source block. -/
     def $name:ident $parameters:bracketedBinder* : $result :=
       Id.run (do $nativeBody:doSeq)
       $(fn.termination):suffix)).raw
@@ -1890,8 +2058,9 @@ private def programDeclarations (family : TSyntax `ident)
     if functions.any (fun previous => previous.name.getId == fn.name.getId) then
       Macro.throwErrorAt fn.name "duplicate source function name"
     if pureMode then
-      unless scalarType fn.result && fn.params.all (scalarType ·.type) do
-        Macro.throwErrorAt fn.name "pure source functions currently have only Nat, Bool and Unit parameters and results"
+      unless pureValueType fn.result && fn.params.all (pureValueType ·.type) do
+        Macro.throwErrorAt fn.name
+          "pure source functions support Nat, Bool, Unit and their products/options, but no nested buffers"
     functions := functions.push fn
   let signaturesName := mkIdentFrom family (family.getId ++ `signatures)
   let localSignaturesName := mkIdentFrom family (family.getId ++ `localSignatures)

@@ -5,7 +5,7 @@ Authors: vvauted
 -/
 import Examples.Language.ScopeCompiledWork
 import Complexity.Computability.Ram.Compiler.Language.Arena.Loop
-import Complexity.Computability.Ram.Compiler.Language.Arena.Memory
+import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
 /-!
@@ -227,69 +227,32 @@ set_option maxRecDepth 2048 in
 /-- The same high-level declaration returns its mathematical array in the real
 halted RAM invocation. Every actual memory access, and therefore every distinct
 word touched, stays within a workspace bound independent of the iteration count.
-Preloaded input representation, scalar ranges and word/code capacity are explicit;
-input loading and output conversion remain outside this invocation boundary. -/
-theorem make_runUntil {w cursor : Nat} (hw : 0 < w)
-    (count n value : Nat) (heap : Heap)
-    (countFits : count < 2 ^ w) (nFits : n < 2 ^ w) (valueFits : value < 2 ^ w)
-    (entry : Ram.Source.State w) {placement : Nat → Ram.Word w}
-    (arena : ArenaRep placement cursor (heapLimit cursor n) heap entry)
-    (codeCapacity : (lowerCode Implementation.program Implementation.makeId).length < 2 ^ w)
-    (stackCapacity : workspaceWords cursor n < 2 ^ w) :
-    ∃ (out : Buffer .nat) (finalHeap : Heap) (steps : Nat)
-        (finalPlacement : Nat → Ram.Word w) (finishTarget : Ram.Source.State w)
-        (target : Ram.State w),
-      Implementation.make count n value heap = Part.some (.ok out, finalHeap) ∧
-      out.Contents finalHeap (resultContents count n value) ∧
-      ArenaRep finalPlacement (cursor + 1) (heapLimit cursor n) finalHeap finishTarget ∧
-      Ram.LocalCompiler.Function.runUntil (programControl Implementation.program)
-          (lowerProgram Implementation.program) Implementation.makeId.val
-          (contextSize Implementation.signatures[Implementation.makeId].params)
-          (heapLimit cursor n) (envWords placement (makeArgs count n value)) entry =
-        some ⟨target, Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-          (lowerFunc Implementation.program Implementation.makeId) (steps + 2) + 1, .halted⟩ ∧
-      Ram.LocalCompiler.Function.returnedValues 2 target =
-        valueWords finalPlacement (τ := .buffer .nat) out ∧
-      (bufferRef finalPlacement out).Rep (heapLimit cursor n)
-        (objectWords w (τ := .nat) (resultContents count n value)).toList finishTarget ∧
-      Ram.Source.State.Observes (heapLimit cursor n) 0 finishTarget target ∧
-      (∀ address ∈ Ram.heapAccesses
-        (lowerCode Implementation.program Implementation.makeId)
-        (Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-          (lowerFunc Implementation.program Implementation.makeId) (steps + 2) + 1)
-        (Ram.LocalCompiler.Function.start (programControl Implementation.program)
-          (heapLimit cursor n) (envWords placement (makeArgs count n value)) entry),
-        address.toNat < workspaceWords cursor n) ∧
-      (Ram.heapAccesses (lowerCode Implementation.program Implementation.makeId)
-        (Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-          (lowerFunc Implementation.program Implementation.makeId) (steps + 2) + 1)
-        (Ram.LocalCompiler.Function.start (programControl Implementation.program)
-          (heapLimit cursor n) (envWords placement (makeArgs count n value)) entry)).card ≤
-        workspaceWords cursor n := by
-  have arguments : EnvFits w (makeArgs count n value) := by
-    simp only [makeArgs, EnvFits.cons_nat_iff, EnvFits.empty,
-      countFits, nFits, valueFits, and_self]
-  have rooted : (makeArgs count n value).Rooted heap := by
-    simp only [makeArgs, Env.Rooted.cons_iff, Env.Rooted.empty, ValueRooted, and_self]
+The shared launch carries the same preloaded representation, scalar ranges and
+word/code capacity. The result retains actual RAM memory, returned fields and
+counted execution; input loading and output conversion remain outside it. -/
+theorem make_runUntil {w cursor : Nat} (count n value : Nat) {heap : Heap}
+    {entry : Ram.Source.State w} {placement : Nat → Ram.Word w}
+    (launch : FunctionArenaLaunch Implementation.program Implementation.makeId 1
+      (heapLimit cursor n) placement (makeArgs count n value) heap cursor entry) :
+    ∃ outcome : FunctionArenaExecution Implementation.program Implementation.makeId 1
+        (heapLimit cursor n) placement (makeArgs count n value) heap entry,
+      outcome.value.Contents outcome.heap (resultContents count n value) ∧
+      outcome.cursor = cursor + 1 ∧
+      (∀ address ∈ outcome.heapAccesses, address.toNat < workspaceWords cursor n) ∧
+      outcome.heapAccesses.card ≤ workspaceWords cursor n := by
+  have countFits : count < 2 ^ w := launch.arguments .here
+  have nFits : n < 2 ^ w := launch.arguments (.there .here)
+  have valueFits : value < 2 ^ w := launch.arguments (.there (.there .here))
   obtain ⟨finish, out, execution, contents⟩ :=
     make_total (makeArgs count n value) heap trivial
-  have ready := make_ready hw count n value heap countFits nFits valueFits
+  have ready := make_ready launch.toFunctionCapacity.positive count n value heap
+    countFits nFits valueFits
     (limit := heapLimit cursor n) (cursor := cursor) (Nat.le_refl _) execution
-  obtain ⟨steps, cost⟩ := ready.exists_cost
-  obtain ⟨finalPlacement, finishTarget, target, invocation, finalArena, agreed,
-    returned, fields, observed⟩ :=
-    cost.runUntil (fn := Implementation.makeId) hw arguments rooted entry arena
-      codeCapacity stackCapacity
-  have outFits : out.length < 2 ^ w := by
-    have length : out.length = 1 := by
-      simpa only [resultContents] using contents.size_eq.symm
-    rw [length]
-    exact Nat.one_lt_two_pow (Nat.ne_of_gt hw)
-  refine ⟨out, finish.heap, steps, finalPlacement, finishTarget, target, ?_, contents,
-    finalArena, returned, fields, finalArena.heapRep.view contents outFits, observed, ?_, ?_⟩
-  · exact Program.eval_eq_ok_iff.mpr ⟨finish, execution, rfl⟩
+  obtain ⟨outcome, resultEq, heapEq, cursorEq⟩ := ready.execute launch
+  refine ⟨outcome, ?_, cursorEq, ?_, ?_⟩
+  · simpa only [resultEq, heapEq] using contents
   · intro address member
-    exact cost.heapAccesses_below hw arguments rooted entry arena codeCapacity stackCapacity member
-  · exact cost.heapAccesses_card_le hw arguments rooted entry arena codeCapacity stackCapacity
+    exact outcome.heapAccesses_below member
+  · exact outcome.heapAccesses_card_le
 
 end Complexity.Language.Examples.Scope

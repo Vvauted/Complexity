@@ -12,6 +12,8 @@ import Examples.Language.Imports
 import Examples.Language.ImportsCompiled
 import Examples.Language.ImportsTraversalCompiled
 import Examples.Language.Linking
+import Examples.Language.OptionalBuffer
+import Examples.Language.OptionalBufferCompiled
 import Examples.Language.Remainder
 import Examples.Language.Scalar
 import Examples.Language.ScalarCompiled

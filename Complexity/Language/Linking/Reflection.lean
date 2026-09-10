@@ -106,6 +106,14 @@ private theorem of_renameCalls_aux {source target : List Signature}
       intro statement same
       cases statement <;> cases same
       exact .iteFalse test (ih _ rfl)
+  | matchNone selected _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .matchNone selected (ih _ rfl)
+  | matchSome selected _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .matchSome selected (ih _ rfl)
   | whileFalse _ ih =>
       intro statement same
       cases statement <;> cases same

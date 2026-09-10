@@ -9,7 +9,7 @@ import Lean.Elab.Tactic.Split
 import Lean.Meta.Tactic.FunInd
 
 /-!
-# Correspondence for the scalar total frontend
+# Correspondence for the buffer-free total frontend
 
 The frontend emits an executable Lean definition and the usual independently
 interpreted source body from the same checked block. This internal tactic uses
@@ -17,6 +17,9 @@ Lean's functional induction principle for the executable definition: its
 recursive hypotheses therefore follow the termination proof already checked by
 Lean. It unfolds the source action once, then composes those hypotheses and
 previously proved callee correspondences using ordinary monad laws.
+Native products and options are ordinary Lean values; case splitting uses the
+same source match equation and native match, without a second evaluator or a
+payload in the `none` case.
 
 This is not an interpreter, a termination oracle, or a native callback in the
 source program. A failed correspondence remains a failed declaration.

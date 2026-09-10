@@ -32,7 +32,7 @@ These results are retained; we do not need another execution model or backend.
 | [Factorial](../Examples/Language/Factorial.lean), [Scalar](../Examples/Language/Scalar.lean) and [Remainder](../Examples/Language/Remainder.lean) | Generated native scalar functions; ordinary equality proofs, one native termination argument for self-recursion, automatic source correspondence and total-contract conversion | Pure `while`, mutually recursive families and buffers are not supported; mathematical proofs and separate resource arguments remain author work. |
 | [Traversal](../Examples/Language/Traversal.lean) | Real read/helper/branch/write loop, native `Array.map` result and outside-buffer frame | Public guard/body/round proofs still manipulate `Control`, local tuples and nested triples. Named variables alone have not completed the loop interface. |
 | [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts preserve both actual results, including disjoint slices of one object | Routine contents/frame consequences are manually transferred between calls. This is an automation gap, not permission to assume all buffers are independent. |
-| [Source types](../Complexity/Language/Basic.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Named initialized allocation, non-escaping scoped reclamation, resource linking and actual repeated-workspace bounds | Products/sums/inductive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
+| [Structured values](../Examples/Language/OptionalBuffer.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Native products/options across imports and actual RAM returns; initialized allocation, non-escaping reclamation and repeated-workspace bounds | General sums/recursive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
 | [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner; factorial uses the shared typed execution result | Compiler cost names and traversal's loop-view/publication transport still need work. |
 | [Imported compiled traversal](../Examples/Language/ImportsTraversalCompiled.lean) | Existing behavior and resource contracts are reused without a new loop proof | Import transport is implemented. Its existence does not finish frame automation, total-function interfaces or data-dependent numerical bounds. |
 | [Splay](../Examples/Language/Splay/Sequence.lean) | One in-place recursive source, a shared mathematical contract and typed RAM results with amortized sequence costs | Mathematical tree descent and potential analysis remain author obligations. Complete container APIs and source-facing peak-space claims remain open. |
@@ -75,7 +75,7 @@ Two complementary approaches share the same contract and compilation layer:
 | Generate success/result contracts, induction rules and proof views over the existing core | Removes repeated environment, outcome and contract conversion; reuses current semantics and compiler immediately | A `Part.get` projection is normally still noncomputable. If obtaining it requires the old complete correctness proof, the difficult proof has only moved. |
 | Generate a total Lean definition and corresponding core from one supported source declaration | Ordinary recursion equations and mathematical proofs can become the primary interface; Lean checks the supplied structural/well-founded recursion | Requires a shared correspondence construction, including recursion. It is not permission to compile arbitrary Lean terms or hand-maintain two function bodies. |
 
-The second is checked for the scalar pure subset; the first is the primary proof
+The second is checked for the buffer-free scalar/product/option subset; the first is the primary proof
 route for genuinely mutable operations, not merely a temporary workaround.
 Their shared contracts carry mathematical results, actual intermediate contents,
 frames and successful termination. Generate both views from one supported
@@ -98,9 +98,10 @@ and charged. Do not select an empty heap and call this heap independence.
 
 ## M1 — Function definitions and proofs that feel like Lean
 
-**Status:** `source_program (pure)` now generates native total scalar functions,
-their checked action correspondence and total source contracts. Scalar,
-Remainder and self-recursive Factorial pass on 0v0. The supported call graph is
+**Status:** `source_program (pure)` generates native total functions over scalars
+and their products/options, checked action correspondence and total source contracts.
+Scalar, Remainder, self-recursive Factorial and OptionalBuffer's nested metadata
+helper pass on 0v0. The supported call graph is
 self-recursion plus acyclic calls; pure `while`, mutual recursion and buffers
 remain unsupported.
 
@@ -188,28 +189,29 @@ global no-aliasing or a special initial heap do not qualify.
 
 ## M3 — A language that can express structured algorithms
 
-**Status:** first-order calls, while and self-recursion work. Richer values and
-their associated programming/proof interfaces are missing.
+**Status:** first-order calls, while, self-recursion and the first structured-value
+layer are implemented. Native Lean `Prod` and `Option` values now pass through
+constructors, projections, assignment, real matching, calls, returns and imports.
+Their source contracts, word ranges, actual lowering and instruction counts use
+the same execution. Option patterns currently bind the payload by name; general
+nested patterns, sums and recursive data representations remain open.
 
-Products and tagged results are the next data-language requirements: they allow
-ordinary multi-result helpers and optional search outcomes without inventing
-sentinel words. Their field/tag encodings must work through calls, returns,
-imports, source proofs and resource transfer. A proof-local tuple used by a
-loop is not an implemented product value.
+The existing multi-field ABI concatenates product fields and places an option
+tag before its fixed payload. `none` has canonical zero padding, not a default
+buffer; only the selected `some` branch receives a payload. Copying and matching
+have actual emitted costs. Recursive rootedness preserves the existing aliasing
+and scratch-escape conditions even when borrowed views are nested in a tuple or
+option. Object cells remain scalar; this adds neither a new allocator nor a
+global inverse of the buffer encoding.
 
-Implement the first structured-value layer with native Lean `Prod` and `Option`
-as mathematical values. Reuse the existing multi-field ABI: products concatenate
-their fields, and options add a tag to a fixed payload layout. A real option
-match must expose a payload only in the `some` branch; it must not manufacture a
-default buffer. Borrowed views inside either type retain their existing aliasing
-and lifetime obligations, including the prohibition on escaping reclaimed scratch
-objects. Keep object cells scalar initially; this does not require a new allocator
-or a global inverse of the existing buffer encoding.
-
-The first complete consumer should return structured values through an imported
-call and use an optional borrowed view in its caller. Its source contract, actual
-RAM return fields and compiler-derived costs must describe that same execution.
-A source-only tuple example does not complete this layer.
+The [complete consumer](../Examples/Language/OptionalBufferCompiled.lean) imports
+a pure helper returning `Option (Nat × Nat)`, constructs a full borrowed slice,
+and returns `Nat × Option (Buffer Nat)` through another imported call. Its client
+matches that actual result, reads and increments the first cell only when present,
+and returns the structure. Ordinary array contents and frame contracts connect to
+the real RAM result, four return words and a compiler-derived instruction bound.
+The public execution theorem states the mathematical postcondition and time bound;
+physical encoding consequences are separate projections of that same result.
 
 Mutually recursive functions with different signatures and source
 `break/continue` remain intended capabilities. Their proof interfaces and real
@@ -374,8 +376,12 @@ runner result. Factorial and splay use the same `execute_le` rule; neither
 reconstructs the old runner witness tuple. Named calls accept an explicit
 result/heap-dependent continuation bound; the scalar consumer checks a
 returned-value-sensitive bound, and traversal checks actual heap/frame transport.
-Concise loop-resource interfaces, allocation-aware publication, migration of
-other consumers and problem-level composition remain unfinished.
+`FunctionArenaLaunch` and `FunctionArenaExecution` provide the corresponding
+allocation-aware result: actual final placement/cursor and complete machine memory,
+with the known call depth retained. The scoped-workspace consumer now uses this
+shared result and its actual access-set bounds instead of assembling a large
+runner tuple. Concise loop-resource interfaces, further consumer migration,
+general live-space observations and problem-level composition remain unfinished.
 
 Keep three layers distinct: mathematical behavior; resource arguments over the
 same source implementation; and a concrete backend adequacy theorem. Ordinary
@@ -558,8 +564,8 @@ contracts, named cost selection and a typed runner result. Traversal's body
 contents and frame are proved together, and its unframed loop contract reuses
 the framed one rather than repeating a loop proof. Explicit result/heap-dependent
 call bounds now use the same named interface. Remaining work includes concise
-loop-resource contracts, allocation-aware publication and migration of the
-older compiled clients. Keep improving those
+loop-resource contracts, migration of older compiled clients to the shared fixed
+or allocation-aware execution results, and general source-space observations. Keep improving those
 actual authors' proofs rather than starting another algorithm catalog.
 
 1. Preserve the checked shared contracts and terminating correspondence for
@@ -569,8 +575,8 @@ actual authors' proofs rather than starting another algorithm catalog.
    two-call/imported clients (M2). Reuse the checked allocating client and
    arena/return protocol when improving the mathematical contract interface (M4);
    a pure scalar example cannot settle these abstraction questions.
-3. Implement the shared interfaces justified by those exercises, then add the
-   required structured values and container operations. Frame automation and
+3. Preserve the checked product/option path, then build container operations and
+   the data representations justified by actual algorithms. Frame automation and
    dependent-call cost interfaces support those tasks, not substitute for them.
 4. Keep M5's publication/model boundary in each consumer; do not defer the
    meaning of a cost or space claim until after its proof is written.

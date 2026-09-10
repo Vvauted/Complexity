@@ -224,6 +224,77 @@ theorem ite_max {condition : Atom Γ .bool}
   · exact Nat.le_max_left _ _
   · exact Nat.le_max_right _ _
 
+/-- Option matching preserves the actual selected payload for a dependent
+branch bound. The `some` path pays for every copied payload field and its jump;
+the `none` path neither reads nor manufactures a payload. -/
+theorem matchOption {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    {noneBound : Nat} {someBound : Value τ → Nat}
+    (noneCost : value.eval entry.locals = none →
+      StmtCostBound program noneBranch entry noneBound)
+    (someCost : ∀ payload, value.eval entry.locals = some payload →
+      StmtCostBound program someBranch (Complexity.Language.State.cons payload entry)
+        (someBound payload))
+    (noneBounded : value.eval entry.locals = none → noneBound + 2 ≤ bound)
+    (someBounded : ∀ payload, value.eval entry.locals = some payload →
+      2 * fieldCount τ + someBound payload + 3 ≤ bound) :
+    StmtCostBound program (.matchOption value noneBranch someBranch) entry bound := by
+  intro w depth finish control execution steps cost
+  cases cost with
+  | @matchNone Γ result τ depth value noneBranch someBranch entry finish control
+      selected body steps bodyCost =>
+      exact (Nat.add_le_add_right (noneCost selected body bodyCost) 2).trans
+        (noneBounded selected)
+  | @matchSome Γ result τ depth value noneBranch someBranch entry payload finish control
+      selected payloadFits body steps bodyCost =>
+      exact (Nat.add_le_add_right
+        (Nat.add_le_add_left (someCost payload selected body bodyCost) _) 3).trans
+          (someBounded payload selected)
+
+/-- A known absent value requires a bound only for the `none` branch. -/
+theorem match_none {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    (selected : value.eval entry.locals = none)
+    (body : StmtCostBound program noneBranch entry bound) :
+    StmtCostBound program (.matchOption value noneBranch someBranch) entry (bound + 2) := by
+  intro w depth finish control execution steps cost
+  cases cost with
+  | matchNone bodyCost => exact Nat.add_le_add_right (body _ bodyCost) 2
+  | matchSome bodyCost => simp_all
+
+/-- A known present value binds its actual payload and charges its field copies. -/
+theorem match_some {τ : Ty} {value : Atom Γ (.option τ)} {payload : Value τ}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    (selected : value.eval entry.locals = some payload)
+    (body : StmtCostBound program someBranch
+      (Complexity.Language.State.cons payload entry) bound) :
+    StmtCostBound program (.matchOption value noneBranch someBranch) entry
+      (2 * fieldCount τ + bound + 3) := by
+  intro w depth finish control execution steps cost
+  cases cost with
+  | matchNone bodyCost => simp_all
+  | @matchSome Γ result τ depth value noneBranch someBranch entry actual finish control
+      same payloadFits branch steps bodyCost =>
+      cases Option.some.inj (selected.symm.trans same)
+      exact Nat.add_le_add_right (Nat.add_le_add_left (body branch bodyCost) _) 3
+
+/-- A uniform match bound retains the selection equation in both branch proofs. -/
+theorem match_max {τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    {noneBound someBound : Nat}
+    (noneCost : value.eval entry.locals = none →
+      StmtCostBound program noneBranch entry noneBound)
+    (someCost : ∀ payload, value.eval entry.locals = some payload →
+      StmtCostBound program someBranch (Complexity.Language.State.cons payload entry) someBound) :
+    StmtCostBound program (.matchOption value noneBranch someBranch) entry
+      (max (noneBound + 2) (2 * fieldCount τ + someBound + 3)) :=
+  matchOption (someBound := fun _ => someBound) noneCost someCost
+    (fun _ => Nat.le_max_left _ _) (fun _ _ => Nat.le_max_right _ _)
+
 /-- Reuse a property of an actual normal first execution to bound the second
 statement at that execution's final state. The property can come from an existing
 source specification; no first-statement termination or repeated contents proof

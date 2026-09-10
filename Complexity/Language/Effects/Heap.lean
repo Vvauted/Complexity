@@ -41,6 +41,7 @@ only their continuation; execution framing additionally checks all callee bodies
   | .call _ _ continuation => continuation.NoCellWrites
   | .seq first second => first.NoCellWrites ∧ second.NoCellWrites
   | .ite _ yes no => yes.NoCellWrites ∧ no.NoCellWrites
+  | .matchOption _ noneBranch someBranch => noneBranch.NoCellWrites ∧ someBranch.NoCellWrites
   | .while guard body => guard.NoCellWrites ∧ body.NoCellWrites
 
 end Stmt
@@ -86,6 +87,8 @@ theorem heap_prefix {signatures : List Signature} {program : Program signatures}
   | seqFault head ih => intro unchanged; exact ih unchanged.1
   | iteTrue test body ih => intro unchanged; exact ih unchanged.1
   | iteFalse test body ih => intro unchanged; exact ih unchanged.2
+  | matchNone selected body ih => intro unchanged; exact ih unchanged.1
+  | matchSome selected body ih => intro unchanged; exact ih unchanged.2
   | whileFalse test ih => intro unchanged; exact ih unchanged.1
   | whileTrue test iteration rest ihTest ihIteration ihRest =>
       intro unchanged

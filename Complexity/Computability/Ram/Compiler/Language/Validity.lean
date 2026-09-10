@@ -40,9 +40,8 @@ theorem lowerPrim_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
     (dst : Reg) (prim : Prim Γ τ) : Compiler.CallsValid program (lowerPrim layout dst prim) := by
   cases τ with
   | nat | bool | unit => trivial
-  | buffer kind =>
-      cases prim with
-      | atom atom => exact copyFields_callsValid program dst (atomExprs layout atom)
+  | buffer kind | prod left right | option τ =>
+      exact copyFields_callsValid program dst (primExprs layout prim)
 
 /-- Updating an existing local introduces no function call. -/
 theorem lowerAssign_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
@@ -89,6 +88,8 @@ theorem lowerStmtCore_callsValid {signatures : List Signature}
       exact ⟨ihFirst _ _ _ _, trivial, ihSecond _ _ _ _⟩
   | ite condition yes no ihYes ihNo =>
       exact ⟨ihYes _ _ _ _, ihNo _ _ _ _⟩
+  | matchOption value noneBranch someBranch ihNone ihSome =>
+      exact ⟨⟨copyFields_callsValid _ _ _, ihSome _ _ _ _⟩, ihNone _ _ _ _⟩
   | «while» guard body ihGuard ihBody =>
       exact ⟨trivial, trivial, ihGuard _ _ _ _, ⟨ihBody _ _ _ _, trivial, trivial⟩, trivial⟩
   | ret value => exact ⟨lowerReturn_callsValid _ _ _ _, trivial⟩

@@ -112,6 +112,26 @@ inductive RealizedExec {signatures : List Signature}
       (test : condition.eval entry.locals = false)
       (body : RealizedExec program w depth no entry finish control) :
       RealizedExec program w depth (.ite condition yes no) entry finish control
+  | matchNone {Γ : List Ty} {result τ : Ty} {depth : Nat}
+      {value : Atom Γ (.option τ)}
+      {noneBranch : Complexity.Language.Stmt signatures Γ result}
+      {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      (selected : value.eval entry.locals = none)
+      (body : RealizedExec program w depth noneBranch entry finish control) :
+      RealizedExec program w depth (.matchOption value noneBranch someBranch) entry finish control
+  | matchSome {Γ : List Ty} {result τ : Ty} {depth : Nat}
+      {value : Atom Γ (.option τ)}
+      {noneBranch : Complexity.Language.Stmt signatures Γ result}
+      {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+      {entry : Complexity.Language.State Γ} {payload : Value τ}
+      {finish : Complexity.Language.State (τ :: Γ)} {control : Control result}
+      (selected : value.eval entry.locals = some payload)
+      (payloadFits : ValueFits w (τ := τ) payload)
+      (body : RealizedExec program w depth someBranch
+        (Complexity.Language.State.cons payload entry) finish control) :
+      RealizedExec program w depth (.matchOption value noneBranch someBranch)
+        entry finish.tail control
   | whileFalse {Γ : List Ty} {result : Ty} {depth : Nat}
       {guard : Complexity.Language.Stmt signatures Γ .bool}
       {body : Complexity.Language.Stmt signatures Γ result}
@@ -181,6 +201,8 @@ theorem erase (execution : RealizedExec program w depth stmt entry finish contro
   | seqReturn head ih => exact .seqReturn ih
   | iteTrue test body ih => exact .iteTrue test ih
   | iteFalse test body ih => exact .iteFalse test ih
+  | matchNone selected body ih => exact .matchNone selected ih
+  | matchSome selected payloadFits body ih => exact .matchSome selected ih
   | whileFalse test ih => exact .whileFalse ih
   | whileTrue test iteration rest ihTest ihIteration ihRest =>
       exact .whileTrue ihTest ihIteration ihRest
@@ -209,6 +231,8 @@ theorem outcome_fits (execution : RealizedExec program w depth stmt entry finish
   | seqReturn head ih => exact ih
   | iteTrue test body ih => exact ih
   | iteFalse test body ih => exact ih
+  | matchNone selected body ih => exact ih
+  | matchSome selected payloadFits body ih => exact ih
   | whileFalse => trivial
   | whileTrue test iteration rest ihTest ihIteration ihRest => exact ihRest
   | whileReturn test iteration ihTest ihIteration => exact ihIteration
@@ -239,6 +263,8 @@ theorem mono_depth (execution : RealizedExec program w depth stmt entry finish c
   | seqReturn head ih => exact .seqReturn (ih capacity)
   | iteTrue test body ih => exact .iteTrue test (ih capacity)
   | iteFalse test body ih => exact .iteFalse test (ih capacity)
+  | matchNone selected body ih => exact .matchNone selected (ih capacity)
+  | matchSome selected payloadFits body ih => exact .matchSome selected payloadFits (ih capacity)
   | whileFalse test ih => exact .whileFalse (ih capacity)
   | whileTrue test iteration rest ihTest ihIteration ihRest =>
       exact .whileTrue (ihTest capacity) (ihIteration capacity) (ihRest capacity)
@@ -506,6 +532,39 @@ theorem slice_of_bound {kind : CellTy} {buffer : Atom Γ (.buffer kind)}
         | iteFalse truth body => cases hcondition.symm.trans truth
       · rintro ⟨finish, control, execution, post⟩
         exact ⟨finish, control, .iteTrue hcondition execution, post⟩
+
+/-- Matching an option requires only the selected branch. The payload range is
+checked on its actual value; leaving the branch discards only its local binder. -/
+@[simp] theorem matchOption_iff {τ : Ty} (value : Atom Γ (.option τ))
+    (noneBranch : Complexity.Language.Stmt signatures Γ result)
+    (someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result) :
+    RealizationWP program w depth (.matchOption value noneBranch someBranch)
+        normal returned entry ↔
+      match value.eval entry.locals with
+      | none => RealizationWP program w depth noneBranch normal returned entry
+      | some payload => ValueFits w (τ := τ) payload ∧
+          RealizationWP program w depth someBranch (fun finish => normal finish.tail)
+            (fun result finish => returned result finish.tail)
+            (Complexity.Language.State.cons payload entry) := by
+  cases selected : value.eval entry.locals with
+  | none =>
+      constructor
+      · rintro ⟨finish, control, execution, post⟩
+        cases execution with
+        | matchNone _ body => exact ⟨finish, control, body, post⟩
+        | matchSome same _ body => cases selected.symm.trans same
+      · rintro ⟨finish, control, execution, post⟩
+        exact ⟨finish, control, .matchNone selected execution, post⟩
+  | some payload =>
+      constructor
+      · rintro ⟨finish, control, execution, post⟩
+        cases execution with
+        | matchNone same body => cases selected.symm.trans same
+        | matchSome same fits body =>
+            cases Option.some.inj (selected.symm.trans same)
+            exact ⟨fits, _, control, body, post⟩
+      · rintro ⟨fits, finish, control, execution, post⟩
+        exact ⟨finish.tail, control, .matchSome selected fits execution, post⟩
 
 /-- Unfold one actual loop round. The guard must return a Boolean, and its final
 state feeds either the exit postcondition or the body. A normal body continues

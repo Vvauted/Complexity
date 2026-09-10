@@ -99,6 +99,20 @@ theorem deterministic {signatures : List Signature}
       cases second with
       | iteTrue cost' => simp_all
       | iteFalse cost' => rw [ih cost']
+  | matchNone cost ih =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | matchNone cost' => rw [ih cost']
+      | matchSome cost' => simp_all
+  | @matchSome Γ result τ depth value noneBranch someBranch entry payload finish control
+      selected payloadFits body steps cost ih =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | matchNone cost' => simp_all
+      | @matchSome _ _ _ _ _ _ _ _ payload' _ _ selected' _ _ _ cost' =>
+          have same : payload = payload' := Option.some.inj (selected.symm.trans selected')
+          subst payload'
+          rw [ih cost']
   | whileFalse guardCost ihGuard =>
       intro w' depth' finish' control' execution' steps' second
       cases second with

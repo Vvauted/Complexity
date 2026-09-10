@@ -46,6 +46,10 @@ A loop evaluates its Boolean guard block anew before every iteration. The guard'
 returned Boolean is local to that block; its actual final locals and heap feed
 the body or the false exit. Body returns leave the enclosing loop immediately.
 Guard fallthrough is a missing-return fault, not a false condition.
+
+Option matching selects the actual constructor. Only a `some` branch binds a
+payload, and leaving that branch drops only this binding while preserving its
+outer-local updates, heap and control outcome.
 -/
 
 namespace Complexity.Language
@@ -213,6 +217,21 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
       (test : condition.eval entry.locals = false)
       (body : Exec program no entry finish control) :
       Exec program (.ite condition yes no) entry finish control
+  | matchNone {Γ : List Ty} {result τ : Ty} {value : Atom Γ (.option τ)}
+      {noneBranch : Stmt signatures Γ result}
+      {someBranch : Stmt signatures (τ :: Γ) result}
+      {entry finish : State Γ} {control : Control result}
+      (selected : value.eval entry.locals = none)
+      (body : Exec program noneBranch entry finish control) :
+      Exec program (.matchOption value noneBranch someBranch) entry finish control
+  | matchSome {Γ : List Ty} {result τ : Ty} {value : Atom Γ (.option τ)}
+      {noneBranch : Stmt signatures Γ result}
+      {someBranch : Stmt signatures (τ :: Γ) result}
+      {entry : State Γ} {payload : Value τ} {finish : State (τ :: Γ)}
+      {control : Control result}
+      (selected : value.eval entry.locals = some payload)
+      (body : Exec program someBranch (State.cons payload entry) finish control) :
+      Exec program (.matchOption value noneBranch someBranch) entry finish.tail control
   | whileFalse {Γ : List Ty} {result : Ty} {guard : Stmt signatures Γ .bool}
       {body : Stmt signatures Γ result} {entry finish : State Γ}
       (test : Exec program guard entry finish (.returned false)) :
@@ -327,6 +346,11 @@ theorem locals_eq {signatures : List Signature} {program : Program signatures}
   | seqFault head ih => intro unchanged; exact ih unchanged.1
   | iteTrue test body ih => intro unchanged; exact ih unchanged.1
   | iteFalse test body ih => intro unchanged; exact ih unchanged.2
+  | matchNone selected body ih => intro unchanged; exact ih unchanged.1
+  | matchSome selected body ih =>
+      intro unchanged
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
+        congrArg Env.tail (ih unchanged.2)
   | whileFalse test ih => intro unchanged; exact ih unchanged.1
   | whileTrue test iteration rest ihTest ihIteration ihRest =>
       intro unchanged
@@ -451,6 +475,17 @@ theorem deterministic {signatures : List Signature} {program : Program signature
       cases second with
       | iteTrue test' body' => simp_all
       | iteFalse test' body' => exact ih body'
+  | matchNone selected body ih =>
+      cases second with
+      | matchNone selected' body' => exact ih body'
+      | matchSome selected' body' => cases selected.symm.trans selected'
+  | matchSome selected body ih =>
+      cases second with
+      | matchNone selected' body' => cases selected.symm.trans selected'
+      | matchSome selected' body' =>
+          cases Option.some.inj (selected.symm.trans selected')
+          obtain ⟨rfl, rfl⟩ := ih body'
+          exact ⟨rfl, rfl⟩
   | whileFalse test ih =>
       cases second with
       | whileFalse test' =>

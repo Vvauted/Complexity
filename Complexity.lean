@@ -94,6 +94,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Call
 import Complexity.Computability.Ram.Compiler.Language.Arena.Execution
 import Complexity.Computability.Ram.Compiler.Language.Arena.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.Arena.Frame
+import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.Arena.Import
 import Complexity.Computability.Ram.Compiler.Language.Arena.Linking
 import Complexity.Computability.Ram.Compiler.Language.Arena.Lowering

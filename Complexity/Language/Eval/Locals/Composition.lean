@@ -77,6 +77,37 @@ theorem observe_ite (condition : Atom Γ .bool) (yes no : Stmt signatures Γ res
   · simp only [observe, action, eval_ite, if_pos test]
   · simp only [observe, action, eval_ite, if_neg test]
 
+/-- Match an actual optional value in ordinary local coordinates. The `some`
+branch receives its payload alongside the outer locals; every exit drops only
+that payload binding and preserves the actual outer locals, heap and control. -/
+theorem observe_matchOption {τ : Ty} (value : Atom Γ (.option τ))
+    (noneBranch : Stmt signatures Γ result)
+    (someBranch : Stmt signatures (τ :: Γ) result) (locals : Locals) :
+    observe view (.matchOption value noneBranch someBranch) program locals =
+      (match value.eval (view.symm locals) with
+      | none => observe view noneBranch program locals
+      | some payload => do
+          let (control, scopedValues) ←
+            observe (Env.equivProd.trans (Equiv.prodCongr (Equiv.refl _) view)) someBranch
+              program (payload, locals)
+          pure (control, scopedValues.2)) := by
+  funext heap
+  cases selected : value.eval (view.symm locals) with
+  | none =>
+      simp only [observe, action, eval_matchOption, selected]
+  | some payload =>
+      simp only [observe, action, eval_matchOption, selected, Prod.swap,
+        Bind.bind, Pure.pure, StateT.bind,
+        Equiv.trans_apply, Equiv.symm_trans_apply, Equiv.prodCongr_apply,
+        Equiv.prodCongr_symm,
+        Env.equivProd_apply, Env.equivProd_symm_apply, State.cons, State.tail,
+        ← Part.bind_some_eq_map, Part.bind_assoc, Part.bind_some]
+      apply congrArg ((someBranch.eval program
+        ⟨Env.cons payload (view.symm locals), heap⟩).bind)
+      funext outcome
+      rcases outcome with ⟨⟨scopedLocals, finalHeap⟩, control⟩
+      rfl
+
 /-- A scoped binding is an ordinary value paired with the outer locals. On
 every exit, only that binding is dropped from the actual final local values. -/
 theorem observe_letPrim {τ : Ty} (value : Prim Γ τ)

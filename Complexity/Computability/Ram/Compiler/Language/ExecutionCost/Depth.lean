@@ -51,6 +51,12 @@ theorem realized_at_steps {signatures : List Signature}
       exact .iteTrue test (ih.mono_depth (by omega))
   | @iteFalse Γ result depth condition yes no entry finish control test body steps _ ih =>
       exact .iteFalse test (ih.mono_depth (by omega))
+  | @matchNone Γ result τ depth value noneBranch someBranch entry finish control
+      selected body steps _ ih =>
+      exact .matchNone selected (ih.mono_depth (by omega))
+  | @matchSome Γ result τ depth value noneBranch someBranch entry payload finish control
+      selected payloadFits body steps _ ih =>
+      exact .matchSome selected payloadFits (ih.mono_depth (by omega))
   | whileFalse _ ih => exact .whileFalse (ih.mono_depth (by omega))
   | whileTrue _ _ _ ihGuard ihBody ihRest =>
       exact .whileTrue (ihGuard.mono_depth (by omega)) (ihBody.mono_depth (by omega))
