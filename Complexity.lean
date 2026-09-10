@@ -8,6 +8,7 @@ import Complexity.Analysis.Asymptotics.Logarithm
 import Complexity.Analysis.Asymptotics.Polynomial
 import Complexity.Analysis.Asymptotics.Sum
 import Complexity.Analysis.Asymptotics.Traversal
+import Complexity.Analysis.Log
 import Complexity.Computability.Ram.Array.Basic
 import Complexity.Computability.Ram.Array.BinaryInsertion
 import Complexity.Computability.Ram.Array.Contents
@@ -125,7 +126,9 @@ import Complexity.Computability.Ram.Compiler.Language.Effects
 import Complexity.Computability.Ram.Compiler.Language.Encoding
 import Complexity.Computability.Ram.Compiler.Language.Execution
 import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
+import Complexity.Computability.Ram.Compiler.Language.ExecutionCost.Depth
 import Complexity.Computability.Ram.Compiler.Language.Heap
+import Complexity.Computability.Ram.Compiler.Language.Heap.Observation
 import Complexity.Computability.Ram.Compiler.Language.HeapOperation
 import Complexity.Computability.Ram.Compiler.Language.Layout
 import Complexity.Computability.Ram.Compiler.Language.Linking.ExecutionCost
@@ -138,6 +141,7 @@ import Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation
 import Complexity.Computability.Ram.Compiler.Language.MeasuredValues
 import Complexity.Computability.Ram.Compiler.Language.Placement
 import Complexity.Computability.Ram.Compiler.Language.Realization
+import Complexity.Computability.Ram.Compiler.Language.Realization.Finite
 import Complexity.Computability.Ram.Compiler.Language.Realization.Loop
 import Complexity.Computability.Ram.Compiler.Language.Scalar
 import Complexity.Computability.Ram.Compiler.Language.Simulation
@@ -315,9 +319,11 @@ import Complexity.Data.List.Fold
 import Complexity.Data.List.InsertIdx
 import Complexity.Data.List.StateM
 import Complexity.Data.Nat.Log
+import Complexity.Data.Tree.Basic
 import Complexity.Language.Basic
 import Complexity.Language.Effects
 import Complexity.Language.Effects.Heap
+import Complexity.Language.Eval.Attributes
 import Complexity.Language.Eval.Basic
 import Complexity.Language.Eval.Composition
 import Complexity.Language.Eval.Continuation
@@ -328,12 +334,16 @@ import Complexity.Language.Eval.Locals.Continuation
 import Complexity.Language.Eval.Locals.Effects
 import Complexity.Language.Eval.Locals.Verification
 import Complexity.Language.Eval.Loop
+import Complexity.Language.Eval.Simp
 import Complexity.Language.Eval.Verification
 import Complexity.Language.Heap
 import Complexity.Language.Heap.Allocation
+import Complexity.Language.Heap.Frame
 import Complexity.Language.Heap.Prefix
 import Complexity.Language.Heap.Restriction
 import Complexity.Language.Heap.Shape
+import Complexity.Language.Heap.Tree
+import Complexity.Language.Heap.Tree.Update
 import Complexity.Language.Linking.Basic
 import Complexity.Language.Linking.Eval
 import Complexity.Language.Linking.Extension

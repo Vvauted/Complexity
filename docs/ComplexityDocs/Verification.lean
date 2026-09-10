@@ -62,6 +62,16 @@ finite fault establish successful return. Use `FunctionTotal` or a strict native
 triple for successful source termination; a host `termination_by` on action
 construction alone is not that proof.
 
+For effectful equations, the dedicated
+[`source_eval` simp set](##Complexity.Language.Eval.Simp) removes transformer
+administration after opening one generated `P.f_eq`. Supply actual read, write
+and recursive-call equations to `simp [source_eval, ...]`; recursive function
+bodies remain opaque. This preserves the real intermediate heaps and does not
+turn faults into success. The [splay proof](##Examples.Language.Splay.Correctness)
+combines this interface with a mathematical `Tree`, subtree-local memory frames
+and one well-founded induction. Its representation supplies access bounds;
+no proposed running time or RAM capacity is needed for source correctness.
+
 Mutable bindings use ordinary Lean `do` in the generated equation. `x := value`
 updates an existing local, and `x ← action` rebinds it to the result of a real
 source call, read, slice or allocation. Branch joins retain outer updates;

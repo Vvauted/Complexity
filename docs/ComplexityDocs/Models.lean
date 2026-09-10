@@ -145,7 +145,7 @@ actual runner count, including empty output. Its named `Named.make` uses
 with `mvcgen`, without source capacity or time premises. Mathematical ranges
 and loop/recursion invariants remain author work, not automatically inferred
 by the generic register/placement proofs. Allocation-aware resource transport
-through imports, the full library, all 50 Examples, the routine source-frame
+through imports, the full library, all Examples, the routine source-frame
 consumer and the complete manual build are checked on 0v0.
 
 ## Reclaim scoped temporary storage

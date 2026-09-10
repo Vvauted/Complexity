@@ -35,6 +35,7 @@ These results are retained; we do not need another execution model or backend.
 | [Source types](../Complexity/Language/Basic.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Named initialized allocation, non-escaping scoped reclamation, resource linking and actual repeated-workspace bounds | Products/sums/inductive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
 | [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner | Authors still see compiler cost names, loop-view transport and large representation/ABI-shaped publication theorems. |
 | [Imported compiled traversal](../Examples/Language/ImportsTraversalCompiled.lean) | Existing behavior and resource contracts are reused without a new loop proof | Import transport is implemented. Its existence does not finish frame automation, total-function interfaces or data-dependent numerical bounds. |
+| [Splay](../Examples/Language/Splay/Sequence.lean) | One in-place recursive source, mathematical tree correctness and actual RAM amortized sequence costs | Finite callee tables, cost-entry packing and the final runner witness still need manual transport. |
 
 There are three different kinds of work: remove routine proof bookkeeping;
 design a better function/data abstraction; add genuinely missing language and
@@ -126,7 +127,7 @@ single-body, single-termination-argument construction while improving the interf
 one native `termination_by`/`decreasing_by` argument. Generated correspondence
 and total-contract conversion remove manual `ExceptT/Part/Heap/Env` conversion
 and a second implementation induction. The generic RAM chain and separate
-resource conditions remain; all 50 Examples and both aggregate library/Examples
+resource conditions remain; all Examples and both aggregate library/Examples
 builds pass. Native Lean execution and RAM instruction cost are distinct runtimes.
 
 **Reconsider when:** the new API only shortens the final theorem while requiring
@@ -391,6 +392,105 @@ model must make the quantified statement meaningful. The current factorial's
 linear word-step bound in numeric `n` is useful evidence, not a claim of linear
 bit complexity or arbitrary-precision multiplication in constant time.
 
+## Splay proof exercise — checked
+
+Use one actual `source_program` splay implementation to challenge the interfaces
+above. The selected representation uses three borrowed arrays for keys and left
+and right child IDs, with zero denoting an empty child. Its recursive two-level
+descent must implement real zig, zig-zig and zig-zag steps, including unsuccessful
+searches. Reuse mathlib's `Tree` as the mathematical view; do not maintain an
+independent host splay implementation or assign it an unrelated cost model.
+
+Completion requires all of the following, not merely a verified rotation:
+
+- [x] Prove successful source termination, preservation of inorder keys and BST
+  order, valid unique node IDs, and the accessed/last-visited node at the root.
+  Preserve the key array, unrelated nodes and the actual surrounding heap.
+- [x] Connect the same implementation to the existing RAM realization and
+  compiler-derived costs. Include recursive calls, field reads/writes and
+  branches; any rotation-count abstraction needs a proved instruction bound.
+- [x] Prove the logarithmic access lemma with a real logarithmic tree potential,
+  then a sequence bound retaining initial potential. From an arbitrary initial
+  tree, do not claim an unconditional `O(m log n)` total bound or worst-case
+  logarithmic time for one access. Word capacity and the preloaded-input boundary
+  remain explicit in the RAM claim.
+- [x] Shorten the actual author proof through shared rules, check it on 0v0 and
+  keep the remaining mathematical obligations visible. Do not count moving an
+  equally long per-example adapter behind a short theorem as an improvement.
+
+The complete [source correctness proof](../Examples/Language/Splay/Correctness.lean)
+and its callable total contract now check on 0v0, including the shortened
+recursive branches. The proof uses one induction on the mathematical input tree,
+with no time or capacity premise. Shared `source_eval` simplification replaces
+the old per-example operational branch wrappers; recursive calls stay opaque
+until their actual execution equations are supplied.
+
+The complete [instruction bound](../Examples/Language/Splay/Cost.lean) and
+[halted RAM invocation](../Examples/Language/Splay/Compiled.lean) now check too.
+Their fixed coefficient comes from the compiler and covers the actual recursive
+calls, field operations, branches and outer call/return/halt overhead. Shared
+finite-word realization handles the copy/compare/read/write/call fragment.
+The represented-tree interface derives all three column-index bounds from its
+successful reads; clients need not carry another copy of those access proofs.
+The [consecutive-call theorem](../Examples/Language/Splay/Sequence.lean) constructs
+actual halted runner results, carries their complete physical memory and I/O
+into the next call, and supplies the per-access costs internally. For `m`
+accesses to an initial `n`-node tree, its total word-instruction bound is
+`K * (m * (3 * log₂(n + 1) + 2) + n * log₂(n + 1))`, with a fixed
+compiler-derived `K`. A stronger theorem retains both endpoint potentials.
+Query supply, host scheduling and initial loading are outside the preloaded-call
+boundary; this is not a separately compiled batch-query driver.
+The library, Examples and manual build together on 0v0 with
+`lake build Complexity Examples ComplexityDocs`; the final source-correctness,
+single-run and sequence theorems use only Lean's standard axioms.
+
+The initial implementation review identifies these focused interface tasks;
+revise them against the actual splay proof rather than treating them as a new
+general-purpose framework project:
+
+- [x] **Subtree-local frames.** Shared cell-local frames now preserve cells
+  outside a subtree's node footprint *inside the same buffers*. Tree replacement
+  rules compose the real recursive update and parent relink; rotation rules lift
+  the actual stores once. Disjoint slices of one object remain supported.
+- [x] **Real, final-state-sensitive potential accounting.** The shared finite-sum
+  telescoping theorem now supports ordered cancellative additive monoids,
+  including `ℝ`, and the tree access lemma retains logarithmic endpoint potentials.
+  The actual RAM invocation theorem supplies the rotation-to-instruction bound
+  for the same result, and the sequence theorem constructs the real call history.
+  Source correctness retains no time-budget premise.
+- [x] **Read facts and dependent cost-family selection.** The cost pass keeps
+  successful read equations, selects the actual callee before assigning a
+  uniform bound and preserves the arithmetic presentation expected by existing
+  consumers. These are shared elaboration fixes, not a new evaluator or pricing
+  table. Ordinary compiler-generated index bounds should reuse `Fin.isLt`
+  rather than search a large algorithm/ABI context again.
+- [ ] **Keep callee results and heap facts in cost automation.** The current
+  structural pass now retains successful read equations even for a uniform
+  numeric continuation bound; existing traversal and factorial consumers still
+  check. Splay needs those prefix reads to identify its recursive subtree, but
+  its remaining rotation bound is uniform: do not repeat final-tree correctness
+  to price that tail. When a bound genuinely depends on returned data or state,
+  expose the existing dependent `read`, `seq_of_post` and `call` rules through
+  the same named interface.
+- [ ] **Named recursive and cost contracts.** The generated total-contract
+  equivalence now handles splay's ordinary source parameters. Its cost proof
+  still manually packs the argument environment and constructs a finite table
+  from the recursive and rotation bounds. Generate this transport from the
+  declaration and supplied contracts, retaining the author's subtree descent
+  and mathematical bound rather than re-proving functional correctness.
+- [ ] **Publish the same execution without ABI-shaped boilerplate.** The shared
+  finite-fragment rule now reuses source termination and instruction bounds
+  without another tree induction. The final invocation still requires a manual
+  witness-tuple wrapper. Generate that transport from the existing contracts,
+  preserving actual returned memory and explicit ranges/capacity. A time-derived
+  stack capacity is conservative, not a tight stack-space theorem.
+
+The access lemma, BST invariant and genuine non-aliasing/descent arguments are
+mathematical obligations, not defects to hide with automation. The standard
+analysis follows [Sleator and Tarjan](https://www.cs.cmu.edu/~sleator/papers/self-adjusting.pdf);
+the [AFP development](https://isa-afp.org/entries/Amortized_Complexity.html)
+provides a verified reference, not a dependency or a proof of our RAM costs.
+
 ## Backend and connection-layer work remains active
 
 Maintain reusable register/state/frame, call/return, control-flow and measured
@@ -416,6 +516,12 @@ encapsulation are not consequences of those theorems. The first bottom-up alloca
 Allocation, linking, scalar pure correspondence, Examples and the complete manual
 now build together. The priorities below extend the supported fragments toward
 the longer-term proof-experience goals.
+
+The complete splay path above is now checked. Its shared frames and source
+simplification remove the old per-example operational branch wrappers; its
+full cost proof still exposes finite-callee and environment transport. The next
+interface work should remove those concrete author obligations and improve the
+existing mutable clients, rather than start another example catalog.
 
 1. Preserve the checked shared contracts and terminating correspondence for
    Factorial, Scalar and Remainder (M1), then address the unsupported pure

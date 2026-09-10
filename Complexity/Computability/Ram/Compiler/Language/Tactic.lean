@@ -29,6 +29,8 @@ and otherwise uses a maximum for both branches. A call can omit its source
 contract only when the continuation needs no facts about the callee's result
 or final heap. Even a uniform numeric bound may need those facts to justify a
 later call's precondition. For result-dependent bounds use `StmtCostBound.call` directly.
+Reads retain their actual successful read equations, so mathematical contents
+can identify values used in a branch or a later callee's precondition.
 
 `ram_source_realize_step` and `ram_source_cost_step` run the same structural
 passes on statement-level goals, without introducing a function contract or
@@ -246,8 +248,30 @@ private def inferLocalBound : TacticM Unit := withMainContext do
 inference by the continuation proof. These parameters are not ordinary goals
 that an unrelated local natural number may solve. All proposition obligations,
 other data goals and pre-existing sibling goals remain visible. -/
-private def applyCostRule (rule : TSyntax `term) : TacticM Unit :=
+private def applyCostRule (rule : TSyntax `term) (normalizeCallBound := false) : TacticM Unit :=
   evalApplyLikeTactic (fun goal proof => do
+    let proof ← if normalizeCallBound then do
+      -- A selected cost family can be constant in the actual arguments even
+      -- when its unreduced application mentions values introduced by a read.
+      -- This fallback removes that artificial dependency only after ordinary
+      -- application fails, preserving existing certificates' presentation.
+      let type ← Meta.transform (← inferType proof) (pre := fun expression => do
+        if expression.isAppOfArity ``Ram.LanguageCompiler.callCost 4 then
+          let arguments := expression.getAppArgs
+          let reduced ← whnf arguments[3]!
+          let reduced := match reduced.rawNatLit? with
+            | some value => mkNatLit value
+            | none => reduced
+          let bodyBound ← Meta.transform reduced (post := fun expression => do
+            -- Keep the standard addition presentation (`Nat.add_eq`) expected
+            -- by arithmetic tactics and existing cost consumers.
+            if expression.isAppOfArity ``Nat.add 2 then
+              return .done (← mkAppM ``HAdd.hAdd expression.getAppArgs)
+            return .done expression)
+          return .done (mkAppN expression.getAppFn (arguments.set! 3 bodyBound))
+        return .continue)
+      mkExpectedTypeHint proof type
+    else pure proof
     let generated ← goal.apply proof
     generated.filterM fun pending => pending.withContext do
       let type ← whnf (← pending.getType)
@@ -261,6 +285,7 @@ private def costBranch : TacticM Unit := do
     applyCostRule ⟨(mkIdent rule).raw⟩
     focusAndDone do
       normalizeValues
+      evalTactic (← `(tactic| all_goals simp_all only [Except.ok.injEq]))
       evalTactic (← `(tactic| all_goals first | assumption | (norm_num; done) | omega))
   Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtCostBound.ite_true) fun _ => do
     Tactic.tryCatchRestore (known ``Ram.LanguageCompiler.StmtCostBound.ite_false) fun _ => do
@@ -291,7 +316,7 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
         else if statement.isAppOf ``Complexity.Language.Stmt.letPrim then
           applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.letPrim))
         else if statement.isAppOf ``Complexity.Language.Stmt.read then
-          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.read_uniform))
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.read_of_success))
         else if statement.isAppOf ``Complexity.Language.Stmt.write then
           applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.write))
         else if statement.isAppOf ``Complexity.Language.Stmt.slice then
@@ -308,7 +333,12 @@ private partial def cost (callee : Option (TSyntax `term)) : TacticM Unit := do
         else if statement.isAppOf ``Complexity.Language.Stmt.call then
           match callee with
           | some certificate =>
-              applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.call_uniform $certificate))
+              Tactic.tryCatchRestore
+                (applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.call_uniform $certificate)))
+                fun _ => do
+                  let fn ← Term.exprToSyntax statement.getAppArgs[3]!
+                  applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.call_uniform
+                    (fn := $fn) $certificate)) (normalizeCallBound := true)
           | none =>
               normalizeValues
               return

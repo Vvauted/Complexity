@@ -13,7 +13,10 @@ The potential inequalities below are arithmetic tools for summing costs already
 justified by execution or contracts. They do not themselves certify machine
 execution or assign costs to source operations. Initial potential is part of the
 budget; final potential can be kept for a later phase. Neither theorem requires
-the potential to be monotone, and both include the empty sequence.
+the potential to be monotone, and both include the empty sequence. Telescoping
+works in any ordered cancellative additive commutative monoid, so real-valued
+logarithmic potentials and natural instruction counts cast to the reals use
+the same theorem as natural-valued credits.
 
 General summation and irregular traversal counting are already upstream:
 
@@ -33,10 +36,12 @@ namespace Finset
 
 open Finset
 
-/-- Sum local amortized bounds without natural subtraction. The final potential
-remains available as credit for subsequent work. -/
+/-- Sum local amortized bounds without subtraction. The final potential remains
+available as credit for subsequent work. No sign or monotonicity assumption on
+the potential is needed; nonnegativity matters only when discarding final credit. -/
 theorem sum_range_add_potential_le
-    {cost charge potential : Nat → Nat} {n : Nat}
+    {α : Type*} [AddCommMonoid α] [PartialOrder α] [IsOrderedCancelAddMonoid α]
+    {cost charge potential : Nat → α} {n : Nat}
     (step : ∀ i, i < n → cost i + potential (i + 1) ≤ charge i + potential i) :
     (∑ i ∈ range n, cost i) + potential n ≤
       (∑ i ∈ range n, charge i) + potential 0 := by
@@ -47,7 +52,18 @@ theorem sum_range_add_potential_le
   have telescope : (∑ i ∈ range n, potential (i + 1)) + potential 0 =
       (∑ i ∈ range n, potential i) + potential n :=
     (sum_range_succ' potential n).symm.trans (sum_range_succ potential n)
-  omega
+  apply (add_le_add_iff_left (∑ i ∈ range n, potential i)).mp
+  calc
+    (∑ i ∈ range n, potential i) + ((∑ i ∈ range n, cost i) + potential n) =
+        ((∑ i ∈ range n, cost i) + (∑ i ∈ range n, potential (i + 1))) +
+          potential 0 := by
+      rw [add_assoc, telescope]
+      ac_rfl
+    _ ≤ ((∑ i ∈ range n, charge i) + (∑ i ∈ range n, potential i)) + potential 0 := by
+      simpa only [add_comm (potential 0)] using
+        (_root_.add_le_add_right hsum (potential 0))
+    _ = (∑ i ∈ range n, potential i) + ((∑ i ∈ range n, charge i) + potential 0) := by
+      ac_rfl
 
 /-- A constant amortized charge gives a total cost bound, with initial credit
 explicitly charged to the budget and nonnegative final credit discarded. -/

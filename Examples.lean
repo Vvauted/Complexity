@@ -18,6 +18,11 @@ import Examples.Language.ScalarCompiled
 import Examples.Language.Scope
 import Examples.Language.ScopeCompiled
 import Examples.Language.ScopeCompiledWork
+import Examples.Language.Splay.Amortized
+import Examples.Language.Splay.Compiled
+import Examples.Language.Splay.Correctness
+import Examples.Language.Splay.Cost
+import Examples.Language.Splay.Sequence
 import Examples.Language.Traversal
 import Examples.Language.TraversalCompiled
 import Examples.Language.TraversalComposition

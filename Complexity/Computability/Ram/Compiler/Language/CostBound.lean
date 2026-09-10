@@ -103,13 +103,26 @@ theorem read {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ 
       exact (Nat.add_le_add_left (body value loaded bodyExec tail) _).trans
         (combine value loaded)
 
+/-- A uniform numeric continuation bound may still use the actual successful
+read equation. This retains mathematical information about a child index or
+array element without repeating its validity or termination proof. -/
+theorem read_of_success {kind : CellTy} {buffer : Atom Γ (.buffer kind)}
+    {index : Atom Γ .nat}
+    {continuation : Complexity.Language.Stmt signatures (kind.toTy :: Γ) result}
+    (body : ∀ value,
+      entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .ok value →
+      StmtCostBound program continuation
+        (Complexity.Language.State.cons (kind.toValue value) entry) bound) :
+    StmtCostBound program (.read buffer index continuation) entry (readCodeSize + bound) :=
+  read (nextBound := fun _ => bound) body (fun _ _ => Nat.le_refl _)
+
 /-- A uniform read-continuation bound needs no contents specification. -/
 theorem read_uniform {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
     {continuation : Complexity.Language.Stmt signatures (kind.toTy :: Γ) result}
     (body : ∀ value, StmtCostBound program continuation
       (Complexity.Language.State.cons (kind.toValue value) entry) bound) :
     StmtCostBound program (.read buffer index continuation) entry (readCodeSize + bound) :=
-  read (nextBound := fun _ => bound) (fun value _ => body value) (fun _ _ => Nat.le_refl _)
+  read_of_success (fun value _ => body value)
 
 /-- An actual successful store pays for its emitted address, value and store
 instructions. Its changed heap is already part of the observed execution. -/

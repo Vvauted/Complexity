@@ -13,6 +13,25 @@ A useful complexity proof has two parts: show what work the program performs, th
 that work mathematically. The compiler and operation contracts supply the first connection;
 ordinary Lean functions and mathlib supply the sums, recurrences and asymptotics.
 
+## Amortized analysis of a mutable source program
+
+The [splay example](##Examples.Language.Splay.Sequence) connects one in-place
+`source_program` to mathematical `Tree` correctness, actual compiled instruction
+counts and consecutive RAM calls. Its logarithmic potential is a proof view;
+rotations do not run in a second host implementation. For `m` accesses to an
+initial tree with `n` nodes, the proved total count is at most
+`K * (m * (3 * log₂(n + 1) + 2) + n * log₂(n + 1))`, where `K` comes from the
+actual compiler. The stronger sequence theorem retains final and initial
+potentials. This is an amortized bound, not a worst-case logarithmic bound for
+one access; the constant term also covers empty trees.
+
+The history passes the actual returned machine memory and I/O to the next call,
+including private stack words. Counts include each call, return and halt.
+Initial loading, query supply and host scheduling remain outside the preloaded
+function-call boundary. Word ranges, represented inputs and code/stack capacity
+are explicit; the instruction-derived stack envelope is conservative, not an
+exact peak-space analysis. Source correctness and termination use no time budget.
+
 ## Keep correctness separate
 
 For a callable function, `Ram.Source.FunctionMeasuredExec` observes both its actual
