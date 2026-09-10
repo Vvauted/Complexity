@@ -96,6 +96,21 @@ theorem evalWith_alloc {kind : CellTy} (length : Atom Γ .nat)
   simp only [eval_alloc, Buffer.allocM, Part.bind_some, Part.bind_map, ExceptT.bindCont,
     evalWith, State.cons, State.tail]
 
+/-- Run the scope boundary before interpreting its control outcome. Only a
+safe normal exit invokes `next`; a safe return keeps its value, and every fault
+bypasses `next` with the boundary's actual final heap. -/
+theorem evalWith_scope (body : Stmt signatures Γ result) (entry : Env Γ)
+    (next : Env Γ → ExceptT Fault (StateT Heap Part) (Value result)) :
+    (Stmt.scope body).evalWith program entry next = fun heap =>
+      (body.eval program ⟨entry, heap⟩).bind (fun outcome =>
+        let exited := scopeExit heap outcome
+        match exited.2 with
+        | .normal => next exited.1.locals exited.1.heap
+        | .returned value => Part.some (.ok value, exited.1.heap)
+        | .fault error => Part.some (.error error, exited.1.heap)) := by
+  funext heap
+  simp only [evalWith, eval_scope, Part.bind_map]
+
 /-- A checked current-heap read uses the native action and binds its actual
 scalar cell. Faults bypass both the scoped body and the normal continuation. -/
 theorem evalWith_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)

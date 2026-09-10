@@ -58,6 +58,8 @@ guard and body observations retain complete lexical coordinates and actual
 heap effects, and their equations follow from the source semantic rules.
 Each named loop also exports `variant_spec`: the author supplies an invariant
 and natural-valued variant over named mutable locals and the current heap.
+The companion `wellFounded_spec` accepts an ordinary Lean well-founded relation
+on the mutable locals and heap; it does not impose a numeric fuel or time budget.
 Immutable lexical captures are fixed by generated preservation proofs, not
 additional author-maintained invariant fields. This does not infer the
 mathematical invariant or turn descriptor preservation into a heap frame.
@@ -77,6 +79,13 @@ Even an empty allocation has a fresh identity; returning does not remove its
 storage, and a later fault does not roll the heap back. Allocation is effectful
 and is rejected by `source_program (pure)`. Finite target capacity and counted
 initialization remain separate compilation obligations.
+
+`with_scratch do ...` releases objects allocated inside that lexical block when
+its surviving locals and return value do not refer to them. Existing-object
+writes remain visible; a return still leaves the enclosing function after
+cleanup. Escaping references report the source `regionEscape` fault without
+releasing the heap. Named scope bodies and equations use the same source rules;
+scope exit is not an implicit return-value boundary or an exception rollback.
 
 The declaration exports `P.signatures`, `P.fId`, `P.fBody` and `P.program`,
 together with the ordinary curried observation `P.f` and its equation `P.f_eq`.
@@ -132,6 +141,9 @@ syntax (name := pureSourceProgram) "source_program " "(" &"pure" ") " ident " wh
 syntax (name := importingPureSourceProgram)
   "source_program " "(" &"pure" ") " ident " importing " ident,+ " where" ppLine
   many1Indent(sourceFunction) : command
+
+/-- A lexical allocation scope; returns still leave the enclosing source function. -/
+syntax (name := sourceScratch) "with_scratch " "do " doSeq : doElem
 
 -- Internal emission point: infer an equation from its checked proof instead of
 -- inventing an unresolved right-hand side in a theorem header.
@@ -216,18 +228,18 @@ private structure Primitive where
   atom : Option (TSyntax `term)
   value : TSyntax `term
 
-private structure LoopSite where
+private structure BlockSite where
   name : TSyntax `ident
   scope : Scope
   result : Ty
-  guard : TSyntax `term
+  guard : Option (TSyntax `term)
   body : TSyntax `term
 
 private structure LoweredBlock where
   term : TSyntax `term
   proofBody : Array (TSyntax `doElem)
   fallsThrough : Bool
-  loops : Array LoopSite
+  sites : Array BlockSite
 
 private structure NormalizedValue where
   bindings : Array (TSyntax `doElem)
@@ -301,7 +313,7 @@ private def freshProofName (ref : Syntax) (name : Name) : MacroM (TSyntax `ident
   withFreshMacroScope do
     return mkIdentFrom ref (← Macro.addMacroScope name)
 
-private def loopMember (site : LoopSite) (name : String) : TSyntax `ident :=
+private def loopMember (site : BlockSite) (name : String) : TSyntax `ident :=
   mkIdentFrom site.name (site.name.getId ++ Name.mkSimple name)
 
 private def namedSimpArgs (names : Array (TSyntax `ident)) :
@@ -391,7 +403,7 @@ private def mergeScopeFields (scope : Scope) (mutable captured : Array (TSyntax 
       capturedIndex := capturedIndex + 1
   return fields
 
-private def freshMutableScope (site : LoopSite) (scopePrefix : String) : MacroM Scope :=
+private def freshMutableScope (site : BlockSite) (scopePrefix : String) : MacroM Scope :=
   site.scope.mapM fun binding => do
     if !binding.isMutable then return binding
     let name := Name.mkSimple (scopePrefix ++ binding.proofName.getId.eraseMacroScopes.toString)
@@ -680,7 +692,7 @@ private def LoweredBlock.proofSequence (block : LoweredBlock) (normal : TSyntax 
     TSyntax ``doSeq :=
   doSequence (if block.fallsThrough then block.proofBody.push normal else block.proofBody)
 
-private def loopProofBody (site : LoopSite) : MacroM (Array (TSyntax `doElem)) := do
+private def loopProofBody (site : BlockSite) : MacroM (Array (TSyntax `doElem)) := do
   let control ← freshProofName site.name `loopControl
   let locals ← freshProofName site.name `loopLocals
   let value ← freshProofName site.name `returned
@@ -777,6 +789,7 @@ private def normalizeElement (element : TSyntax `doElem) :
       return (normalized.bindings,
         ← `(doElem| if $(normalized.value) then $yes:doSeq else $no:doSeq))
   | `(doElem| while $_condition do $_body) => return (#[], element)
+  | `(doElem| with_scratch do $_body:doSeq) => return (#[], element)
   | `(doElem| $action:term) =>
       let (bindings, action) ← normalizeCall action
       return (bindings, ← `(doElem| $action:term))
@@ -799,7 +812,7 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       let inner := if parsed.atom.isSome then scope
         else ⟨none, saved, Ty.bool, false⟩ :: scope
       let yesCode ← recurse inner result (getDoElems yes).toList nextIndex
-      let noCode ← recurse inner result (getDoElems no).toList (nextIndex + yesCode.loops.size)
+      let noCode ← recurse inner result (getDoElems no).toList (nextIndex + yesCode.sites.size)
       let term ← match parsed.atom with
         | some atom =>
             `(Complexity.Language.Stmt.ite $atom $(yesCode.term) $(noCode.term))
@@ -817,20 +830,29 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
         let capture ← `(doElem| let $saved:ident : Bool := $(parsed.value))
         pure #[capture, branch]
       return ⟨term, proofBody, yesCode.fallsThrough || noCode.fallsThrough,
-        yesCode.loops ++ noCode.loops⟩
+        yesCode.sites ++ noCode.sites⟩
   | `(doElem| while $condition do $body) =>
       let name := generatedName family owner s!"_loop{nextIndex}"
       let guardCode ← recurse scope .bool (← guardElements condition) (nextIndex + 1)
       let bodyCode ← recurse scope result (getDoElems body).toList
-        (nextIndex + 1 + guardCode.loops.size)
-      let site : LoopSite := ⟨name, scope, result, guardCode.term, bodyCode.term⟩
+        (nextIndex + 1 + guardCode.sites.size)
+      let site : BlockSite := ⟨name, scope, result, some guardCode.term, bodyCode.term⟩
       let code := loopMember site "Code"
       return ⟨⟨code.raw⟩, ← loopProofBody site, true,
-        guardCode.loops ++ bodyCode.loops |>.push site⟩
+        guardCode.sites ++ bodyCode.sites |>.push site⟩
+  | `(doElem| with_scratch do $body:doSeq) =>
+      let name := generatedName family owner s!"_scope{nextIndex}"
+      let bodyCode ← recurse scope result (getDoElems body).toList (nextIndex + 1)
+      let site : BlockSite := ⟨name, scope, result, none, bodyCode.term⟩
+      let code := loopMember site "Code"
+      -- The observation exposes Control rather than a syntactically terminal
+      -- return. Retain its normal continuation just as for a named loop.
+      return ⟨⟨code.raw⟩, ← loopProofBody site, true,
+        bodyCode.sites.push site⟩
   | `(doElem| $action:term) => actionCode functions scope action
   | _ =>
       Macro.throwErrorAt element
-        "unsupported source statement; use let, let mut, assignment, a named call, buffer access or allocation, if/then/else, while, or return"
+        "unsupported source statement; use let, let mut, assignment, a named call, buffer access or allocation, with_scratch, if/then/else, while, or return"
 
 private partial def blockCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident) (scope : Scope) (result : Ty)
@@ -852,7 +874,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let type ← valueTypeTerm parsed.type
           let binding ← `(doElem| let mut $proofName:ident : $type := $(parsed.value))
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
-            #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
+            #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
       | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
           let parsed ← parsePrimitive scope value
           checkAnnotation annotation parsed.type
@@ -862,7 +884,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let type ← valueTypeTerm parsed.type
           let binding ← `(doElem| let $proofName:ident : $type := $(parsed.value))
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
-            #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
+            #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
       | `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term) =>
           let (bindingType, statement, invocation) ← parseBinding functions scope action
           checkAnnotation annotation bindingType
@@ -872,7 +894,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let type ← valueTypeTerm bindingType
           let binding ← `(doElem| let mut $proofName:ident : $type ← $invocation:term)
           return ⟨← `($statement $(body.term)),
-            #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
+            #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
       | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
           let (bindingType, statement, invocation) ← parseBinding functions scope action
           checkAnnotation annotation bindingType
@@ -882,7 +904,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let type ← valueTypeTerm bindingType
           let binding ← `(doElem| let $proofName:ident : $type ← $invocation:term)
           return ⟨← `($statement $(body.term)),
-            #[binding] ++ body.proofBody, body.fallsThrough, body.loops⟩
+            #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
       | _ =>
           let statement ← statementCode family functions owner (blockCode family functions owner)
             scope result element nextIndex
@@ -890,12 +912,12 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
             return statement
           else
             let continuation ← blockCode family functions owner scope result rest
-              (nextIndex + statement.loops.size)
+              (nextIndex + statement.sites.size)
             return ⟨← `(Complexity.Language.Stmt.seq $(statement.term) $(continuation.term)),
               if statement.fallsThrough then statement.proofBody ++ continuation.proofBody
                 else statement.proofBody,
               statement.fallsThrough && continuation.fallsThrough,
-              statement.loops ++ continuation.loops⟩
+              statement.sites ++ continuation.sites⟩
 
 private def functionCode (family : TSyntax `ident) (functions : Array Callee)
     (fn : Function) : MacroM LoweredBlock := do
@@ -906,7 +928,7 @@ private def functionCode (family : TSyntax `ident) (functions : Array Callee)
       blockCode family functions fn.name scope fn.result (getDoElems body).toList 1
   | _ => Macro.throwErrorAt fn.body "source function bodies must be supported 'do' blocks"
 
-private def loopCodeDeclarations (signatures : TSyntax `ident) (site : LoopSite) :
+private def loopCodeDeclarations (signatures : TSyntax `ident) (site : BlockSite) :
     MacroM (Array Syntax) := do
   let locals := loopMember site "Locals"
   let view := loopMember site "View"
@@ -929,8 +951,8 @@ private def loopCodeDeclarations (signatures : TSyntax `ident) (site : LoopSite)
     projected ← `((Complexity.Language.Env.get $entry:ident $sourceVar, $projected))
     let type ← typeTerm binding.type
     restored ← `(Complexity.Language.Env.cons (τ := $type) $(fields[index]!) $restored)
-  return #[
-    (← `(command| /-- Complete lexical coordinates for this source loop. -/
+  let mut declarations := #[
+    (← `(command| /-- Complete lexical coordinates for this source block. -/
       abbrev $locals:ident := $localsType)).raw,
     (← `(command| /-- Lossless proof coordinates, including fixed and shadowed captures. -/
       def $view:ident : Complexity.Language.Env $types ≃ $locals:ident := $viewTerm)).raw,
@@ -939,23 +961,31 @@ private def loopCodeDeclarations (signatures : TSyntax `ident) (site : LoopSite)
           $view:ident $entry:ident = $projected := rfl)).raw,
     (← `(command| /-- Restore complete lexical coordinates without unfolding proof fields. -/
       theorem $viewSymmApply:ident ($values:ident : $locals:ident) :
-          ($view:ident).symm $values:ident = $restored := rfl)).raw,
-    (← `(command| /-- The actual value-producing guard, reevaluated on every iteration. -/
-      def $guard:ident : Complexity.Language.Stmt $signatures:ident $types .bool := $(site.guard))).raw,
-    (← `(command| /-- The actual parsed loop body, with its enclosing return type. -/
-      def $body:ident : Complexity.Language.Stmt $signatures:ident $types $result := $(site.body))).raw,
-    (← `(command| /-- This source loop, not a host-language looping algorithm. -/
-      def $code:ident : Complexity.Language.Stmt $signatures:ident $types $result :=
-        .while $guard:ident $body:ident)).raw]
+          ($view:ident).symm $values:ident = $restored := rfl)).raw]
+  if let some guardTerm := site.guard then
+    declarations := declarations.push (← `(command|
+      /-- The actual value-producing guard, reevaluated on every iteration. -/
+      def $guard:ident : Complexity.Language.Stmt $signatures:ident $types .bool := $guardTerm)).raw
+  declarations := declarations.push (← `(command|
+    /-- The actual parsed lexical body, with its enclosing return type. -/
+    def $body:ident : Complexity.Language.Stmt $signatures:ident $types $result := $(site.body))).raw
+  let codeTerm ← match site.guard with
+    | some _ => `(Complexity.Language.Stmt.while $guard:ident $body:ident)
+    | none => `(Complexity.Language.Stmt.scope $body:ident)
+  declarations := declarations.push (← `(command|
+    /-- This actual source block, retaining its loop or allocation-scope semantics. -/
+    def $code:ident : Complexity.Language.Stmt $signatures:ident $types $result := $codeTerm)).raw
+  return declarations
 
-private def loopObservationDeclarations (program : TSyntax `ident) (site : LoopSite) :
+private def loopObservationDeclarations (program : TSyntax `ident) (site : BlockSite) :
     MacroM (Array Syntax) := do
   let localsType := loopMember site "Locals"
   let view := loopMember site "View"
   let tuple ← scopeTuple site.scope
   let mut declarations := #[]
-  for (suffix, codeSuffix, result) in
-      [("guard", "Guard", Ty.bool), ("body", "Body", site.result), ("", "Code", site.result)] do
+  let observations := (if site.guard.isSome then [("guard", "Guard", Ty.bool)] else []) ++
+    [("body", "Body", site.result), ("", "Code", site.result)]
+  for (suffix, codeSuffix, result) in observations do
     let name := if suffix.isEmpty then site.name else loopMember site suffix
     let code := loopMember site codeSuffix
     let result ← typeTerm result
@@ -977,7 +1007,7 @@ private def loopObservationDeclarations (program : TSyntax `ident) (site : LoopS
             $applied := rfl)).raw
   return declarations
 
-private def loopCaptureDeclarations (site : LoopSite) : MacroM (Array Syntax) := do
+private def loopCaptureDeclarations (site : BlockSite) : MacroM (Array Syntax) := do
   let mutableScope := site.scope.filter (·.isMutable)
   let capturedScope := site.scope.filter (! ·.isMutable)
   let mutableType ← scopeValueTypes mutableScope
@@ -1031,13 +1061,14 @@ private def loopCaptureDeclarations (site : LoopSite) : MacroM (Array Syntax) :=
     (← `(command| theorem $captureViewApply:ident ($entry:ident : Complexity.Language.Env $types) :
       $captureView:ident $entry:ident = $projected := rfl)).raw]
 
-private def loopCaptureFrameDeclarations (program : TSyntax `ident) (site : LoopSite)
-    (sites : Array LoopSite) : MacroM (Array Syntax) := do
+private def loopCaptureFrameDeclarations (program : TSyntax `ident) (site : BlockSite)
+    (sites : Array BlockSite) : MacroM (Array Syntax) := do
   let types ← scopeTypes site.scope
   let captureView := loopMember site "CaptureView"
   let captureViewApply := loopMember site "captureView_apply"
   let preservedArgs ← namedSimpArgs (sites.flatMap fun other =>
-    #[loopMember other "Code", loopMember other "Guard", loopMember other "Body"])
+    #[loopMember other "Code", loopMember other "Body"] ++
+      if other.guard.isSome then #[loopMember other "Guard"] else #[])
   let preservedArgs := preservedArgs ++ (← constantSimpArgs
     #[``Complexity.Language.Stmt.PreservesLocal, ``Complexity.Language.Var.index])
   let entry ← freshProofName site.name `entry
@@ -1069,8 +1100,9 @@ private def loopCaptureFrameDeclarations (program : TSyntax `ident) (site : Loop
         exact $capturesProof)).raw
   return declarations
 
-private def loopVariantStepType (site : LoopSite)
-    (invariant variant normal returned : TSyntax `ident) : MacroM (TSyntax `term) := do
+private def loopTerminationStepType (site : BlockSite)
+    (invariant progress normal returned : TSyntax `ident) (wellFoundedMode : Bool) :
+    MacroM (TSyntax `term) := do
   let afterGuardScope ← freshMutableScope site "afterGuard_"
   let afterBodyScope ← freshMutableScope site "afterBody_"
   let startHeap ← freshProofName site.name `startHeap
@@ -1081,9 +1113,16 @@ private def loopVariantStepType (site : LoopSite)
   let afterBodyHeap ← freshProofName site.name `afterBodyHeap
   let value ← freshProofName site.name `value
   let again ← freshProofName site.name `again
+  let decrease ← if wellFoundedMode then do
+      let afterMutable ← scopeTuple (afterBodyScope.filter (·.isMutable))
+      let beforeMutable ← scopeTuple (site.scope.filter (·.isMutable))
+      `($progress:ident ($afterMutable, $afterBodyHeap:ident)
+        ($beforeMutable, $startHeap:ident))
+    else
+      `($(mutableApplication afterBodyScope progress ⟨afterBodyHeap.raw⟩) <
+        $(mutableApplication site.scope progress ⟨startHeap.raw⟩))
   let bodyNormal ← `($(mutableApplication afterBodyScope invariant ⟨afterBodyHeap.raw⟩) ∧
-    $(mutableApplication afterBodyScope variant ⟨afterBodyHeap.raw⟩) <
-      $(mutableApplication site.scope variant ⟨startHeap.raw⟩))
+    $decrease)
   let bodyReturned := mutableApplication afterBodyScope returned ⟨afterBodyHeap.raw⟩ #[⟨value.raw⟩]
   let bodyPost ← `(match ($bodyOutcome:ident).1 with
     | .normal => $bodyNormal
@@ -1108,7 +1147,7 @@ private def loopVariantStepType (site : LoopSite)
       (fun $guardOutcome:ident $afterGuardHeap:ident => ⟨$guardPost⟩, ⟨⟩))
   quantifyScope (site.scope.filter (·.isMutable)) step
 
-private def loopVariantPost (site : LoopSite) (normal returned : TSyntax `ident)
+private def loopVariantPost (site : BlockSite) (normal returned : TSyntax `ident)
     (fullScope : Bool) : MacroM (TSyntax `term) := do
   let finishScope ← freshMutableScope site "final_"
   let finishScope := if fullScope then finishScope else finishScope.filter (·.isMutable)
@@ -1124,9 +1163,10 @@ private def loopVariantPost (site : LoopSite) (normal returned : TSyntax `ident)
   let post ← bindMutableFields finishScope (← `(($outcome:ident).2)) post
   `((fun $outcome:ident $heap:ident => ⟨$post⟩, ⟨⟩))
 
-private def loopVariantDeclaration (program : TSyntax `ident) (site : LoopSite) :
+private def loopTerminationDeclaration (program : TSyntax `ident) (site : BlockSite)
+    (wellFoundedMode : Bool) :
     MacroM Syntax := do
-  let name := loopMember site "variant_spec"
+  let name := loopMember site (if wellFoundedMode then "wellFounded_spec" else "variant_spec")
   let mutableScope := site.scope.filter (·.isMutable)
   let capturedScope := site.scope.filter (! ·.isMutable)
   let mutableType := loopMember site "Mutable"
@@ -1136,7 +1176,8 @@ private def loopVariantDeclaration (program : TSyntax `ident) (site : LoopSite) 
   let guardFrame := loopMember site "guard_preservesCaptures"
   let bodyFrame := loopMember site "body_preservesCaptures"
   let invariant ← freshProofName site.name `invariant
-  let variant ← freshProofName site.name `variant
+  let progress ← freshProofName site.name (if wellFoundedMode then `relation else `variant)
+  let wellFounded ← freshProofName site.name `wellFounded
   let normal ← freshProofName site.name `normal
   let returned ← freshProofName site.name `returned
   let step ← freshProofName site.name `step
@@ -1147,11 +1188,12 @@ private def loopVariantDeclaration (program : TSyntax `ident) (site : LoopSite) 
   let initialMutable ← scopeTuple mutableScope
   let fields ← tupleFields mutableScope ⟨mutable.raw⟩
   let invApplication := Lean.Syntax.mkApp ⟨invariant.raw⟩ (fields.push ⟨heap.raw⟩)
-  let varApplication := Lean.Syntax.mkApp ⟨variant.raw⟩ (fields.push ⟨heap.raw⟩)
   let rawInvariant ← `(fun ($mutable:ident : $mutableType:ident)
     ($heap:ident : Complexity.Language.Heap) => $invApplication)
-  let rawVariant ← `(fun ($mutable:ident : $mutableType:ident)
-    ($heap:ident : Complexity.Language.Heap) => $varApplication)
+  let rawProgress ← if wellFoundedMode then `($progress:ident) else do
+    let application := Lean.Syntax.mkApp ⟨progress.raw⟩ (fields.push ⟨heap.raw⟩)
+    `(fun ($mutable:ident : $mutableType:ident)
+      ($heap:ident : Complexity.Language.Heap) => $application)
   let rawPost ← loopVariantPost site normal returned false
   let actualPost ← loopVariantPost site normal returned true
   let transportArgs ← namedSimpArgs #[captureView,
@@ -1188,39 +1230,59 @@ private def loopVariantDeclaration (program : TSyntax `ident) (site : LoopSite) 
   let finalType ← `(Std.Do.Triple (m := StateT Complexity.Language.Heap Part)
     (ps := .arg Complexity.Language.Heap .pure) $invocation
     (fun $heap:ident => ⟨$(mutableApplication site.scope invariant ⟨heap.raw⟩)⟩) $actualPost)
-  let stepType ← loopVariantStepType site invariant variant normal returned
+  let stepType ← loopTerminationStepType site invariant progress normal returned wellFoundedMode
   let predicateType ← quantifyScope mutableScope (← `(Complexity.Language.Heap → Prop))
-  let variantType ← quantifyScope mutableScope (← `(Complexity.Language.Heap → Nat))
+  let progressType ← if wellFoundedMode then
+      `(($mutableType:ident × Complexity.Language.Heap) →
+        ($mutableType:ident × Complexity.Language.Heap) → Prop)
+    else quantifyScope mutableScope (← `(Complexity.Language.Heap → Nat))
   let result ← valueTypeTerm site.result
   let returnType ← `($result → $predicateType)
-  let type ← quantifyScope capturedScope (← `(∀ ($invariant:ident : $predicateType)
-    ($variant:ident : $variantType) ($normal:ident : $predicateType)
+  let conclusion ← `(∀ ($normal:ident : $predicateType)
     ($returned:ident : $returnType) ($step:ident : $stepType),
-      $(← quantifyScope mutableScope finalType)))
+      $(← quantifyScope mutableScope finalType))
+  let conclusion ← if wellFoundedMode then
+      `(∀ ($wellFounded:ident : WellFounded $progress:ident), $conclusion)
+    else pure conclusion
+  let type ← quantifyScope capturedScope (← `(∀ ($invariant:ident : $predicateType)
+    ($progress:ident : $progressType), $conclusion))
+  let specification ← if wellFoundedMode then
+      `(Complexity.Language.Stmt.observe_while_fixed_spec
+        $captureView:ident $program:ident $guard:ident $body:ident
+        $guardFrame:ident $bodyFrame:ident $captures $rawInvariant $rawProgress
+        $wellFounded:ident $rawPost $rawStep $initialMutable)
+    else
+      `(Complexity.Language.Stmt.observe_while_fixed_variant_spec
+        $captureView:ident $program:ident $guard:ident $body:ident
+        $guardFrame:ident $bodyFrame:ident $captures $rawInvariant $rawProgress $rawPost
+        $rawStep $initialMutable)
   let proof ← curryScope mutableScope (← `(by
-    have specification := Complexity.Language.Stmt.observe_while_fixed_variant_spec
-      $captureView:ident $program:ident $guard:ident $body:ident
-      $guardFrame:ident $bodyFrame:ident $captures $rawInvariant $rawVariant $rawPost
-      $rawStep $initialMutable
+    have specification := $specification
     simp only [$transportArgs,*] at specification ⊢
     simp only [$wpArgs,*] at specification ⊢
     intro currentHeap initial
     obtain ⟨⟨⟨control, locals⟩, finalHeap⟩, member, post⟩ := specification currentHeap initial
     refine ⟨((control, locals), finalHeap), member, ?_⟩
     cases control <;> exact post))
-  let proof ← curryScope capturedScope (← `(fun $invariant:ident $variant:ident
-    $normal:ident $returned:ident $step:ident => $proof))
+  let proof ← `(fun $normal:ident $returned:ident $step:ident => $proof)
+  let proof ← if wellFoundedMode then `(fun $wellFounded:ident => $proof) else pure proof
+  let proof ← curryScope capturedScope (← `(fun $invariant:ident $progress:ident => $proof))
   return (← `(command|
     open scoped Part.TotalCorrectness in
-    /-- Prove this actual loop with fixed captures and a variant on its named mutable locals.
+    /-- Prove this actual loop with fixed captures and well-founded progress on its mutable locals.
     Only normal body exits must decrease; guard effects, returns and faults retain their real heap. -/
     theorem $name:ident : $type := $proof)).raw
 
-private def loopEquationDeclarations (site : LoopSite) (sites : Array LoopSite)
+private def loopEquationDeclarations (site : BlockSite) (sites : Array BlockSite)
     (calleeFolds : Array (TSyntax `ident)) : MacroM (Array Syntax) := do
   let loopCode := loopMember site "Code"
+  let expandedFolds ← sites.mapM fun other => do
+    return (other, ← freshProofName other.name `nestedObservation)
+  let expandedFoldArgs ← namedSimpArgs (expandedFolds.map (·.2))
+  let viewDefinitions ← namedSimpArgs (sites.map fun other => loopMember other "View")
   let foldNames ← namedSimpArgs (sites.flatMap fun other =>
-    #[loopMember other "guard_observe", loopMember other "body_observe", loopMember other "observe"])
+    #[loopMember other "body_observe", loopMember other "observe"] ++
+      if other.guard.isSome then #[loopMember other "guard_observe"] else #[])
   let nestedLoops ← namedSimpArgs (sites.map fun other => loopMember other "observe")
   let viewNames ← namedSimpArgs (sites.flatMap fun other =>
     #[loopMember other "view_apply", loopMember other "view_symm_apply"])
@@ -1234,42 +1296,60 @@ private def loopEquationDeclarations (site : LoopSite) (sites : Array LoopSite)
   let sharedArgs := compositionArgs ++ nestedLoops ++ viewNames ++ calleeFolds ++
     (← viewSimpArgs) ++ (← valueSimpArgs)
   let mut declarations := #[]
-  for (suffix, codeSuffix) in [("guard", "Guard"), ("body", "Body")] do
+  let observations := (if site.guard.isSome then [("guard", "Guard")] else []) ++
+    [("body", "Body")]
+  for (suffix, codeSuffix) in observations do
     let name := loopMember site suffix
     let equation := loopMember site (suffix ++ "_eq")
     let code := loopMember site codeSuffix
     let applied := scopeApplication site.scope name
     let allArgs := (← namedSimpArgs #[code]) ++ sharedArgs
-    let proof ← curryScope site.scope (← `(by
+    let mut proof ← `(by
       have equation : $applied = $applied := rfl
       conv at equation =>
         lhs
         unfold $name:ident
         simp only [$allArgs,*]
+        simp (config := { failIfUnchanged := false }) only [$viewDefinitions,*]
+        simp (config := { failIfUnchanged := false }) only [$expandedFoldArgs,*]
         dsimp only [Complexity.Language.Env.equivProd, Complexity.Language.Env.equivUnit,
           Equiv.symm]
         simp (config := { failIfUnchanged := false }) only
           [Equiv.coe_fn_mk, Complexity.Language.Env.cons_here,
             Complexity.Language.Env.cons_there, Complexity.Language.Env.head_cons,
             Complexity.Language.Env.tail_cons, Complexity.Language.Env.get_tail]
-      exact equation.symm))
-    declarations := declarations.push (← `(command| source_equation% $equation:ident := $proof)).raw
+      exact equation.symm)
+    -- Composing lexical bindings constructs a view definitionally equal to a
+    -- nested block's named View. Normalize just these equation-local copies;
+    -- public views stay opaque to the separate continuation and frame proofs.
+    for (other, folded) in expandedFolds.reverse do
+      let observed := loopMember other "observe"
+      let view := loopMember other "View"
+      proof ← `(by
+        have $folded:ident := $observed:ident
+        dsimp only [$view:ident] at $folded:ident
+        exact $proof)
+    let curriedProof ← curryScope site.scope proof
+    declarations := declarations.push
+      (← `(command| source_equation% $equation:ident := $curriedProof)).raw
   let name := site.name
   let equation := loopMember site "eq"
   let applied := scopeApplication site.scope name
+  let composition := mkCIdent (if site.guard.isSome then
+    ``Complexity.Language.Stmt.observe_while else ``Complexity.Language.Stmt.observe_scope)
   let proof ← curryScope site.scope (← `(by
     have equation : $applied = $applied := rfl
     conv at equation =>
       lhs
       unfold $name:ident
-      rw [$loopCode:ident, Complexity.Language.Stmt.observe_while]
+      rw [$loopCode:ident, $composition:ident]
       simp only [$foldNames,*]
     exact equation.symm))
   declarations := declarations.push (← `(command| source_equation% $equation:ident := $proof)).raw
   return declarations
 
-private def loopContinuationDeclaration (program : TSyntax `ident) (site : LoopSite)
-    (sites : Array LoopSite) : MacroM Syntax := do
+private def loopContinuationDeclaration (program : TSyntax `ident) (site : BlockSite)
+    (sites : Array BlockSite) : MacroM Syntax := do
   let name := loopMember site "continue_eq"
   let view := loopMember site "View"
   let code := loopMember site "Code"
@@ -1301,7 +1381,8 @@ private def loopContinuationDeclaration (program : TSyntax `ident) (site : LoopS
   let viewNames ← namedSimpArgs (sites.flatMap fun other =>
     #[loopMember other "view_apply", loopMember other "view_symm_apply"])
   let codeNames ← namedSimpArgs (sites.flatMap fun other =>
-    #[loopMember other "Code", loopMember other "Guard", loopMember other "Body"])
+    #[loopMember other "Code", loopMember other "Body"] ++
+      if other.guard.isSome then #[loopMember other "Guard"] else #[])
   let viewArgs := viewNames ++ (← viewSimpArgs)
   let normalArgs := viewArgs ++ captureNames
   let preservedArgs := codeNames ++
@@ -1337,6 +1418,42 @@ private def loopContinuationDeclaration (program : TSyntax `ident) (site : LoopS
       | returned value => rfl
       | fault error => rfl)
   return declaration.raw
+
+private def scopeSpecificationDeclaration (program : TSyntax `ident) (site : BlockSite) :
+    MacroM Syntax := do
+  let name := loopMember site "spec"
+  let localsType := loopMember site "Locals"
+  let view := loopMember site "View"
+  let body := loopMember site "Body"
+  let result ← typeTerm site.result
+  let tuple ← scopeTuple site.scope
+  let invocation := scopeApplication site.scope site.name
+  let bodyInvocation := scopeApplication site.scope (loopMember site "body")
+  let post ← freshProofName site.name `post
+  let heap ← freshProofName site.name `heap
+  let outcome ← freshProofName site.name `outcome
+  let finish ← freshProofName site.name `finish
+  let postType ← `(Std.Do.PostCond (Complexity.Language.Control $result × $localsType:ident)
+    (.arg Complexity.Language.Heap .pure))
+  let type ← quantifyScope site.scope (← `(∀ ($post:ident : $postType),
+    Std.Do.Triple (m := StateT Complexity.Language.Heap Part)
+      (ps := .arg Complexity.Language.Heap .pure) $invocation
+      (fun $heap:ident =>
+        ((Std.Do.WP.wp $bodyInvocation).apply
+          (fun $outcome:ident $finish:ident => ⟨
+            Complexity.Language.ScopeSafe $heap:ident
+              ⟨($view:ident).symm ($outcome:ident).2, $finish:ident⟩ ($outcome:ident).1 ∧
+            (($post:ident).1 $outcome:ident
+              (Complexity.Language.Heap.take $finish:ident ($heap:ident).objects.size)).down⟩,
+            ⟨⟩)) $heap:ident) $post:ident))
+  let proof ← curryScope site.scope (← `(fun $post:ident =>
+    Complexity.Language.Stmt.observe_scope_safe_spec $view:ident $program:ident
+      $body:ident $tuple $post:ident))
+  return (← `(command|
+    open scoped Part.TotalCorrectness in
+    /-- Compose the actual body specification with safe scratch release. Surviving
+    locals and return values stay rooted; current retained contents are not rolled back. -/
+    theorem $name:ident : $type := $proof)).raw
 
 private def observationDeclaration (family programName : TSyntax `ident)
     (fn : Function) (pureMode : Bool) : MacroM Syntax := do
@@ -1400,8 +1517,8 @@ private def equationDeclaration (family programName : TSyntax `ident)
   let fallthrough ← `(doElem| throw Complexity.Language.Fault.missingReturn)
   let body := lowered.proofSequence fallthrough
   let result ← valueTypeTerm fn.result
-  let loopContinuations ← namedSimpArgs (lowered.loops.map fun site => loopMember site "continue_eq")
-  let loopViews ← namedSimpArgs (lowered.loops.flatMap fun site =>
+  let loopContinuations ← namedSimpArgs (lowered.sites.map fun site => loopMember site "continue_eq")
+  let loopViews ← namedSimpArgs (lowered.sites.flatMap fun site =>
     #[loopMember site "view_apply", loopMember site "view_symm_apply"])
   let compositionArgs ← constantSimpArgs #[``Complexity.Language.Stmt.evalWith_skip,
     ``Complexity.Language.Stmt.evalWith_ret, ``Complexity.Language.Stmt.evalWith_assign,
@@ -1826,13 +1943,16 @@ private def programDeclarations (family : TSyntax `ident)
       Macro.throwErrorAt fn.name
         "buffer allocation is effectful and is not supported by 'source_program (pure)'"
     if pureMode then
-      unless body.loops.isEmpty do
+      if body.sites.any (fun site => site.guard.isNone) then
+        Macro.throwErrorAt fn.name
+          "scratch allocation scopes are effectful and are not supported by 'source_program (pure)'"
+      unless body.sites.isEmpty do
         Macro.throwErrorAt fn.name
           "the pure frontend currently supports recursive calls, not while loops"
       if body.fallsThrough then
         Macro.throwErrorAt fn.name "every pure source function path must return a value"
     loweredBodies := loweredBodies.push body
-    for site in body.loops do
+    for site in body.sites do
       declarations := declarations ++ (← loopCodeDeclarations signaturesName site)
     let declaration ← `(command|
       /-- The named function's actual independently interpreted source body. -/
@@ -1863,15 +1983,20 @@ private def programDeclarations (family : TSyntax `ident)
   for fn in functions do
     declarations := declarations.push (← calleeObservationDeclaration family programName fn pureMode)
   let calleeFolds := callees.map (·.fold)
-  let loopSites := loweredBodies.flatMap (·.loops)
+  let loopSites := loweredBodies.flatMap (·.sites)
   for site in loopSites do
     declarations := declarations ++ (← loopObservationDeclarations programName site)
-    declarations := declarations ++ (← loopCaptureDeclarations site)
+    if site.guard.isSome then
+      declarations := declarations ++ (← loopCaptureDeclarations site)
   for site in loopSites do
     declarations := declarations ++ (← loopEquationDeclarations site loopSites calleeFolds)
     declarations := declarations.push (← loopContinuationDeclaration programName site loopSites)
-    declarations := declarations ++ (← loopCaptureFrameDeclarations programName site loopSites)
-    declarations := declarations.push (← loopVariantDeclaration programName site)
+    if site.guard.isSome then
+      declarations := declarations ++ (← loopCaptureFrameDeclarations programName site loopSites)
+      declarations := declarations.push (← loopTerminationDeclaration programName site false)
+      declarations := declarations.push (← loopTerminationDeclaration programName site true)
+    else
+      declarations := declarations.push (← scopeSpecificationDeclaration programName site)
   for fn in functions, body in loweredBodies do
     declarations := declarations.push
       (← equationDeclaration family programName fn body importFolds pureMode)

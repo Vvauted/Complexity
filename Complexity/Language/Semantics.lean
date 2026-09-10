@@ -5,6 +5,8 @@ Authors: vvauted
 -/
 import Complexity.Language.State
 import Complexity.Language.Heap.Allocation
+import Complexity.Language.Rooted
+import Complexity.Language.Heap.Restriction
 
 /-!
 # Independent finite source execution
@@ -34,6 +36,12 @@ Allocation appends a fresh initialized source object and binds its complete
 view in the continuation. Returns and faults retain that continuation's actual
 heap. Source allocation has no word capacity, out-of-memory result or cost.
 
+An explicit allocation scope keeps the current contents of its entry objects
+and discards only the fresh suffix, provided its final locals and any returned
+value refer only to entry objects. Otherwise the complete final heap is retained
+and the outcome faults with `regionEscape`, without overriding an earlier fault.
+The scope does not catch a return or roll back local assignments and heap writes.
+
 A loop evaluates its Boolean guard block anew before every iteration. The guard's
 returned Boolean is local to that block; its actual final locals and heap feed
 the body or the false exit. Body returns leave the enclosing loop immediately.
@@ -46,6 +54,7 @@ namespace Complexity.Language
 inductive Fault where
   | missingReturn
   | heap (error : Heap.Error)
+  | regionEscape
   deriving DecidableEq, Repr
 
 /-- Statement continuation, return from a value-producing block and failure are
@@ -55,6 +64,48 @@ inductive Control (result : Ty) where
   | normal
   | returned : Value result → Control result
   | fault : Fault → Control result
+
+/-- Only a returned control outcome carries an object root of its own. -/
+@[simp] def Control.Rooted {result : Ty} (control : Control result) (heap : Heap) : Prop :=
+  match control with
+  | .normal | .fault _ => True
+  | .returned value => ValueRooted heap value
+
+/-- A failed allocation-scope exit retains an earlier fault rather than masking it. -/
+@[simp] def Control.scopeFailure {result : Ty} (control : Control result) : Control result :=
+  match control with
+  | .fault error => .fault error
+  | .normal | .returned _ => .fault .regionEscape
+
+/-- Every root retained on scope exit already belongs to the entry object domain.
+Only object identities are checked, not buffer validity, contents or separation. -/
+def ScopeSafe {Γ : List Ty} {result : Ty} (initial : Heap) (finish : State Γ)
+    (control : Control result) : Prop :=
+  finish.locals.Rooted initial ∧ control.Rooted initial
+
+/-- Apply the allocation-scope boundary to an already determined body outcome.
+Safe exits discard only fresh objects from the actual final heap. Unsafe exits
+retain that heap and report failure without masking an existing fault. This is
+an outcome conversion, not an evaluator for source statements. -/
+noncomputable def scopeExit {Γ : List Ty} {result : Ty} (initial : Heap)
+    (outcome : State Γ × Control result) : State Γ × Control result := by
+  classical
+  exact if ScopeSafe initial outcome.1 outcome.2 then
+    (⟨outcome.1.locals, outcome.1.heap.take initial.objects.size⟩, outcome.2)
+  else (outcome.1, outcome.2.scopeFailure)
+
+/-- A safe boundary preserves control and the current contents of retained objects. -/
+@[simp] theorem scopeExit_of_safe {Γ : List Ty} {result : Ty} {initial : Heap}
+    {finish : State Γ} {control : Control result} (safe : ScopeSafe initial finish control) :
+    scopeExit initial (finish, control) =
+      (⟨finish.locals, finish.heap.take initial.objects.size⟩, control) := by
+  simp only [scopeExit, if_pos safe]
+
+/-- An unsafe boundary does not leave handles dangling by discarding their objects. -/
+@[simp] theorem scopeExit_of_not_safe {Γ : List Ty} {result : Ty} {initial : Heap}
+    {finish : State Γ} {control : Control result} (escapes : ¬ ScopeSafe initial finish control) :
+    scopeExit initial (finish, control) = (finish, control.scopeFailure) := by
+  simp only [scopeExit, if_neg escapes]
 
 /-- Finite execution of the source syntax itself. The state of each
 statement is separate from its control outcome; scoped and call bindings are
@@ -128,6 +179,17 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
          State.cons allocated.1 ⟨entry.locals, allocated.2⟩)
         finish control) :
       Exec program (.alloc length initial continuation) entry finish.tail control
+  | scope {Γ : List Ty} {result : Ty} {stmt : Stmt signatures Γ result}
+      {entry finish : State Γ} {control : Control result}
+      (body : Exec program stmt entry finish control)
+      (safe : ScopeSafe entry.heap finish control) :
+      Exec program (.scope stmt) entry
+        ⟨finish.locals, finish.heap.take entry.heap.objects.size⟩ control
+  | scopeEscape {Γ : List Ty} {result : Ty} {stmt : Stmt signatures Γ result}
+      {entry finish : State Γ} {control : Control result}
+      (body : Exec program stmt entry finish control)
+      (escapes : ¬ ScopeSafe entry.heap finish control) :
+      Exec program (.scope stmt) entry finish control.scopeFailure
   | seqNormal {Γ : List Ty} {result : Ty} {first second : Stmt signatures Γ result}
       {entry middle finish : State Γ} {control : Control result}
       (head : Exec program first entry middle .normal)
@@ -212,6 +274,18 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
 
 namespace Exec
 
+/-- The outcome conversion is justified by the two actual scope execution rules. -/
+theorem scope_exit {signatures : List Signature} {program : Program signatures}
+    {Γ : List Ty} {result : Ty} {stmt : Stmt signatures Γ result}
+    {entry finish : State Γ} {control : Control result}
+    (body : Exec program stmt entry finish control) :
+    Exec program (.scope stmt) entry (scopeExit entry.heap (finish, control)).1
+      (scopeExit entry.heap (finish, control)).2 := by
+  classical
+  by_cases safe : ScopeSafe entry.heap finish control
+  · simpa only [scopeExit_of_safe safe] using Exec.scope body safe
+  · simpa only [scopeExit_of_not_safe safe] using Exec.scopeEscape body safe
+
 /-- Statements with no local writes preserve their enclosing environment even
 when the shared heap changes. Callee-local assignment is allowed: calls restore
 the caller's locals before executing its continuation. -/
@@ -244,6 +318,8 @@ theorem locals_eq {signatures : List Signature} {program : Program signatures}
       intro unchanged
       simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
         congrArg Env.tail (ih unchanged)
+  | scope body safe ih => intro unchanged; exact ih unchanged
+  | scopeEscape body escapes ih => intro unchanged; exact ih unchanged
   | seqNormal head tail ihHead ihTail =>
       intro unchanged
       exact (ihTail unchanged.2).trans (ihHead unchanged.1)
@@ -332,6 +408,22 @@ theorem deterministic {signatures : List Signature} {program : Program signature
   | alloc body ih =>
       cases second with
       | alloc body' =>
+          obtain ⟨rfl, rfl⟩ := ih body'
+          exact ⟨rfl, rfl⟩
+  | scope body safe ih =>
+      cases second with
+      | scope body' safe' =>
+          obtain ⟨rfl, rfl⟩ := ih body'
+          exact ⟨rfl, rfl⟩
+      | scopeEscape body' escapes =>
+          obtain ⟨rfl, rfl⟩ := ih body'
+          exact False.elim (escapes safe)
+  | scopeEscape body escapes ih =>
+      cases second with
+      | scope body' safe =>
+          obtain ⟨rfl, rfl⟩ := ih body'
+          exact False.elim (escapes safe)
+      | scopeEscape body' escapes' =>
           obtain ⟨rfl, rfl⟩ := ih body'
           exact ⟨rfl, rfl⟩
   | seqNormal head tail ihHead ihTail =>

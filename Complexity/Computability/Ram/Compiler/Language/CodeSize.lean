@@ -55,6 +55,7 @@ def sourceCodeSize {signatures : List Signature} {Γ : List Ty} {result : Ty}
   | .write .. => writeCodeSize
   | .slice _ _ _ body => sliceCodeSize + sourceCodeSize localsTable body
   | .alloc _ _ body => 30 + sourceCodeSize localsTable body
+  | .scope body => sourceCodeSize localsTable body + 6
   | .call fn _ body =>
       2 * contextSize signatures[fn].params + 4 * localsTable fn.val + 5 +
         fieldCount signatures[fn].result + sourceCodeSize localsTable body
@@ -190,6 +191,11 @@ theorem lowerStmtCore_stmtSize {signatures : List Signature} {Γ : List Ty} {res
   | alloc length initial body ih =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerAlloc_stmtSize,
         ih, sourceCodeSize]
+  | scope body ih =>
+      simp only [lowerStmtCore, LocalCompiler.stmtSize_seq,
+        Source.Arena.Scope.capture_stmtSize, Source.Arena.Scope.release_stmtSize,
+        ih, sourceCodeSize]
+      omega
   | call fn args body ih =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerCall_stmtSize,
         ih, sourceCodeSize]

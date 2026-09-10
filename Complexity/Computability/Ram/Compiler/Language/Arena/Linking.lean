@@ -79,6 +79,8 @@ theorem renameCalls {source target : List Signature}
       entry finish control view sliced body bufferFits offsetFits lengthFits viewFits _ ih =>
       exact .slice (sliced := sliced) bufferFits offsetFits lengthFits viewFits ih
   | alloc initialFits capacity _ ih => exact .alloc initialFits capacity ih
+  | @scope Γ result w heapLimit depth next₀ bodyCursor stmt entry finish control body safe _ ih =>
+      exact .scope (safe := safe) ih
   | seqNormal _ _ ihHead ihTail => exact .seqNormal ihHead ihTail
   | seqReturn _ ih => exact .seqReturn ih
   | @iteTrue Γ result w heapLimit depth next₀ next₁ condition yes no entry finish control
@@ -159,6 +161,11 @@ private theorem of_renameCalls_aux {source target : List Signature}
       cases statement <;> cases same
       obtain ⟨_, original⟩ := ih _ rfl
       exact ⟨_, .alloc initialFits capacity original⟩
+  | @scope Γ result w heapLimit depth next₀ bodyCursor stmt entry finish control body safe _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      obtain ⟨_, original⟩ := ih _ rfl
+      exact ⟨_, .scope (safe := safe) original⟩
   | seqNormal _ _ ihHead ihTail =>
       intro statement same
       cases statement <;> cases same
@@ -334,6 +341,8 @@ theorem renameCalls {source target : List Signature}
   | @alloc Γ result kind depth next₀ next₁ length initial continuation entry finish control
       body initialFits capacity ready steps _ ih =>
       exact .alloc (initialFits := initialFits) (capacity := capacity) ih
+  | @scope Γ result depth next₀ bodyCursor stmt entry finish control body safe ready steps _ ih =>
+      exact .scope (safe := safe) ih
   | seqNormal _ _ ihHead ihTail => exact .seqNormal ihHead ihTail
   | seqReturn _ ih => exact .seqReturn ih
   | @iteTrue Γ result depth next₀ next₁ condition yes no entry finish control test body

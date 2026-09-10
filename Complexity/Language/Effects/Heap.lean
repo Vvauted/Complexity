@@ -19,6 +19,8 @@ through the existing finite source execution. A call's syntactic condition
 checks its continuation; the theorem separately requires the same condition
 for every function body, including recursive callees. Guards and faulting
 callees retain their actual heap effects instead of rolling back allocations.
+Safe scope exits may discard their fresh suffix; all entry objects still retain
+their exact contents. Escaping scope exits retain the complete current heap.
 -/
 
 namespace Complexity.Language
@@ -35,6 +37,7 @@ only their continuation; execution framing additionally checks all callee bodies
   | .write .. => False
   | .slice _ _ _ continuation => continuation.NoCellWrites
   | .alloc _ _ continuation => continuation.NoCellWrites
+  | .scope body => body.NoCellWrites
   | .call _ _ continuation => continuation.NoCellWrites
   | .seq first second => first.NoCellWrites ∧ second.NoCellWrites
   | .ite _ yes no => yes.NoCellWrites ∧ no.NoCellWrites
@@ -69,6 +72,13 @@ theorem heap_prefix {signatures : List Signature} {program : Program signatures}
       intro unchanged
       exact (entry.heap.objects_prefix_alloc (length.eval entry.locals)
         (kind.ofValue (initial.eval entry.locals))).trans (ih unchanged)
+  | @scope Γ result stmt entry finish control body safe ih =>
+      intro unchanged
+      change List.IsPrefix entry.heap.objects.toList
+        (finish.heap.take entry.heap.objects.size).objects.toList
+      rw [Heap.take_eq_of_prefix (ih unchanged)]
+      exact List.prefix_refl _
+  | scopeEscape body escapes ih => intro unchanged; exact ih unchanged
   | seqNormal head tail ihHead ihTail =>
       intro unchanged
       exact (ihHead unchanged.1).trans (ihTail unchanged.2)

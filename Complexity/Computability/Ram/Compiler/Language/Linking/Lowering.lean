@@ -81,7 +81,8 @@ theorem lowerStmtCore_renameCalls {source target : List Signature}
   induction statement generalizing next resultSlot flag <;>
     simp_all only [Complexity.Language.Stmt.renameCalls, lowerStmtCore_callOfEq,
       lowerStmtCore, Ram.Stmt.renameCalls, lowerAssign, lowerPrim_renameCalls,
-      lowerRead, lowerWrite, lowerSlice, lowerAlloc_renameCalls, lowerReturn, copyFields_renameCalls]
+      lowerRead, lowerWrite, lowerSlice, lowerAlloc_renameCalls,
+      Source.Arena.Scope.capture, Source.Arena.Scope.release, lowerReturn, copyFields_renameCalls]
 
 private theorem lowerBody_cast {signatures : List Signature}
     (program : Complexity.Language.Program signatures) (fn : Fin signatures.length)

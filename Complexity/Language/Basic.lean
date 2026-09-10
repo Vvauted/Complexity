@@ -22,6 +22,10 @@ syntax. Heap accesses are explicit statements on the shared current objects.
 A binding's continuation is its lexical scope. Typed assignment updates a local
 in that scope; surface mutability is checked by the frontend. Scope exit retains
 outer updates, and a return can occur inside any continuation.
+
+An explicit allocation scope reclaims its body's fresh objects only when no
+retained local or returned value refers to them. It preserves outer-local
+updates, writes to existing objects and the body's return or fault.
 -/
 
 namespace Complexity.Language
@@ -218,6 +222,8 @@ inductive Stmt (signatures : List Signature) : List Ty → Ty → Type where
   | alloc {Γ : List Ty} {result : Ty} {kind : CellTy}
       (length : Atom Γ .nat) (initial : Atom Γ kind.toTy)
       (continuation : Stmt signatures (.buffer kind :: Γ) result) : Stmt signatures Γ result
+  | scope {Γ : List Ty} {result : Ty} (body : Stmt signatures Γ result) :
+      Stmt signatures Γ result
   | call {Γ : List Ty} {result : Ty} (fn : Fin signatures.length)
       (args : Args Γ signatures[fn].params)
       (continuation : Stmt signatures (signatures[fn].result :: Γ) result) :
@@ -244,6 +250,7 @@ conservatively rejects assignments even to a binding that will leave scope. -/
   | .write _ _ _ => True
   | .slice _ _ _ continuation => continuation.NoLocalWrites
   | .alloc _ _ continuation => continuation.NoLocalWrites
+  | .scope body => body.NoLocalWrites
   | .call _ _ continuation => continuation.NoLocalWrites
   | .seq first second => first.NoLocalWrites ∧ second.NoLocalWrites
   | .ite _ yes no => yes.NoLocalWrites ∧ no.NoLocalWrites

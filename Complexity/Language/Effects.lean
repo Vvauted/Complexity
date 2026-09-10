@@ -91,6 +91,7 @@ on callee-local assignments. -/
   | .write _ _ _ => True
   | .slice _ _ _ continuation => continuation.PreservesLocal (.there v)
   | .alloc _ _ continuation => continuation.PreservesLocal (.there v)
+  | .scope body => body.PreservesLocal v
   | .call _ _ continuation => continuation.PreservesLocal (.there v)
   | .seq first second => first.PreservesLocal v ∧ second.PreservesLocal v
   | .ite _ yes no => yes.PreservesLocal v ∧ no.PreservesLocal v
@@ -119,6 +120,9 @@ theorem NoLocalWrites.preservesLocal {signatures : List Signature} {Γ : List Ty
   | alloc length initial continuation ih =>
       intro unchanged τ v
       exact ih unchanged (.there v)
+  | scope body ih =>
+      intro unchanged τ v
+      exact ih unchanged v
   | call fn args continuation ih =>
       intro unchanged τ v
       exact ih unchanged (.there v)
@@ -172,6 +176,8 @@ theorem get_eq {signatures : List Signature} {program : Program signatures}
       intro τ v preserved
       simpa only [State.locals_tail, Env.get_tail, State.locals_cons, Env.cons_there] using
         ih (.there v) preserved
+  | scope body safe ih => intro τ v preserved; exact ih v preserved
+  | scopeEscape body escapes ih => intro τ v preserved; exact ih v preserved
   | seqNormal head tail ihHead ihTail =>
       intro τ v preserved
       exact (ihTail v preserved.2).trans (ihHead v preserved.1)

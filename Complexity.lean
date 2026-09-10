@@ -96,10 +96,13 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Frame
 import Complexity.Computability.Ram.Compiler.Language.Arena.Import
 import Complexity.Computability.Ram.Compiler.Language.Arena.Linking
 import Complexity.Computability.Ram.Compiler.Language.Arena.Lowering
+import Complexity.Computability.Ram.Compiler.Language.Arena.Loop
 import Complexity.Computability.Ram.Compiler.Language.Arena.MeasuredAllocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.MeasuredSimulation
+import Complexity.Computability.Ram.Compiler.Language.Arena.Memory
 import Complexity.Computability.Ram.Compiler.Language.Arena.ProgramExecution
 import Complexity.Computability.Ram.Compiler.Language.Arena.Realization
+import Complexity.Computability.Ram.Compiler.Language.Arena.Restriction
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Basic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Binding
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Buffer
@@ -107,6 +110,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Call
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Composition
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Loop
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Primitive
+import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Scope
 import Complexity.Computability.Ram.Compiler.Language.Arena.Verification
 import Complexity.Computability.Ram.Compiler.Language.Block
 import Complexity.Computability.Ram.Compiler.Language.CodeSize
@@ -164,6 +168,7 @@ import Complexity.Computability.Ram.Compiler.Local.Exact.Stack
 import Complexity.Computability.Ram.Compiler.Local.Exact.Writes
 import Complexity.Computability.Ram.Compiler.Local.Exact.WritesBasic
 import Complexity.Computability.Ram.Compiler.Local.Function
+import Complexity.Computability.Ram.Compiler.Local.Function.Memory
 import Complexity.Computability.Ram.Compiler.Local.Function.Total
 import Complexity.Computability.Ram.Compiler.Local.Function.Typed
 import Complexity.Computability.Ram.Compiler.Local.Measured.Basic
@@ -207,6 +212,7 @@ import Complexity.Computability.Ram.Memory.Arena.Function
 import Complexity.Computability.Ram.Memory.Arena.Inline
 import Complexity.Computability.Ram.Memory.Arena.Registers
 import Complexity.Computability.Ram.Memory.Arena.Registers.Allocation
+import Complexity.Computability.Ram.Memory.Arena.Scope
 import Complexity.Computability.Ram.Memory.Basic
 import Complexity.Computability.Ram.Memory.Contracts
 import Complexity.Computability.Ram.Memory.Finmap.Basic
@@ -326,6 +332,7 @@ import Complexity.Language.Eval.Verification
 import Complexity.Language.Heap
 import Complexity.Language.Heap.Allocation
 import Complexity.Language.Heap.Prefix
+import Complexity.Language.Heap.Restriction
 import Complexity.Language.Heap.Shape
 import Complexity.Language.Linking.Basic
 import Complexity.Language.Linking.Eval

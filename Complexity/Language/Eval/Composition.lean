@@ -85,6 +85,40 @@ theorem eval_alloc {kind : CellTy} (length : Atom Γ .nat) (initial : Atom Γ ki
     cases same
     exact mem_eval_iff.mpr (.alloc (mem_eval_iff.mp body))
 
+/-- A scope converts the body's actual finite outcome. Safe exits retain the
+current old-object prefix; unsafe exits retain the full heap and fault. Returns
+and earlier faults are not mistaken for normal continuation. -/
+theorem eval_scope (body : Stmt signatures Γ result) (entry : State Γ) :
+    (Stmt.scope body).eval program entry =
+      (body.eval program entry).map (scopeExit entry.heap) := by
+  apply Part.ext
+  rintro ⟨finish, control⟩
+  constructor
+  · intro member
+    cases mem_eval_iff.mp member with
+    | scope execution safe =>
+        exact Part.mem_map_iff _ |>.mpr
+          ⟨(_, _), mem_eval_iff.mpr execution, scopeExit_of_safe safe⟩
+    | scopeEscape execution escapes =>
+        exact Part.mem_map_iff _ |>.mpr
+          ⟨(_, _), mem_eval_iff.mpr execution, scopeExit_of_not_safe escapes⟩
+  · intro member
+    obtain ⟨outcome, execution, same⟩ := Part.mem_map_iff _ |>.mp member
+    have scopeExecution := (mem_eval_iff.mp execution).scope_exit
+    exact same ▸ mem_eval_iff.mpr scopeExecution
+
+/-- Native source actions use the same scope boundary, including early returns
+and faults. The initial heap is the mark, not a snapshot restored on exit. -/
+theorem action_scope (body : Stmt signatures Γ result) (entry : State Γ) :
+    (Stmt.scope body).action program entry =
+      (body.action program entry).map
+        (fun outcome => (scopeExit entry.heap outcome.swap).swap) := by
+  simp only [action, eval_scope, ← Part.bind_some_eq_map, Part.bind_assoc, Part.bind_some]
+  apply congrArg ((body.eval program entry).bind)
+  funext outcome
+  rcases outcome with ⟨finish, control⟩
+  rfl
+
 /-- Reading observes the current shared heap before binding its actual cell.
 A finite heap fault skips the scoped continuation and retains that heap. -/
 theorem eval_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)

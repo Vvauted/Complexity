@@ -10,14 +10,17 @@ import Complexity.Language.Eval.Locals.Verification
 
 A lossless local view can group mutable values with captured values. When the
 actual guard and body executions preserve the captures, the author supplies an
-invariant and a variant only for mutable values and the current heap. The frame
+invariant and a well-founded decrease relation only for mutable values and the
+current heap. The frame
 premises establish the fixed capture equations internally; they do not require
 the heap or borrowed buffer contents to remain unchanged.
 
 `Stmt.observe_reindex` relates this grouped view to an existing lexical-order
 view by mapping the same actual outcome. The fixed-capture rule then reuses the
-ordinary-local variant rule with a strengthened internal invariant. There is no
-new observer, execution relation, loop induction or proposed runtime budget.
+ordinary-local well-founded rule with a strengthened internal invariant and
+Lean's `InvImage.wf`. The natural-valued variant interface is its `measure`
+specialization. There is no new observer, execution relation, loop induction or
+proposed runtime budget.
 -/
 
 namespace Complexity.Language.Stmt
@@ -39,11 +42,13 @@ theorem observe_reindex {Locals Reindexed : Type} (view : Env Γ ≃ Locals)
     Functor.map, StateT.map, Bind.bind, Pure.pure,
     ← Part.bind_some_eq_map, Part.bind_assoc, Part.bind_some]
 
-/-- Fixed captures need not appear in the author's invariant or variant.
+/-- Fixed captures need not appear in the author's invariant or decrease relation.
 The frame premises concern the actual guard/body executions; the specifications
 still run those same blocks and retain their actual mutable values and heap.
-Only a normal body completion must restore the invariant and decrease. -/
-theorem observe_while_fixed_variant_spec {Mutable Captured : Type}
+Only a normal body completion must restore the invariant and decrease relative
+to the state before the guard. Lean's existing well-founded relations can be
+used directly, without reducing progress to a natural-valued variant. -/
+theorem observe_while_fixed_spec {Mutable Captured : Type}
     (view : Env Γ ≃ Mutable × Captured) (program : Program signatures)
     (guard : Stmt signatures Γ .bool) (body : Stmt signatures Γ result)
     (guardFrame : ∀ {entry finish : State Γ} {control : Control .bool},
@@ -52,7 +57,9 @@ theorem observe_while_fixed_variant_spec {Mutable Captured : Type}
     (bodyFrame : ∀ {entry finish : State Γ} {control : Control result},
       Exec program body entry finish control →
         (view finish.locals).2 = (view entry.locals).2)
-    (captures : Captured) (invariant : Mutable → Heap → Prop) (variant : Mutable → Heap → Nat)
+    (captures : Captured) (invariant : Mutable → Heap → Prop)
+    (relation : (Mutable × Heap) → (Mutable × Heap) → Prop)
+    (wellFounded : WellFounded relation)
     (post : Std.Do.PostCond (Control result × Mutable) (.arg Heap .pure))
     (step : ∀ startMutable startHeap, invariant startMutable startHeap →
       Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
@@ -66,7 +73,7 @@ theorem observe_while_fixed_variant_spec {Mutable Captured : Type}
                   (fun current => ⟨current = afterGuardHeap⟩)
                   (fun bodyOutcome afterBodyHeap => ⟨match bodyOutcome.1 with
                     | .normal => invariant bodyOutcome.2.1 afterBodyHeap ∧
-                        variant bodyOutcome.2.1 afterBodyHeap < variant startMutable startHeap
+                        relation (bodyOutcome.2.1, afterBodyHeap) (startMutable, startHeap)
                     | .returned value =>
                         (post.1 (.returned value, bodyOutcome.2.1) afterBodyHeap).down
                     | .fault _ => False⟩, ⟨⟩)
@@ -78,9 +85,12 @@ theorem observe_while_fixed_variant_spec {Mutable Captured : Type}
       (observe view (.while guard body) program (mutable, captures))
       (fun heap => ⟨invariant mutable heap⟩)
       (fun outcome heap => post.1 (outcome.1, outcome.2.1) heap, ⟨⟩) := by
-  have specification := observe_while_variant_spec view program guard body
+  have specification := observe_while_spec view program guard body
     (fun locals heap => locals.2 = captures ∧ invariant locals.1 heap)
-    (fun locals heap => variant locals.1 heap)
+    (InvImage relation (fun current : (Mutable × Captured) × Heap =>
+      (current.1.1, current.2)))
+    (InvImage.wf (fun current : (Mutable × Captured) × Heap =>
+      (current.1.1, current.2)) wellFounded)
     (fun outcome heap => post.1 (outcome.1, outcome.2.1) heap, ⟨⟩)
     (by
       rintro ⟨startMutable, startCaptured⟩ startHeap ⟨sameCapture, initial⟩
@@ -121,5 +131,48 @@ theorem observe_while_fixed_variant_spec {Mutable Captured : Type}
     Part.TotalCorrectness.wp] at specification ⊢
   intro heap initial
   exact specification heap ⟨True.intro, initial⟩
+
+/-- Fixed captures need not appear in the author's invariant or variant.
+The frame premises concern the actual guard/body executions; the specifications
+still run those same blocks and retain their actual mutable values and heap.
+Only a normal body completion must restore the invariant and decrease. -/
+theorem observe_while_fixed_variant_spec {Mutable Captured : Type}
+    (view : Env Γ ≃ Mutable × Captured) (program : Program signatures)
+    (guard : Stmt signatures Γ .bool) (body : Stmt signatures Γ result)
+    (guardFrame : ∀ {entry finish : State Γ} {control : Control .bool},
+      Exec program guard entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (bodyFrame : ∀ {entry finish : State Γ} {control : Control result},
+      Exec program body entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (captures : Captured) (invariant : Mutable → Heap → Prop) (variant : Mutable → Heap → Nat)
+    (post : Std.Do.PostCond (Control result × Mutable) (.arg Heap .pure))
+    (step : ∀ startMutable startHeap, invariant startMutable startHeap →
+      Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+        (observe view guard program (startMutable, captures))
+        (fun current => ⟨current = startHeap⟩)
+        (fun guardOutcome afterGuardHeap => ⟨match guardOutcome.1 with
+          | .returned again =>
+              if again then
+                Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+                  (observe view body program (guardOutcome.2.1, captures))
+                  (fun current => ⟨current = afterGuardHeap⟩)
+                  (fun bodyOutcome afterBodyHeap => ⟨match bodyOutcome.1 with
+                    | .normal => invariant bodyOutcome.2.1 afterBodyHeap ∧
+                        variant bodyOutcome.2.1 afterBodyHeap < variant startMutable startHeap
+                    | .returned value =>
+                        (post.1 (.returned value, bodyOutcome.2.1) afterBodyHeap).down
+                    | .fault _ => False⟩, ⟨⟩)
+              else (post.1 (.normal, guardOutcome.2.1) afterGuardHeap).down
+          | .normal => False
+          | .fault _ => False⟩, ⟨⟩))
+    (mutable : Mutable) :
+    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+      (observe view (.while guard body) program (mutable, captures))
+      (fun heap => ⟨invariant mutable heap⟩)
+      (fun outcome heap => post.1 (outcome.1, outcome.2.1) heap, ⟨⟩) :=
+  observe_while_fixed_spec view program guard body guardFrame bodyFrame captures invariant
+    (measure fun current : Mutable × Heap => variant current.1 current.2).rel
+    (measure fun current : Mutable × Heap => variant current.1 current.2).wf post step mutable
 
 end Complexity.Language.Stmt

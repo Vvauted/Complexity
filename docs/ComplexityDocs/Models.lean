@@ -115,9 +115,10 @@ and preserves caller locals outside those slots.
 
 Use the actual returned shared state for subsequent calls. Returning restores
 caller registers, not old heap contents or an old cursor. Later allocator calls
-preserve an existing view at its original address. This is a monotone arena:
-there is no reset, free or GC, and ordinary aliasing writes can still change
-array contents. Reserved extent is not peak reachable space.
+preserve an existing view at its original address. Allocation alone is monotone;
+explicit scratch scopes below add safe reuse. Ordinary aliasing writes can still
+change array contents. Arbitrary `free` and GC are not provided, and reserved
+extent is not peak reachable space.
 
 The typed core includes `Stmt.alloc`. Its evaluator and budget-free correctness
 rules retain that same initialized object; the native VCG rule exposes ordinary
@@ -134,7 +135,8 @@ budget. The RAM guarantee still requires positive word width, exact scalar
 ranges, rooted represented arguments and sufficient arena/code/stack capacity.
 Its count includes the body's two private-flag initialization instructions and
 the outer call/return/halt overhead; input preparation and the one-time bootstrap
-remain separate. Capacity tracks cumulative cursor growth, not peak live storage.
+remain separate. Without scratch scopes, capacity tracks cumulative cursor growth,
+not peak live storage.
 The checked [allocation consumer](##Examples.Language.Allocation) calls `make`
 to allocate a result, allocates again, then reads the original if nonempty and
 returns it. `retain_runUntil` retains the original `ArrayRef` contents and the
@@ -145,6 +147,45 @@ and loop/recursion invariants remain author work, not automatically inferred
 by the generic register/placement proofs. Allocation-aware resource transport
 through imports, the full library, all 50 Examples, the routine source-frame
 consumer and the complete manual build are checked on 0v0.
+
+## Reclaim scoped temporary storage
+
+In a named source program, `with_scratch do ...` keeps temporary allocations
+within a lexical scope. Allocate longer-lived output before entering the scope.
+On a safe exit, old objects keep their **current** contents while new objects
+are discarded. Returning from inside the block still returns from the enclosing
+function, after cleanup. No copying, freezing or rollback is implicit.
+
+Safety requires all surviving local and returned handles to refer to objects
+that existed at scope entry. Current array cells are scalars, so they cannot
+hide further handles. The source reports an escaping reference without freeing
+its heap; the compiled success theorem covers proved-safe exits, not a runtime
+escape scanner. See the [scope specification](##Complexity.Language.Verification)
+for the correctness rules.
+
+The [RAM scope primitive](##Complexity.Computability.Ram.Memory.Arena.Scope)
+saves and restores the shared cursor using six instructions in total. It changes
+metadata rather than clearing cells, allowing later allocation to reuse addresses.
+The [compiled simulation](##Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Scope)
+proves that this preserves retained objects and runs cleanup after early returns.
+
+The [physical workspace interface](##Complexity.Computability.Ram.Compiler.Language.Arena.Memory)
+bounds all actual accesses throughout a complete function invocation by
+`heapLimit + (depth + 1) * frameSize`. This includes inputs, retained outputs,
+scratch, metadata and call frames. Registers, code, I/O streams and host-side
+loading/conversion are separate. The bound is a sufficient address envelope,
+not an exact count of reachable live objects; a restored final cursor alone
+would not bound intermediate workspace.
+
+The [repeated scratch client](##Examples.Language.ScopeCompiled) uses the same
+named source declaration for correctness and compiled execution. It allocates
+one surviving result cell, repeatedly calls a worker with two nested length-`n`
+scratch buffers, and returns that result. `make_runUntil` proves actual halt,
+mathematical contents and a workspace envelope of
+`entryCursor + 1 + 2*n + 2*frameSize`, independent of the repetition count.
+Word ranges and representation/capacity conditions remain explicit. The
+source loop's Lean well-founded proof supplies termination before resource
+readiness is considered.
 
 For scalar code, `source_program (pure)` supplies native total functions and
 automatically proved source correspondence. The checked

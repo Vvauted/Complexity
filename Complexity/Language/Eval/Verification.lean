@@ -127,6 +127,28 @@ entire heap. Its validity and contents can be derived using the existing view ru
 
 end Buffer
 
+/-- Compose the standard state-action weakest precondition with the same scope
+exit used by source execution. The body must produce an actual finite outcome;
+the native postcondition then sees reclamation or the preserved escaping fault.
+Successful source postconditions reduce this exit to its non-escape obligation. -/
+@[spec] theorem Stmt.scope_action_spec {signatures : List Signature} {Γ : List Ty}
+    {result : Ty} (program : Program signatures) (body : Stmt signatures Γ result)
+    (post : Std.Do.PostCond (Control result) (.arg (State Γ) .pure)) :
+    Std.Do.Triple (m := StateT (State Γ) Part) (ps := .arg (State Γ) .pure)
+      ((Stmt.scope body).action program)
+      (fun entry =>
+        ((Std.Do.WP.wp (body.action program)).apply
+          (fun control finish =>
+            let exited := scopeExit entry.heap (finish, control)
+            post.1 exited.2 exited.1, ⟨⟩)) entry)
+      post := by
+  simp only [Std.Do.Triple, Std.Do.WP.wp, Std.Do.PredTrans.pushArg,
+    Part.TotalCorrectness.wp]
+  intro entry ⟨⟨control, finish⟩, execution, property⟩
+  exact ⟨((scopeExit entry.heap (finish, control)).2,
+      (scopeExit entry.heap (finish, control)).1),
+    Stmt.mem_action_iff.mpr ((Stmt.mem_action_iff.mp execution).scope_exit), property⟩
+
 /-- Source total correctness observes a real finite result and tests its
 successful control postcondition. -/
 theorem TotalWP.iff_eval {signatures : List Signature} {Γ : List Ty} {result : Ty}

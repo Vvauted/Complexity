@@ -10,6 +10,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Buffer
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Composition
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Loop
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Call
+import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Scope
 
 /-!
 # Counted simulation of allocation-ready source programs
@@ -60,6 +61,8 @@ theorem lowerCoreMeasured {signatures : List Signature}
   | @alloc Γ result kind depth next₀ next₁ length initial continuation entry finish outcome
       body initialFits capacity ready steps tail ih =>
       exact ArenaCoreSimulates.alloc initialFits capacity ih
+  | @scope Γ result depth next₀ bodyCursor stmt entry finish outcome body safe ready steps cost ih =>
+      exact ArenaCoreSimulates.scope safe ih
   | seqNormal firstCost secondCost ihFirst ihSecond =>
       exact ArenaCoreSimulates.seqNormal ihFirst ihSecond
   | seqReturn cost ih => exact ArenaCoreSimulates.seqReturn ih

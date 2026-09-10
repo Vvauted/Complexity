@@ -15,6 +15,9 @@ import Examples.Language.Linking
 import Examples.Language.Remainder
 import Examples.Language.Scalar
 import Examples.Language.ScalarCompiled
+import Examples.Language.Scope
+import Examples.Language.ScopeCompiled
+import Examples.Language.ScopeCompiledWork
 import Examples.Language.Traversal
 import Examples.Language.TraversalCompiled
 import Examples.Language.TraversalComposition

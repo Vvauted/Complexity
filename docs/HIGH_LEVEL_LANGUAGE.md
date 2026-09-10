@@ -1,19 +1,15 @@
 # High-level language design
 
-Status: the independent core and backend connection are implemented for the
-subset described below; the intended high-level programming/proof experience
-is not complete. `source_program (pure)` generates native total scalar functions
-with checked source correspondence; self-recursion and acyclic calls are supported,
+Status: `source_program (pure)` generates native total scalar functions with
+checked source correspondence; self-recursion and acyclic calls are supported,
 but pure `while`, mutual recursion and buffers are not. Effectful declarations
-retain their partial heap-action interface. Typed core programs can now
-allocate and return buffers with checked RAM execution. Named `Buffer.alloc`
-and a complete allocating-callee/using-caller example are checked, including
-resource-import transport. The complete library, all 50 Examples, the routine
-source-frame consumer and the complete manual build on 0v0. The
-[roadmap](ROADMAP.md) reopens the public function and lifetime decisions on that
-evidence. Existing core semantics and
-compiler proofs remain foundations, not a commitment to their current public
-presentation.
+retain their partial heap-action interface. Named `Buffer.alloc` has a checked
+allocating-callee/using-caller path to RAM, including resource-import transport.
+Scoped scratch reclamation now has a checked same-source runner and physical
+workspace bound independent of repeated call count; see
+[the implementation checklist](RECLAMATION_TODO.md). The
+high-level programming/proof interface remains incomplete; the
+[roadmap](ROADMAP.md) distinguishes its working foundations from planned APIs.
 
 The [cross-prover research report](DESIGN_RESEARCH.md) supplies the rationale
 for the next interface: one supported implementation, a common mathematical
@@ -43,7 +39,7 @@ semantics and checked whole-compiler behavior/cost connections. Mutable local
 bindings and assignments use the same source state, native equations and lowering.
 The typed core now includes effectful-guard loops and well-founded source rules.
 The surface accepts `while` and generates named guard/body/loop equations,
-normal-continuation proofs and a variant rule over named mutable locals.
+normal-continuation proofs and termination rules over mutable locals and the heap.
 The complete buffer traversal proof now gives its ordinary `Array.map` result,
 preservation of disjoint views, termination, compiled invocation and independent
 linear instruction bound.
@@ -188,9 +184,10 @@ function boundary; sequencing executes its tail only on normal continuation.
 The scalar compiler already handles returns through nested bindings, branches
 and sequences using a private flag, without duplicating the remaining code.
 Loop lowering and the named loop frontend propagate the same control outcome.
-The generated loop rule takes an invariant and variant over ordinary mutable
-locals, fixing immutable captures with proved lexical preservation. Authors
-still supply the mathematical invariant and descent proof.
+The generated loop rules take an invariant and either a natural-valued variant
+or a well-founded relation on mutable locals and the heap. Immutable captures
+are fixed by proved lexical preservation. Authors still supply the mathematical
+invariant and descent proof.
 `break/continue` and tagged
 `Option/Sum` values are subsequent supported constructs, with real control and
 tag/payload lowering, not dummy returned words.
@@ -291,9 +288,9 @@ and `x ← action` update existing typed locals; the latter reuses the same real
 calls, reads and slices. An immutable nearest binding cannot be bypassed to
 assign an outer mutable binding with the same name. The native equation uses
 Lean's own mutable `do` and branch joins, not a second environment monad.
-Surface `while` now generates observations and equations for the actual parsed
-guard and body, together with a named-local `variant_spec`. General proof automation
-remains unfinished. The buffer consumer separately
+Surface `while` generates observations and equations for the actual parsed
+guard and body, together with `variant_spec` and `wellFounded_spec`. General
+proof automation remains unfinished. The buffer consumer separately
 checks its source specification and the compiled invocation of that declaration.
 
 Assignments also cover borrowed descriptors: changing a local handle does not
@@ -469,14 +466,42 @@ cost observations must not depend on which proof of execution or termination
 was supplied. Allocation uses the current object count as its deterministic
 fresh identity, rather than an unspecified choice of fresh names.
 
-Use ordinary well-founded reasoning for loops and recursion. The implementation
-must provide reusable rules for arbitrary bodies, not an algorithm-specific
-interpreter or a new induction framework for each example.
-
 Source predicates use ordinary Lean values, lists, arrays and relations.
 A result specification need not be an independently implemented reference
 function. For pure computations, determinism and termination yield ordinary
 value equations; for mutation, they yield result/state relations and frames.
+
+### Reuse Lean's termination arguments
+
+For `source_program (pure)`, supply ordinary `termination_by` and, where needed,
+`decreasing_by` once. Lean checks the generated native definition; generated
+correspondence reuses its recursion principle to establish terminating source
+execution with the same result. The mathematical result theorem is then an
+ordinary Lean proof, as in the factorial example. This mechanism covers the
+supported pure fragment, not arbitrary effectful native recursion.
+
+Effectful total correctness reuses the same mathematical foundation through
+source rules, without fuel or a time budget:
+
+- `TotalWP.while_wellFounded` accepts an ordinary `WellFounded` relation.
+  `Stmt.observe_while_fixed_spec` exposes it through native `Std.Do` triples
+  while fixing immutable captures internally. A named loop's `wellFounded_spec`
+  takes a relation on `Loop.Mutable × Heap`; its invariant and normal/return
+  postconditions still use named mutable arguments. Descent compares the end
+  of a normally completed body with the state before the guard. A false guard
+  or early return needs no descent. The existing `variant_spec` is the
+  natural-valued `measure` specialization, not a separate termination checker.
+- `FunctionTotal.verify_wellFounded` supplies complete source-function contracts
+  at smaller mathematical indices using `WellFounded.induction`. The index may
+  select different functions and signatures for mutual recursion. This is a
+  core proof rule; a convenient named effectful-recursion frontend remains open.
+
+A terminating Lean definition returning `Part α` can return `Part.none`.
+Termination of constructing that value does not prove its `Part.Dom`, still
+less successful source return rather than a finite fault. `FunctionTotal` or
+a strict native triple establishes the required successful execution. Separate
+backend proofs retain word-range, stack and cost obligations; those are not a
+second source termination argument.
 
 ### Public functions, effects and successful termination
 
@@ -744,11 +769,12 @@ and original `ArrayRef` contents, including the empty case. Its `Named.make`
 uses `Buffer.alloc`; `named_make_spec` proves ordinary `Array.replicate` contents
 with `mvcgen`, without source capacity or time premises. Mathematical ranges
 and loop/recursion arguments remain author work; register/placement transport
-uses the shared proof. Allocation-aware resource linking and the complete
-library and all-Examples builds are checked, including the source-frame rule
-and its consumer. The complete manual builds too.
-The caller/session owns the live arena; nested calls share
-allocation progress, and returned containers remain there. Return does not reset it.
+uses the shared proof. Allocation-aware resource linking transports the same
+readiness and costs; the source-frame rule preserves old contents for bodies
+without cell writes.
+The caller/session owns the live arena; nested calls share allocation progress.
+A function return alone does not reset it; an explicit scratch scope has the
+lifetime behavior described below.
 Caller-supplied scratch remains useful but does not replace fresh results.
 
 The local call bridge now permits different input and output placements and
@@ -861,17 +887,66 @@ allocator-aware postcondition returning the updated arena representation;
 `HeapRep` and an address-capacity bound alone do not suffice. All cooperating
 allocating imports use the same session protocol.
 
-Capacity covers retained inputs, the metadata reservation and cumulative fresh
-allocation across nested and subsequent calls, together with a separate
-sufficient stack bound below `2^w`. There is no reset, free, GC or reference
-counting in this first protocol. Hence a returned region remains valid until
-the session is discarded, but its contents are still mutable through aliases:
-a return-time contents contract does not promise an immutable value forever.
-Reclamation needs non-escape on all relevant exits and a representation of
-live/dead objects; resizing needs an explicit alias policy. Reserved extent,
-cumulative allocation and peak reachable data remain distinct. See
-[M4](ROADMAP.md#m4--allocation-lifetime-and-encapsulated-local-mutation) for the
-allocating-callee/using-caller acceptance criterion and later lifetime work.
+Without explicit reclamation, capacity covers retained inputs, metadata and
+cumulative fresh allocation across nested and subsequent calls. A separate
+stack bound must fit below `2^w`. Returned contents remain mutable through
+aliases: a return-time contents contract does not promise an immutable value
+forever. Resizing, arbitrary `free`, GC and reference counting are not implemented.
+
+#### Scoped scratch storage
+
+`with_scratch do ...` lowers to the typed core's `Stmt.scope`. It is a lexical
+control block, not a function or a value-producing return boundary. Ordinary
+fallthrough continues after it; a `return` still exits the enclosing function,
+after scope cleanup. Allocate a result outside the scratch scope when it must
+survive that scope, and use temporary buffers inside it. This does not implicitly
+copy, move or freeze a returned buffer.
+
+`ScopeSafe initial finish control` requires every surviving local handle and
+returned handle to refer to an object already present at entry. It is a
+root/lifetime condition, not a disjointness, contents or full-view-validity
+condition. Current objects contain only scalar Nat/Bool cells; they cannot
+hide another buffer reference. Pointer-containing cells or closures would need
+a stronger reachability account.
+
+On a safe finite exit, the source retains
+`finish.heap.take initial.objects.size`: the prefix of the **current** heap.
+Writes to old objects and outer locals remain visible. Only objects allocated
+inside the scope, including through its callees, are removed, so later allocation
+may reuse their identities. This rule also applies to a safe fault exit and
+preserves that fault. If the entry-root condition fails, the source retains the
+full current heap; normal completion or
+return becomes `Fault.regionEscape`, while an existing fault is preserved.
+The semantics does not silently leave dangling handles or roll back earlier writes.
+
+`TotalWP.scope` and `scope_compose` prove successful exits from a body contract
+that supplies non-escape and the postcondition on this restricted final heap.
+The native `Stmt.scope_action_spec` composes the same endpoint conversion with
+the body action. Named scratch blocks expose their actual body, equation,
+continuation and safe-exit `spec`; no second evaluator determines cleanup.
+
+The RAM lowering saves the actual cursor from address zero in one fresh local,
+runs the body, then stores that saved cursor back. Capture and release each
+execute three instructions; the latter runs even when the body sets the return
+flag. Release does not clear cells or restore old data. The representation proof
+keeps precisely the retained source objects and makes the suffix available to
+subsequent allocation. `ArenaReady.scope` certifies only safe exits. There is no
+compiled escape scanner or claimed runtime implementation of `regionEscape`;
+successful target execution remains conditional on non-escape and capacity.
+
+Space must cover every intermediate execution, not just the restored final
+cursor. Nested scratch regions contribute their simultaneously reserved space;
+sequential reuse need not add their allocation totals. The allocation-aware
+memory interface bounds actual accessed addresses by the heap/stack envelope.
+That is a sufficient physical workspace bound, not an exact peak-reachable-space
+metric. Register, code and I/O storage are separate. The
+[source consumer](../Examples/Language/Scope.lean) allocates one result outside
+two nested scratch regions, writes it and returns early through cleanup. Its
+[compiled theorem](../Examples/Language/ScopeCompiled.lean) repeats that worker
+arbitrarily many times within word ranges, returns the same mathematical result,
+and bounds every actual access by `entryCursor + 1 + 2*n + 2*frameSize`, independent
+of repetition count. The existing source loop proof supplies termination;
+resource readiness does not require a second descent argument.
 
 ### Nat is mathematical, Word is modular
 
@@ -1177,8 +1252,8 @@ those capabilities. No choice may define high-level meaning through
 lowering, accept manually entered instruction prices or expose register proofs
 to algorithm authors.
 
-Richer data operations and reclamation remain
-scheduled capabilities, not assumed consequences of core allocation or a
-mathematical view. Arbitrary Lean compilation,
+Richer data operations and general lifetime/encapsulation interfaces remain
+scheduled capabilities, not assumed consequences of the checked scoped allocator
+or a mathematical view. Arbitrary Lean compilation,
 general closure conversion, a new ownership calculus, bignums, a new machine
 model and a full optimizer are not prerequisites for the first usable language.

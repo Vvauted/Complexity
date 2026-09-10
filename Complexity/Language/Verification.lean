@@ -39,6 +39,29 @@ def Control.Satisfies {Γ : List Ty} {result : Ty}
   | .returned value => returned value finish
   | .fault _ => False
 
+/-- An escaping scope cannot establish either successful postcondition, even
+when its body was already faulting. -/
+@[simp] theorem Control.not_satisfies_scopeFailure {Γ : List Ty} {result : Ty}
+    (control : Control result) (normal : State Γ → Prop)
+    (returned : Value result → State Γ → Prop) (finish : State Γ) :
+    ¬ control.scopeFailure.Satisfies normal returned finish := by
+  cases control <;> simp [Control.scopeFailure, Control.Satisfies]
+
+/-- The shared scope-exit operation establishes a successful postcondition
+exactly when its roots are safe and the reclaimed current heap satisfies it. -/
+@[simp] theorem scopeExit_satisfies_iff {Γ : List Ty} {result : Ty}
+    (initial : Heap) (finish : State Γ) (control : Control result)
+    (normal : State Γ → Prop) (returned : Value result → State Γ → Prop) :
+    (scopeExit initial (finish, control)).2.Satisfies normal returned
+      (scopeExit initial (finish, control)).1 ↔
+      ScopeSafe initial finish control ∧
+        control.Satisfies normal returned
+          ⟨finish.locals, finish.heap.take initial.objects.size⟩ := by
+  classical
+  by_cases safe : ScopeSafe initial finish control
+  · simp only [scopeExit_of_safe safe, safe, true_and]
+  · simp only [scopeExit_of_not_safe safe, Control.not_satisfies_scopeFailure, safe, false_and]
+
 /-- Budget-free total correctness, retaining both normal and returning control. -/
 def TotalWP {signatures : List Signature} {Γ : List Ty} {result : Ty}
     (program : Program signatures) (stmt : Stmt signatures Γ result)
@@ -131,6 +154,37 @@ budget belongs to this source-level correctness rule. -/
     | alloc body => exact ⟨_, control, body, post⟩
   · rintro ⟨finish, control, execution, post⟩
     exact ⟨finish.tail, control, .alloc execution, post⟩
+
+/-- A scope must finish successfully without retaining a reference to a fresh
+object. Its postcondition observes the current contents of the entry objects,
+after discarding only the newly allocated suffix. Returns pass through this
+same exit check; an escaping exit is a fault and cannot establish total correctness. -/
+@[simp] theorem scope_iff (body : Stmt signatures Γ result) :
+    TotalWP program (.scope body) normal returned entry ↔
+      TotalWP program body
+        (fun finish => ScopeSafe entry.heap finish (.normal : Control result) ∧
+          normal ⟨finish.locals, finish.heap.take entry.heap.objects.size⟩)
+        (fun value finish => ScopeSafe entry.heap finish (.returned value) ∧
+          returned value ⟨finish.locals, finish.heap.take entry.heap.objects.size⟩)
+        entry := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | scope execution safe =>
+        refine ⟨_, control, execution, ?_⟩
+        cases control with
+        | normal => exact ⟨safe, post⟩
+        | returned value => exact ⟨safe, post⟩
+        | fault error => exact False.elim post
+    | scopeEscape execution escapes =>
+        exact False.elim (Control.not_satisfies_scopeFailure _ _ _ _ post)
+  · rintro ⟨finish, control, execution, post⟩
+    cases control with
+    | normal =>
+        exact ⟨_, .normal, .scope execution post.1, post.2⟩
+    | returned value =>
+        exact ⟨_, .returned value, .scope execution post.1, post.2⟩
+    | fault error => exact False.elim post
 
 /-- A read must succeed and its actual current cell supplies the scoped value.
 The continuation may change the heap, return early or execute further calls. -/
@@ -332,6 +386,29 @@ theorem assign {τ : Ty} {target : Var Γ τ} {value : Prim Γ τ}
     (post : normal (entry.set target (value.eval entry.locals))) :
     TotalWP program (.assign target value) normal returned entry :=
   (assign_iff target value).mpr post
+
+/-- Close a source allocation scope after proving both the non-escape check
+and the desired postcondition at the reclaimed current heap. -/
+theorem scope
+    (body : TotalWP program stmt
+      (fun finish => ScopeSafe entry.heap finish (.normal : Control result) ∧
+        normal ⟨finish.locals, finish.heap.take entry.heap.objects.size⟩)
+      (fun value finish => ScopeSafe entry.heap finish (.returned value) ∧
+        returned value ⟨finish.locals, finish.heap.take entry.heap.objects.size⟩) entry) :
+    TotalWP program (.scope stmt) normal returned entry :=
+  (scope_iff stmt).mpr body
+
+/-- Reuse a body contract and discharge the two scope exits from its actual
+normal and returning postconditions. No new termination argument is required. -/
+theorem scope_compose (body : TotalWP program stmt normal' returned' entry)
+    (normalExit : ∀ finish, normal' finish →
+      ScopeSafe entry.heap finish (.normal : Control result) ∧
+        normal ⟨finish.locals, finish.heap.take entry.heap.objects.size⟩)
+    (returnedExit : ∀ value finish, returned' value finish →
+      ScopeSafe entry.heap finish (.returned value) ∧
+        returned value ⟨finish.locals, finish.heap.take entry.heap.objects.size⟩) :
+    TotalWP program (.scope stmt) normal returned entry :=
+  scope (body.mono_post normalExit returnedExit)
 
 /-- Compose a successful current-heap read with a proof about its actual value. -/
 theorem read {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}

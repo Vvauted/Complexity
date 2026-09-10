@@ -181,9 +181,18 @@ A heap boundary bounds addresses; a visited-address set is a cumulative footprin
 Neither is automatically peak live storage. Saved-frame and partial save/restore lemmas
 describe the actual calling protocol, but a complete tight nested-call live-space result
 is still missing. In particular, `SP - H` is not enough: setup writes before advancing `SP`,
-and return retreats it before restoration finishes. The verified monotone arena
-tracks cumulative allocation and preserves its cursor across calls; this does not
-establish peak live storage. Reclamation still needs a separate lifetime semantics.
+and return retreats it before restoration finishes. The
+[function memory theorem](##Complexity.Computability.Ram.Compiler.Local.Function.Memory)
+covers those intermediate accesses and the final halt in one sufficient heap-plus-stack
+envelope. The [source connection](##Complexity.Computability.Ram.Compiler.Language.Arena.Memory)
+reuses the same measured execution, including real allocation and scope release.
+
+The arena preserves its cursor across calls except at explicit scratch-scope exits.
+These have source lifetime semantics: surviving roots must precede the checkpoint,
+and cleanup retains the current contents of older objects. Repeated scratch work
+can therefore reuse physical addresses. This supplies a conservative workspace
+bound, not a tight peak-reachable-object metric; final cursor restoration alone
+would not prove an intermediate-space bound.
 
 See [execution footprints](##Complexity.Computability.Ram.Execution.Memory),
 [saved frames](##Complexity.Computability.Ram.Compiler.Local.ABI.Stack) and

@@ -54,6 +54,14 @@ private theorem of_renameCalls_aux {source target : List Signature}
       intro statement same
       cases statement <;> cases same
       exact .alloc (ih _ rfl)
+  | scope _ safe ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .scope (ih _ rfl) safe
+  | scopeEscape _ escapes ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .scopeEscape (ih _ rfl) escapes
   | read loaded _ ih =>
       intro statement same
       cases statement <;> cases same

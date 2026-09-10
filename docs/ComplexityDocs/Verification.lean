@@ -56,12 +56,43 @@ effectful, possibly partial actions with actual heaps and finite faults.
 Those `Part` observations remain noncomputable, while the pure native functions
 can be evaluated by Lean. Native execution and certified RAM instruction costs
 are different runtimes; ordinary result equality assigns no execution cost.
+A terminating Lean definition returning `Part α` may return `Part.none`:
+constructing the action does not establish its `Part.Dom`. Nor does a defined
+finite fault establish successful return. Use `FunctionTotal` or a strict native
+triple for successful source termination; a host `termination_by` on action
+construction alone is not that proof.
 
 Mutable bindings use ordinary Lean `do` in the generated equation. `x := value`
 updates an existing local, and `x ← action` rebinds it to the result of a real
-source call, read, slice or allocation. Branch joins retain outer updates; leaving a scope
-drops only its inner bindings. Ordinary `let` and parameters are immutable.
+source call, read, slice or allocation. Branch joins retain outer updates;
+leaving an ordinary binding drops only that binding, without reclaiming its
+object. Ordinary `let` and parameters are immutable.
 Copying an existing buffer handle does not copy its contents or alter the heap.
+
+`with_scratch do ...` explicitly gives fresh objects a lexical lifetime. Its
+core `Stmt.scope` reclaims the fresh suffix on a safe exit while keeping the
+current contents of older objects. A `return` still leaves the enclosing
+function after cleanup; it does not merely return from the scratch block.
+For an output that must survive, allocate it outside the scratch scope and use
+the inner buffers only temporarily. No implicit copy or freeze is performed.
+
+The safety premise `ScopeSafe initial finish control` says surviving locals
+and any returned value are rooted in the entry object domain. `TotalWP.scope`
+and `scope_compose` require this premise and apply the postcondition to
+`finish.heap.take initial.objects.size`, not to a restored entry heap. The
+native `Stmt.scope_action_spec` describes the same actual exit; a named block's
+`spec` exposes its safe-body obligation. Current cells contain only scalar
+values, so they cannot hide references to the reclaimed objects.
+
+If the entry-root condition fails, source semantics retains the heap and reports
+`regionEscape`, unless an earlier fault exists, in which case it preserves that fault.
+Safe fault exits may reclaim storage but remain faults. The RAM backend certifies
+safe exits only: it saves and restores the real allocator cursor, including
+after an early return, without a runtime escape scanner or GC. Finite capacity
+remains a separate backend premise. The [scratch consumer](##Examples.Language.Scope)
+proves the actual nested/called source program using these rules and ordinary
+array contents. Its [compiled theorem](##Examples.Language.ScopeCompiled) supplies
+the separate physical workspace bound; exact peak-live-space analysis remains distinct.
 
 [Evaluation adequacy](##Complexity.Language.Eval.Basic) distinguishes finite
 faults from absence of a finite result. The
@@ -246,10 +277,18 @@ invariant and well-founded relation, or a natural-valued variant, on those value
 and the current heap. The [continuation bridge](##Complexity.Language.Eval.Locals.Continuation)
 runs the remaining function only on normal completion. These are proved changes
 of view of the same source execution, not another implementation.
-Named `while` syntax now generates actual guard/body/loop observations, one-step
-equations, normal-continuation proofs and a `variant_spec` over named mutable
-locals. Immutable captures are fixed by generated lexical preservation proofs;
-this preserves a buffer descriptor, not its contents. The
+Named `while` syntax generates actual guard/body/loop observations, one-step
+equations, normal-continuation proofs and two termination entries. Use
+`variant_spec` for a natural-valued measure over named mutable locals and the
+heap. `wellFounded_spec` instead accepts a relation on the generated
+`Loop.Mutable × Heap` and its ordinary Lean `WellFounded` proof. Invariants and
+normal/return postconditions still take named mutable arguments. Its
+`Stmt.observe_while_fixed_spec` foundation reuses the ordinary-local loop rule
+through `InvImage.wf`; the variant rule is just its `measure` specialization.
+Only normal body completion must decrease relative to the pre-guard state;
+false guards and early returns need no descent. Neither interface supplies fuel
+or an instruction budget. Immutable captures are fixed by lexical preservation
+proofs; this preserves a buffer descriptor, not its contents. The
 [read/helper/branch/write traversal](##Examples.Language.Traversal) uses this rule
 and native array identities to prove termination and its complete `Array.map`
 result. Its author-supplied invariant describes the processed prefix and unread
@@ -293,9 +332,11 @@ retains that frame, the final heap representation and the unchanged instruction
 bound. Neither array correctness nor register-level simulation is proved again.
 
 For recursion, the [source contract rule](##Complexity.Language.Verification.Recursion)
-supplies complete callable specifications at smaller mathematical indices through
-ordinary well-founded induction. It supports a fixed function or a family of
-mutually recursive functions without imposing a runtime budget or stack depth.
+`FunctionTotal.verify_wellFounded` supplies complete callable specifications at
+smaller mathematical indices through Lean's `WellFounded.induction`. A fixed
+function selector gives ordinary recursion; a varying selector supports mutually
+recursive functions with different signatures. The index is mathematical proof
+data, not runtime fuel, an instruction budget or a stack-depth bound.
 For the supported pure fragment, the [named factorial](##Examples.Language.Factorial)
 uses Lean's native termination machinery:
 
@@ -330,8 +371,11 @@ and the final arithmetic inequality remain the author's proof.
 The resulting halted-runner theorem returns factorial, preserves shared entry
 memory and retains the generated code and stack-capacity premises. The linear
 word-RAM instruction bound is in the numeric argument `n`, not its binary bit
-length or the cost of arbitrary-precision multiplication. Pure mutually recursive
-families and a convenient named proof interface for effectful recursion remain open.
+length or the cost of arbitrary-precision multiplication. These backend range,
+nesting and cost arguments do not repeat the source termination proof. Pure
+mutually recursive families and a convenient named proof interface for effectful
+recursion remain open; automatic pure correspondence is not a promise of
+automatic termination transport for arbitrary effectful actions.
 
 The [compiled buffer invocation](##Examples.Language.BufferCompiled) reuses this
 source proof and derives the read cell's range from the input heap representation.
@@ -470,9 +514,9 @@ The [remainder example](##Examples.Language.Remainder) implements
 `n - (n / d) * d`, reuses the ordinary Nat identity, and derives the actual
 compiled result with a separate instruction bound. Divisor zero is included;
 no artificial subtraction-order condition is required.
-Named `while` is supported as described above; products and allocation remain
-future work. Local assignment is covered by the same structural realization and
-cost tactics. Richer
+Named `while` and initialized allocation are supported as described above;
+products remain future work. Local assignment is covered by the same structural
+realization and cost tactics. Richer
 callee selection, recursive proofs and data-dependent bound automation remain
 unfinished. Costs are currently derived
 for successfully realized executions, not an instrumentation theorem for

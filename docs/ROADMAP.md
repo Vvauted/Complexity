@@ -32,7 +32,7 @@ These results are retained; we do not need another execution model or backend.
 | [Factorial](../Examples/Language/Factorial.lean), [Scalar](../Examples/Language/Scalar.lean) and [Remainder](../Examples/Language/Remainder.lean) | Generated native scalar functions; ordinary equality proofs, one native termination argument for self-recursion, automatic source correspondence and total-contract conversion | Pure `while`, mutually recursive families and buffers are not supported; mathematical proofs and separate resource arguments remain author work. |
 | [Traversal](../Examples/Language/Traversal.lean) | Real read/helper/branch/write loop, native `Array.map` result and outside-buffer frame | Public guard/body/round proofs still manipulate `Control`, local tuples and nested triples. Named variables alone have not completed the loop interface. |
 | [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts preserve both actual results, including disjoint slices of one object | Routine contents/frame consequences are manually transferred between calls. This is an automation gap, not permission to assume all buffers are independent. |
-| [Source types](../Complexity/Language/Basic.lean) and [allocation consumer](../Examples/Language/Allocation.lean) | `Nat`, `Bool`, `Unit`, array views, named initialized allocation, an allocating-callee/using-caller path to RAM, resource linking and an allocation-preserving source frame | Products/sums/inductive data and reclamation remain missing. |
+| [Source types](../Complexity/Language/Basic.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Named initialized allocation, non-escaping scoped reclamation, resource linking and actual repeated-workspace bounds | Products/sums/inductive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
 | [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner | Authors still see compiler cost names, loop-view transport and large representation/ABI-shaped publication theorems. |
 | [Imported compiled traversal](../Examples/Language/ImportsTraversalCompiled.lean) | Existing behavior and resource contracts are reused without a new loop proof | Import transport is implemented. Its existence does not finish frame automation, total-function interfaces or data-dependent numerical bounds. |
 
@@ -136,7 +136,10 @@ each function. A small alias or an additional `simp` lemma does not meet this ga
 ## M2 — Mutable algorithms with mathematical data contracts
 
 **Status:** shared objects, aliases, operation specifications and complete
-traversal proofs exist; modular proof automation remains incomplete.
+traversal proofs exist; modular proof automation remains incomplete. Named loops
+now expose `wellFounded_spec` for Lean relations on their mutable locals and heap;
+the existing Nat `variant_spec` is retained as a measure specialization. The
+scoped scratch consumer uses this general rule, and Traversal remains compatible.
 
 The checked [source-frame rule](../Complexity/Language/Effects/Heap.lean) uses `NoCellWrites` for the
 statement and every callee preserves an exact heap-object prefix and existing
@@ -213,8 +216,11 @@ measured simulation through loops and recursive calls, and the halted runner
 connection are checked. Named `Buffer.alloc` and the complete allocating client
 are checked too, as is allocating resource-import transport. The complete
 library, all Examples, the routine source-frame consumer and the complete manual
-build. Reclamation remains unfinished.
+build. Scoped scratch reclamation, its named mathematical contracts and the
+same-source repeated-call runner/physical-workspace theorem are now checked.
+Arbitrary lifetimes and encapsulated persistent pure results remain open.
 Develop this alongside M1/M2; it constrains what a pure-looking collection API can mean.
+See the [scoped reclamation checklist](RECLAMATION_TODO.md) for its concrete scope.
 
 The first bottom-up layer is now implemented and individually checked:
 [source heap allocation](../Complexity/Language/Heap/Allocation.lean),
@@ -226,7 +232,7 @@ including typed operand materialization, and checked call-boundary rules for
 placement extension and explicit legacy metadata frames. `Stmt.alloc` now has
 source semantics, `TotalWP`/VCG rules, source linking and static lowering.
 The [general measured simulation](../Complexity/Computability/Ram/Compiler/Language/Arena/MeasuredSimulation.lean)
-threads the same execution's final heap, extended placement and cumulative
+threads the same execution's final heap, extended placement and current
 cursor through calls and loops; the [runner connection](../Complexity/Computability/Ram/Compiler/Language/Arena/ProgramExecution.lean)
 includes private-flag initialization and the outer call/return/halt cost.
 Independent source correctness can supply termination to the separate readiness
@@ -250,15 +256,17 @@ call stack. These borrowed-storage interfaces remain useful alongside allocation
   returned container and must not replace that requirement.
 - **Stable-address monotone arena:** its typed source operation and general
   allocating execution to RAM, named construction and the allocating client
-  and resource-import transport are implemented; reclamation remains open. The caller/session
+  and resource-import transport are implemented. The caller/session
   owns a still-live arena; nested calls share allocation progress, and returned
   containers remain there. Return does not reset the arena. Capacity accounts
   for retained input and cumulative fresh allocation across calls, not only one
-  isolated callee. Initially omit reset rather than claim reclamation.
-- **Scoped scratch regions plus longer-lived results:** a candidate for
-  reusable workspace and externally functional APIs. Region reset needs a
-  non-escape/lifetime argument; a returned object must remain live or be moved
-  by a proved, charged operation. This is more work than bump allocation.
+  isolated callee when no explicit scratch scope is used.
+- **Scoped scratch regions plus longer-lived results — checked:** `with_scratch`
+  preserves writes to older objects and releases its fresh suffix after a
+  non-escaping exit, including early return. Results allocated outside the scope
+  remain live. Actual cursor capture/release costs six instructions and enables
+  address reuse across calls and loops. This does not move/freeze results or
+  establish a persistent pure collection API.
 
 GC, reference counting and a new general ownership calculus are not selected.
 Indirection/movable objects would require a real object table and additional
@@ -306,21 +314,33 @@ boundaries and remaining integration/lifetime obligations are:
    prefixes are connected to counted execution, including zero-length overhead.
    Sufficient capacity remains a backend premise, not an implemented OOM result.
    Input loading and output conversion need an explicit boundary too.
-5. **Escape and abstraction.** A reset region cannot retain accessible aliases.
+5. **Escape and abstraction — scoped lifetime checked, encapsulation open.**
+   A reset region cannot retain accessible aliases. `ScopeSafe` checks surviving
+   locals and returns against the entry object domain; current cells contain
+   scalars, not hidden pointers. Its source failure keeps the heap; compiled
+   success requires a proved-safe exit rather than an escape scanner.
    Escaping aliases must not let later writes change a promised persistent pure
    result; prove the relevant isolation/freeze boundary or perform a real copy.
-   Establish how results remain live across calls and how repeated clients
-   reclaim or retain storage. Reclamation also changes which objects must remain
-   represented: the current relation represents every object. Do not label
-   arena occupancy as live-space analysis.
+   Scope restriction retains exactly the current prefix of represented objects;
+   outer results survive while repeated clients reuse scratch. Richer pointer
+   cells or closures require extended root reasoning. Do not label the current
+   physical workspace envelope as exact reachable live-space analysis.
 
 **First allocation gate — checked:** a source callee allocates and returns a
 container; its caller allocates again, uses the original and retains its
 contents in the actual RAM result, including empty output. Behavior, capacity
 and counted initialization compose without per-program register proofs.
 This does not automatically infer mathematical ranges or loop/recursion
-invariants. Scoped reclamation still needs a non-escaping scratch consumer;
-the monotone arena is not peak-live-space analysis.
+invariants.
+
+**Scoped reclamation gate — checked:** one named declaration allocates a result,
+repeatedly calls a worker with nested scratch arrays and returns the retained
+result. Its source proof uses Lean's `measure` with no resource premise.
+`Scope.make_runUntil` connects that same execution to actual halt, output contents
+and all intermediate accesses within `entryCursor + 1 + 2*n + 2*frameSize`,
+independent of repetition count. The bound includes retained heap, metadata,
+scratch and two call frames; registers, code, I/O and host loading remain separate.
+It is a sufficient physical workspace bound, not exact peak-live-space analysis.
 
 ## M5 — Source-level complexity and complete published claims
 
@@ -389,7 +409,9 @@ and should be reused, not confused with completing this different bridge.
 
 ## Next work and when to change direction
 
-The first bottom-up implementation queue is complete; see
+Scoped reclamation and its same-source physical workspace guarantee are checked;
+see [RECLAMATION_TODO.md](RECLAMATION_TODO.md). General lifetime inference and
+encapsulation are not consequences of those theorems. The first bottom-up allocation queue is complete; see
 [FOUNDATIONS_TODO.md](FOUNDATIONS_TODO.md) for its scope and checked builds.
 Allocation, linking, scalar pure correspondence, Examples and the complete manual
 now build together. The priorities below extend the supported fragments toward

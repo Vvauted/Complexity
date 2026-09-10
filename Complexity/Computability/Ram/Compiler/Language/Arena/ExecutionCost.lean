@@ -18,6 +18,8 @@ formulas, including return flags, loop guards and actual callee-frame work.
 Allocation charges `14 * length + 18` for the actual operand assignments and
 initialization loop, as established by `lowerAlloc_measured`. Its static code
 size is not its dynamic cost; length zero still performs the fixed overhead.
+An explicit safe scope charges six instructions in addition to its body:
+three for saving the cursor and three for releasing its temporary allocation.
 
 Counts cover `lowerStmtCore`. Function-body flag initialization, an outer
 invocation and session bootstrap retain their separate existing boundaries.
@@ -116,6 +118,14 @@ inductive ArenaExecutionCost {signatures : List Signature}
       {steps : Nat} (tail : ArenaExecutionCost ready steps) :
       ArenaExecutionCost (.alloc initialFits capacity ready)
         (14 * length.eval entry.locals + 18 + steps)
+  | scope {Γ : List Ty} {result : Ty} {depth next₀ bodyCursor : Nat}
+      {stmt : Complexity.Language.Stmt signatures Γ result}
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      {body : Complexity.Language.Exec program stmt entry finish control}
+      {safe : ScopeSafe entry.heap finish control}
+      {ready : ArenaReady body w heapLimit depth next₀ bodyCursor}
+      {steps : Nat} (cost : ArenaExecutionCost ready steps) :
+      ArenaExecutionCost (.scope (safe := safe) ready) (steps + 6)
   | seqNormal {Γ : List Ty} {result : Ty} {depth next₀ middleCursor next₁ : Nat}
       {first second : Complexity.Language.Stmt signatures Γ result}
       {entry middle finish : Complexity.Language.State Γ} {control : Control result}
@@ -243,6 +253,9 @@ theorem ArenaReady.exists_cost {signatures : List Signature}
   | alloc initialFits capacity ready ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .alloc (initialFits := initialFits) (capacity := capacity) cost⟩
+  | @scope Γ result w heapLimit depth next₀ bodyCursor stmt entry finish control body safe ready ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .scope (safe := safe) cost⟩
   | seqNormal headReady tailReady ihHead ihTail =>
       obtain ⟨firstSteps, firstCost⟩ := ihHead
       obtain ⟨secondSteps, secondCost⟩ := ihTail
@@ -385,6 +398,10 @@ theorem deterministic {signatures : List Signature}
       intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
       cases second with
       | alloc tail' => rw [ih tail']
+  | scope cost ih =>
+      intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
+      cases second with
+      | scope cost' => rw [ih cost']
   | seqNormal firstCost secondCost ihFirst ihSecond =>
       intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
       cases second with

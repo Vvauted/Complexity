@@ -80,6 +80,7 @@ def renameCalls {source target : List Signature} (map : SignatureMap source targ
   | _, _, .letPrim value continuation => .letPrim value (continuation.renameCalls map)
   | _, _, .alloc length initial continuation =>
       .alloc length initial (continuation.renameCalls map)
+  | _, _, .scope body => .scope (body.renameCalls map)
   | _, _, .read buffer index continuation => .read buffer index (continuation.renameCalls map)
   | _, _, .write buffer index value => .write buffer index value
   | _, _, .slice buffer offset length continuation =>

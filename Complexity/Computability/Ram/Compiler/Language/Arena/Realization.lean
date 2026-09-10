@@ -12,7 +12,8 @@ import Complexity.Computability.Ram.Compiler.Language.Realization
 call-nesting and allocation-capacity evidence, not another execution relation.
 Its cursor indices compose through actual guards, iterations, calls and lexical
 continuations. A returning callee's final cursor is never reset to the caller's
-entry cursor. Only allocation advances this numeric cursor.
+entry cursor unless the source explicitly encloses that work in a reclaiming
+scope. Allocation advances the cursor; successful scope exit restores its mark.
 
 Positive cursors, physical object placement, rooted environments and the global
 word-address bound remain premises of arena representation and simulation.
@@ -27,7 +28,8 @@ open Complexity.Language
 
 /-- Resource readiness of the same finite source execution. Successful branches
 retain the original realization range conditions; allocation additionally threads
-the monotonically reserved extent through its actual continuation. -/
+the reserved extent through its actual continuation, and a safe scope restores
+its entry extent after its body has finished. -/
 inductive ArenaReady {signatures : List Signature}
     {program : Complexity.Language.Program signatures} :
     {Γ : List Ty} → {result : Ty} →
@@ -107,6 +109,13 @@ inductive ArenaReady {signatures : List Signature}
       (capacity : next₀ + length.eval entry.locals ≤ heapLimit)
       (ready : ArenaReady body w heapLimit depth (next₀ + length.eval entry.locals) next₁) :
       ArenaReady (.alloc body) w heapLimit depth next₀ next₁
+  | scope {Γ : List Ty} {result : Ty} {w heapLimit depth next₀ bodyCursor : Nat}
+      {stmt : Complexity.Language.Stmt signatures Γ result}
+      {entry finish : Complexity.Language.State Γ} {control : Control result}
+      {body : Complexity.Language.Exec program stmt entry finish control}
+      {safe : ScopeSafe entry.heap finish control}
+      (ready : ArenaReady body w heapLimit depth next₀ bodyCursor) :
+      ArenaReady (.scope body safe) w heapLimit depth next₀ next₀
   | seqNormal {Γ : List Ty} {result : Ty} {w heapLimit depth next₀ middleCursor next₁ : Nat}
       {first second : Complexity.Language.Stmt signatures Γ result}
       {entry middle finish : Complexity.Language.State Γ} {control : Control result}
@@ -193,6 +202,26 @@ variable {entry finish : Complexity.Language.State Γ} {control : Control result
 variable {execution : Complexity.Language.Exec program stmt entry finish control}
 variable {w heapLimit depth next₀ next₁ : Nat}
 
+/-- Add resource readiness to an independently successful scope execution.
+Source semantics supplies its actual non-escape proof; the resource argument
+checks only the existing body's ranges, nesting and transient allocation.
+Its final temporary extent is released, including on a source early return. -/
+theorem scope_of_exec {cursor : Nat}
+    (execution : Complexity.Language.Exec program (.scope stmt) entry finish control)
+    (successful : control.Satisfies (fun _ => True) (fun _ _ => True) finish)
+    (bodyReady : ∀ after outcome,
+      ∀ body : Complexity.Language.Exec program stmt entry after outcome,
+        outcome.Satisfies (fun _ => True) (fun _ _ => True) after →
+          ∃ finalCursor, ArenaReady body w heapLimit depth cursor finalCursor) :
+    ArenaReady execution w heapLimit depth cursor cursor := by
+  cases execution with
+  | scope body safe =>
+      obtain ⟨finalCursor, ready⟩ := bodyReady _ _ body (by
+        cases control <;> exact successful)
+      exact .scope (safe := safe) ready
+  | scopeEscape body escapes =>
+      exact False.elim (Control.not_satisfies_scopeFailure _ _ _ _ successful)
+
 /-- Readiness retains every actual returned value's range and rules out faults. -/
 theorem outcome_fits (ready : ArenaReady execution w heapLimit depth next₀ next₁) :
     ControlFits w control := by
@@ -204,6 +233,7 @@ theorem outcome_fits (ready : ArenaReady execution w heapLimit depth next₀ nex
   | write => trivial
   | slice bufferFits offsetFits lengthFits viewFits ready ih => exact ih
   | alloc initialFits capacity ready ih => exact ih
+  | scope ready ih => exact ih
   | seqNormal headReady tailReady ihHead ihTail => exact ihTail
   | seqReturn ready ih => exact ih
   | iteTrue ready ih => exact ih
@@ -214,7 +244,9 @@ theorem outcome_fits (ready : ArenaReady execution w heapLimit depth next₀ nex
   | ret value entry fits => exact fits
   | callReturn arguments calleeReady bodyReady ihCallee ihBody => exact ihBody
 
-/-- Reserved extent never decreases, including across guard and callee effects. -/
+/-- A complete statement retains at least its entry extent. A reclaiming scope
+has equal entry and exit cursors; this is not monotonicity at every execution
+prefix, since the scope's final release decreases the cursor used by its body. -/
 theorem cursor_mono (ready : ArenaReady execution w heapLimit depth next₀ next₁) :
     next₀ ≤ next₁ := by
   induction ready with
@@ -225,6 +257,7 @@ theorem cursor_mono (ready : ArenaReady execution w heapLimit depth next₀ next
   | write => exact Nat.le_refl _
   | slice bufferFits offsetFits lengthFits viewFits ready ih => exact ih
   | alloc initialFits capacity ready ih => exact (Nat.le_add_right _ _).trans ih
+  | scope => exact Nat.le_refl _
   | seqNormal headReady tailReady ihHead ihTail => exact ihHead.trans ihTail
   | seqReturn ready ih => exact ih
   | iteTrue ready ih => exact ih

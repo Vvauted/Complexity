@@ -82,6 +82,7 @@ theorem lowerStmtCore_callsValid {signatures : List Signature}
   | write buffer index value => trivial
   | slice buffer offset length body ih => exact ⟨⟨trivial, trivial⟩, ih _ _ _ _⟩
   | alloc length initial body ih => exact ⟨lowerAlloc_callsValid _ _ _ _ _, ih _ _ _ _⟩
+  | scope body ih => exact ⟨trivial, ih _ _ _ _, trivial⟩
   | call fn args body ih =>
       exact ⟨call_callsValid program layout fn args next, ih _ _ _ _⟩
   | seq first second ihFirst ihSecond =>

@@ -130,6 +130,68 @@ theorem observe_alloc {kind : CellTy} (length : Atom Γ .nat)
   rcases outcome with ⟨⟨scopedLocals, finalHeap⟩, control⟩
   rfl
 
+/-- Allocation-scope exit retains all actual ordinary locals and applies the
+same root check to their complete source environment. The returned control is
+not caught: the surrounding observation still distinguishes return from normal
+completion, and a failed scope retains the full heap with its fault. -/
+theorem observe_scope (body : Stmt signatures Γ result) (locals : Locals) :
+    observe view (.scope body) program locals = fun heap =>
+      (observe view body program locals heap).map (fun outcome =>
+        let exited := scopeExit heap (⟨view.symm outcome.1.2, outcome.2⟩, outcome.1.1)
+        ((exited.2, view exited.1.locals), exited.1.heap)) := by
+  funext heap
+  simp only [observe, action, eval_scope, ← Part.bind_some_eq_map,
+    Part.bind_assoc, Part.bind_some]
+  apply congrArg ((body.eval program ⟨view.symm locals, heap⟩).bind)
+  funext outcome
+  rcases outcome with ⟨⟨finalLocals, finalHeap⟩, control⟩
+  simp only [Prod.swap, Equiv.symm_apply_apply]
+
+open scoped Part.TotalCorrectness in
+/-- Compose the body's native weakest precondition with the actual scope exit.
+The complete local environment is reconstructed only to check its roots; the
+postcondition sees ordinary locals and the actual retained or unreclaimed heap.
+Finite faults remain available to an arbitrary native postcondition. -/
+@[spec] theorem observe_scope_spec (body : Stmt signatures Γ result) (locals : Locals)
+    (post : Std.Do.PostCond (Control result × Locals) (.arg Heap .pure)) :
+    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+      (observe view (.scope body) program locals)
+      (fun heap =>
+        ((Std.Do.WP.wp (observe view body program locals)).apply
+          (fun outcome finish =>
+            let exited := scopeExit heap (⟨view.symm outcome.2, finish⟩, outcome.1)
+            post.1 (exited.2, view exited.1.locals) exited.1.heap, ⟨⟩)) heap)
+      post := by
+  simp only [Std.Do.Triple, Std.Do.WP.wp, Std.Do.PredTrans.pushArg,
+    Part.TotalCorrectness.wp]
+  intro heap ⟨⟨⟨control, finalLocals⟩, finalHeap⟩, execution, property⟩
+  let exited := scopeExit heap (⟨view.symm finalLocals, finalHeap⟩, control)
+  refine ⟨((exited.2, view exited.1.locals), exited.1.heap), ?_, property⟩
+  rw [observe_scope]
+  exact Part.mem_map_iff _ |>.mpr
+    ⟨((control, finalLocals), finalHeap), execution, rfl⟩
+
+open scoped Part.TotalCorrectness in
+/-- A non-escaping body preserves its actual control and ordinary locals while
+reclaiming only its fresh heap suffix. The author supplies the lifetime fact and
+the desired postcondition on current retained contents, without opening the
+scope-outcome conversion. This does not assume the body is free of faults. -/
+theorem observe_scope_safe_spec (body : Stmt signatures Γ result) (locals : Locals)
+    (post : Std.Do.PostCond (Control result × Locals) (.arg Heap .pure)) :
+    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+      (observe view (.scope body) program locals)
+      (fun heap =>
+        ((Std.Do.WP.wp (observe view body program locals)).apply
+          (fun outcome finish => ⟨
+            ScopeSafe heap ⟨view.symm outcome.2, finish⟩ outcome.1 ∧
+              (post.1 outcome (finish.take heap.objects.size)).down⟩, ⟨⟩)) heap)
+      post := by
+  simp only [Std.Do.Triple, Std.Do.WP.wp, Std.Do.PredTrans.pushArg,
+    Part.TotalCorrectness.wp]
+  intro heap ⟨⟨⟨control, finalLocals⟩, finalHeap⟩, execution, safe, property⟩
+  refine ⟨((control, finalLocals), finalHeap.take heap.objects.size), ?_, property⟩
+  exact mem_observe_iff.mpr (.scope (mem_observe_iff.mp execution) safe)
+
 /-- A read uses the actual native heap action, then binds its cell in ordinary
 local coordinates. A failed read skips the continuation without rolling back. -/
 theorem observe_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)

@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Layout
 import Complexity.Computability.Ram.Memory.Arena.Registers
+import Complexity.Computability.Ram.Memory.Arena.Scope
 import Complexity.Computability.Ram.Source.Bounds
 
 /-!
@@ -18,6 +19,9 @@ slices emit ordinary address arithmetic and memory instructions. Successful
 source access and realization justify safety; no runtime check is added here.
 Allocation uses the shared arena cursor and the existing initialization loop;
 its capacity, placement growth and behavior need allocation-aware simulation.
+An allocation scope saves that cursor in one fresh local and restores it after
+the body with an unconditional raw sequence, including after a source return.
+Restoring metadata neither clears data nor changes the result fields or flag.
 
 Each statement child is lowered once. An internal return flag records whether
 the function returned; sequence tails and the final normal continuation inspect
@@ -142,6 +146,10 @@ def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
       .seq (lowerAlloc layout next length initial)
         (lowerStmtCore (RegisterMap.extend layout (.buffer kind) next)
           (next + fieldCount (.buffer kind)) resultSlot flag body)
+  | .scope body =>
+      .seq (Source.Arena.Scope.capture next)
+        (.seq (lowerStmtCore layout (next + 1) resultSlot flag body)
+          (Source.Arena.Scope.release next))
   | .call fn args body =>
       .seq (.call (valueRegs signatures[fn].result next) fn.val (argsExprs layout args))
         (lowerStmtCore (RegisterMap.extend layout signatures[fn].result next)
@@ -163,6 +171,19 @@ def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
                   (.ite (.var flag) (.assign next (.const 0)) .skip))
                 .skip))))
   | .ret value => .seq (lowerReturn layout resultSlot value) (.assign flag (.const 1))
+
+/-- A scope reserves its one checkpoint slot in addition to the actual body
+locals. Release uses that same slot and introduces no further source local. -/
+theorem lowerStmtCore_scope_regBound {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    (layout : RegisterMap Γ) (next resultSlot flag : Reg)
+    (body : Complexity.Language.Stmt signatures Γ result) :
+    (lowerStmtCore layout next resultSlot flag (.scope body)).regBound =
+      max (next + 1) (lowerStmtCore layout (next + 1) resultSlot flag body).regBound := by
+  change max (Source.Arena.Scope.capture next).regBound
+    (max (lowerStmtCore layout (next + 1) resultSlot flag body).regBound
+      (Source.Arena.Scope.release next).regBound) = _
+  rw [Source.Arena.Scope.capture_regBound, Source.Arena.Scope.release_regBound,
+    Nat.max_left_comm, Nat.max_self, Nat.max_comm]
 
 /-- Evaluate a value-producing block without leaving the surrounding function.
 Its result fields and private return flag follow the current live layout. A

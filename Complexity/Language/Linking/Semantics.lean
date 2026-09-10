@@ -82,6 +82,8 @@ theorem renameCalls {source target : List Signature}
   | assign => exact .assign _ _ _
   | letPrim _ ih => exact .letPrim ih
   | alloc _ ih => exact .alloc ih
+  | scope _ safe ih => exact .scope ih safe
+  | scopeEscape _ escapes ih => exact .scopeEscape ih escapes
   | read loaded _ ih => exact .read loaded ih
   | readFault failed => exact .readFault failed
   | write written => exact .write written

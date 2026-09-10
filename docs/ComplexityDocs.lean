@@ -46,14 +46,23 @@ use the same interface. This pure subset supports self-recursion and acyclic cal
 not pure `while`, mutual recursion or buffers.
 
 The effectful surface supports mutable locals, shared buffers, loops, calls and
-`Buffer.alloc`. Source correctness uses mathematical contents and native VCG rules,
+`Buffer.alloc` and `with_scratch` scopes. Source correctness uses mathematical
+contents and native VCG rules,
 without a capacity or time budget. The [allocation client](##Examples.Language.Allocation)
 allocates in a callee, returns a buffer, allocates again and reads the original.
 [Generic counted transfer](##Complexity.Computability.Ram.Compiler.Language.Arena.ProgramExecution)
 reaches its halted RAM invocation with actual heap, cursor and returned contents,
 including internal and outer-call overheads. Word ranges, rooted represented inputs
 and code/stack/arena capacity remain separate backend conditions. Input preparation
-and session bootstrap are separate operations; the monotone arena has no reclamation.
+and session bootstrap are separate operations. Scratch scopes preserve current
+writes to older objects while reclaiming temporary allocations; longer-lived
+outputs must remain outside the reclaimed region. The source checks escaping
+handles, and the compiled success guarantee requires proved-safe exits.
+The [scoped source consumer](##Examples.Language.Scope) proves nested/called
+cleanup and a retained result, using Lean's `measure` through its named
+`wellFounded_spec` to prove the actual loop terminates.
+Its [compiled workspace theorem](##Examples.Language.ScopeCompiled) bounds all
+actual accesses independently of repetition count, including both call frames.
 The [source-frame rule](##Complexity.Language.Effects.Heap) preserves existing contents
 through allocating code and callees without explicit cell writes, including finite faults.
 Further resource inference and richer pure data/loop interfaces remain future work.

@@ -9,8 +9,9 @@ import Complexity.Language.Semantics
 /-!
 # Object roots through actual source execution
 
-Every finite `Exec` preserves the types and extents of old objects. Its final
-heap is retained on faults and missing returns as well as successful returns.
+Every finite `Exec` preserves the types and extents of old objects. Scope
+cleanup discards only fresh suffix objects, without reverting retained writes.
+Faults and missing returns likewise retain preceding effects on old objects.
 Rooted initial locals produce rooted final locals and returned values through
 the same execution, without a second relation or a validity/alias restriction.
 
@@ -30,12 +31,6 @@ theorem Env.Rooted.set {heap : Heap} {env : Env Γ} (rooted : env.Rooted heap)
   | there target ih =>
       exact Env.Rooted.cons (ih (Env.Rooted.tail rooted) value valueRooted)
         env.head (Env.Rooted.head rooted)
-
-/-- Only a returned control outcome carries an object root of its own. -/
-@[simp] def Control.Rooted {result : Ty} (control : Control result) (heap : Heap) : Prop :=
-  match control with
-  | .normal | .fault _ => True
-  | .returned value => ValueRooted heap value
 
 namespace Exec
 
@@ -59,6 +54,8 @@ theorem heap_shapeExtends {signatures : List Signature} {program : Program signa
   | @alloc Γ result kind length initial continuation entry finish control body ih =>
       exact (entry.heap.shapeExtends_alloc (length.eval entry.locals)
         (kind.ofValue (initial.eval entry.locals))).trans ih
+  | scope body safe ih => exact ih.take
+  | scopeEscape body escapes ih => exact ih
   | seqNormal head tail ihHead ihTail => exact ihHead.trans ihTail
   | seqReturn head ih => exact ih
   | seqFault head ih => exact ih
@@ -123,6 +120,19 @@ theorem rooted {signatures : List Signature} {program : Program signatures}
         (entry.heap.alloc_rooted (length.eval entry.locals)
           (kind.ofValue (initial.eval entry.locals))))
       exact ⟨Env.Rooted.tail finalRooted.1, finalRooted.2⟩
+  | @scope Γ result stmt entry finish control body safe ih =>
+      intro _
+      have retainedShape : entry.heap.ShapeExtends (finish.heap.take entry.heap.objects.size) :=
+        body.heap_shapeExtends.take
+      refine ⟨Env.Rooted.mono safe.1 retainedShape, ?_⟩
+      cases control with
+      | normal => trivial
+      | returned value => exact ValueRooted.mono safe.2 retainedShape
+      | fault error => trivial
+  | @scopeEscape Γ result stmt entry finish control body escapes ih =>
+      intro initialRooted
+      refine ⟨(ih initialRooted).1, ?_⟩
+      cases control <;> trivial
   | seqNormal head tail ihHead ihTail =>
       intro initialRooted
       exact ihTail (ihHead initialRooted).1

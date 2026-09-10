@@ -12,8 +12,9 @@ import Complexity.Computability.Ram.Source.Effects
 # Heap and stream effects of lowering
 
 The source fragment without heap writes lowers to local assignments, reads,
-branches, sequences and actual calls. Buffer stores and allocation are explicitly excluded
-from its preservation theorem. The generic source effect theorem applies when
+branches, sequences and actual calls. Buffer stores, allocation and scope release
+are explicitly excluded from its preservation theorem: restoring a cursor is
+an actual metadata store. The generic source effect theorem applies when
 every actual function body satisfies this condition, including recursive calls.
 All supported source operations are free of input/output stream operations,
 including buffer writes and initialization. Their generated program therefore satisfies the
@@ -36,7 +37,7 @@ def NoHeapWrites {signatures : List Signature} {Γ : List Ty} {result : Ty} :
   | .skip | .assign .. | .ret _ => True
   | .letPrim _ body | .read _ _ body | .slice _ _ _ body | .call _ _ body =>
       NoHeapWrites body
-  | .write .. | .alloc .. => False
+  | .write .. | .alloc .. | .scope _ => False
   | .seq first second => NoHeapWrites first ∧ NoHeapWrites second
   | .ite _ yes no => NoHeapWrites yes ∧ NoHeapWrites no
   | .while guard body => NoHeapWrites guard ∧ NoHeapWrites body
@@ -90,6 +91,7 @@ theorem lowerStmtCore_noSharedWrites {signatures : List Signature} {Γ : List Ty
     intro condition
     exact ⟨⟨trivial, trivial⟩, ih _ _ _ _ condition⟩
   | alloc length initial body ih => exact False.elim
+  | scope body ih => exact False.elim
   | call fn args body ih =>
     intro condition
     exact ⟨trivial, ih _ _ _ _ condition⟩
@@ -190,6 +192,7 @@ theorem lowerStmtCore_noIOWrites {signatures : List Signature} {Γ : List Ty} {r
   | slice buffer offset length body ih =>
       exact ⟨lowerSlice_noIOWrites _ _ _ _ _, ih _ _ _ _⟩
   | alloc length initial body ih => exact ⟨lowerAlloc_noIOWrites _ _ _ _, ih _ _ _ _⟩
+  | scope body ih => exact ⟨trivial, ih _ _ _ _, trivial⟩
   | call fn args body ih => exact ⟨trivial, ih _ _ _ _⟩
   | seq first second firstIH secondIH => exact ⟨firstIH _ _ _ _, trivial, secondIH _ _ _ _⟩
   | ite test yes no yesIH noIH => exact ⟨yesIH _ _ _ _, noIH _ _ _ _⟩
@@ -311,6 +314,13 @@ theorem lowerStmtCore_not_mem_writtenRegs {signatures : List Signature} {Γ : Li
       · exact ih _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
           (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
           outsideResult differentFlag
+  | scope body ih =>
+      intro regular bounded avoids before outsideResult differentFlag
+      have freshBounded : layout.Bounded (next + 1) :=
+        fun v i => Nat.lt_trans (bounded v i) (Nat.lt_succ_self next)
+      have bodyProtected := ih _ _ _ _ regular freshBounded avoids
+        (Nat.lt_trans before (Nat.lt_succ_self next)) outsideResult differentFlag
+      exact not_or.mpr ⟨Nat.ne_of_lt before, not_or.mpr ⟨bodyProtected, False.elim⟩⟩
   | call fn args body ih =>
       intro regular bounded avoids before outsideResult differentFlag
       refine not_or.mpr ⟨flag_not_mem_valueRegs_of_lt _ next r before, ?_⟩
@@ -364,5 +374,24 @@ theorem lowerStmtCore_regs_eq {signatures : List Signature} {Γ : List Ty} {resu
   execution.regs_eq_of_not_mem_writtenRegs
     (lowerStmtCore_not_mem_writtenRegs layout next resultSlot flag stmt
       regular bounded avoids before outsideResult differentFlag)
+
+/-- The scope's generated body cannot overwrite its checkpoint. Freshness
+follows from the original layout and result/flag bounds, not a body-specific
+register invariant; nested calls use the same existing caller-local frame. -/
+theorem lowerStmtCore_scope_body_regs_eq {signatures : List Signature} {Γ : List Ty}
+    {result : Ty} {program : Ram.Program} {heapLimit depth : Nat}
+    {layout : RegisterMap Γ} {next resultSlot flag : Reg}
+    {body : Complexity.Language.Stmt signatures Γ result} {entry finish : Source.State w}
+    (execution : Source.SafeExec program heapLimit depth
+      (lowerStmtCore layout (next + 1) resultSlot flag body) entry finish)
+    (regular : RegisterMap.Regular layout) (bounded : layout.Bounded next)
+    (resultBound : resultSlot + fieldCount result ≤ flag) (flagBound : flag < next) :
+    finish.regs next = entry.regs next :=
+  lowerStmtCore_regs_eq execution regular
+    (fun v i => Nat.lt_trans (bounded v i) (Nat.lt_succ_self next))
+    (fun v i => Nat.ne_of_lt (bounded v i)) (Nat.lt_succ_self next)
+    (flag_not_mem_valueRegs result resultSlot next
+      (Nat.le_trans resultBound (Nat.le_of_lt flagBound)))
+    (Nat.ne_of_gt flagBound)
 
 end Ram.LanguageCompiler
