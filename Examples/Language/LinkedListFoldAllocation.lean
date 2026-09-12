@@ -61,7 +61,6 @@ theorem push_ready_cost {w heapLimit cursor : Nat}
       ⟨ListReducer.Source.push_args accumulator head, heap⟩ cursor := by
     ram_source_arena_call exact using originalCost
       via ListReducer.Source.imports.ListReducer.Operations.consNat.embedding
-    exact ⟨rfl, rfl, rfl⟩
   obtain ⟨_, _, _, _, execution, ready, cost, rfl, rfl, rfl, rfl⟩ := measured
   exact ⟨execution, ready, cost⟩
 

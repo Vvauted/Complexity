@@ -160,6 +160,80 @@ theorem ite {signatures : List Signature}
   | false => exact iteFalse selected (noBranch selected)
   | true => exact iteTrue selected (yesBranch selected)
 
+/-- An absent option follows only its actual `none` branch. The existing tag
+test adds two instructions and leaves the branch's heap and cursor unchanged. -/
+theorem matchNone {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w heapLimit depth : Nat}
+    {Γ : List Ty} {result τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    {post : Complexity.Language.State Γ → Control result → Nat → Nat → Prop}
+    {entry : Complexity.Language.State Γ} {cursor : Nat}
+    (selected : value.eval entry.locals = none)
+    (body : ArenaMeasured program w heapLimit depth noneBranch
+      (fun finish control finalCursor steps => post finish control finalCursor (steps + 2))
+      entry cursor) :
+    ArenaMeasured program w heapLimit depth (.matchOption value noneBranch someBranch)
+      post entry cursor := by
+  obtain ⟨finish, control, finalCursor, steps, execution, ready, cost, outcome⟩ := body
+  exact ⟨finish, control, finalCursor, steps + 2,
+    Complexity.Language.Exec.matchNone selected execution,
+    ArenaReady.matchNone (selected := selected) ready,
+    ArenaExecutionCost.matchNone (selected := selected) cost, outcome⟩
+
+/-- A present option exposes the actual stored payload in its lexical binder.
+Leaving the branch discards that binder, not its heap effects or arena cursor.
+The field copies and tag branch retain their existing compiler cost. -/
+theorem matchSome {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w heapLimit depth : Nat}
+    {Γ : List Ty} {result τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    {post : Complexity.Language.State Γ → Control result → Nat → Nat → Prop}
+    {entry : Complexity.Language.State Γ} {cursor : Nat} {payload : Value τ}
+    (selected : value.eval entry.locals = some payload)
+    (payloadFits : ValueFits w (τ := τ) payload)
+    (body : ArenaMeasured program w heapLimit depth someBranch
+      (fun finish control finalCursor steps =>
+        post finish.tail control finalCursor (2 * fieldCount τ + steps + 3))
+      (Complexity.Language.State.cons payload entry) cursor) :
+    ArenaMeasured program w heapLimit depth (.matchOption value noneBranch someBranch)
+      post entry cursor := by
+  obtain ⟨finish, control, finalCursor, steps, execution, ready, cost, outcome⟩ := body
+  exact ⟨finish.tail, control, finalCursor, 2 * fieldCount τ + steps + 3,
+    Complexity.Language.Exec.matchSome selected execution,
+    ArenaReady.matchSome (selected := selected) payloadFits ready,
+    ArenaExecutionCost.matchSome (selected := selected) (payloadFits := payloadFits) cost,
+    outcome⟩
+
+/-- Split an unknown actual option. The nonempty case checks the existing range
+condition on its real payload and proves only its selected branch; no decoder,
+canonical representation or additional cost interpretation is introduced. -/
+theorem matchOption {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w heapLimit depth : Nat}
+    {Γ : List Ty} {result τ : Ty} {value : Atom Γ (.option τ)}
+    {noneBranch : Complexity.Language.Stmt signatures Γ result}
+    {someBranch : Complexity.Language.Stmt signatures (τ :: Γ) result}
+    {post : Complexity.Language.State Γ → Control result → Nat → Nat → Prop}
+    {entry : Complexity.Language.State Γ} {cursor : Nat}
+    (absent : value.eval entry.locals = none →
+      ArenaMeasured program w heapLimit depth noneBranch
+        (fun finish control finalCursor steps => post finish control finalCursor (steps + 2))
+        entry cursor)
+    (present : ∀ payload, value.eval entry.locals = some payload →
+      ValueFits w (τ := τ) payload ∧
+        ArenaMeasured program w heapLimit depth someBranch
+          (fun finish control finalCursor steps =>
+            post finish.tail control finalCursor (2 * fieldCount τ + steps + 3))
+          (Complexity.Language.State.cons payload entry) cursor) :
+    ArenaMeasured program w heapLimit depth (.matchOption value noneBranch someBranch)
+      post entry cursor := by
+  cases selected : value.eval entry.locals with
+  | none => exact matchNone selected (absent selected)
+  | some payload =>
+      obtain ⟨fits, body⟩ := present payload selected
+      exact matchSome selected fits body
+
 /-- Change only the final observations, retaining the exact execution and count. -/
 theorem mono_post {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {w heapLimit depth : Nat}

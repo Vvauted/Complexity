@@ -67,7 +67,6 @@ theorem prepend_ready_cost {w heapLimit cursor : Nat}
     ram_source_arena_step
     ram_source_arena_call exact using originalCost via
       NativeConstruction.Source.imports.NativeConstruction.Operations.consNat.embedding
-    exact ⟨rfl, rfl, rfl⟩
   obtain ⟨finish, control, finalCursor, steps, execution, ready, cost,
       rfl, rfl, rfl, rfl⟩ := measured
   exact ⟨execution, ready, cost⟩
@@ -172,7 +171,6 @@ theorem prependPair_execute {w heapLimit cursor : Nat} {placement : Nat → Ram.
     ram_source_arena_step
     ram_source_arena_call exact using secondCost
     ram_source_arena_call exact using firstCost
-    exact ⟨rfl, rfl⟩
   obtain ⟨finish, control, finalCursor, steps, execution, ready, cost, rfl, rfl, rfl⟩ := measured
   obtain ⟨outcome, _, heapEq, cursorEq, bodyEq⟩ :=
     cost.execute (fn := NativeConstruction.Source.prependPairId) launch

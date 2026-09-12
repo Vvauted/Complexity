@@ -10,10 +10,13 @@ import Complexity.Computability.Ram.Compiler.Language.Tactic
 # Structural arena resource proofs
 
 `ram_source_arena_step` composes the existing `ArenaMeasured` rules for primitive
-bindings, assignment, sequencing, conditionals and returns, stopping at calls.
+bindings, assignment, sequencing, conditionals, option matches and returns,
+stopping at calls.
 It reads the actual source statement; clients do not reconstruct argument
 environments or continuation states. A known Boolean selects its actual branch;
 an unknown Boolean gives two proof obligations, each charging only its own path.
+Option matches likewise inspect the actual source value and bind its stored
+payload, retaining ranges obtained from the actual callee's readiness proof.
 
 `ram_source_arena_call exact using cost` consumes an actual callee cost witness.
 Its optional `via embedded` transports a witness from the original source program.
@@ -52,7 +55,11 @@ private def normalizeLeaves : TacticM Unit := do
   unless (← getGoals).isEmpty do
     Ram.LanguageCompiler.Tactic.normalizeValues
     evalTactic (← `(tactic|
-      all_goals try exact Nat.one_lt_two_pow (Nat.ne_of_gt (by assumption))))
+      all_goals
+        first
+        | exact Nat.one_lt_two_pow (Nat.ne_of_gt (by assumption))
+        | solve_by_elim only [And.left, And.right, *]
+        | skip))
 
 /-- Select a branch from its actual condition when reflexivity or a local proof
 determines it. Otherwise introduce the two selected-path obligations. -/
@@ -68,6 +75,32 @@ private def conditional (statement target : Lean.Expr) : TacticM Unit := do
         (condition := $condition) (entry := $entry)
         (by first | rfl | assumption) ?_
     | apply Ram.LanguageCompiler.ArenaMeasured.ite))
+
+/-- Match the actual source option. A known constructor selects one branch;
+otherwise cases retain the actual payload and its already-proved word ranges. -/
+private def optionMatch (statement target : Lean.Expr) : TacticM Unit := do
+  let valueExpr := statement.getAppArgs[4]!
+  let entryExpr := target.getAppArgs[9]!
+  let value ← Term.exprToSyntax valueExpr
+  let entry ← Term.exprToSyntax entryExpr
+  let locals ← mkAppM ``Complexity.Language.State.locals #[entryExpr]
+  let actual ← Term.exprToSyntax (← whnf
+    (← mkAppM ``Complexity.Language.Atom.eval #[valueExpr, locals]))
+  evalTactic (← `(tactic|
+    first
+    | refine Ram.LanguageCompiler.ArenaMeasured.matchNone
+        (value := $value) (entry := $entry)
+        (by first | rfl | assumption) ?_
+    | refine Ram.LanguageCompiler.ArenaMeasured.matchSome
+        (value := $value) (entry := $entry)
+        (by first | rfl | assumption) ?_ ?_
+    | cases selected : $actual with
+      | none =>
+          refine Ram.LanguageCompiler.ArenaMeasured.matchNone
+            (by first | rfl | exact selected) ?_
+      | some payload =>
+          refine Ram.LanguageCompiler.ArenaMeasured.matchSome
+            (by first | rfl | exact selected) ?_ ?_))
 
 /-- Apply only structural measured-execution rules, leaving calls and mathematical
 observations intact. Non-propositional metavariables are never filled by search. -/
@@ -98,6 +131,9 @@ private partial def step : TacticM Unit := do
           Ram.LanguageCompiler.Tactic.onGoals step
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
           conditional statement target
+          Ram.LanguageCompiler.Tactic.onGoals step
+        else if statement.isAppOf ``Complexity.Language.Stmt.matchOption then
+          optionMatch statement target
           Ram.LanguageCompiler.Tactic.onGoals step
       else
         normalizeLeaves
@@ -155,6 +191,17 @@ private def importedFunction (targetFn embedding : TSyntax `term) : TacticM (TSy
 private def exactCall (cost : TSyntax `term)
     (embedded : Option (TSyntax `term)) : TacticM Unit := withMainContext do
   let (fn, args, continuation, entry) ← callTerms
+  let costProof ← Term.elabTerm cost none
+  let costType := (← instantiateMVars (← inferType costProof)).consumeMData.headBeta.consumeMData
+  unless costType.isAppOf ``Ram.LanguageCompiler.ArenaExecutionCost do
+    throwErrorAt cost "expected an actual ArenaExecutionCost witness"
+  let costArguments := costType.getAppArgs
+  let ready := costArguments[costArguments.size - 2]!
+  let returnedFits ← Term.exprToSyntax
+    (← mkAppM ``Ram.LanguageCompiler.ArenaReady.outcome_fits #[ready])
+  evalTactic (← `(tactic|
+    (have returnedFits := $returnedFits
+     simp only [Ram.LanguageCompiler.ControlFits] at returnedFits)))
   match embedded with
   | none =>
       evalTactic (← `(tactic|
@@ -190,7 +237,7 @@ private def contractCall (index total resources bounded : TSyntax `term)
 
 /-- Compose non-loop structural statements in a measured arena execution, leaving
 the next call and mathematical obligations for explicit proofs. Conditionals
-preserve the selected path's actual heap, cursor and instruction count. -/
+and option matches preserve the selected path's actual heap, cursor and count. -/
 syntax "ram_source_arena_step" : tactic
 
 /-- Compose the current actual source call with an exact callee cost witness,
