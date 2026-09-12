@@ -10,6 +10,7 @@ import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.RepresentedFunction
 import Complexity.Computability.Ram.Compiler.Language.CostBound.Locals
 import Complexity.Computability.Ram.Compiler.Language.LocalsTactic
+import Complexity.Computability.Ram.Compiler.Language.LoopTactic
 import Complexity.Computability.Ram.Compiler.Language.Realization.Loop
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
@@ -98,18 +99,11 @@ theorem loop_costBound (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     StmtCostBound Implementation.program Implementation.boundedMap_loop1.Code
       ⟨Implementation.boundedMap_loop1.View.symm (i, xs, limit, ()), heap⟩
       (loopBound (contents.size - i)) := by
-  apply StmtCostBound.while_contract_fixed_linear Implementation.boundedMap_loop1.CaptureView
-    Implementation.boundedMap_loop1.guard_preservesCaptures
-    Implementation.boundedMap_loop1.body_preservesCaptures (xs, limit, ())
-    (guard_contract xs limit contents) (body_contract xs limit contents)
-    (fun _ _ _ _ _ ready => ⟨ready.2.2.1, ready.2.2.2.mp rfl⟩)
-    guardCost.val bodyCost.val (fun locals _ => contents.size - locals.1)
-    (mutable := (i, ())) (heap := heap)
-    (invariant := fun mutable => invariant xs limit contents mutable.1)
-  · intro mutable heap _
-    exact guard_costBound (mutable.1, xs, limit, ()) heap
-  · intro mutable heap afterGuard afterHeap _ _
-    exact body_costBound (afterGuard.1, xs, limit, ()) afterHeap
+  ram_source_loop_cost (remaining := fun locals _ => contents.size - locals.1)
+    using (guard_contract xs limit contents), (body_contract xs limit contents)
+    costs guard_costBound, body_costBound
+  · intro _ _ _ _ _ ready
+    exact ⟨ready.2.2.1, ready.2.2.2.mp rfl⟩
   · intro _ _ _ _ _ _ _ _ completed
     exact completed.2.1
   · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial ready completed
@@ -183,21 +177,12 @@ theorem loop_realizable {w : Nat} (hw : 0 < w) (xs : Buffer .nat) (limit : Nat)
     RealizationWP Implementation.program w 1 Implementation.boundedMap_loop1.Code
       (fun _ => True) (fun _ _ => False)
       ⟨Implementation.boundedMap_loop1.View.symm (i, xs, limit, ()), heap⟩ := by
-  have total : TotalWP Implementation.program Implementation.boundedMap_loop1.Code
-      (fun _ => True) (fun _ _ => False)
-      ⟨Implementation.boundedMap_loop1.View.symm (i, xs, limit, ()), heap⟩ := by
-    exact TotalWP.of_blockSpec Implementation.boundedMap_loop1.CaptureView
-      (fun mutable => (mutable, xs, limit, ())) (loop_contract xs limit contents heap)
-      (input := (i, ())) (heap := heap)
-      ⟨current, Buffer.PreservesOutside.refl xs heap⟩
-      (fun _ _ _ => True.intro) (fun _ _ _ impossible => impossible)
-  apply RealizationWP.while_contract_fixed_of_total Implementation.boundedMap_loop1.CaptureView
-    Implementation.boundedMap_loop1.guard_preservesCaptures
-    Implementation.boundedMap_loop1.body_preservesCaptures (xs, limit, ())
-    (guard_contract xs limit contents) (body_contract xs limit contents)
-    (fun _ _ _ _ _ ready => ⟨ready.2.2.1, ready.2.2.2.mp rfl⟩)
-    (mutable := (i, ())) (heap := heap)
-    (invariant := fun mutable => invariant xs limit contents mutable.1) total
+  ram_source_loop_realize using (guard_contract xs limit contents), (body_contract xs limit contents)
+    total loop_contract xs limit contents heap
+  case enterBody =>
+    intro _ _ _ _ _ ready
+    exact ⟨ready.2.2.1, ready.2.2.2.mp rfl⟩
+  · exact ⟨current, Buffer.PreservesOutside.refl xs heap⟩
   · rintro ⟨j, ⟨⟩⟩ entry initial
     have size : contents.size = xs.length := by
       simpa only [Array.size_mapIdx] using initial.2.size_eq

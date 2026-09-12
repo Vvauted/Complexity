@@ -908,6 +908,38 @@ not search for arithmetic proofs. Both the structured accumulator and mutable
 traversal use this pass. Selecting the loop contracts and supplying their
 mathematical obligations remain separate from coordinate normalization.
 
+For a statement goal retaining its generated loop `Code`, the
+[named-loop resource tactics](##Complexity.Computability.Ram.Compiler.Language.LoopTactic)
+also select the capture view and its checked guard/body preservation proofs:
+
+```lean
+ram_source_loop_cost (remaining := fun locals _ => contents.size - locals.1)
+  using (guard_contract xs limit contents), (body_contract xs limit contents)
+  costs guard_costBound, body_costBound
+
+ram_source_loop_realize
+  using (guard_contract xs limit contents), (body_contract xs limit contents)
+  total loop_contract xs limit contents heap
+```
+
+The supplied block contracts determine the invariant and actual guard/body
+relations. The cost form applies uniform guard/body certificates; the author
+still proves entry into the body, invariant preservation, decrease, positivity
+and the initial invariant. The realization form converts the source loop
+contract to totality, keeping its precondition separate from the resource
+invariant. For example, the traversal's source precondition additionally carries
+its outside-buffer frame. Routine true/false postcondition consequences are
+discharged; other consequences, actual word/nesting proofs and invariant
+preservation remain goals. The `enterBody` case names the true-guard implication.
+The compiled traversal uses both entries without writing capture views, frame
+theorem names, environment repacking or its own `BlockSpec → TotalWP` conversion.
+Mathematical mutable-coordinate patterns remain in its proof leaves.
+
+Apply these tactics before unfolding the named `Code`. Already expanded loops
+and arbitrary potential functions can still use the public loop theorems below;
+the cost tactic is the uniform-cost, linear-iteration specialization, not a
+replacement for those general interfaces or automatic invariant discovery.
+
 The [read/helper/branch/write traversal](##Examples.Language.Traversal) writes
 `for i in [:xs.length]`. Its invariant describes the processed prefix and unread
 suffix of an ordinary array. Independent guard/body contracts feed the loop

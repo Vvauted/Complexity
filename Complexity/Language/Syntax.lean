@@ -169,10 +169,22 @@ namespace Complexity.Language.Syntax
 open Lean
 open Lean.Parser.Term
 
-/-- Checked coordinate rewrite declarations belonging to one generated source loop.
-The key is its actual `Code` declaration; no body, semantics or cost is stored here. -/
+/-- An already checked grouping of a generated loop's mutable locals and captures,
+with the guard and body theorems that preserve those captures. -/
+structure LoopCaptureCoordinates where
+  /-- The raw or native capture-grouping equivalence. -/
+  view : Name
+  /-- Capture preservation on every actual guard exit. -/
+  guardFrame : Name
+  /-- Capture preservation on every actual body exit. -/
+  bodyFrame : Name
+
+/-- Checked coordinate and capture declarations belonging to one generated source loop.
+The key is its actual `Code` declaration; no executable body or budget is stored here. -/
 structure LoopCoordinates where
   rules : Array Name
+  /-- Raw coordinates first, followed by native coordinates when generated. -/
+  captures : Array LoopCaptureCoordinates
 
 private initialize loopCoordinatesExt :
     SimplePersistentEnvExtension (Name × LoopCoordinates) (NameMap LoopCoordinates) ←
@@ -182,13 +194,19 @@ private initialize loopCoordinatesExt :
       (fun state entry => state.insert entry.1 entry.2) {}
   }
 
-/-- Find the coordinate rules registered for an actual generated loop body. -/
+/-- Find the checked coordinates registered for an actual generated loop body. -/
 def getLoopCoordinates? (env : Environment) (code : Name) : Option LoopCoordinates :=
   (loopCoordinatesExt.getState env).find? code
+
+private structure LoopCaptureCoordinateRegistration where
+  view : TSyntax `ident
+  guardFrame : TSyntax `ident
+  bodyFrame : TSyntax `ident
 
 private structure LoopCoordinateRegistration where
   code : TSyntax `ident
   rules : Array (TSyntax `ident)
+  captures : Array LoopCaptureCoordinateRegistration
   nativeTypes : Array (TSyntax `term)
 
 /-- One explicitly typed source parameter. -/
@@ -3898,14 +3916,27 @@ private def programDeclarations (family : TSyntax `ident)
       let mut rules := #["view_apply", "view_symm_apply", "captureView_apply",
         "captureView_symm_apply", "regroup_apply", "regroup_symm_apply"].map
         (loopMember site)
+      let mut captures : Array LoopCaptureCoordinateRegistration := #[{
+        view := loopMember site "CaptureView"
+        guardFrame := loopMember site "guard_preservesCaptures"
+        bodyFrame := loopMember site "body_preservesCaptures"
+      }]
       if hasNativeCoordinates site then
         rules := rules ++ #[loopMember site "native_captureView_apply",
           loopMember site "native_captureView_symm_apply"]
+        captures := captures.push {
+          view := loopMember site "NativeCaptureView"
+          guardFrame := loopMember site "native_guard_preservesCaptures"
+          bodyFrame := loopMember site "native_body_preservesCaptures"
+        }
       if pureMode && site.nativeResult.isSome && site.finiteRange.isSome then
         rules := rules ++ #[loopMember site "nativeRangeStop", loopMember site "nativeRangeStep"]
       let nativeTypes := site.scope.toArray.filterMap (fun binding => binding.native.map (·.type))
       coordinates := coordinates.push {
-        code := loopMember site "Code", rules := rules, nativeTypes := nativeTypes
+        code := loopMember site "Code"
+        rules := rules
+        captures := captures
+        nativeTypes := nativeTypes
       }
   return (mkNullNode declarations, (functions.map fun fn =>
     ⟨fn.name.getId, fn.params.map (fun param => (param.name.getId, param.type)), fn.result,
@@ -3934,6 +3965,11 @@ private def registerLoopCoordinates (entries : Array LoopCoordinateRegistration)
   for entry in entries do
     let code ← Lean.resolveGlobalConstNoOverload entry.code
     let mut rules ← entry.rules.mapM (fun rule => Lean.resolveGlobalConstNoOverload rule)
+    let captures : Array LoopCaptureCoordinates ← entry.captures.mapM fun capture => do
+      let view ← Lean.resolveGlobalConstNoOverload capture.view
+      let guardFrame ← Lean.resolveGlobalConstNoOverload capture.guardFrame
+      let bodyFrame ← Lean.resolveGlobalConstNoOverload capture.bodyFrame
+      return ⟨view, guardFrame, bodyFrame⟩
     let nativeRules ← Lean.Elab.Command.liftTermElabM do
       let mut names := #[]
       for type in entry.nativeTypes do
@@ -3946,7 +3982,7 @@ private def registerLoopCoordinates (entries : Array LoopCoordinateRegistration)
         -- native-coordinate derivation; registration never adds a proof premise.
         discard <| Lean.getConstInfo rule
         rules := rules.push rule
-    modifyEnv fun env => loopCoordinatesExt.addEntry env (code, ⟨rules⟩)
+    modifyEnv fun env => loopCoordinatesExt.addEntry env (code, ⟨rules, captures⟩)
 
 private def nativeView (header : NativeHeader) : Lean.Elab.Term.TermElabM NativeView := do
   let mut simplifications := #[``Function.Embedding.coe_refl, ``Function.Embedding.coe_prodMap,

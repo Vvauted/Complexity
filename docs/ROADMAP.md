@@ -40,10 +40,10 @@ yet have separate consumer coverage. Dynamic top-tree operations remain open.
 | Evidence | Working capability | Remaining author-facing problem |
 | --- | --- | --- |
 | [Factorial](../Examples/Language/Factorial.lean), [Scalar](../Examples/Language/Scalar.lean) and [Remainder](../Examples/Language/Remainder.lean) | Generated native functions, including finite-range iteration; ordinary equality proofs, one native termination argument for self-recursion, automatic source correspondence and total-contract conversion | Pure general `while`, mutually recursive families and buffers remain unsupported; this is not a restriction on the effectful function table. Mathematical proofs and separate resource arguments remain author work. |
-| [Traversal](../Examples/Language/Traversal.lean) | Actual range `for`, native `Array.map` result and outside-buffer frame; independent guard/body contracts feed correctness and resource proofs; uniform budgets are inferred once and a loop-specific tactic normalizes local coordinates | Connection-layer consumers still select generated views and set up resource contracts. Ordinary-parameter resource entry points should remove that remaining transport. |
+| [Traversal](../Examples/Language/Traversal.lean) | Actual range `for`, native `Array.map` result and outside-buffer frame; independent guard/body contracts feed correctness and resource proofs; named-loop tactics select capture views, lexical frames and totality conversion, alongside inferred uniform budgets | Mathematical mutable-coordinate patterns remain in loop proof leaves. General potential and allocation-aware loop setup still use their public rules. |
 | [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts preserve both actual results, including disjoint slices of one object | Routine contents/frame consequences are manually transferred between calls. This is an automation gap, not permission to assume all buffers are independent. |
 | [Structured values](../Examples/Language/OptionalBuffer.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Native products/options across imports and actual RAM returns; initialized allocation, non-escaping reclamation and repeated-workspace bounds | General sums/recursive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
-| [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner; both use the shared typed execution result | Compiler cost names and traversal's loop-view/resource-contract setup still need work. |
+| [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner; both use the shared typed execution result, and traversal reuses its source loop contracts without manual capture/totality setup | Further operation resource interfaces and source-facing numerical bounds remain open; named-loop automation does not infer mathematical invariants or ranges. |
 | [Imported compiled traversal](../Examples/Language/ImportsTraversalCompiled.lean) | Existing behavior and resource contracts are reused without a new loop proof | Import transport is implemented. Its existence does not finish frame automation, total-function interfaces or data-dependent numerical bounds. |
 | [Splay](../Examples/Language/Splay/Sequence.lean) | One in-place recursive source, a shared mathematical contract and typed RAM results with amortized sequence costs | Mathematical tree descent and potential analysis remain author obligations. Complete container APIs and source-facing peak-space claims remain open. |
 
@@ -182,6 +182,18 @@ facts inside cost and realization proofs. Their shared implementation extracts
 actual postconditions and preserves fixed captures. No nested round contract,
 per-example execution adapter or repeated termination proof is required.
 
+The [named-loop resource tactics](../Complexity/Computability/Ram/Compiler/Language/LoopTactic.lean)
+now remove view/frame selection and contract-to-totality setup from the compiled
+traversal. They read the actual registered `Code` and supplied block contracts;
+their proof terms reuse the existing loop rules. The cost form consumes uniform
+guard/body certificates and an explicit remaining-iteration function. The
+realization form retains a separate source precondition, including any extra
+frame facts, and leaves nontrivial postcondition consequences to the author.
+Entry into the body, preservation, numerical inequalities and actual word ranges
+remain mathematical work. Mutable-coordinate patterns still occur in those
+leaves. General potentials and allocating loops retain their existing public
+rules rather than being silently reduced to this specialization.
+
 The checked [source-frame rule](../Complexity/Language/Effects/Heap.lean) uses `NoCellWrites` for the
 statement and every callee preserves an exact heap-object prefix and existing
 contents through actual execution, including faults. It permits allocation
@@ -194,8 +206,9 @@ updates. Library rules retain the actual heap internally; clients must not
 confuse an old contents observation with the state after a mutating call.
 
 1. Preserve the checked source/resource contract reuse, inferred structural
-   budgets and loop-specific coordinate normalization while hiding remaining
-   view selection and resource-contract setup. Lexical tuples,
+   budgets, coordinate normalization and named-loop setup. Extend these shared
+   interfaces where general potential or allocating consumers still repeat
+   connection work. Lexical tuples,
    guard/body sequencing and impossible control exits belong in shared rules,
    not repeated algorithm proofs. Keep general effectful guards and genuine
    early-return behavior intact.
@@ -788,9 +801,11 @@ pass selects the loop's registered view, endpoint and structure-encoding equatio
 from its namespace. Standard tactic locations restrict which hypotheses or target
 are normalized; callee bodies, mathematical invariants and cost functions stay
 closed. This removes repeated coordinate lemma lists in the structured range
-and mutable traversal consumers. Selecting their loop contracts and views remains
-explicit; the next interface gap is that setup and resource composition, not
-another per-program termination or register proof.
+and mutable traversal consumers. The traversal's named-loop resource tactics
+also select capture views and fixed-capture frames from its existing contracts.
+The structured range uses its separate encoded-range rules. Further resource
+composition remains open; it must not add another per-program termination or
+register proof.
 
 The existing multi-field ABI concatenates product fields and places an option
 tag before its fixed payload. `none` has canonical zero padding, not a default
@@ -1242,13 +1257,15 @@ environment encodings or repeating source facts in a second resource proof.
    and compose the structural pass with existing loop/recursion contracts. Arbitrary resource
    indices cannot be guessed from raw handles; frontend metadata may expose the
    correspondence, not assert operation prices. Reuse the loop-specific coordinate
-   pass while removing remaining view/contract setup and resource-result packaging
+   pass and named-loop setup while removing remaining resource-result packaging
    in existing consumers, retaining the supplied leaf contracts, ranges, capacity
-   and mathematical bounds. Reuse source totality and actual heaps without
-   another per-program termination proof. The traversal already uses
-   `TotalWP.of_blockSpec`; wrapping that conversion alone does not justify another
-   long loop interface. A shorter public theorem must not hide an equally long
-   private connection proof.
+   and mathematical bounds. The traversal now selects its view/frames and reuses
+   `TotalWP.of_blockSpec` through shared tactics, with no private adapter.
+   Its proof leaves still contain mathematical mutable-coordinate patterns;
+   general potential and allocating-loop setup are separate follow-up work.
+   Reuse source totality and actual heaps without another per-program termination
+   proof. A shorter public theorem must not hide an equally long private
+   connection proof.
 2. Preserve native finite-range correspondence and inferred uniform budgets.
    Improve generated mathematical equations so ordinary fold/product proofs
    need less local-tuple projection; extend construct combinations only with

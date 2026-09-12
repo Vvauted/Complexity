@@ -185,6 +185,7 @@ import Complexity.Computability.Ram.Compiler.Language.List.Fold.Scalar
 import Complexity.Computability.Ram.Compiler.Language.List.IsEmpty
 import Complexity.Computability.Ram.Compiler.Language.List.Uncons
 import Complexity.Computability.Ram.Compiler.Language.LocalsTactic
+import Complexity.Computability.Ram.Compiler.Language.LoopTactic
 import Complexity.Computability.Ram.Compiler.Language.Lowering
 import Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation
 import Complexity.Computability.Ram.Compiler.Language.MeasuredNode
