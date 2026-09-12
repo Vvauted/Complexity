@@ -215,8 +215,17 @@ option, product and linked-list representations. The heap stays exactly the
 same, and the returned tail is the original reference, not a copied suffix.
 Its [RAM theorem](##Ram.LanguageCompiler.List.Uncons.execute_le) includes the
 full invocation cost derived from the same implementation, including the empty
-branch, option construction and call overhead. This typed callable operation
-is not yet a native persistent List frontend.
+branch, option construction and call overhead. Its composable
+[measured entry](##Ram.LanguageCompiler.List.Uncons.arenaMeasured) accepts an
+ordinary represented list at the current heap and a word-range proof only for
+its present head. It preserves the actual result, entire heap and cursor, with
+no proposed time bound or physical heap representation needed for readiness.
+The [launch-heap entry](##Ram.LanguageCompiler.List.Uncons.arenaMeasured_of_heapRep)
+derives that range when a heap representation is already available. Existing
+scalar-head and allocating callers reuse these observations directly; their
+complete RAM launch conditions and independent cost bounds remain intact.
+Native `xs.uncons` and `List.uncons xs` use the same operation, but do not
+constitute a complete persistent List library.
 
 The [named linked-list client](##Examples.Language.LinkedList) writes:
 
@@ -612,6 +621,22 @@ independent source postcondition before composing a call. The existing
 `reverseSum` proof uses this to pass the new List observation from reverse to the
 next fold, without unpacking or rebuilding `Exec`, `ArenaReady` or cost witnesses.
 The final publication rule consumes the resulting measured proof directly.
+
+When a later certificate depends on the actual return, name the continuation
+before structural reasoning splits its branches:
+
+```lean
+ram_source_arena_call measured using read
+  as finish parts cursor steps observed fits via embedding
+```
+
+This introduces the actual state, value, cursor, core count, supplied observations
+and value-range proof, but does not execute the continuation proof pass.
+Prepare the next callee certificate from these facts, then resume with
+`ram_source_arena_step`. The `replaceHead` consumer uses this to prepare its
+actual-tail constructor once before the empty/nonempty branches. Omitting `as`
+keeps the existing automatic continuation behavior; genuine argument-range
+obligations are never discarded.
 
 The generic form `ram_source_arena_call (index := x) using total, resources, bounded`
 is also available for independently specified indexed callees. All forms retain

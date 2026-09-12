@@ -392,7 +392,17 @@ ordinary `List.head?`/`List.tail` observations at the unchanged heap. The
 derives a constant full-invocation bound from the actual branch, read, option
 packaging, return and call rules. The existing input List representation and
 complete heap representation supply the lookup and word ranges; callers add no
-register proof or tail traversal. The native frontend now registers `xs.uncons`
+register proof or tail traversal. Its composable `arenaMeasured` entry takes
+ordinary list contents at the current heap and only the present head's word
+range; it needs no physical heap representation or proposed time bound.
+`arenaMeasured_of_heapRep` derives that range from an existing launch heap when
+available. Both retain the actual read result, unchanged heap and cursor; the
+separate cost certificate applies to the same execution. The existing `headOr`,
+`replaceHead` and conditional inspection clients now compose these observations
+directly, without unpacking Uncons execution/cost witnesses. The optional named
+continuation mode pauses the shared call pass before a match, so `replaceHead`
+prepares its returned-tail constructor certificate once for both branches.
+Constructor counts and actual continuation heaps remain explicit. The native frontend registers `xs.uncons`
 and `List.uncons xs` to this operation; its generated mathematical view uses
 ordinary head/tail observations, not a new upstream Lean List definition.
 The [named client](../Examples/Language/LinkedList.lean) writes the same operation

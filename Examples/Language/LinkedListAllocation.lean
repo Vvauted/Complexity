@@ -375,25 +375,27 @@ theorem replaceHead_execute_le {w heapLimit cursor : Nat} {placement : Nat → R
       outcome.result.steps ≤ replaceHeadSteps := by
   have positive : 0 < w := launch.positive
   have replacementFits : replacement < 2 ^ w := launch.arguments .here
-  obtain ⟨readFinish, parts, readSteps, readExecution, readReady, readCost,
-      _readStepsLe, _readHeapEq, _partsObserved⟩ :=
-    Ram.LanguageCompiler.List.Uncons.ready_cost .nat values root heap
+  have read :=
+    Ram.LanguageCompiler.List.Uncons.arenaMeasured_of_heapRep .nat values root heap
       (depth := 1) (cursor := cursor) positive launch.arena.heapRep observed
-  obtain ⟨_, _, prependCost⟩ := prepend_ready_cost replacement
-    (parts.elim none Prod.snd) readFinish.heap positive replacementFits space
   have measured : ArenaMeasured NativeViews.Source.program w heapLimit 2
       (NativeViews.Source.program.body NativeViews.Source.replaceHeadId)
       (fun _ control finalCursor _ =>
         ∃ value, control = .returned value ∧ finalCursor = cursor + 3)
       ⟨NativeViews.Source.replaceHead_args replacement root, heap⟩ cursor := by
     ram_source_arena_step
-    ram_source_arena_call exact using readCost via
+    ram_source_arena_call measured using read
+      as readFinish parts readCursor readSteps readProperty partsFits via
       NativeViews.Source.imports.NativeViews.Operations.unconsNat.embedding
+    have cursorEq := readProperty.2.1
+    subst readCursor
+    obtain ⟨_, _, prependCost⟩ := prepend_ready_cost replacement
+      (parts.elim none Prod.snd) readFinish.heap positive replacementFits space
+    ram_source_arena_step
     all_goals
       ram_source_arena_call exact using prependCost via
         NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
-    all_goals
-      exact ⟨_, rfl⟩
+    all_goals exact ⟨_, rfl⟩
   obtain ⟨outcome, cursorEq, ⟨_, result, rfl⟩, shape, bodyBound, stepsBound⟩ :=
     measured.execute_le (P := fun _ _ finalCursor => finalCursor = cursor + 3)
       (replaceHeadCost.property w heapLimit _)

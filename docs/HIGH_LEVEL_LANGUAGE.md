@@ -890,6 +890,16 @@ not from assigning a price to the ordinary Lean List function. The native
 frontend registers `xs.uncons` and `List.uncons xs` to this same operation;
 these are source spellings, not a claim that upstream Lean defines `List.uncons`.
 
+Its ordinary-parameter `arenaMeasured` entry composes the existing read at the
+current heap from the represented list and the present head's range. There is
+no whole-tail range check, physical heap representation or time-bound premise
+in this readiness interface. A separate `arenaMeasured_of_heapRep` convenience
+entry obtains the head range from an existing launch heap. Both preserve the
+actual result, entire heap and cursor; independent cost certificates count the
+same execution. The scalar-head, replace-head and conditional inspection proofs
+reuse this entry, retaining actual intermediate heaps and constructor costs.
+Complete halted RAM invocations still require their original launch conditions.
+
 `List.Cons` supplies the corresponding complete construction invocation. Its
 source theorem exposes ordinary `head :: values`, the exact fresh root and heap,
 and preservation of previously represented lists, with no resource premise.
@@ -1066,10 +1076,20 @@ proof from the actual source body. `ArenaMeasured` is a thin proposition over
 the existing execution, readiness and exact compiler count; its postcondition
 can retain exact results or upper bounds. `ram_source_arena_step` handles
 primitive bindings and returns, stopping at calls. `ram_source_arena_call exact
-using cost` consumes a measured callee. The indexed contract form consumes
-independent source totality, resource and cost contracts; both accept
+using cost` consumes an actual callee cost witness. The measured form composes
+a returning `ArenaMeasured` directly; the indexed contract form consumes
+independent source totality, resource and cost contracts. All accept
 `via embedding` for imports. The actual arguments and continuation come from
 the statement, and imported function identity comes from its table map.
+
+The measured form can pause before the continuation with
+`as finish value cursor steps observed fits`, before an optional `via embedding`.
+These are the six binders of the existing call rule, not decoded mathematical
+values or a new execution. This permits preparing one result-dependent callee
+certificate before `ram_source_arena_step` splits a subsequent match. The
+`replaceHead` consumer uses its actual returned tail this way; omitting `as`
+preserves the automatic structural pass. Unresolved argument-range premises
+remain proof obligations.
 
 The `prependPair` and `reverseAppend` migrations include the leaf `prepend` and
 `push` wrappers: no hand-written `Args`/`EnvFits`, import transport or operational
@@ -1077,7 +1097,7 @@ return continuation remains in those consumers. `List.Cons.ready_cost` provides
 the original constructor proof in ordinary head/tail arguments, not a new
 constructor implementation. `List.Fold.measured` similarly exposes the existing
 fold entry in ordinary accumulator/list/root arguments. `reverseAppend` now
-consumes that actual measured execution through the exact-call form; it no longer
+consumes that actual execution through the measured-call form; it no longer
 builds a resource-index tuple, `functionPre`, or separate wrapper contracts.
 The callback contracts, admissibility, numerical ranges, remaining capacity and
 final comparisons stay explicit. The generic contract-call form remains useful

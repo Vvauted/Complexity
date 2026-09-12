@@ -22,11 +22,15 @@ payload, retaining ranges obtained from the actual callee's readiness proof.
 Its optional `via embedded` transports a witness from the original source program.
 `ram_source_arena_call measured using certificate` directly composes an existing
 returning `ArenaMeasured`, retaining its observations without witness unpacking.
-The same optional embedding supports imported measured bodies.
+The same optional embedding supports imported measured bodies. Adding
+`as finish value cursor steps observed fits` names the six actual continuation
+arguments and pauses before its structural statements. This permits preparing
+a result-dependent callee certificate once before a later branch is split;
+`ram_source_arena_step` resumes the ordinary structural pass.
 `ram_source_arena_call (index := x) using total, resources, bounded` instead uses
 independent source correctness, arena resource and cost contracts. Add
-`via embedded` to use contracts for an imported source program. All forms resume
-structural reasoning after the call, stopping at the next call.
+`via embedded` to use contracts for an imported source program. By default all
+forms resume structural reasoning after the call, stopping at the next call.
 
 The contract form exposes the real returned value, heap, cursor and core count,
 including the proved bound on that count. Mathematical preconditions, capacity
@@ -272,8 +276,9 @@ private def contractCall (index total resources bounded : TSyntax `term)
           $index ?_ ?_ ?_ ?_ ?_ ?_))
   Ram.LanguageCompiler.Tactic.onGoals step
 
-private def measuredCall (measured : TSyntax `term)
-    (embedded : Option (TSyntax `term)) : TacticM Unit := withMainContext do
+private def measuredCallCore (measured : TSyntax `term)
+    (embedded : Option (TSyntax `term))
+    (names : Option (Array (TSyntax `ident))) : TacticM Unit := withMainContext do
   let (fn, args, continuation, entry) ← callTerms
   match embedded with
   | none =>
@@ -288,7 +293,21 @@ private def measuredCall (measured : TSyntax `term)
           $embedding (fn := $sourceFn) rfl
           (args := $args) (continuation := $continuation) (entry := $entry)
           ?_ $measured ?_))
-  Ram.LanguageCompiler.Tactic.onGoals step
+  match names with
+  | none => Ram.LanguageCompiler.Tactic.onGoals step
+  | some names =>
+      Ram.LanguageCompiler.Tactic.onGoals do
+        let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
+        if target.isForall then
+          evalTactic (← `(tactic| intro $names:ident*))
+        else
+          step
+
+private def measuredCall (measured : TSyntax `term)
+    (embedded : Option (TSyntax `term))
+    (names : Option (Array (TSyntax `ident)) := none) : TacticM Unit :=
+  if names.isSome then focus (measuredCallCore measured embedded names)
+  else measuredCallCore measured embedded names
 
 /-- Compose non-loop structural statements in a measured arena execution, leaving
 the next call and mathematical obligations for explicit proofs. Conditionals
@@ -303,6 +322,12 @@ syntax "ram_source_arena_call" "exact" "using" term:max (&"via" term)? : tactic
 returned heap, value, cursor and count. An embedding supports imported bodies. -/
 syntax "ram_source_arena_call" &"measured" "using" term:max (&"via" term)? : tactic
 
+/-- Name the actual returned state, value, cursor, core count, observations and
+value-range proof, then pause before the continuation. Resume with
+`ram_source_arena_step` after preparing result-dependent facts or certificates. -/
+syntax "ram_source_arena_call" &"measured" "using" term:max
+  &"as" ident ident ident ident ident ident (&"via" term)? : tactic
+
 /-- Compose the current source call using independent correctness, resources and
 cost contracts. An optional embedding transports original imported contracts. -/
 syntax "ram_source_arena_call" "(" &"index" ":=" term ")" "using"
@@ -316,6 +341,13 @@ elab_rules : tactic
   | `(tactic| ram_source_arena_call measured using $certificate) => measuredCall certificate none
   | `(tactic| ram_source_arena_call measured using $certificate via $embedded) =>
       measuredCall certificate (some embedded)
+  | `(tactic| ram_source_arena_call measured using $certificate
+      as $finish:ident $value:ident $cursor:ident $steps:ident $observed:ident $fits:ident) =>
+      measuredCall certificate none (some #[finish, value, cursor, steps, observed, fits])
+  | `(tactic| ram_source_arena_call measured using $certificate
+      as $finish:ident $value:ident $cursor:ident $steps:ident $observed:ident $fits:ident
+      via $embedded) =>
+      measuredCall certificate (some embedded) (some #[finish, value, cursor, steps, observed, fits])
   | `(tactic| ram_source_arena_call (index := $resourceIndex:term) using
       $total, $resources, $bounded) =>
       contractCall resourceIndex total resources bounded none

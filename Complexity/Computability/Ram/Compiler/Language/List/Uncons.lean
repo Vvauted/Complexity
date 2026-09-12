@@ -9,6 +9,7 @@ import Complexity.Computability.Ram.Compiler.Language.CostBound
 import Complexity.Computability.Ram.Compiler.Language.MeasuredNode
 import Complexity.Computability.Ram.Compiler.Language.Arena.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured
 
 /-!
 # Compiling decomposition of represented linked lists
@@ -122,6 +123,74 @@ private theorem readable_of_heapRep {kind : CellTy} {w heapLimit : Nat}
   cases contents with
   | cons found tail => exact ⟨_, _, found, memory.node_valueFits found⟩
 
+/-- The actual represented node supplies its lookup and tail. Only the head
+that is read needs a scalar range; the optional tail needs its existing tag
+range, not a range or traversal of the remaining elements. -/
+private theorem readable_of_headFits {kind : CellTy} {w : Nat}
+    {heap : Heap} {values : _root_.List (CellValue kind)} {root : Option (NodeRef kind)}
+    (positive : 0 < w)
+    (observed : (Representation.list kind).Rel values root heap)
+    (headFits : ∀ head, values.head? = some head → ValueFits w (kind.toValue head)) :
+    ∀ ref, root = some ref →
+      ∃ head tail, heap.node? kind ref.object = some (head, tail) ∧
+        ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) := by
+  intro ref selected
+  have contents : NodeRef.Contents heap (some ref) values := by
+    rw [← selected]
+    exact observed
+  cases contents with
+  | cons found contents =>
+      exact ⟨_, _, found, headFits _ rfl, ValueFits.option_node positive _⟩
+
+/-- Compose decomposition at the actual source heap and cursor. The existing
+List observation and first-element range establish the same read, without a
+physical heap witness, a tail-element range or a proposed instruction budget.
+The result retains the mathematical head and shared tail at the unchanged heap. -/
+theorem arenaMeasured (kind : CellTy) (values : _root_.List (CellValue kind))
+    (root : Option (NodeRef kind)) (heap : Heap)
+    {w heapLimit depth cursor : Nat} (positive : 0 < w)
+    (observed : (Representation.list kind).Rel values root heap)
+    (headFits : ∀ head, values.head? = some head → ValueFits w (kind.toValue head)) :
+    ArenaMeasured (program kind) w heapLimit depth ((program kind).body (entry kind))
+      (fun finish control finalCursor _ => ∃ value, control = .returned value ∧
+        finish.heap = heap ∧ finalCursor = cursor ∧
+        (resultRepresentation kind).Rel
+          (values.head?.map (fun head => (head, values.tail))) value finish.heap)
+      ⟨Env.cons (τ := .option (.node kind)) root Env.empty, heap⟩ cursor := by
+  obtain ⟨finish, value, realized⟩ :=
+    (realizable kind positive).mono_depth (Nat.zero_le depth)
+      (Env.cons (τ := .option (.node kind)) root Env.empty) heap
+      (readable_of_headFits positive observed headFits)
+  obtain ⟨actualSteps, cost⟩ := realized.exists_cost
+  have property := (total kind values).postcondition
+    (args := Env.cons (τ := .option (.node kind)) root Env.empty) (heap := heap)
+    observed realized.erase
+  exact ⟨finish, .returned value, cursor, actualSteps, realized.erase,
+    realized.arenaReady heapLimit cursor, cost.arena heapLimit cursor,
+    value, rfl, property.2, rfl, property.1⟩
+
+/-- A represented RAM heap supplies precisely the head range needed by the
+composable source operation. No additional input or suffix check is required. -/
+theorem arenaMeasured_of_heapRep (kind : CellTy) (values : _root_.List (CellValue kind))
+    (root : Option (NodeRef kind)) (heap : Heap)
+    {w heapLimit depth cursor : Nat} {initial : Source.State w} {placement : Nat → Word w}
+    (positive : 0 < w) (memory : HeapRep placement heapLimit heap initial)
+    (observed : (Representation.list kind).Rel values root heap) :
+    ArenaMeasured (program kind) w heapLimit depth ((program kind).body (entry kind))
+      (fun finish control finalCursor _ => ∃ value, control = .returned value ∧
+        finish.heap = heap ∧ finalCursor = cursor ∧
+        (resultRepresentation kind).Rel
+          (values.head?.map (fun head => (head, values.tail))) value finish.heap)
+      ⟨Env.cons (τ := .option (.node kind)) root Env.empty, heap⟩ cursor := by
+  apply arenaMeasured kind values root heap positive observed
+  intro head selected
+  cases observed with
+  | nil => simp at selected
+  | cons found contents =>
+      cases Option.some.inj selected
+      exact (memory.node_valueFits found).1
+
 /-- Ordinary list arguments supply the same actual decomposition and its arena
 cost. Existing heap and list representations establish read success and field
 ranges; no new lookup or object-identifier bound is required. The cursor and
@@ -139,17 +208,17 @@ theorem ready_cost (kind : CellTy) (values : _root_.List (CellValue kind))
         finish.heap = heap ∧
         (resultRepresentation kind).Rel
           (values.head?.map (fun head => (head, values.tail))) value finish.heap := by
-  obtain ⟨finish, value, realized⟩ :=
-    (realizable kind positive).mono_depth (Nat.zero_le depth)
-      (Env.cons (τ := .option (.node kind)) root Env.empty) heap
-      (readable_of_heapRep memory observed)
-  obtain ⟨actualSteps, cost⟩ := realized.exists_cost
-  have property := (total kind values).postcondition
-    (args := Env.cons (τ := .option (.node kind)) root Env.empty) (heap := heap)
-    observed realized.erase
-  exact ⟨finish, value, actualSteps, realized.erase, realized.arenaReady heapLimit cursor,
-    cost.arena heapLimit cursor, (bodyCost kind).property _ realized cost,
-    property.2, property.1⟩
+  obtain ⟨finish, control, finalCursor, actualSteps, execution, ready, cost,
+      value, returned, unchanged, cursorEq, related⟩ :=
+    arenaMeasured_of_heapRep kind values root heap (depth := depth) (cursor := cursor)
+      positive memory observed
+  cases returned
+  subst finalCursor
+  have bounded := arenaCostBound kind w heapLimit depth
+    (Env.cons (τ := .option (.node kind)) root Env.empty) heap trivial
+    finish value execution ready cost
+  change actualSteps + 2 ≤ (bodyCost kind).val + 2 at bounded
+  exact ⟨finish, value, actualSteps, execution, ready, cost, by omega, unchanged, related⟩
 
 /-- The inferred function budget plus the actual outer-call and halt charges. -/
 def steps (kind : CellTy) : Nat :=

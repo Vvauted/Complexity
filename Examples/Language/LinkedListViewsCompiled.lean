@@ -113,9 +113,7 @@ theorem headOr_execute_le {w heapLimit cursor : Nat} {placement : Nat → Ram.Wo
       outcome.bodySteps ≤ headOrCost.val + 2 ∧ outcome.result.steps ≤ headOrSteps := by
   have positive : 0 < w := launch.positive
   have fallbackFits : fallback < 2 ^ w := launch.arguments .here
-  obtain ⟨readFinish, parts, readSteps, readExecution, readReady, readCost,
-      _readStepsLe, readHeapEq, _partsObserved⟩ :=
-    Ram.LanguageCompiler.List.Uncons.ready_cost .nat values root heap
+  have read := Ram.LanguageCompiler.List.Uncons.arenaMeasured_of_heapRep .nat values root heap
       (depth := 0) (cursor := cursor) positive launch.arena.heapRep observed
   have measured : ArenaMeasured NativeViews.Source.program w heapLimit 1
       (NativeViews.Source.program.body NativeViews.Source.headOrId)
@@ -123,9 +121,11 @@ theorem headOr_execute_le {w heapLimit cursor : Nat} {placement : Nat → Ram.Wo
         ∃ value, control = .returned value ∧ finish.heap = heap ∧ finalCursor = cursor)
       ⟨NativeViews.Source.headOr_args fallback root, heap⟩ cursor := by
     ram_source_arena_step
-    ram_source_arena_call exact using readCost via
+    ram_source_arena_call measured using read via
       NativeViews.Source.imports.NativeViews.Operations.unconsNat.embedding
-    all_goals exact ⟨_, rfl, readHeapEq⟩
+    all_goals
+      refine ⟨_, rfl, ?_⟩
+      ram_source_arena_step
   obtain ⟨outcome, ⟨heapEq, cursorEq⟩, ⟨answer, represented, answerEq⟩,
       _shape, bodyBound, stepsBound⟩ :=
     measured.execute_le (P := fun finalHeap _ finalCursor =>
@@ -153,6 +153,34 @@ theorem inspectAndPrepend_arenaCostBound (w heapLimit : Nat) :
   intro args heap _
   exact inspectAndPrependCost.property w heapLimit _
 
+/-- Compose the actual node read and constructor at the returned heap and
+cursor. The mathematical compound result remains an independent source
+contract, and no proposed instruction bound is required for this execution. -/
+theorem inspectAndPrepend_measured {w heapLimit cursor : Nat}
+    (head : Nat) (values : List Nat) (root : Option (NodeRef .nat)) (heap : Heap)
+    {placement : Nat → Ram.Word w} {entry : Ram.Source.State w}
+    (positive : 0 < w) (headFits : head < 2 ^ w)
+    (memory : HeapRep placement heapLimit heap entry)
+    (observed : (Representation.list .nat).Rel values root heap)
+    (space : cursor + 3 ≤ heapLimit) :
+    ArenaMeasured NativeViews.Source.program w heapLimit 2
+      (NativeViews.Source.program.body NativeViews.Source.inspectAndPrependId)
+      (fun _ control finalCursor _ =>
+        ∃ value, control = .returned value ∧ finalCursor = cursor + 3)
+      ⟨NativeViews.Source.inspectAndPrepend_args head root, heap⟩ cursor := by
+  have read := Ram.LanguageCompiler.List.Uncons.arenaMeasured_of_heapRep .nat values root heap
+    (depth := 1) (cursor := cursor) positive memory observed
+  ram_source_arena_call measured using read
+    as readFinish parts readCursor readSteps readPost partsFits via
+    NativeViews.Source.imports.NativeViews.Operations.unconsNat.embedding
+  obtain ⟨_, _, prependCost⟩ :=
+    prepend_ready_cost head root readFinish.heap positive headFits
+      (cursor := readCursor) (by simpa only [readPost.2.1] using space)
+  ram_source_arena_call exact using prependCost via
+    NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
+  refine ⟨_, rfl, ?_⟩
+  omega
+
 /-- Reading and prepending share the actual intermediate heap. Three fresh words
 are sufficient, and the witness retains the actual compound returned value. -/
 theorem inspectAndPrepend_ready_cost {w heapLimit cursor : Nat}
@@ -168,25 +196,9 @@ theorem inspectAndPrepend_ready_cost {w heapLimit cursor : Nat}
         ⟨NativeViews.Source.inspectAndPrepend_args head root, heap⟩ finish (.returned value),
         ∃ ready : ArenaReady execution w heapLimit 2 cursor (cursor + 3),
           ArenaExecutionCost ready steps := by
-  obtain ⟨readFinish, parts, readSteps, readExecution, readReady, readCost,
-      _readStepsLe, _readHeapEq, _partsObserved⟩ :=
-    Ram.LanguageCompiler.List.Uncons.ready_cost .nat values root heap
-      (depth := 1) (cursor := cursor) positive memory observed
-  obtain ⟨_, _, prependCost⟩ :=
-    prepend_ready_cost head root readFinish.heap positive headFits space
-  have measured : ArenaMeasured NativeViews.Source.program w heapLimit 2
-      (NativeViews.Source.program.body NativeViews.Source.inspectAndPrependId)
-      (fun _ control finalCursor _ =>
-        ∃ value, control = .returned value ∧ finalCursor = cursor + 3)
-      ⟨NativeViews.Source.inspectAndPrepend_args head root, heap⟩ cursor := by
-    ram_source_arena_step
-    ram_source_arena_call exact using readCost via
-      NativeViews.Source.imports.NativeViews.Operations.unconsNat.embedding
-    ram_source_arena_call exact using prependCost via
-      NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
-    exact ⟨_, rfl⟩
   obtain ⟨finish, value, _, steps, execution, ready, cost, rfl⟩ :=
-    ArenaMeasured.exists_returned_iff.mp measured
+    ArenaMeasured.exists_returned_iff.mp
+      (inspectAndPrepend_measured head values root heap positive headFits memory observed space)
   exact ⟨finish, value, steps, execution, ready, cost⟩
 
 /-- The compound join's bound includes real initialization of all result fields,
@@ -240,12 +252,12 @@ theorem inspectOrPrepend_execute_le {w heapLimit cursor : Nat}
         ram_source_arena_step
         exact ⟨_, rfl, rfl⟩
     | true =>
-        obtain ⟨_, _, _, _, _, inspectionCost⟩ :=
-          inspectAndPrepend_ready_cost head values root heap positive headFits
+        have inspected := inspectAndPrepend_measured head values root heap positive headFits
             launch.arena.heapRep observed space
         ram_source_arena_step
-        ram_source_arena_call exact using inspectionCost
-        exact ⟨_, rfl, rfl⟩
+        ram_source_arena_call measured using inspected
+        refine ⟨_, rfl, ?_⟩
+        assumption
   obtain ⟨outcome, cursorEq, ⟨_, result, rfl⟩, shape, bodyBound, stepsBound⟩ :=
     measured.execute_le (P := fun _ _ finalCursor =>
       finalCursor = cursor + (if flag then 3 else 0))
