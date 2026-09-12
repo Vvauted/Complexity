@@ -540,14 +540,21 @@ totality, resources and a bound. Imported function identity is recovered from
 the actual call and its supplied table embedding, without opening callee bodies.
 The generic contract form keeps mathematical resource indices explicit: they
 cannot be reconstructed from raw list handles. The shared
-[`List.Fold.measured`](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Resources.lean)
+[`List.Fold.arenaMeasured`](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Measured.lean)
 entry now exposes the existing fold proof in ordinary mathematical/source
 arguments. `reverseAppend` consumes its actual measured execution directly,
 without assembling `functionPre`, a resource-index tuple or separate wrapper
 totality/resource/cost contracts. Callback correctness, admissibility, value
 ranges, remaining capacity and final numerical comparisons remain supplied
 proofs. `ArenaMeasured` only packages existing witnesses; there is no new
-interpreter or pricing model. The shared allocating-loop cost rule below bounds
+interpreter or pricing model. The `measured using` call form retains those
+observations directly, including across imports. `with_spec` attaches an
+independent source specification to the same execution. The existing
+`reverseAppend`, `reverse` and `reverseSum` resource proofs now compose these
+certificates without unpacking and rebuilding execution/readiness/cost witnesses;
+their final RAM publication uses the same measured proof directly. The old
+ready/cost entry points retain their signatures through a shared extraction rule.
+The shared allocating-loop cost rule below bounds
 actual executions; automatically deriving loop readiness, recursive contracts
 and further operation resource adapters remains follow-up work.
 
@@ -1199,7 +1206,9 @@ environment encodings or repeating source facts in a second resource proof.
    `reverseAppend` use inferred wrapper costs, preserving their published bounds.
    Source postconditions now also flow into later input-dependent call budgets;
    the allocating `reverseSum` path uses this to traverse its actual new List.
-   Continue removing remaining resource-result bookkeeping and composing supplied
+   Direct measured-call composition now removes execution-witness unpacking in
+   the reverse/append and allocation-then-traversal resource proofs. Continue
+   removing remaining resource-result bookkeeping and composing supplied
    loop contracts; arbitrary potentials, budget comparisons and readiness are not
    thereby inferred. The fixed-heap
    `StmtCostBound` cannot silently stand in for a bound on allocating execution;

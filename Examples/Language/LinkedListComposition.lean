@@ -126,6 +126,41 @@ theorem isBigO_reverseSumInvocationBound :
     (Nat.cast_le.mpr bound : (reverseSumInvocationBound length : ℝ) ≤
       (((reverseSumInvocationBound 1 + reverseSumInvocationBound 0) * length : Nat) : ℝ))
 
+/-- Compose existing measured calls at their actual returned heap and cursor.
+The independent reverse specification supplies the List observed by the fold. -/
+theorem reverseSum_measured {w heapLimit cursor : Nat}
+    (values : List Nat) (root : Option (NodeRef .nat)) (heap : Heap)
+    (positive : 0 < w) (observed : (Representation.list .nat).Rel values root heap)
+    (fits : values.sum < 2 ^ w) (space : cursor + 3 * values.length ≤ heapLimit) :
+    ArenaMeasured NativeLists.Source.program w heapLimit 5
+      (NativeLists.Source.program.body NativeLists.Source.reverseSumId)
+      (fun _ control finalCursor _ =>
+        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
+      ⟨NativeLists.Source.reverseSum_args root, heap⟩ cursor := by
+  have ranges := sum_ranges 0 values (by simpa only [Nat.zero_add] using fits)
+  have reversed := (reverse_measured values root heap positive observed ranges.2 space).with_spec
+    (NativeLists.reverse_refines values trivial) observed
+  ram_source_arena_call measured using reversed
+  rename_i reverseFinish reversed reverseCursor reverseSteps reverseProperty reverseFits
+  have reverseCursorBound := reverseProperty.1
+  have reversedObserved : (Representation.list .nat).Rel (NativeLists.reverse values)
+      reversed reverseFinish.heap := reverseProperty.2
+  have reversedFits : 0 + (NativeLists.reverse values).sum < 2 ^ w := by
+    simpa only [reverse_eq, List.sum_reverse, Nat.zero_add] using fits
+  have reversedRanges := sum_ranges 0 (NativeLists.reverse values) reversedFits
+  have folded := List.Fold.arenaMeasured (add_fold_contract w)
+    (add_fold_resources_at_depth w heapLimit 3) (add_fold_costBound_at_depth w heapLimit 3)
+    0 (NativeLists.reverse values) 0 reversed reverseFinish.heap reverseCursor positive
+    (sum_admissible 0 _ reversedFits) rfl reversedRanges.1 reversedRanges.2
+    (by simp only [List.Fold.accumulated_const, Nat.mul_zero, Nat.add_zero]; omega)
+    reversedObserved
+  ram_source_arena_call measured using folded
+    via NativeLists.Source.imports.NativeLists.Operations.fold1.embedding
+  rename_i finalFinish finalValue finalCursor finalSteps foldProperty finalFits
+  have cursorBound := foldProperty.2
+  simp only [List.Fold.accumulated_const, Nat.mul_zero, Nat.add_zero] at cursorBound
+  exact ⟨_, rfl, by omega⟩
+
 /-- Compose the actual allocating reverse with the scalar fold at its actual
 returned heap and cursor. The second traversal reserves no additional words. -/
 theorem reverseSum_ready_cost {w heapLimit cursor : Nat}
@@ -139,39 +174,8 @@ theorem reverseSum_ready_cost {w heapLimit cursor : Nat}
         ∃ ready : ArenaReady execution w heapLimit 5 cursor finalCursor,
           ArenaExecutionCost ready steps ∧ steps ≤ (reverseSumCost values.length).val ∧
           finalCursor ≤ cursor + 3 * values.length := by
-  have ranges := sum_ranges 0 values (by simpa only [Nat.zero_add] using fits)
-  obtain ⟨reverseFinish, reversed, reverseCursor, reverseSteps, reverseExec,
-      reverseReady, reverseCost, _, reverseCursorBound⟩ :=
-    reverse_ready_cost values root heap positive observed ranges.2 space
-  have reversedObserved : (Representation.list .nat).Rel (NativeLists.reverse values)
-      reversed reverseFinish.heap :=
-    (NativeLists.reverse_refines values trivial).postcondition
-      (args := NativeLists.Source.reverse_args root) (heap := heap) observed reverseExec
-  have reversedFits : 0 + (NativeLists.reverse values).sum < 2 ^ w := by
-    simpa only [reverse_eq, List.sum_reverse, Nat.zero_add] using fits
-  have reversedRanges := sum_ranges 0 (NativeLists.reverse values) reversedFits
-  obtain ⟨finalAcc, finalHeap, finalCursor, steps, sumExec, sumReady, sumCost,
-      _, cursorBound⟩ := List.Fold.measured (add_fold_contract w)
-    (add_fold_resources_at_depth w heapLimit 3) (add_fold_costBound_at_depth w heapLimit 3)
-    0 (NativeLists.reverse values) 0 reversed reverseFinish.heap reverseCursor positive
-    (sum_admissible 0 _ reversedFits) rfl reversedRanges.1 reversedRanges.2
-    (by simp only [List.Fold.accumulated_const, Nat.mul_zero, Nat.add_zero]; omega)
-    reversedObserved
-  simp only [List.Fold.accumulated_const, Nat.mul_zero, Nat.add_zero] at cursorBound
-  have measured : ArenaMeasured NativeLists.Source.program w heapLimit 5
-      (NativeLists.Source.program.body NativeLists.Source.reverseSumId)
-      (fun _ control finalCursor _ =>
-        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
-      ⟨NativeLists.Source.reverseSum_args root, heap⟩ cursor := by
-    ram_source_arena_call exact using reverseCost
-    ram_source_arena_call exact using sumCost
-      via NativeLists.Source.imports.NativeLists.Operations.fold1.embedding
-    exact ⟨_, rfl, by omega⟩
-  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, cursorBound⟩ :=
-    ArenaMeasured.exists_returned_iff.mp measured
-  exact ⟨finish, value, finalCursor, steps, execution, ready, cost,
-    (reverseSumCost values.length).property w heapLimit values root heap rfl observed fits
-      execution ready cost, cursorBound⟩
+  exact (reverseSum_measured values root heap positive observed fits space).exists_returned_le
+    ((reverseSumCost values.length).property w heapLimit values root heap rfl observed fits)
 
 /-- The native allocation-then-traversal program halts on RAM with `values.sum`.
 The original List remains observable in the same final heap. The instruction
@@ -191,15 +195,7 @@ theorem reverseSum_execute {w heapLimit cursor : Nat} {placement : Nat → Ram.W
       heap.ShapeExtends outcome.heap ∧ outcome.cursor ≤ cursor + 3 * values.length ∧
       outcome.bodySteps ≤ (reverseSumCost values.length).val + 2 ∧
       outcome.result.steps ≤ reverseSumInvocationBound values.length := by
-  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, _, cursorBound⟩ :=
-    reverseSum_ready_cost values root heap launch.positive observed fits space
-  have measured : ArenaMeasured NativeLists.Source.program w heapLimit 5
-      (NativeLists.Source.program.body NativeLists.Source.reverseSumId)
-      (fun _ control finalCursor _ =>
-        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
-      ⟨NativeLists.Source.reverseSum_args root, heap⟩ cursor :=
-    ArenaMeasured.exists_returned_iff.mpr
-      ⟨finish, value, finalCursor, steps, execution, ready, cost, cursorBound⟩
+  have measured := reverseSum_measured values root heap launch.positive observed fits space
   obtain ⟨outcome, cursorBound, represented, shape, bodyBound, stepsBound⟩ :=
     measured.execute_le (P := fun _ _ finalCursor => finalCursor ≤ cursor + 3 * values.length)
       ((reverseSumCost values.length).property w heapLimit values root heap rfl observed fits)

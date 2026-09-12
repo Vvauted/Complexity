@@ -5,7 +5,7 @@ Authors: vvauted
 -/
 import Examples.Language.LinkedList
 import Complexity.Computability.Ram.Compiler.Language.List.Cons
-import Complexity.Computability.Ram.Compiler.Language.List.Fold.Resources
+import Complexity.Computability.Ram.Compiler.Language.List.Fold.Measured
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.CostBound
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.Asymptotics
 import Complexity.Computability.Ram.Compiler.Language.Arena.Tactic
@@ -181,6 +181,41 @@ theorem reverseAppendInvocationBound_affine (length : Nat) :
     Nat.zero_mul]
   omega
 
+/-- Compose the existing fold certificate directly with the actual wrapper's
+return. The retained observation concerns its real final cursor; the independent
+structural cost certificate can be applied without unpacking the execution. -/
+theorem reverseAppend_measured {w heapLimit cursor : Nat}
+    (values tailValues : List Nat) (root tail : Option (NodeRef .nat)) (heap : Heap)
+    (positive : 0 < w)
+    (observed : (Representation.list .nat).Rel values root heap)
+    (tailObserved : (Representation.list .nat).Rel tailValues tail heap)
+    (headFits : ∀ head ∈ values, head < 2 ^ w)
+    (space : cursor + 3 * values.length ≤ heapLimit) :
+    ArenaMeasured NativeLists.Source.program w heapLimit 3
+      (NativeLists.Source.program.body NativeLists.Source.reverseAppendId)
+      (fun _ control finalCursor _ =>
+        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
+      ⟨NativeLists.Source.reverseAppend_args root tail, heap⟩ cursor := by
+  have admissible : List.Fold.Admissible (kind := .nat) ListReducer.push
+      (fun _ _ => True) tailValues values := by
+    intro processed head suffix partition
+    trivial
+  have capacity : cursor + Ram.LanguageCompiler.List.Fold.accumulated (kind := .nat)
+      ListReducer.push (fun _ _ => 3) tailValues values ≤ heapLimit := by
+    rw [Ram.LanguageCompiler.List.Fold.accumulated_const]
+    omega
+  have folded := Ram.LanguageCompiler.List.Fold.arenaMeasured
+    NativeLists.Operations.fold0.callback_contract
+    (push_fold_resources positive) (push_fold_costBound w heapLimit)
+    tailValues values tail root heap cursor positive admissible tailObserved
+    (ValueFits.option_node positive tail) headFits capacity observed
+  ram_source_arena_call measured using folded
+    via NativeLists.Source.imports.NativeLists.Operations.fold0.embedding
+  refine ⟨_, rfl, ?_⟩
+  simp only [Ram.LanguageCompiler.List.Fold.accumulated_const,
+    Nat.mul_comm values.length 3] at *
+  omega
+
 /-- The actual generated caller composes the independently specified allocating
 fold with its return. Readiness begins at the real current cursor, and the cost
 and cursor bounds retain the same source execution throughout. -/
@@ -199,35 +234,10 @@ theorem reverseAppend_ready_cost {w heapLimit cursor : Nat}
           ArenaExecutionCost ready steps ∧
           steps ≤ reverseAppendBodyBound values.length ∧
           finalCursor ≤ cursor + 3 * values.length := by
-  have admissible : List.Fold.Admissible (kind := .nat) ListReducer.push
-      (fun _ _ => True) tailValues values := by
-    intro processed head suffix partition
-    trivial
-  have capacity : cursor + Ram.LanguageCompiler.List.Fold.accumulated (kind := .nat)
-      ListReducer.push (fun _ _ => 3) tailValues values ≤ heapLimit := by
-    rw [Ram.LanguageCompiler.List.Fold.accumulated_const]
-    omega
-  obtain ⟨finalAcc, finalHeap, finalCursor, steps, execution, ready, cost,
-      _coreBound, cursorBound⟩ := Ram.LanguageCompiler.List.Fold.measured
-    NativeLists.Operations.fold0.callback_contract
-    (push_fold_resources positive) (push_fold_costBound w heapLimit)
-    tailValues values tail root heap cursor positive admissible tailObserved
-    (ValueFits.option_node positive tail) headFits capacity observed
-  rw [Ram.LanguageCompiler.List.Fold.accumulated_const,
-    Nat.mul_comm values.length 3] at cursorBound
-  have measured : ArenaMeasured NativeLists.Source.program w heapLimit 3
-      (NativeLists.Source.program.body NativeLists.Source.reverseAppendId)
-      (fun _ control finalCursor _ =>
-        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
-      ⟨NativeLists.Source.reverseAppend_args root tail, heap⟩ cursor := by
-    ram_source_arena_call exact using cost
-      via NativeLists.Source.imports.NativeLists.Operations.fold0.embedding
-    exact ⟨_, rfl, cursorBound⟩
-  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, cursorBound⟩ :=
-    ArenaMeasured.exists_returned_iff.mp measured
-  exact ⟨finish, value, finalCursor, steps, execution, ready, cost,
-    (reverseAppendCost values.length).property w heapLimit values tailValues root tail heap
-      rfl observed tailObserved execution ready cost, cursorBound⟩
+  exact (reverseAppend_measured values tailValues root tail heap positive
+    observed tailObserved headFits space).exists_returned_le
+      ((reverseAppendCost values.length).property w heapLimit values tailValues root tail heap
+        rfl observed tailObserved)
 
 /-- The actual native `reverseAppend` halts with its ordinary mathematical
 result. The original lists remain observable in the same extended heap, and the
@@ -257,16 +267,8 @@ theorem reverseAppend_execute {w heapLimit cursor : Nat} {placement : Nat → Ra
       outcome.result.steps ≤ reverseAppendInvocationBound values.length := by
   have headFits := Ram.LanguageCompiler.List.Fold.contents_valueFits
     launch.arena.heapRep observed
-  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, _stepBound, cursorBound⟩ :=
-    reverseAppend_ready_cost values tailValues root tail heap launch.positive
-      observed tailObserved headFits space
-  have measured : ArenaMeasured NativeLists.Source.program w heapLimit 3
-      (NativeLists.Source.program.body NativeLists.Source.reverseAppendId)
-      (fun _ control finalCursor _ =>
-        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
-      ⟨NativeLists.Source.reverseAppend_args root tail, heap⟩ cursor :=
-    ArenaMeasured.exists_returned_iff.mpr
-      ⟨finish, value, finalCursor, steps, execution, ready, cost, cursorBound⟩
+  have measured := reverseAppend_measured values tailValues root tail heap launch.positive
+    observed tailObserved headFits space
   obtain ⟨outcome, cursorBound, represented, shape, bodyBound, stepsBound⟩ :=
     measured.execute_le (P := fun _ _ finalCursor => finalCursor ≤ cursor + 3 * values.length)
       ((reverseAppendCost values.length).property w heapLimit values tailValues root tail heap
@@ -333,6 +335,26 @@ theorem reverse_costBound (w heapLimit length : Nat) :
     ((reverseCost length).property w heapLimit values root heap lengthEq observed
       execution ready cost) 2
 
+/-- The native reverse wrapper composes its existing measured callee directly.
+Its returned root and real intermediate heap remain available for a later fold,
+without transporting operational witnesses through the caller. -/
+theorem reverse_measured {w heapLimit cursor : Nat}
+    (values : List Nat) (root : Option (NodeRef .nat)) (heap : Heap)
+    (positive : 0 < w)
+    (observed : (Representation.list .nat).Rel values root heap)
+    (headFits : ∀ head ∈ values, head < 2 ^ w)
+    (space : cursor + 3 * values.length ≤ heapLimit) :
+    ArenaMeasured NativeLists.Source.program w heapLimit 4
+      (NativeLists.Source.program.body NativeLists.Source.reverseId)
+      (fun _ control finalCursor _ =>
+        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
+      ⟨NativeLists.Source.reverse_args root, heap⟩ cursor := by
+  have reversed := reverseAppend_measured values [] root none heap positive observed
+      (Representation.list_nil .nat heap) headFits space
+  ram_source_arena_step
+  ram_source_arena_call measured using reversed
+  exact ⟨_, rfl, by assumption⟩
+
 /-- Execute the actual native `reverse` around the already measured
 reverse/append call. The real result, final heap and cursor are available to a
 subsequent caller; no list traversal or source-correctness proof is repeated. -/
@@ -349,21 +371,7 @@ theorem reverse_ready_cost {w heapLimit cursor : Nat}
         ∃ ready : ArenaReady execution w heapLimit 4 cursor finalCursor,
           ArenaExecutionCost ready steps ∧ steps ≤ (reverseCost values.length).val ∧
           finalCursor ≤ cursor + 3 * values.length := by
-  obtain ⟨_, _, _, _, _, _, cost, _, cursorBound⟩ :=
-    reverseAppend_ready_cost values [] root none heap positive observed
-      (Representation.list_nil .nat heap) headFits space
-  have measured : ArenaMeasured NativeLists.Source.program w heapLimit 4
-      (NativeLists.Source.program.body NativeLists.Source.reverseId)
-      (fun _ control finalCursor _ =>
-        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
-      ⟨NativeLists.Source.reverse_args root, heap⟩ cursor := by
-    ram_source_arena_step
-    ram_source_arena_call exact using cost
-    exact ⟨_, rfl, cursorBound⟩
-  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, cursorBound⟩ :=
-    ArenaMeasured.exists_returned_iff.mp measured
-  exact ⟨finish, value, finalCursor, steps, execution, ready, cost,
-    (reverseCost values.length).property w heapLimit values root heap rfl observed
-      execution ready cost, cursorBound⟩
+  exact (reverse_measured values root heap positive observed headFits space).exists_returned_le
+    ((reverseCost values.length).property w heapLimit values root heap rfl observed)
 
 end Complexity.Language.Examples.LinkedList

@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.Arena.Measured
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Call
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
 /-!
@@ -20,9 +20,12 @@ payload, retaining ranges obtained from the actual callee's readiness proof.
 
 `ram_source_arena_call exact using cost` consumes an actual callee cost witness.
 Its optional `via embedded` transports a witness from the original source program.
+`ram_source_arena_call measured using certificate` directly composes an existing
+returning `ArenaMeasured`, retaining its observations without witness unpacking.
+The same optional embedding supports imported measured bodies.
 `ram_source_arena_call (index := x) using total, resources, bounded` instead uses
 independent source correctness, arena resource and cost contracts. Add
-`via embedded` to use contracts for an imported source program. Both forms resume
+`via embedded` to use contracts for an imported source program. All forms resume
 structural reasoning after the call, stopping at the next call.
 
 The contract form exposes the real returned value, heap, cursor and core count,
@@ -269,6 +272,24 @@ private def contractCall (index total resources bounded : TSyntax `term)
           $index ?_ ?_ ?_ ?_ ?_ ?_))
   Ram.LanguageCompiler.Tactic.onGoals step
 
+private def measuredCall (measured : TSyntax `term)
+    (embedded : Option (TSyntax `term)) : TacticM Unit := withMainContext do
+  let (fn, args, continuation, entry) ← callTerms
+  match embedded with
+  | none =>
+      evalTactic (← `(tactic|
+        refine Ram.LanguageCompiler.ArenaMeasured.call_measured
+          (fn := $fn) (args := $args) (continuation := $continuation) (entry := $entry)
+          rfl ?_ $measured ?_))
+  | some embedding =>
+      let sourceFn ← importedFunction fn embedding
+      evalTactic (← `(tactic|
+        refine Ram.LanguageCompiler.ArenaMeasured.call_measured_imported
+          $embedding (fn := $sourceFn) rfl
+          (args := $args) (continuation := $continuation) (entry := $entry)
+          ?_ $measured ?_))
+  Ram.LanguageCompiler.Tactic.onGoals step
+
 /-- Compose non-loop structural statements in a measured arena execution, leaving
 the next call and mathematical obligations for explicit proofs. Conditionals
 and option matches preserve the selected path's actual heap, cursor and count. -/
@@ -277,6 +298,10 @@ syntax "ram_source_arena_step" : tactic
 /-- Compose the current actual source call with an exact callee cost witness,
 then process structural statements in its actual continuation. -/
 syntax "ram_source_arena_call" "exact" "using" term:max (&"via" term)? : tactic
+
+/-- Compose an existing measured body, retaining its observations at the actual
+returned heap, value, cursor and count. An embedding supports imported bodies. -/
+syntax "ram_source_arena_call" &"measured" "using" term:max (&"via" term)? : tactic
 
 /-- Compose the current source call using independent correctness, resources and
 cost contracts. An optional embedding transports original imported contracts. -/
@@ -288,6 +313,9 @@ elab_rules : tactic
   | `(tactic| ram_source_arena_call exact using $cost) => exactCall cost none
   | `(tactic| ram_source_arena_call exact using $cost via $embedded) =>
       exactCall cost (some embedded)
+  | `(tactic| ram_source_arena_call measured using $certificate) => measuredCall certificate none
+  | `(tactic| ram_source_arena_call measured using $certificate via $embedded) =>
+      measuredCall certificate (some embedded)
   | `(tactic| ram_source_arena_call (index := $resourceIndex:term) using
       $total, $resources, $bounded) =>
       contractCall resourceIndex total resources bounded none

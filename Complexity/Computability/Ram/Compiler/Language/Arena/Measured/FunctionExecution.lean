@@ -25,6 +25,27 @@ namespace Ram.LanguageCompiler.ArenaMeasured
 
 open Complexity.Language
 
+/-- Retain the actual returning execution and its observations while applying
+an independent structural bound to that same cost witness. -/
+theorem exists_returned_le {signatures : List Signature}
+    {program : Complexity.Language.Program signatures}
+    {w heapLimit depth cursor bound : Nat} {Γ : List Ty} {result : Ty}
+    {stmt : Complexity.Language.Stmt signatures Γ result}
+    {entry : Complexity.Language.State Γ}
+    {P : Complexity.Language.State Γ → Value result → Nat → Prop}
+    (measured : ArenaMeasured program w heapLimit depth stmt
+      (fun finish control finalCursor _ =>
+        ∃ value, control = .returned value ∧ P finish value finalCursor) entry cursor)
+    (bounded : StmtArenaCostBound program w heapLimit depth stmt entry bound) :
+    ∃ finish value finalCursor steps,
+      ∃ execution : Complexity.Language.Exec program stmt entry finish (.returned value),
+        ∃ ready : ArenaReady execution w heapLimit depth cursor finalCursor,
+          ArenaExecutionCost ready steps ∧ steps ≤ bound ∧ P finish value finalCursor := by
+  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, observed⟩ :=
+    exists_returned_iff.mp measured
+  exact ⟨finish, value, finalCursor, steps, execution, ready, cost,
+    bounded execution ready cost, observed⟩
+
 /-- Publish the actual measured invocation with its independent source
 postcondition, retained observations and complete instruction bound. The cost
 certificate bounds the same execution; it is not a termination premise for

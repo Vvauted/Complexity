@@ -574,20 +574,28 @@ ram_source_arena_call exact using firstCost
 The constructor wrappers themselves use `exact using originalCost via embedding`;
 they do not hide hand-written argument environments below this short proof.
 The fold wrapper gets its actual execution and bounds from the
-[ordinary-parameter fold entry](##Ram.LanguageCompiler.List.Fold.measured).
+[composable fold entry](##Ram.LanguageCompiler.List.Fold.arenaMeasured).
 It supplies mathematical accumulator/list observations, callback correctness
 and resources, admissibility, word ranges and remaining capacity. The shared
 entry constructs the internal source arguments and reuses the existing traversal
 proof; the caller does not assemble a resource-index tuple or another wrapper
-totality/resource/cost contract. The resulting exact cost witness is composed by:
+totality/resource/cost contract. Its measured certificate is composed directly:
 
 ```lean
-ram_source_arena_call exact using cost
+ram_source_arena_call measured using folded
   via NativeLists.Source.imports.NativeLists.Operations.fold0.embedding
 ```
 
+The [measured call rules](##Ram.LanguageCompiler.ArenaMeasured.call_measured) retain
+the same final state, returned value, cursor, core count and supplied observations.
+Use [with_spec](##Ram.LanguageCompiler.ArenaMeasured.with_spec) to attach an
+independent source postcondition before composing a call. The existing
+`reverseSum` proof uses this to pass the new List observation from reverse to the
+next fold, without unpacking or rebuilding `Exec`, `ArenaReady` or cost witnesses.
+The final publication rule consumes the resulting measured proof directly.
+
 The generic form `ram_source_arena_call (index := x) using total, resources, bounded`
-is also available for independently specified indexed callees. Both forms retain
+is also available for independently specified indexed callees. All forms retain
 the actual returned value, heap and allocation cursor. The contract form exposes
 the actual count and its proved bound for the continuation. Compound exact-cost
 or final-bound proof terms use parentheses before `via`. These checked consumers
