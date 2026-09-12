@@ -35,6 +35,29 @@ namespace Ram.LanguageCompiler.Arena.Tactic
 
 open Lean Meta Elab Tactic
 
+/-- Project only conjunctions already present in a proof. No auxiliary
+proposition or backward search tree is invented to obtain a range fact. -/
+private partial def conjunctProof? (target proof : Lean.Expr) : MetaM (Option Lean.Expr) := do
+  let type := (← instantiateMVars (← inferType proof)).consumeMData.headBeta.consumeMData
+  unless type.isAppOf ``And do return none
+  for projection in #[``And.left, ``And.right] do
+    let observed ← mkAppM projection #[proof]
+    if ← withNewMCtxDepth <| isDefEq (← inferType observed) target then
+      return some observed
+    if let some found ← conjunctProof? target observed then
+      return some found
+  return none
+
+/-- Close a leaf by projecting an actual local conjunction, without unfolding
+execution certificates or searching for new conjuncts. -/
+private def closeConjunct : TacticM Unit := withMainContext do
+  let target ← instantiateMVars (← getMainTarget)
+  for declaration in ← getLCtx do
+    if let some proof ← conjunctProof? target (mkFVar declaration.fvarId) then
+      (← getMainGoal).assign proof
+      replaceMainGoal []
+      return
+
 /-- Simplify source coordinates before unfolding fits predicates. In particular,
 an optional node is bounded by its tag, not by an assumed bound on its object id. -/
 private def normalizeLeaves : TacticM Unit := do
@@ -56,10 +79,13 @@ private def normalizeLeaves : TacticM Unit := do
     Ram.LanguageCompiler.Tactic.normalizeValues
     evalTactic (← `(tactic|
       all_goals
-        first
-        | exact Nat.one_lt_two_pow (Nat.ne_of_gt (by assumption))
-        | solve_by_elim only [And.left, And.right, *]
-        | skip))
+        (simp (config := { failIfUnchanged := false }) (disch := assumption) only
+          [Ram.LanguageCompiler.ValueFits.option_node, and_true, true_and] at * <;>
+          try exact Nat.one_lt_two_pow (Nat.ne_of_gt (by assumption)))))
+    Ram.LanguageCompiler.Tactic.onGoals closeConjunct
+    evalTactic (← `(tactic|
+      all_goals try solve
+        | (repeat' apply And.intro) <;> rfl))
 
 /-- Select a branch from its actual condition when reflexivity or a local proof
 determines it. Otherwise introduce the two selected-path obligations. -/
@@ -94,13 +120,13 @@ private def optionMatch (statement target : Lean.Expr) : TacticM Unit := do
     | refine Ram.LanguageCompiler.ArenaMeasured.matchSome
         (value := $value) (entry := $entry)
         (by first | rfl | assumption) ?_ ?_
-    | cases selected : $actual with
-      | none =>
-          refine Ram.LanguageCompiler.ArenaMeasured.matchNone
-            (by first | rfl | exact selected) ?_
-      | some payload =>
-          refine Ram.LanguageCompiler.ArenaMeasured.matchSome
-            (by first | rfl | exact selected) ?_ ?_))
+    | (cases selected : $actual <;>
+        simp (config := { failIfUnchanged := false }) only [selected] at * <;>
+        first
+        | refine Ram.LanguageCompiler.ArenaMeasured.matchNone
+            (by first | rfl | assumption) ?_
+        | refine Ram.LanguageCompiler.ArenaMeasured.matchSome
+            (by first | rfl | assumption) ?_ ?_)))
 
 /-- Apply only structural measured-execution rules, leaving calls and mathematical
 observations intact. Non-propositional metavariables are never filled by search. -/

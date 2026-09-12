@@ -344,8 +344,8 @@ ordinary mathematical proofs in the same way as the read-only example.
 `List.cons`, explicitly typed empty lists, successive list-returning calls and
 folds of both old and new lists are exercised by the existing linked-list
 consumer. Allocation is not an unchanged-heap action, a runtime decoder or a
-free mathematical operation. General List pattern matching, traversal operations
-and element layouts are still incomplete.
+free mathematical operation. The traversal operation library and general
+element layouts are still incomplete.
 
 An explicitly typed conditional can return a list to a common continuation:
 
@@ -368,9 +368,41 @@ Generated correspondence follows the actual selected branch's allocation and
 returned root, preserves both old lists, and then composes the fold at that
 branch's final heap. The author needs no intermediate-heap proof. The `:= if`
 form uses the same lowering; this fragment requires an explicit List result type
-and returning branch blocks. General native List matching and recursion remain
+and returning branch blocks. General native patterns and recursion remain
 separate work. The local result slot and its copies are real source operations,
 not uncharged mathematical selection.
+
+List matching uses the same result-binding interface:
+
+```lean
+source_program (native) NativeViews importing NativeConstruction where
+  def replaceHead (replacement : Nat) (values : List Nat) : List Nat := do
+    let tail : List Nat ← match values with
+      | [] => do
+        return ([] : List Nat)
+      | _head :: rest => do
+        return rest
+    let result := NativeConstruction.prepend replacement tail
+    return result
+
+theorem replaceHead_eq (replacement : Nat) (values : List Nat) :
+    NativeViews.replaceHead replacement values = replacement :: values.tail := by
+  cases values <;> rfl
+```
+
+The compiler selects the real Uncons operation, matches its optional result and
+projects the actual head/shared-tail pair. Neither mathematical List decoding
+nor suffix copying is inserted. The generated correspondence transports the
+ordinary equation to the actual source result and retains the original list.
+There is no time or capacity premise in this correctness proof.
+
+Option matching supports `none` and `some payload` in the same form. Products
+and options may recursively contain lists as parameters and results; their
+projections and heap-indexed observations compose through allocation. The
+existing `inspectAndPrepend` consumer retains the old optional head/tail and
+returns a new list together. Matching still requires exactly two branches,
+returning do-blocks and an explicit `List Nat` or `List Bool` result binding;
+arbitrary result joins and general patterns remain unfinished.
 
 A fold callback can itself construct a list. Declare that native family before
 the family that imports it:
@@ -430,6 +462,18 @@ and outer invocation overhead. The shared structural pass handles assignment,
 sequencing and conditional execution as well as calls; it derives the option-tag
 range from the launch's positive word width. The author still supplies callee
 resource facts and sufficient space for the selected path.
+
+`replaceHead_execute_le` covers the List-match program above through the same
+halted RAM invocation. It returns `replacement :: values.tail`, preserves the
+old list and advances the cursor by exactly three words. Its length-independent
+instruction bound includes the real root test, possible node read, payload/join
+copies, subsequent constructor and outer invocation. The shared pass handles
+both actual Option paths and inherits payload ranges from the read's readiness
+certificate; no manual raw-option split is needed in the connection proof.
+Input loading is excluded, and finite-word/code/stack/arena conditions remain
+explicit. The resource proof still names callee certificates and the wrapper's
+structural budget; those are remaining inference tasks, unlike the ordinary
+correctness theorem above.
 
 The [allocating-fold consumer](##Examples.Language.LinkedListFoldAllocation)
 proves `reverseAppend_execute` for the actual generated wrapper above, not just

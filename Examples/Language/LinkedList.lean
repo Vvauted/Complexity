@@ -393,4 +393,82 @@ theorem chooseSum_correct :
   NativeBranches.chooseSum_refines.of_math
     (fun input _ => chooseSum_eq input.1 input.2.1 input.2.2.1 input.2.2.2)
 
+source_program (native) NativeViews importing NativeConstruction where
+  def uncons (values : List Nat) : Option (Nat × List Nat) := do
+    let result := values.uncons
+    return result
+
+  def consPair (fields : Nat × List Nat) : List Nat := do
+    let result := NativeConstruction.prepend fields.1 fields.2
+    return result
+
+  def restoreOr (parts : Option (Nat × List Nat)) (fallback : List Nat) : List Nat := do
+    let result : List Nat ← match parts with
+      | none => do
+        return fallback
+      | some fields => do
+        let restored := consPair fields
+        return restored
+    return result
+
+  def inspectAndPrepend (head : Nat) (values : List Nat) :
+      Option (Nat × List Nat) × List Nat := do
+    let parts := values.uncons
+    let grown := NativeConstruction.prepend head values
+    return (parts, grown)
+
+  def replaceHead (replacement : Nat) (values : List Nat) : List Nat := do
+    let tail : List Nat ← match values with
+      | [] => do
+        return ([] : List Nat)
+      | _head :: rest => do
+        return rest
+    let result := NativeConstruction.prepend replacement tail
+    return result
+
+/-- The optional mathematical head and tail describe the actual node read. -/
+theorem nativeUncons_eq (values : List Nat) :
+    NativeViews.uncons values = values.head?.map (fun head => (head, values.tail)) := rfl
+
+/-- A compound argument retains the ordinary head and its shared List tail. -/
+theorem consPair_eq (fields : Nat × List Nat) :
+    NativeViews.consPair fields = fields.1 :: fields.2 := rfl
+
+/-- Optional represented fields can be matched and passed to a named constructor. -/
+theorem restoreOr_eq (parts : Option (Nat × List Nat)) (fallback : List Nat) :
+    NativeViews.restoreOr parts fallback =
+      (match parts with | none => fallback | some fields => fields.1 :: fields.2) := by
+  cases parts <;> rfl
+
+/-- The old compound observation survives an actual allocation, and both old
+fields and the newly constructed list are returned together. -/
+theorem inspectAndPrepend_eq (head : Nat) (values : List Nat) :
+    NativeViews.inspectAndPrepend head values =
+      (values.head?.map (fun value => (value, values.tail)), head :: values) := rfl
+
+/-- List cases expose the ordinary tail; the common continuation constructs
+the new first node. This is a mathematical proof, not a source-heap induction. -/
+theorem replaceHead_eq (replacement : Nat) (values : List Nat) :
+    NativeViews.replaceHead replacement values = replacement :: values.tail := by
+  cases values <;> rfl
+
+/-- Automatically generated correspondence retains both parts of the compound
+result at the same final heap, including the pre-allocation head/tail view. -/
+theorem inspectAndPrepend_correct :
+    RepresentedFunction.Total NativeViews.program NativeViews.inspectAndPrependId
+      NativeViews.inspectAndPrepend_representation (fun _ => True)
+      (fun input result => result =
+        (input.2.head?.map (fun head => (head, input.2.tail)), input.1 :: input.2)) :=
+  NativeViews.inspectAndPrepend_refines.of_math
+    (fun input _ => inspectAndPrepend_eq input.1 input.2)
+
+/-- The List-match implementation inherits its ordinary functional theorem
+without any word-width, storage or time-budget assumption. -/
+theorem replaceHead_correct :
+    RepresentedFunction.Total NativeViews.program NativeViews.replaceHeadId
+      NativeViews.replaceHead_representation (fun _ => True)
+      (fun input result => result = input.1 :: input.2.tail) :=
+  NativeViews.replaceHead_refines.of_math
+    (fun input _ => replaceHead_eq input.1 input.2)
+
 end Complexity.Language.Examples.LinkedList

@@ -879,8 +879,9 @@ mathematical output is `xs.head?.map (fun head => (head, xs.tail))`, related to
 the returned handles at the unchanged heap. The full constant bound includes
 the branch, option packaging and outer-call overhead in addition to the node
 read. It comes from the same source implementation and measured compiler rules,
-not from assigning a price to the ordinary Lean List function. This callable
-core operation does not yet register native List method syntax.
+not from assigning a price to the ordinary Lean List function. The native
+frontend registers `xs.uncons` and `List.uncons xs` to this same operation;
+these are source spellings, not a claim that upstream Lean defines `List.uncons`.
 
 `List.Cons` supplies the corresponding complete construction invocation. Its
 source theorem exposes ordinary `head :: values`, the exact fresh root and heap,
@@ -916,6 +917,14 @@ use actual calls in `List.Fold.program`; `List.cons` and `head :: tail` select t
 real allocating `List.Cons.program`. The same block generates an ordinary Lean function and
 `_refines`; List handles are related to contents in the actual heap, not encoded
 through an `Equiv`. A typed empty list needs no heap object.
+
+Products and options can recursively contain these represented lists. Their
+constructors, projections, parameters and returns compose the existing
+heap-indexed relations. `NativeViews.inspectAndPrepend` returns an optional
+head/tail observation together with a newly allocated list; the old observation
+remains valid at the actual final heap. Preservation composes only for leaves
+with a proved shape-extension rule. Mutable array contents and exact-heap
+observations are not automatically persistent.
 
 The linked-list consumer covers constant accumulators, reordered parameters,
 immutable locals, consecutive folds and earlier same-family calls. Its
@@ -957,12 +966,34 @@ these statements from supplied callee costs; the consumer does not build
 register or lexical-environment proofs. Word and code/stack/arena conditions
 remain explicit, and input loading is outside the count.
 
-The native container fragment still lacks List pattern matching, general
-recursion, general element layouts and escaping callbacks. Matching a List
-must use the real root/read operations, not free mathematical decomposition.
-The existing effectful fold library retains its wider contract. Further control
-and operation registration should preserve the same heap-indexed composition
-and immutable shared tails.
+The same binding interface supports `match` with exactly two List branches
+(`[]` and `head :: tail`) or Option branches (`none` and `some payload`). List
+matching calls the real Uncons operation before matching its returned option;
+the head and tail projections are actual source operations. The branches retain
+their selected heap and return to one common continuation. Both `←` and `:=`
+forms currently require an explicit `List Nat` or `List Bool` result type and
+branch do-blocks ending in `return`. This result-type restriction remains even
+though function parameters and returns already support products/options of lists.
+
+`NativeViews.replaceHead` uses List matching and a subsequent constructor call.
+Its ordinary equation is `replaceHead replacement values = replacement :: values.tail`,
+proved by cases on the mathematical list. Generated relational correspondence
+supplies the actual source correctness without another heap or traversal proof.
+General patterns, native recursion, general element layouts and escaping
+callbacks remain open. The existing effectful fold library retains its wider
+contract; this is not a complete persistent collection interface.
+
+`replaceHead_execute_le` connects that same declaration to a halted RAM result.
+It retains the original list, advances the arena cursor by exactly three words
+and bounds the full invocation independently of list length. The bound includes
+the actual root test and possible node read, payload and join copies, constructor
+call and enclosing initialization/call/return/halt. Existing List and heap
+representation supply read success and payload ranges; the structural arena pass
+propagates the selected Option branch and its returned ranges to the later call.
+Word, code/stack and arena capacity remain explicit, with input loading excluded.
+The connection proof still selects imported callee certificates and writes the
+wrapper's structural budget; eliminating that remaining layout bookkeeping is
+separate work, not a completed automatic complexity interface.
 
 The compiled `Native.sumFrom` consumer uses those generated declarations and
 the existing call proofs to reach the actual wrapper's halted RAM result.

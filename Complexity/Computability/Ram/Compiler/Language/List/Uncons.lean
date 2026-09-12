@@ -7,6 +7,7 @@ import Complexity.Language.List.Uncons
 import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.CostBound
 import Complexity.Computability.Ram.Compiler.Language.MeasuredNode
+import Complexity.Computability.Ram.Compiler.Language.Arena.ExecutionCost
 
 /-!
 # Compiling decomposition of represented linked lists
@@ -94,6 +95,51 @@ theorem program_noHeapWrites (kind : CellTy) :
   change NoHeapWrites (body kind)
   simp [body, NoHeapWrites]
 
+private theorem readable_of_heapRep {kind : CellTy} {w heapLimit : Nat}
+    {heap : Heap} {initial : Source.State w} {placement : Nat → Word w}
+    {values : _root_.List (CellValue kind)} {root : Option (NodeRef kind)}
+    (memory : HeapRep placement heapLimit heap initial)
+    (observed : (Representation.list kind).Rel values root heap) :
+    ∀ ref, root = some ref →
+      ∃ head tail, heap.node? kind ref.object = some (head, tail) ∧
+        ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) := by
+  intro ref selected
+  have contents : NodeRef.Contents heap (some ref) values := by
+    rw [← selected]
+    exact observed
+  cases contents with
+  | cons found tail => exact ⟨_, _, found, memory.node_valueFits found⟩
+
+/-- Ordinary list arguments supply the same actual decomposition and its arena
+cost. Existing heap and list representations establish read success and field
+ranges; no new lookup or object-identifier bound is required. The cursor and
+entire heap are unchanged, and the existing body certificate bounds its count. -/
+theorem ready_cost (kind : CellTy) (values : _root_.List (CellValue kind))
+    (root : Option (NodeRef kind)) (heap : Heap)
+    {w heapLimit depth cursor : Nat} {initial : Source.State w} {placement : Nat → Word w}
+    (positive : 0 < w) (memory : HeapRep placement heapLimit heap initial)
+    (observed : (Representation.list kind).Rel values root heap) :
+    ∃ finish value actualSteps,
+      ∃ execution : Complexity.Language.Exec (program kind) (body kind)
+          ⟨Env.cons (τ := .option (.node kind)) root Env.empty, heap⟩ finish (.returned value),
+      ∃ ready : ArenaReady execution w heapLimit depth cursor cursor,
+        ArenaExecutionCost ready actualSteps ∧ actualSteps ≤ (bodyCost kind).val ∧
+        finish.heap = heap ∧
+        (resultRepresentation kind).Rel
+          (values.head?.map (fun head => (head, values.tail))) value finish.heap := by
+  obtain ⟨finish, value, realized⟩ :=
+    (realizable kind positive).mono_depth (Nat.zero_le depth)
+      (Env.cons (τ := .option (.node kind)) root Env.empty) heap
+      (readable_of_heapRep memory observed)
+  obtain ⟨actualSteps, cost⟩ := realized.exists_cost
+  have property := (total kind values).postcondition
+    (args := Env.cons (τ := .option (.node kind)) root Env.empty) (heap := heap)
+    observed realized.erase
+  exact ⟨finish, value, actualSteps, realized.erase, realized.arenaReady heapLimit cursor,
+    cost.arena heapLimit cursor, (bodyCost kind).property _ realized cost,
+    property.2, property.1⟩
+
 /-- The inferred function budget plus the actual outer-call and halt charges. -/
 def steps (kind : CellTy) : Nat :=
   LocalCompiler.Function.callSteps (programControl (program kind))
@@ -125,14 +171,7 @@ theorem execute_le (kind : CellTy) {w heapLimit : Nat}
   have readable : ∀ ref, args.head = some ref →
       ∃ head tail, initialHeap.node? kind ref.object = some (head, tail) ∧
         ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
-          (kind.toValue head, tail) := by
-    intro ref selected
-    have contents : NodeRef.Contents initialHeap (some ref) values := by
-      change root = some ref at selected
-      rw [← selected]
-      exact observed
-    cases contents with
-    | cons found tail => exact ⟨_, _, found, memory.node_valueFits found⟩
+          (kind.toValue head, tail) := readable_of_heapRep memory observed
   let launch : FunctionLaunch (program kind) (entry kind) 0 heapLimit placement
       args initialHeap initial := ⟨capacity, arguments, memory⟩
   obtain ⟨outcome, property, bounded⟩ :=

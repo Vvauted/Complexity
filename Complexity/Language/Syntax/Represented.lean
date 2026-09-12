@@ -218,6 +218,8 @@ private inductive Trace where
   | call (invocation : Invocation)
   | conditional (condition : Value) (yes no : Array Trace)
       (yesResult noResult : Value) (result : Binding)
+  | optionMatch (discriminant : Value) (payload : Binding) (none some : Array Trace)
+      (noneResult someResult : Value) (result : Binding)
 
 private def lookup (scope : List Binding) (name : TSyntax `ident) : TermElabM Binding := do
   let some parameter := scope.find? (fun parameter => parameter.name.getId == name.getId)
@@ -337,7 +339,7 @@ private def Function.hasExactEquation (fn : Function) : Bool :=
   match fn.result with
   | .pure _ => scalarArguments && fn.calls.all fun
       | .call invocation => invocation.operation.equation.isSome
-      | .conditional .. => false
+      | _ => false
   | _ => false
 
 private structure Preparation where
@@ -488,6 +490,12 @@ private def doTerm (elements : Array (TSyntax `doElem)) : TermElabM (TSyntax `te
 private partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
     (expression : TSyntax `term) :
     PrepareM (Option (TSyntax `term)) := do
+  if let `($called:ident) := expression then
+    if let .str receiverName "uncons" := called.getId then
+      unless receiverName == `List do
+        let receiver : TSyntax `ident := ⟨Syntax.ident called.raw.getHeadInfo
+          receiverName.toString.toRawSubstring receiverName []⟩
+        return some (← `(List.uncons $receiver:ident))
   match expression with
   | `(($inner:term)) => canonicalCall? imports scope inner
   | `(List.foldl $callback:ident $initial:term $values:term) =>
@@ -528,6 +536,39 @@ private partial def conditionalParts? (expression : TSyntax `term) :
   | `(if $condition:term then $yes:term else $no:term) => some (condition, yes, no)
   | _ => none
 
+private partial def matchParts? (expression : TSyntax `term) :
+    Option (TSyntax `term × TSyntax `term × TSyntax `term × TSyntax `term × TSyntax `term) :=
+  match expression with
+  | `(($inner:term)) => matchParts? inner
+  | `(match $discriminant:term with
+      | $first:term => $firstBody:term
+      | $second:term => $secondBody:term) =>
+      some (discriminant, first, firstBody, second, secondBody)
+  | _ => none
+
+private def branchTerm (elements : TSyntax ``doSeq) : TermElabM (TSyntax `term) := do
+  if let [element] := (getDoElems elements).toList then
+    if let `(doElem| do $nested:doSeq) := element then
+      return ← `(do $nested:doSeq)
+  `(do $elements:doSeq)
+
+private def isNonePattern (pattern : TSyntax `term) : Bool :=
+  match pattern with | `(none) | `(Option.none) | `(.none) => true | _ => false
+
+private def someName? (pattern : TSyntax `term) : Option (TSyntax `ident) :=
+  match pattern with
+  | `(some $name:ident) | `(Option.some $name:ident) | `(.some $name:ident) => some name
+  | _ => none
+
+private def isNilPattern (pattern : TSyntax `term) : Bool :=
+  match pattern with | `([]) | `(List.nil) => true | _ => false
+
+private def consNames? (pattern : TSyntax `term) :
+    Option (TSyntax `ident × TSyntax `ident) :=
+  match pattern with
+  | `($head:ident :: $tail:ident) => some (head, tail)
+  | _ => none
+
 private partial def sequence (family : TSyntax `ident)
     (imports : ImportedPrograms) (resultType : NativeType)
     (scope : List Binding) (elements : List (TSyntax `doElem)) :
@@ -543,14 +584,19 @@ private partial def sequence (family : TSyntax `ident)
     -- Normalize that parser shape before the shared typed conditional path.
     if let `(doElem| let $name:ident $[: $annotation:term]? ← $rhs:doElem) := element then
       if let `(doElem| if $test:term then $yes:doSeq else $no:doSeq) := rhs then
-        let branchTerm (elements : TSyntax ``doSeq) : TermElabM (TSyntax `term) := do
-          if let [element] := (getDoElems elements).toList then
-            if let `(doElem| do $nested:doSeq) := element then
-              return ← `(do $nested:doSeq)
-          `(do $elements:doSeq)
         let yesTerm ← branchTerm yes
         let noTerm ← branchTerm no
         let expression ← `(if $test:term then $yesTerm:term else $noTerm:term)
+        let normalized ← `(doElem| let $name:ident $[: $annotation:term]? ← ($expression:term))
+        return ← sequence family imports resultType scope (normalized :: rest)
+      if let `(doElem| match $discriminant:term with
+          | $first:term => $firstBody:doSeq
+          | $second:term => $secondBody:doSeq) := rhs then
+        let firstBody ← branchTerm firstBody
+        let secondBody ← branchTerm secondBody
+        let expression ← `(match $discriminant:term with
+          | $first:term => $firstBody:term
+          | $second:term => $secondBody:term)
         let normalized ← `(doElem| let $name:ident $[: $annotation:term]? ← ($expression:term))
         return ← sequence family imports resultType scope (normalized :: rest)
     let binding? := match element with
@@ -560,6 +606,95 @@ private partial def sequence (family : TSyntax `ident)
           some (name, annotation, expression)
       | _ => none
     if let some (name, annotation, expression) := binding? then
+      if let some (matched, first, firstBody, second, secondBody) := matchParts? expression then
+        let some annotation := annotation
+          | throwErrorAt name "a native match binding requires an explicit List result type"
+        let discriminant ← value scope matched
+        if let .list _ := discriminant.type then
+          let (nilBody, head, tail, consBody) ←
+            if isNilPattern first then do
+              let some (head, tail) := consNames? second
+                | throwErrorAt second "expected a head :: tail List pattern"
+              pure (firstBody, head, tail, secondBody)
+            else if isNilPattern second then do
+              let some (head, tail) := consNames? first
+                | throwErrorAt first "expected a head :: tail List pattern"
+              pure (secondBody, head, tail, firstBody)
+            else throwErrorAt expression "a List match needs exactly [] and head :: tail branches"
+          let `(do $consElements:doSeq) := consBody
+            | throwErrorAt consBody "a native match branch must end in a do-block return"
+          let inspected := mkIdent (← mkFreshUserName `listParts)
+          let payload := mkIdent (← mkFreshUserName `listFields)
+          let someElements := #[
+            ← `(doElem| let $head:ident := $payload:ident.1),
+            ← `(doElem| let $tail:ident := $payload:ident.2)] ++ getDoElems consElements
+          let someBody ← doTerm someElements
+          let optionMatch ← `(match ($inspected:ident) with
+            | none => $nilBody:term
+            | some $payload:ident => $someBody:term)
+          let read ← `(doElem| let $inspected:ident := List.uncons $matched:term)
+          let select ← `(doElem| let $name:ident : $annotation ← ($optionMatch:term))
+          return ← sequence family imports resultType scope (read :: select :: rest)
+        let .option payloadType := discriminant.type
+          | throwErrorAt matched "native matching currently supports List and Option values"
+        let (noneBody, payloadName, someBody) ←
+          if isNonePattern first then do
+            let some payload := someName? second
+              | throwErrorAt second "expected a some payload option pattern"
+            pure (firstBody, payload, secondBody)
+          else if isNonePattern second then do
+            let some payload := someName? first
+              | throwErrorAt first "expected a some payload option pattern"
+            pure (secondBody, payload, firstBody)
+          else throwErrorAt expression "an Option match needs exactly none and some payload branches"
+        let selectedType ← resolveType annotation
+        let .list _ := selectedType
+          | throwErrorAt annotation "native match bindings currently merge List Nat or List Bool results"
+        let `(do $noneElements:doSeq) := noneBody
+          | throwErrorAt noneBody "a native match branch must be a do block ending in return"
+        let `(do $someElements:doSeq) := someBody
+          | throwErrorAt someBody "a native match branch must be a do block ending in return"
+        let payloadRaw := mkIdent (← mkFreshUserName (payloadName.getId.appendAfter "_source"))
+        let payloadRelation := mkIdent (← mkFreshUserName (payloadName.getId.appendAfter "_represented"))
+        let payload : Binding := {
+          name := payloadName, type := payloadType, rawName := payloadRaw,
+          relationName := payloadRelation, model := ⟨payloadName.raw⟩, rawModel := ⟨payloadRaw.raw⟩,
+          observation := if payloadType.isPure then .refl else .named payloadRelation.getId }
+        let (noneRaw, noneNative, noneCalls, noneResult) ←
+          sequence family imports selectedType scope (getDoElems noneElements).toList
+        let (someRaw, someNative, someCalls, someResult) ←
+          sequence family imports selectedType (payload :: scope) (getDoElems someElements).toList
+        let rawType ← rawTypeTerm selectedType.coreTy
+        let nativeType ← termOfExpr selectedType.nativeType
+        let slot := mkIdent (← mkFreshUserName (name.getId.appendAfter "_join"))
+        let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
+        let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
+        let noneBlock : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq
+          ((noneRaw.pop.push (← `(doElem| $slot:ident := $(noneResult.raw)))).map (·.raw))⟩
+        let someBlock : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq
+          ((someRaw.pop.push (← `(doElem| $slot:ident := $(someResult.raw)))).map (·.raw))⟩
+        let noneNativeBody ← doTerm noneNative
+        let someNativeBody ← doTerm someNative
+        let payloadNativeType ← termOfExpr payloadType.nativeType
+        let nativeChoice ← `(Option.elim $(discriminant.native) (Id.run $noneNativeBody:term)
+          (fun ($payloadName:ident : $payloadNativeType) => Id.run $someNativeBody:term))
+        let model ← `(Option.elim $(discriminant.model) $(noneResult.model)
+          (fun ($payloadName:ident : $payloadNativeType) => $(someResult.model)))
+        let binding : Binding := {
+          name, type := selectedType, rawName, relationName,
+          model, rawModel := ⟨rawName.raw⟩, observation := .named relationName.getId }
+        let (rawRest, nativeRest, later, returned) ←
+          sequence family imports resultType (binding :: scope) rest
+        let rawPrefix := #[
+          ← `(doElem| let mut $slot:ident : $rawType := none),
+          ← `(doElem| match $(discriminant.raw):term with
+            | none => $noneBlock:doSeq
+            | some $payloadName:ident => $someBlock:doSeq),
+          ← `(doElem| let $name:ident : $rawType := $slot:ident)]
+        let nativeBinding ← `(doElem| let $name:ident : $nativeType := $nativeChoice)
+        return (rawPrefix ++ rawRest, #[nativeBinding] ++ nativeRest,
+          #[.optionMatch discriminant payload noneCalls someCalls noneResult someResult binding] ++ later,
+          returned)
       if let some (test, yes, no) := conditionalParts? expression then
         let some annotation := annotation
           | throwErrorAt name "a native conditional binding requires an explicit List result type"
@@ -1050,6 +1185,13 @@ private theorem bind_conditional {m : Type u → Type v} [Bind m] {α β : Type 
   apply_ite_left (fun (action : m α) (continuation : α → m β) => action >>= continuation)
     condition yes no next
 
+/-- The same bind distributes over an optional payload without inspecting it. -/
+private theorem bind_optionMatch {m : Type u → Type v} [Bind m] {α β γ : Type u}
+    (value : Option α) (absent : m β) (present : α → m β) (next : β → m γ) :
+    (Option.elim value absent present >>= next) =
+      Option.elim value (absent >>= next) (fun payload => present payload >>= next) := by
+  cases value <;> rfl
+
 private structure CorrespondenceHeader where
   nativeName : TSyntax `ident
   rawEquation : TSyntax `ident
@@ -1125,16 +1267,22 @@ private def observationAt (argument : Value) (heap : TSyntax `term)
 
 private partial def preservation (type : NativeType) (initial finish shape : TSyntax `term) :
     TermElabM (TSyntax `term) := do
-  match type with
-  | .pure type =>
-      `(Complexity.Language.Representation.Preserves.ofEmbedding
-        $(← termOfExpr type.embedding) $initial $finish)
-  | .list kind => `(Complexity.Language.Representation.Preserves.list $(← kindTerm kind) $shape)
-  | .prod left right =>
-      `(Complexity.Language.Representation.Preserves.prod
-        $(← preservation left initial finish shape) $(← preservation right initial finish shape))
-  | .option payload =>
-      `(Complexity.Language.Representation.Preserves.option $(← preservation payload initial finish shape))
+  let nativeType ← termOfExpr type.nativeType
+  let coreType ← termOfExpr (coreTypeExpr type.coreTy)
+  let represented ← termOfExpr type.representation
+  let proof ← match type with
+    | .pure _ => `(by
+        intro a sourceValue observed
+        exact observed)
+    | .list kind => do
+        `(Complexity.Language.Representation.Preserves.list $(← kindTerm kind) $shape)
+    | .prod left right => do
+        `(Complexity.Language.Representation.Preserves.prod
+          $(← preservation left initial finish shape) $(← preservation right initial finish shape))
+    | .option payload => do
+        `(Complexity.Language.Representation.Preserves.option $(← preservation payload initial finish shape))
+  `(($proof : Complexity.Language.Representation.Preserves
+    ($represented : Complexity.Language.Representation $nativeType $coreType) $initial $finish))
 
 /-- Reassociate the same named source observations for proof composition. The
 generated source equation checks this expression against the actual lowered body. -/
@@ -1166,6 +1314,17 @@ private partial def traceAction (trace : List Trace) (returned : Value)
         let type ← actualTypeTerm result.type.coreTy
         let selected ← `(if $(resolveRaw condition.rawModel known) then $yesAction:term
           else $noAction:term)
+        `(do
+          let $(result.rawName):ident : $type ← ($selected:term)
+          $next:term)
+    | .optionMatch discriminant payload absent present noneResult someResult result :: rest => do
+        let noneAction ← traceAction absent.toList noneResult known
+        let someAction ← traceAction present.toList someResult known
+        let next ← traceAction rest returned known
+        let type ← actualTypeTerm result.type.coreTy
+        let payloadType ← actualTypeTerm payload.type.coreTy
+        let selected ← `(Option.elim $(resolveRaw discriminant.rawModel known) $noneAction:term
+          (fun ($(payload.rawName):ident : $payloadType) => $someAction:term))
         `(do
           let $(result.rawName):ident : $type ← ($selected:term)
           $next:term)
@@ -1224,6 +1383,80 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
                 $yesProof:tactic*
               · simp only [if_neg $test:ident]
                 $noProof:tactic*))
+          pure (result, (⟨summary.raw⟩ : TSyntax `term))
+      | .optionMatch discriminant payload absent present noneResult someResult result => do
+          let noneAction ← traceAction absent.toList noneResult known
+          let someAction ← traceAction present.toList someResult known
+          let raw := resolveRaw discriminant.rawModel known
+          let type ← actualTypeTerm result.type.coreTy
+          let coreType ← termOfExpr (coreTypeExpr result.type.coreTy)
+          let nativeType ← termOfExpr result.type.nativeType
+          let representation ← termOfExpr result.type.representation
+          let discriminantType ← termOfExpr discriminant.type.nativeType
+          let discriminantCore ← termOfExpr (coreTypeExpr discriminant.type.coreTy)
+          let discriminantRepresentation ← termOfExpr discriminant.type.representation
+          let payloadType ← termOfExpr payload.type.nativeType
+          let rawPayloadType ← actualTypeTerm payload.type.coreTy
+          let payloadCore ← termOfExpr (coreTypeExpr payload.type.coreTy)
+          let payloadRepresentation ← termOfExpr payload.type.representation
+          let summary := mkIdent (← mkFreshUserName `matchRelated)
+          let observed := mkIdent (← mkFreshUserName `optionObserved)
+          let rawCase := mkIdent (← mkFreshUserName `sourceCase)
+          let nativeCase := mkIdent (← mkFreshUserName `nativeCase)
+          let impossible := mkIdent (← mkFreshUserName `impossiblePayload)
+          let payloadObserved := payload.relationName
+          let observation ← observationAt discriminant currentHeap relations
+          let noneProof ← relationTrace absent noneResult currentHeap relations known
+          let mut someRelations := relations
+          let mut someKnown := known
+          let mut somePrefix := #[]
+          if payload.type.isPure then
+            somePrefix := somePrefix.push (← `(tactic|
+              change $(payload.model) = $(payload.rawName):ident at $payloadObserved:ident))
+            somePrefix := somePrefix.push (← `(tactic| subst $(payload.rawName):ident))
+            someKnown := someKnown.push (payload.rawName.getId, payload.model)
+          else
+            someRelations := someRelations.push ⟨payloadObserved.getId, payload.type,
+              ⟨payloadObserved.raw⟩⟩
+          let someProof := somePrefix ++
+            (← relationTrace present someResult currentHeap someRelations someKnown)
+          tactics := tactics.push (← `(tactic|
+            have $summary:ident : ∃ (returned : $type) (finish : Complexity.Language.Heap),
+                (Option.elim $raw $noneAction:term
+                  (fun ($(payload.rawName):ident : $rawPayloadType) => $someAction:term)) $currentHeap =
+                    Part.some (.ok returned, finish) ∧
+                ($representation : Complexity.Language.Representation $nativeType $coreType).Rel
+                  $(result.model) returned finish ∧
+                Complexity.Language.Heap.ShapeExtends $currentHeap finish := by
+              have $observed:ident :
+                  ($discriminantRepresentation : Complexity.Language.Representation
+                    $discriminantType $discriminantCore).Rel $(discriminant.model) $raw $currentHeap :=
+                $observation
+              cases $rawCase:ident : $raw:term with
+              | none =>
+                  cases $nativeCase:ident : $(discriminant.model):term with
+                  | none =>
+                      simp (config := { failIfUnchanged := false }) only [$rawCase:ident, $nativeCase:ident,
+                        Option.elim_none, Option.elim_some]
+                      $noneProof:tactic*
+                  | some $impossible:ident =>
+                      simp only [Complexity.Language.Representation.option, $rawCase:ident,
+                        $nativeCase:ident] at $observed:ident
+              | some $(payload.rawName):ident =>
+                  cases $nativeCase:ident : $(discriminant.model):term with
+                  | none =>
+                      simp only [Complexity.Language.Representation.option, $rawCase:ident,
+                        $nativeCase:ident] at $observed:ident
+                  | some $(payload.name):ident =>
+                      have $payloadObserved:ident :
+                          ($payloadRepresentation : Complexity.Language.Representation
+                            $payloadType $payloadCore).Rel
+                            $(payload.name):ident $(payload.rawName):ident $currentHeap := by
+                        simpa only [Complexity.Language.Representation.option, $rawCase:ident,
+                          $nativeCase:ident] using $observed:ident
+                      simp (config := { failIfUnchanged := false }) only [$rawCase:ident, $nativeCase:ident,
+                        Option.elim_none, Option.elim_some]
+                      $someProof:tactic*))
           pure (result, (⟨summary.raw⟩ : TSyntax `term))
     let returned := result.rawName
     let observed := result.relationName
@@ -1325,14 +1558,20 @@ private def relationDeclaration (family : TSyntax `ident) (fn : Function) : Term
       exact ⟨$nativeValue, $heap:ident, $correct, rfl,
         Complexity.Language.Heap.ShapeExtends.refl $heap:ident⟩)]
   let mut tactics := #[]
-  if fn.calls.any (fun | .conditional .. => true | _ => false) then
+  if fn.calls.any (fun | .call _ => false | _ => true) then
     let action ← traceAction fn.calls.toList fn.returned
     let canonical := mkIdent (← mkFreshUserName `sourceComposition)
     tactics := tactics.push (← `(tactic|
       have $canonical:ident : $rawAction = $action := by
         rw [$rawEquation:ident]
         simp only [Id.run, Id.instMonad, pure_bind, bind_pure, bind_assoc,
-          bind_conditional]))
+          bind_conditional, bind_optionMatch]
+        all_goals repeat' first
+          | rfl
+          | (split <;> simp_all only [Option.some.injEq, reduceCtorEq,
+              Option.elim_none, Option.elim_some])
+          | (congr 1; funext value)
+        all_goals rfl))
     tactics := tactics.push (← `(tactic| rw [$canonical:ident]))
   else
     tactics := tactics.push (← `(tactic| rw [$rawEquation:ident]))

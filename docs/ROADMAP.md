@@ -372,8 +372,9 @@ ordinary `List.head?`/`List.tail` observations at the unchanged heap. The
 derives a constant full-invocation bound from the actual branch, read, option
 packaging, return and call rules. The existing input List representation and
 complete heap representation supply the lookup and word ranges; callers add no
-register proof or tail traversal. This is a typed callable operation, not yet
-native List method syntax or a persistent pure collection frontend.
+register proof or tail traversal. The native frontend now registers `xs.uncons`
+and `List.uncons xs` to this operation; its generated mathematical view uses
+ordinary head/tail observations, not a new upstream Lean List definition.
 The [named client](../Examples/Language/LinkedList.lean) writes the same operation
 with `source_program`, optional-root matching and `ref.read`. Its generated body
 is definitionally the public operation, so correctness and refinement reuse the
@@ -450,8 +451,15 @@ can allocate and return a List to a common later call or fold. The
 `NativeBranches.choosePrepend` and `chooseSum` consumers have checked ordinary
 equations and generated relational correspondence on 0v0. The compiler reuses
 existing source branches and summarizes their actual result/heap relations before
-proving the common continuation once. General List matching, native recursion
-and escaping callbacks remain separate frontend work. This does not restrict the
+proving the common continuation once. The `NativeViews` family additionally
+checks recursive products/options containing Lists, their projections and
+preservation across actual allocation. Its List matches lower through the
+real Uncons call and existing Option match, with head/tail projection copies;
+Option matches retain the actual stored payload. Both support exactly two
+branches and an explicitly typed List-valued result binding. Ordinary equations
+and generated source correctness are checked, including `replaceHead` followed
+by a constructor call. General result joins, patterns, native recursion and
+escaping callbacks remain separate frontend work. This does not restrict the
 more general effectful fold library or change the existing `(pure)` path.
 
 The same frontend also accepts `List.cons`, `head :: tail`, explicitly typed
@@ -536,6 +544,18 @@ ranges, remaining capacity and final numerical comparisons remain supplied
 proofs. `ArenaMeasured` only packages existing witnesses; there is no new
 interpreter or pricing model. General allocating loops, recursion and automatic
 selection of further operation resource adapters remain follow-up work.
+
+`NativeViews.replaceHead` now joins the same actual Uncons call, optional-payload
+match and allocating constructor. Its checked `replaceHead_execute_le` returns
+`replacement :: values.tail`, preserves the original List observation and advances
+the cursor by three words. Its full invocation bound is independent of list
+length and includes node inspection, branch/payload/join copies and outer-call
+overhead. The structural pass propagates actual selected-branch equations and
+callee result ranges; the consumer supplies no manual raw-option cases or
+register proof. Its wrapper budget still names imported calls and compiler
+field counts, and publication still selects callee witnesses. These remaining
+mechanical costs must move to shared inference, not be mistaken for an
+author-facing complexity proof already free of layout details.
 
 The [compiled native consumer](../Examples/Language/LinkedListCompiled.lean)
 now reaches the actual `Native.sumFrom` wrapper's halted RAM result, not merely
@@ -1102,7 +1122,12 @@ improvement should make another author reuse these interfaces without learning
 environment encodings or repeating source facts in a second resource proof.
 
 1. Extend the checked allocating-call proof pass from its current ordinary
-   constructor and fold consumers. The `prependPair` and `reverseAppend`
+   constructor, fold and List-match consumers. Infer wrapper structural budgets
+   from the same arena execution rules and supplied callee bounds, removing
+   `replaceHeadBodyBound`'s explicit call-table/field-count formula and its
+   repeated call-identity normalization. The fixed-heap `StmtCostBound` cannot
+   silently stand in for a bound on allocating execution; reuse the existing
+   arena cost relation and function contracts. The `prependPair` and `reverseAppend`
    migrations include their leaf wrappers: removing argument environments from
    the outer theorem alone is not enough. The allocating fold now reuses its
    ordinary-parameter measured entry without constructing a resource index.
@@ -1122,24 +1147,23 @@ environment encodings or repeating source facts in a second resource proof.
    need less local-tuple projection; extend construct combinations only with
    matching real consumers. Dependent bounds, recursion descent and algorithmic
    potentials remain mathematical obligations, not guessed annotations.
-3. Extend the represented native frontend from its checked List conditional
-   bindings to the remaining container control flow and operation interfaces.
-   Preserve generated relational proofs through conditional allocation,
-   List-valued branch results and a subsequent call. Retain the actual selected
+3. Extend the represented native frontend from its checked List-valued
+   conditionals and List/Option matches. Products/options containing Lists now
+   compose their heap-indexed relations, including across allocation, but branch
+   result slots still require a List type. Generalize typed result joins over
+   the supported representations, with real initialization and copy costs;
+   accepting the type name alone is insufficient. Retain the actual selected
    branch's heap, old shared tails and separate compiler-derived cost; do not
-   evaluate or charge both branches. Native List matching must invoke the
-   existing actual root/read operations, and richer results need composable
-   heap-indexed representations, not a heap-independent inverse of a handle.
-   Start with the existing product/option representations and the real Uncons
-   result `Option (cell × List)`. Compose preservation only for proved-stable
-   leaves and their combinations; mutable arrays and exact-heap observations
-   are not stable under arbitrary shape extension. Lower List cases through
-   that operation and the existing option match, retaining all reads and copies.
-   Extend List operations and their ordinary-parameter resource interfaces on
-   that basis, retaining one declaration and its mathematical function. Further
-   operations and lifetime machinery should follow concrete missing capabilities,
-   not an algorithm catalog. The current construction/fold/conditional fragment
-   is not a complete persistent collection library.
+   evaluate or charge both branches. List matching already invokes the actual
+   Uncons root/read operation before the existing Option match. Preserve that
+   path, not a heap-independent inverse or free mathematical decomposition.
+   Compose preservation only for proved-stable leaves and their combinations;
+   mutable arrays and exact-heap observations are not stable under arbitrary
+   shape extension. Extend List operations and their ordinary-parameter resource
+   interfaces on this basis, retaining one declaration and its mathematical
+   function. Further operations and lifetime machinery should follow concrete
+   missing capabilities, not an algorithm catalog. This fragment is not a
+   complete persistent collection library.
 4. Develop source-facing space observations and composition over the actual
    execution, separating sufficient capacity, reserved storage and peak live
    data. Keep input loading, query drivers, width policy and word-versus-bit cost

@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Examples.Language.LinkedList
 import Complexity.Computability.Ram.Compiler.Language.List.Cons
+import Complexity.Computability.Ram.Compiler.Language.List.Uncons
 import Complexity.Computability.Ram.Compiler.Language.Arena.Tactic
 
 /-!
@@ -309,5 +310,98 @@ theorem choosePrepend_execute {w heapLimit cursor : Nat} {placement : Nat → Ra
     Representation.list_mono rightObserved shape, shape, cursorEq, bodyEq, ?_⟩
   rw [outcome.steps_eq, bodyEq]
   rfl
+
+/-- A uniform body bound for replacing a list's head. Decomposition uses its
+existing constant certificate; the nonempty match branch bounds both paths.
+All join, payload and return copies retain their compiler field counts. -/
+def replaceHeadBodyBound : Nat :=
+  let copy := 2 * fieldCount (.option (.node .nat))
+  let readCall := callCost NativeViews.Source.program
+    (NativeViews.Source.imports.NativeViews.Operations.unconsNat.map.toFun
+      NativeViews.Operations.unconsNat.unconsId)
+    ((Ram.LanguageCompiler.List.Uncons.bodyCost .nat).val + 2)
+  let prependCall := callCost NativeViews.Source.program
+    (NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.map.toFun
+      NativeConstruction.Source.prependId) (prependBodySteps + 2)
+  readCall + (copy + ((2 * fieldCount (.prod .nat (.option (.node .nat))) +
+    (2 * fieldCount .nat + copy + copy) + 3) + 2 +
+    (copy + (prependCall + (copy + 2)))))
+
+/-- Complete constant invocation bound, including the enclosing initialization,
+outer call and halt. Input loading is outside this preloaded-call boundary. -/
+def replaceHeadSteps : Nat :=
+  Ram.LocalCompiler.Function.callSteps (programControl NativeViews.Source.program)
+    (lowerFunc NativeViews.Source.program NativeViews.Source.replaceHeadId)
+    (replaceHeadBodyBound + 2) + 1
+
+/-- Ordinary List matching reads at most one actual node, shares its tail and
+allocates one new head. The same halted RAM execution satisfies the native
+mathematical equation, a length-independent instruction bound and three-word
+growth. Every old List observation remains valid, including shared tails. -/
+theorem replaceHead_execute_le {w heapLimit cursor : Nat} {placement : Nat → Ram.Word w}
+    (replacement : Nat) (values : List Nat) (root : Option (NodeRef .nat)) {heap : Heap}
+    (observed : (Representation.list .nat).Rel values root heap)
+    {entry : Ram.Source.State w}
+    (launch : FunctionArenaLaunch NativeViews.Source.program
+      NativeViews.Source.replaceHeadId 2 heapLimit placement
+      (NativeViews.Source.replaceHead_args replacement root) heap cursor entry)
+    (space : cursor + 3 ≤ heapLimit) :
+    ∃ outcome : FunctionArenaExecution NativeViews.Source.program
+        NativeViews.Source.replaceHeadId 2 heapLimit placement
+        (NativeViews.Source.replaceHead_args replacement root) heap entry,
+      (Representation.list .nat).Rel (replacement :: values.tail)
+        outcome.value outcome.heap ∧
+      (Representation.list .nat).Rel values root outcome.heap ∧
+      heap.ShapeExtends outcome.heap ∧
+      outcome.cursor = cursor + 3 ∧
+      outcome.bodySteps ≤ replaceHeadBodyBound + 2 ∧
+      outcome.result.steps ≤ replaceHeadSteps := by
+  have positive : 0 < w := launch.positive
+  have replacementFits : replacement < 2 ^ w := launch.arguments .here
+  obtain ⟨readFinish, parts, readSteps, readExecution, readReady, readCost,
+      readStepsLe, _readHeapEq, _partsObserved⟩ :=
+    Ram.LanguageCompiler.List.Uncons.ready_cost .nat values root heap
+      (depth := 1) (cursor := cursor) positive launch.arena.heapRep observed
+  have readBound := callCost_mono NativeViews.Source.program
+    (NativeViews.Source.imports.NativeViews.Operations.unconsNat.map.toFun
+      NativeViews.Operations.unconsNat.unconsId) (Nat.add_le_add_right readStepsLe 2)
+  obtain ⟨_, _, prependCost⟩ := prepend_ready_cost replacement
+    (parts.elim none Prod.snd) readFinish.heap positive replacementFits space
+  have measured : ArenaMeasured NativeViews.Source.program w heapLimit 2
+      (NativeViews.Source.program.body NativeViews.Source.replaceHeadId)
+      (fun _ control finalCursor steps =>
+        ∃ value, control = .returned value ∧ finalCursor = cursor + 3 ∧
+          steps ≤ replaceHeadBodyBound)
+      ⟨NativeViews.Source.replaceHead_args replacement root, heap⟩ cursor := by
+    ram_source_arena_step
+    ram_source_arena_call exact using readCost via
+      NativeViews.Source.imports.NativeViews.Operations.unconsNat.embedding
+    all_goals
+      ram_source_arena_call exact using prependCost via
+        NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
+    all_goals
+      refine ⟨_, rfl, ?_⟩
+      dsimp only [replaceHeadBodyBound, primCodeSize, fieldCount,
+        NativeViews.Operations.unconsNat.unconsId, Complexity.Language.List.Uncons.entry,
+        NativeConstruction.Source.prependId]
+        at readBound ⊢
+      omega
+  obtain ⟨finish, value, _, _, execution, ready, cost, rfl, bounded⟩ :=
+    ArenaMeasured.exists_returned_iff.mp measured
+  obtain ⟨outcome, _, heapEq, cursorEq, bodyEq⟩ :=
+    cost.execute (fn := NativeViews.Source.replaceHeadId) launch
+  obtain ⟨_, result, rfl⟩ :=
+    outcome.post (replaceHead_correct (replacement, values) trivial) ⟨rfl, observed⟩
+  have shape : heap.ShapeExtends outcome.heap := by
+    rw [heapEq]
+    exact execution.heap_shapeExtends
+  have bodyBound : outcome.bodySteps ≤ replaceHeadBodyBound + 2 := by
+    rw [bodyEq]
+    exact Nat.add_le_add_right bounded 2
+  refine ⟨outcome, result, Representation.list_mono observed shape, shape,
+    cursorEq, bodyBound, ?_⟩
+  rw [outcome.steps_eq]
+  exact Nat.add_le_add_right
+    (Ram.LocalCompiler.Function.callSteps_mono _ _ bodyBound) 1
 
 end Complexity.Language.Examples.LinkedList
