@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Examples.Language.LinkedListAllocation
+import Complexity.Computability.Ram.Compiler.Language.List.IsEmpty
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.FunctionExecution
 
 /-!
@@ -22,6 +23,62 @@ finite word, code, stack and arena conditions remain those of the actual launch.
 namespace Complexity.Language.Examples.LinkedList
 
 open Ram.LanguageCompiler
+
+/-- Native emptiness uses the actual root-tag call, with a bound inferred from
+its supplied certificate and the generated caller's return instructions. -/
+def isEmptyCost : { bound : Nat // ∀ w heapLimit initial,
+    StmtArenaCostBound NativeViews.Source.program w heapLimit 1
+      (NativeViews.Source.program.body NativeViews.Source.isEmptyId) initial bound } := by
+  ram_source_arena_cost [
+    (Ram.LanguageCompiler.List.IsEmpty.arenaCostBound .nat _ _ _)
+      via NativeViews.Source.imports.NativeViews.Operations.isEmptyNat.embedding]
+
+/-- Complete native invocation accounting, including initialization, call and halt. -/
+def isEmptySteps : Nat :=
+  Ram.LocalCompiler.Function.callSteps (programControl NativeViews.Source.program)
+    (lowerFunc NativeViews.Source.program NativeViews.Source.isEmptyId)
+    (isEmptyCost.val + 2) + 1
+
+/-- The native wrapper reuses the tag test's actual execution at any heap and
+cursor. No node is read, so readiness needs neither head ranges nor a heap
+representation; complete RAM invocation retains its usual launch conditions. -/
+theorem isEmpty_measured {w heapLimit cursor : Nat}
+    (root : Option (NodeRef .nat)) (heap : Heap) (positive : 0 < w) :
+    ArenaMeasured NativeViews.Source.program w heapLimit 1
+      (NativeViews.Source.program.body NativeViews.Source.isEmptyId)
+      (fun finish control finalCursor _ =>
+        ∃ value, control = .returned value ∧ finish.heap = heap ∧ finalCursor = cursor)
+      ⟨NativeViews.Source.isEmpty_args root, heap⟩ cursor := by
+  have checked := Ram.LanguageCompiler.List.IsEmpty.arenaMeasured .nat root heap
+    (heapLimit := heapLimit) (depth := 0) (cursor := cursor) positive
+  ram_source_arena_call measured using checked
+    via NativeViews.Source.imports.NativeViews.Operations.isEmptyNat.embedding
+  refine ⟨_, rfl, ?_⟩
+  ram_source_arena_step
+
+/-- Ordinary native List emptiness and its constant instruction bound hold for
+the same halted RAM call. The heap and cursor stay unchanged, and input loading
+is outside the count. Source correctness has no resource premise. -/
+theorem isEmpty_execute_le {w heapLimit cursor : Nat} {placement : Nat → Ram.Word w}
+    (values : List Nat) (root : Option (NodeRef .nat)) {heap : Heap}
+    (observed : (Representation.list .nat).Rel values root heap)
+    {entry : Ram.Source.State w}
+    (launch : FunctionArenaLaunch NativeViews.Source.program
+      NativeViews.Source.isEmptyId 1 heapLimit placement
+      (NativeViews.Source.isEmpty_args root) heap cursor entry) :
+    ∃ outcome : FunctionArenaExecution NativeViews.Source.program
+        NativeViews.Source.isEmptyId 1 heapLimit placement
+        (NativeViews.Source.isEmpty_args root) heap entry,
+      outcome.value = values.isEmpty ∧ outcome.heap = heap ∧ outcome.cursor = cursor ∧
+      outcome.bodySteps ≤ isEmptyCost.val + 2 ∧ outcome.result.steps ≤ isEmptySteps := by
+  obtain ⟨outcome, ⟨heapEq, cursorEq⟩, ⟨answer, represented, answerEq⟩,
+      _shape, bodyBound, stepsBound⟩ :=
+    (isEmpty_measured root heap launch.positive).execute_le
+      (P := fun finalHeap _ finalCursor => finalHeap = heap ∧ finalCursor = cursor)
+      (isEmptyCost.property w heapLimit _) (nativeIsEmpty_correct values trivial)
+      launch observed
+  change answer = outcome.value at represented
+  exact ⟨outcome, represented.symm.trans answerEq, heapEq, cursorEq, bodyBound, stepsBound⟩
 
 /-- Scalar head selection has a uniform bound inferred from the real node read
 and generated branch, assignment and return instructions. -/

@@ -429,6 +429,7 @@ import Complexity.Language.List.Cons.Native
 import Complexity.Language.List.Fold.Basic
 import Complexity.Language.List.Fold.Native
 import Complexity.Language.List.Fold.Program
+import Complexity.Language.List.IsEmpty.Native
 import Complexity.Language.List.Uncons
 import Complexity.Language.List.Uncons.Native
 import Complexity.Language.Rooted

@@ -6,6 +6,8 @@ Authors: vvauted
 import Complexity.Language.List.Basic
 import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.CostBound
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured
 
 /-!
 # Compiling emptiness of represented linked lists
@@ -69,6 +71,37 @@ theorem program_noHeapWrites (kind : CellTy) :
   refine Fin.cases ?_ (fun index => Fin.elim0 index) fn
   change NoHeapWrites (body kind)
   simp [body, NoHeapWrites]
+
+/-- The same read-only body certificate bounds actual arena execution at any
+cursor. No node lookup, allocation or traversal is added by this bridge. -/
+theorem arenaCostBound (kind : CellTy) (w heapLimit depth : Nat) :
+    FunctionArenaCostBound (program kind) ((program kind).body (entry kind))
+      id (fun _ _ => True) w heapLimit depth (fun _ => (bodyCost kind).val + 2) := by
+  apply FunctionArenaCostBound.of_stmt
+  intro args heap _
+  exact StmtArenaCostBound.of_noHeapWrites ((bodyCost kind).property _)
+    (program_noHeapWrites kind (entry kind)) (program_noHeapWrites kind)
+
+/-- A root-tag test composes with allocating callers at their actual heap and
+cursor. Readiness requires only positive word width, not a physical heap
+representation, head-element range or proposed time bound. The Boolean is the
+actual root's emptiness tag; the independent List contract supplies its
+mathematical interpretation when the root represents a list. -/
+theorem arenaMeasured (kind : CellTy) (root : Option (NodeRef kind)) (heap : Heap)
+    {w heapLimit depth cursor : Nat} (positive : 0 < w) :
+    ArenaMeasured (program kind) w heapLimit depth ((program kind).body (entry kind))
+      (fun finish control finalCursor _ => ∃ value, control = .returned value ∧
+        value = root.isNone ∧ finish.heap = heap ∧ finalCursor = cursor)
+      ⟨Env.cons (τ := .option (.node kind)) root Env.empty, heap⟩ cursor := by
+  obtain ⟨finish, value, realized⟩ :=
+    (realizable kind positive).mono_depth (Nat.zero_le depth)
+      (Env.cons (τ := .option (.node kind)) root Env.empty) heap trivial
+  obtain ⟨actualSteps, cost⟩ := realized.exists_cost
+  have same := realized.erase.deterministic
+    (body_exec (program kind) kind ⟨Env.cons root Env.empty, heap⟩)
+  exact ⟨finish, .returned value, cursor, actualSteps, realized.erase,
+    realized.arenaReady heapLimit cursor, cost.arena heapLimit cursor, value, rfl,
+    Control.returned.inj same.2, congrArg Complexity.Language.State.heap same.1, rfl⟩
 
 /-- The inferred body budget plus the existing outer-call and final-halt
 charges, with no separately chosen instruction prices. -/

@@ -375,8 +375,15 @@ The first callable root operation is checked:
 optional root, returns ordinary `List.isEmpty` and preserves the entire heap.
 Its [compiler bridge](../Complexity/Computability/Ram/Compiler/Language/List/IsEmpty.lean)
 connects that same source to a halted RAM result and a compiler-derived full
-invocation bound. It needs no node read or traversal. Preloading inputs remains
-outside the bound, and native `xs.isEmpty` registration remains open.
+invocation bound. It needs no node read or traversal. The native frontend
+registers `xs.isEmpty` and `List.isEmpty xs` in let-call bindings for the supported
+Nat/Bool Lists. The existing `NativeViews.isEmpty` declaration inherits its
+ordinary Boolean equation and reaches the same halted RAM invocation through
+shared measured-call composition and inferred wrapper costs. Its reusable
+readiness certificate needs no node lookup, head-element range or proposed time
+bound; a complete RAM launch retains its actual representation and capacity
+conditions. Heap and cursor are unchanged. Preloading inputs remains outside
+the count; arbitrary expression-call hoisting is not implemented.
 [`List.Uncons`](../Complexity/Language/List/Uncons.lean) now supplies the next
 callable operation: it matches the root, reads a present node once, and returns
 the head and identical shared tail. Its independent correctness theorem refines

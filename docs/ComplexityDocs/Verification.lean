@@ -197,8 +197,13 @@ matches an optional node root and refines ordinary `List.isEmpty`, preserving
 the entire heap. Its [execution bound](##Ram.LanguageCompiler.List.IsEmpty.execute_le)
 describes the same actual halted invocation, including the compiler's branch,
 return and outer-call overhead. The input representation and launch capacity
-are explicit; loading the inputs is outside this boundary. It neither reads a
-node nor registers a native `xs.isEmpty` frontend. The general allocator bridge
+are explicit; loading the inputs is outside this boundary. Native let-call
+bindings support `xs.isEmpty` and `List.isEmpty xs` for Nat/Bool Lists, using the
+same tag-only operation. Generated mathematical correspondence retains its
+unchanged heap; shared measured-call and structural-cost rules give the native
+wrapper its complete RAM invocation bound. The reusable readiness certificate
+needs no node read, head range or time-bound premise. It does not provide
+arbitrary expression-call hoisting. The general allocator bridge
 requires only an existing tail root; the stronger List contents requirement
 belongs to its mathematical specialization, not to a runtime traversal.
 

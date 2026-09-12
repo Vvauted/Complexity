@@ -8,6 +8,7 @@ import Complexity.Language.List.Fold.Native
 import Complexity.Language.List.Cons.Native
 import Complexity.Language.Representation.Preservation
 import Complexity.Language.List.Uncons.Native
+import Complexity.Language.List.IsEmpty.Native
 
 /-!
 # Native mathematical views of represented source operations
@@ -215,6 +216,10 @@ private structure UnconsRegistration where
   kind : CellTy
   operation : Operation
 
+private structure IsEmptyRegistration where
+  kind : CellTy
+  operation : Operation
+
 private structure Value where
   type : NativeType
   raw : TSyntax `term
@@ -361,6 +366,7 @@ private structure Preparation where
   folds : Array FoldRegistration := #[]
   constructors : Array ConsRegistration := #[]
   deconstructors : Array UnconsRegistration := #[]
+  emptinessTests : Array IsEmptyRegistration := #[]
   functions : Array Function := #[]
   calledFamilies : Array (TSyntax `ident) := #[]
 
@@ -498,6 +504,22 @@ private def unconsOperation (family : TSyntax `ident) (kind : CellTy) : PrepareM
   modify fun state => { state with deconstructors := state.deconstructors.push ⟨kind, operation⟩ }
   return operation
 
+private def isEmptyOperation (family : TSyntax `ident) (kind : CellTy) : PrepareM Operation := do
+  if let some registered := (← get).emptinessTests.find? (fun registered => registered.kind == kind) then
+    return registered.operation
+  let operationFamily := mkIdentFrom family
+    (family.getId ++ `Operations ++ (match kind with | .nat => `isEmptyNat | .bool => `isEmptyBool))
+  let result ← resolveType (← `(Bool))
+  let operation : Operation := {
+    family := operationFamily, sourceName := `isEmpty,
+    native := ⟨(mkCIdent ``List.isEmpty).raw⟩,
+    inputs := #[.list kind], result,
+    equation := some (mkIdentFrom family (operationFamily.getId ++ `isEmpty_eq)),
+    relation := mkIdentFrom family (operationFamily.getId ++ `isEmpty_rel),
+    refinement := mkIdentFrom family (operationFamily.getId ++ `isEmpty_refines) }
+  modify fun state => { state with emptinessTests := state.emptinessTests.push ⟨kind, operation⟩ }
+  return operation
+
 private def doTerm (elements : Array (TSyntax `doElem)) : TermElabM (TSyntax `term) := do
   let sequence : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (elements.map (·.raw))⟩
   `(do $sequence:doSeq)
@@ -511,12 +533,18 @@ private partial def canonicalCall? (imports : ImportedPrograms) (scope : List Bi
         let receiver : TSyntax `ident := ⟨Syntax.ident called.raw.getHeadInfo
           receiverName.toString.toRawSubstring receiverName []⟩
         return some (← `(List.uncons $receiver:ident))
+    if let .str receiverName "isEmpty" := called.getId then
+      if scope.any (fun binding => binding.name.getId == receiverName) then
+        let receiver : TSyntax `ident := ⟨Syntax.ident called.raw.getHeadInfo
+          receiverName.toString.toRawSubstring receiverName []⟩
+        return some (← `(List.isEmpty $receiver:ident))
   match expression with
   | `(($inner:term)) => canonicalCall? imports scope inner
   | `(List.foldl $callback:ident $initial:term $values:term) =>
       return some (← `(List.foldl $callback:ident $initial $values))
   | `(List.cons $head:term $tail:term) => return some (← `(List.cons $head $tail))
   | `(List.uncons $values:term) => return some (← `(List.uncons $values))
+  | `(List.isEmpty $values:term) => return some (← `(List.isEmpty $values))
   | `($head:term :: $tail:term) => return some (← `(List.cons $head $tail))
   | `($called:ident $arguments:term*) =>
       if let .str receiverName "uncons" := called.getId then
@@ -525,6 +553,12 @@ private partial def canonicalCall? (imports : ImportedPrograms) (scope : List Bi
           let receiver : TSyntax `ident := ⟨Syntax.ident called.raw.getHeadInfo
             receiverName.toString.toRawSubstring receiverName []⟩
           return some (← `(List.uncons $receiver:ident))
+      if let .str receiverName "isEmpty" := called.getId then
+        if scope.any (fun binding => binding.name.getId == receiverName) then
+          unless arguments.isEmpty do throwErrorAt expression "list.isEmpty takes no additional arguments"
+          let receiver : TSyntax `ident := ⟨Syntax.ident called.raw.getHeadInfo
+            receiverName.toString.toRawSubstring receiverName []⟩
+          return some (← `(List.isEmpty $receiver:ident))
       if let .str receiverName "foldl" := called.getId then
         unless receiverName == `List do
           let some callbackTerm := (arguments[0]? : Option (TSyntax `term))
@@ -780,6 +814,11 @@ private partial def sequence (family : TSyntax `ident)
               let valuesValue ← value scope values
               let .list kind := valuesValue.type | throwErrorAt values "List.uncons requires a represented list"
               pure (← unconsOperation family kind, #[values])
+          | `(List.isEmpty $values:term) => do
+              let valuesValue ← value scope values
+              let .list kind := valuesValue.type
+                | throwErrorAt values "List.isEmpty requires a represented list"
+              pure (← isEmptyOperation family kind, #[values])
           | `($called:ident $arguments:term*) => do
               if let some fn := (← get).functions.find? (fun fn => fn.name.getId == called.getId) then
                 pure (functionOperation family fn, arguments)
@@ -1167,6 +1206,66 @@ private def unconsDeclarations (registration : UnconsRegistration) : TermElabM (
         $program:ident $unconsId:ident (Complexity.Language.List.Uncons.representation $kind)
         (fun _ => True) (fun values => values.head?.map (fun head => (head, values.tail))) :=
       Complexity.Language.List.Uncons.refines $kind)).raw
+  return declarations
+
+private def isEmptyDeclarations (registration : IsEmptyRegistration) : TermElabM (Array Syntax) := do
+  let operation := registration.operation
+  let name (suffix : Name) := mkIdentFrom operation.family (operation.family.getId ++ suffix)
+  let kind ← kindTerm registration.kind
+  let headType ← termOfExpr (match registration.kind with
+    | .nat => mkConst ``Nat | .bool => mkConst ``Bool)
+  let signatures := name `signatures
+  let program := name `program
+  let isEmptyId := name `isEmptyId
+  let isEmpty := name `isEmpty
+  let observe := name `isEmpty_observe
+  let some equation := operation.equation
+    | throwError "registered emptiness test is missing its unchanged-heap equation"
+  let mut declarations := #[]
+  declarations := declarations.push (← `(command|
+    abbrev $signatures:ident : List Complexity.Language.Signature :=
+      [Complexity.Language.List.IsEmpty.signature $kind])).raw
+  declarations := declarations.push (← `(command|
+    def $program:ident : Complexity.Language.Program $signatures:ident :=
+      Complexity.Language.List.IsEmpty.program $kind)).raw
+  declarations := declarations.push (← `(command|
+    abbrev $isEmptyId:ident : Fin ($signatures:ident).length :=
+      Complexity.Language.List.IsEmpty.entry $kind)).raw
+  declarations := declarations.push (← `(command|
+    noncomputable def $isEmpty:ident (root : Option (Complexity.Language.NodeRef $kind)) :=
+      Complexity.Language.List.IsEmpty.isEmptyEval $kind root)).raw
+  declarations := declarations.push (← `(command|
+    theorem $observe:ident : ∀ args : Complexity.Language.Env
+        (Complexity.Language.List.IsEmpty.signature $kind).params,
+        ($program:ident).eval $isEmptyId:ident args = $isEmpty:ident args.head := by
+      refine (Complexity.Language.Env.forall_cons _).mpr ?_
+      intro root
+      refine (Complexity.Language.Env.forall_nil _).mpr ?_
+      rfl)).raw
+  declarations := declarations.push (← `(command|
+    theorem $equation:ident (values : List $headType)
+        (root : Option (Complexity.Language.NodeRef $kind)) (heap : Complexity.Language.Heap)
+        (observed : (Complexity.Language.Representation.list $kind).Rel values root heap) :
+        $isEmpty:ident root heap = Part.some (.ok values.isEmpty, heap) := by
+      obtain ⟨returned, finish, evaluated, related, unchanged⟩ :=
+        Complexity.Language.List.IsEmpty.eval_exists_heap_eq $kind values root heap observed
+      change values.isEmpty = returned at related
+      rw [← related, unchanged] at evaluated
+      exact evaluated)).raw
+  declarations := declarations.push (← `(command|
+    theorem $(operation.relation):ident (values : List $headType)
+        (root : Option (Complexity.Language.NodeRef $kind)) (heap : Complexity.Language.Heap)
+        (observed : (Complexity.Language.Representation.list $kind).Rel values root heap) :
+        ∃ returned finish,
+          $isEmpty:ident root heap = Part.some (.ok returned, finish) ∧
+          Complexity.Language.Representation.bool.Rel values.isEmpty returned finish ∧
+          heap.ShapeExtends finish := by
+      exact Complexity.Language.List.IsEmpty.eval_exists $kind values root heap observed)).raw
+  declarations := declarations.push (← `(command|
+    theorem $(operation.refinement):ident : Complexity.Language.RepresentedFunction.Refines
+        $program:ident $isEmptyId:ident (Complexity.Language.List.IsEmpty.representation $kind)
+        (fun _ => True) (fun values => values.isEmpty) :=
+      Complexity.Language.List.IsEmpty.refines $kind)).raw
   return declarations
 
 private def rawFunction (fn : Function) : TermElabM (TSyntax `sourceFunction) := do
@@ -1758,11 +1857,17 @@ private def elaborate (family : TSyntax `ident) (libraries : Array (TSyntax `ide
       name := `uncons
       params := #[(`root, .option (.node registration.kind))]
       result := .option (.prod registration.kind.toTy (.option (.node registration.kind))) }]
+  for registration in prepared.emptinessTests do
+    emitDeclarations (← liftTermElabM (isEmptyDeclarations registration))
+    registerProgramInfo registration.operation.family #[{
+      name := `isEmpty
+      params := #[(`root, .option (.node registration.kind))]
+      result := .bool }]
   let rawFunctions ← liftTermElabM (prepared.functions.mapM rawFunction)
   let rawFamily := sourceFamily family
   let operationFamilies := prepared.folds.map (·.operation.family) ++
     prepared.constructors.map (·.operation.family) ++ prepared.deconstructors.map (·.operation.family) ++
-    prepared.calledFamilies
+    prepared.emptinessTests.map (·.operation.family) ++ prepared.calledFamilies
   let rawCommand ← if operationFamilies.isEmpty then
       `(command| source_program $rawFamily:ident where
         $rawFunctions:sourceFunction*)

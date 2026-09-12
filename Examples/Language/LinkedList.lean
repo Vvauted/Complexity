@@ -394,6 +394,10 @@ theorem chooseSum_correct :
     (fun input _ => chooseSum_eq input.1 input.2.1 input.2.2.1 input.2.2.2)
 
 source_program (native) NativeViews importing NativeConstruction where
+  def isEmpty (values : List Nat) : Bool := do
+    let empty := values.isEmpty
+    return empty
+
   def uncons (values : List Nat) : Option (Nat × List Nat) := do
     let result := values.uncons
     return result
@@ -451,6 +455,10 @@ source_program (native) NativeViews importing NativeConstruction where
       return ((none : Option (Nat × List Nat)), values)
     return result
 
+/-- The ordinary emptiness equation comes from the same tag-only source call. -/
+theorem nativeIsEmpty_eq (values : List Nat) :
+    NativeViews.isEmpty values = values.isEmpty := rfl
+
 /-- The optional mathematical head and tail describe the actual node read. -/
 theorem nativeUncons_eq (values : List Nat) :
     NativeViews.uncons values = values.head?.map (fun head => (head, values.tail)) := rfl
@@ -494,6 +502,14 @@ theorem inspectOrPrepend_eq (flag : Bool) (head : Nat) (values : List Nat) :
       if flag then (values.head?.map (fun value => (value, values.tail)), head :: values)
       else (none, values) := by
   cases flag <;> rfl
+
+/-- Ordinary emptiness correctness is independent of word ranges, storage and
+time bounds; the generated correspondence supplies the actual root observation. -/
+theorem nativeIsEmpty_correct :
+    RepresentedFunction.Total NativeViews.program NativeViews.isEmptyId
+      NativeViews.isEmpty_representation (fun _ => True)
+      (fun values result => result = values.isEmpty) :=
+  NativeViews.isEmpty_refines.of_math (fun values _ => nativeIsEmpty_eq values)
 
 /-- Automatically generated correspondence retains both parts of the compound
 result at the same final heap, including the pre-allocation head/tail view. -/

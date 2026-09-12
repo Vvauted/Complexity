@@ -870,8 +870,15 @@ node. Its ordinary `List.isEmpty` refinement preserves the entire heap. The
 checked compiler bridge returns the same halted RAM execution and derives its
 full invocation bound from the existing branch, return and call rules. Its
 arguments and heap must have the supplied representation and fit the launch
-capacity; preloading the inputs is outside that invocation boundary. This
-operation does not yet register a native `xs.isEmpty` frontend.
+capacity; preloading the inputs is outside that invocation boundary. Native
+let-call bindings now accept `xs.isEmpty` and `List.isEmpty xs` for the supported
+Nat/Bool Lists. Generated correspondence reuses this actual operation and its
+unchanged-heap equation. The native `isEmpty` consumer has ordinary Boolean
+correctness and a complete RAM invocation bound inferred from the callee and
+caller instructions. Its composable arena readiness checks no node and needs
+no physical heap representation or element range; the complete launch still
+retains those representation/capacity conditions. This does not add call
+hoisting inside arbitrary expressions such as an inline `if` condition.
 
 `List.Uncons` also has a checked complete invocation: matching the actual root,
 reading a present node and returning an optional head/shared-tail pair. Its
