@@ -148,8 +148,8 @@ theorem reverseSum_measured {w heapLimit cursor : Nat}
   have reversedFits : 0 + (NativeLists.reverse values).sum < 2 ^ w := by
     simpa only [reverse_eq, List.sum_reverse, Nat.zero_add] using fits
   have reversedRanges := sum_ranges 0 (NativeLists.reverse values) reversedFits
-  have folded := List.Fold.arenaMeasured (add_fold_contract w)
-    (add_fold_resources_at_depth w heapLimit 3) (add_fold_costBound_at_depth w heapLimit 3)
+  have folded := List.Fold.arenaMeasured_of_ready (add_fold_contract w)
+    (add_fold_resources_at_depth w heapLimit 3)
     0 (NativeLists.reverse values) 0 reversed reverseFinish.heap reverseCursor positive
     (sum_admissible 0 _ reversedFits) rfl reversedRanges.1 reversedRanges.2
     (by simp only [List.Fold.accumulated_const, Nat.mul_zero, Nat.add_zero]; omega)
@@ -157,7 +157,7 @@ theorem reverseSum_measured {w heapLimit cursor : Nat}
   ram_source_arena_call measured using folded
     via NativeLists.Source.imports.NativeLists.Operations.fold1.embedding
   rename_i finalFinish finalValue finalCursor finalSteps foldProperty finalFits
-  have cursorBound := foldProperty.2
+  have cursorBound := foldProperty
   simp only [List.Fold.accumulated_const, Nat.mul_zero, Nat.add_zero] at cursorBound
   exact ⟨_, rfl, by omega⟩
 

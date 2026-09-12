@@ -204,9 +204,9 @@ theorem reverseAppend_measured {w heapLimit cursor : Nat}
       ListReducer.push (fun _ _ => 3) tailValues values ≤ heapLimit := by
     rw [Ram.LanguageCompiler.List.Fold.accumulated_const]
     omega
-  have folded := Ram.LanguageCompiler.List.Fold.arenaMeasured
+  have folded := Ram.LanguageCompiler.List.Fold.arenaMeasured_of_ready
     NativeLists.Operations.fold0.callback_contract
-    (push_fold_resources positive) (push_fold_costBound w heapLimit)
+    (push_fold_resources positive)
     tailValues values tail root heap cursor positive admissible tailObserved
     (ValueFits.option_node positive tail) headFits capacity observed
   ram_source_arena_call measured using folded

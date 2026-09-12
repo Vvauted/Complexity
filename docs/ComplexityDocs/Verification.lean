@@ -563,8 +563,11 @@ loop through [indexed loop lifting](##Ram.LanguageCompiler.ArenaReady.while_of_e
 The invariant tracks the actual cursor and remaining callback reservations;
 real guard/body endpoints and immutable shared-tail observations pass between
 rounds. The fold does not repeat its list or termination induction in the
-resource proof. Its existing measured interface then applies the independent
-cost certificate to that same ready execution. The native read-only
+resource proof. Its
+[resource-only measured entry](##Ram.LanguageCompiler.List.Fold.arenaMeasured_of_ready)
+packages that same execution and actual count without a proposed time bound.
+The older bounded measured interface applies the independent cost certificate
+afterward. The native read-only
 [realization entry](##Ram.LanguageCompiler.List.Fold.Native.realizable_of_resources)
 also needs no time bound; the existing scalar sum consumer uses it, while its
 separate cost proof still supplies the callback's instruction bound. Range and capacity arguments
@@ -601,13 +604,15 @@ ram_source_arena_call exact using firstCost
 
 The constructor wrappers themselves use `exact using originalCost via embedding`;
 they do not hide hand-written argument environments below this short proof.
-The fold wrapper gets its actual execution and bounds from the
-[composable fold entry](##Ram.LanguageCompiler.List.Fold.arenaMeasured).
+The fold wrapper gets its actual execution and cursor bound from the
+[composable fold entry](##Ram.LanguageCompiler.List.Fold.arenaMeasured_of_ready).
 It supplies mathematical accumulator/list observations, callback correctness
 and resources, admissibility, word ranges and remaining capacity. The shared
 entry constructs the internal source arguments and reuses the existing traversal
 proof; the caller does not assemble a resource-index tuple or another wrapper
-totality/resource/cost contract. Its measured certificate is composed directly:
+totality/resource/cost contract. `reverseAppend` and `reverseSum` use this entry
+without callback time certificates; those remain in their independent cost
+proofs and bound the same execution. Its measured certificate is composed directly:
 
 ```lean
 ram_source_arena_call measured using folded

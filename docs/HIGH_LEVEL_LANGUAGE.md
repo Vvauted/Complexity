@@ -1095,10 +1095,15 @@ The `prependPair` and `reverseAppend` migrations include the leaf `prepend` and
 `push` wrappers: no hand-written `Args`/`EnvFits`, import transport or operational
 return continuation remains in those consumers. `List.Cons.ready_cost` provides
 the original constructor proof in ordinary head/tail arguments, not a new
-constructor implementation. `List.Fold.measured` similarly exposes the existing
-fold entry in ordinary accumulator/list/root arguments. `reverseAppend` now
+constructor implementation. `List.Fold.arenaMeasured_of_ready` exposes the existing
+fold entry in ordinary accumulator/list/root arguments without a callback time
+bound. It retains the actual count and allocation-cursor bound; independent
+cost certificates can be applied to that same execution later. `reverseAppend` now
 consumes that actual execution through the measured-call form; it no longer
 builds a resource-index tuple, `functionPre`, or separate wrapper contracts.
+Both its resource proof and `reverseSum`'s post-allocation traversal use this
+resource-only entry. Their separate instruction-bound proofs retain the callback
+cost certificates. The older bounded `arenaMeasured` interface remains available.
 The callback contracts, admissibility, numerical ranges, remaining capacity and
 final comparisons stay explicit. The generic contract-call form remains useful
 for other indexed operations; the pass does not decode mathematical lists from

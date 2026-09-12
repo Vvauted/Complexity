@@ -459,8 +459,9 @@ range and cost proofs similarly feed the fold through the shared
 [finite-function bridge](../Complexity/Computability/Ram/Compiler/Language/Arena/FunctionResources/Finite.lean).
 The fold itself now exports [callable resource contracts](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Resources.lean),
 so a containing program can reuse its body bound and allocation allowance.
-Its `ready` and `functionResources_of_ready` interfaces need no callback time
-bound. The shared readiness proof lifts the already proved finite source loop;
+Its `ready`, `functionResources_of_ready` and composable `arenaMeasured_of_ready`
+interfaces need no callback time bound. The last retains the actual compiler
+count without prescribing an upper bound. The shared readiness proof lifts the already proved finite source loop;
 it no longer repeats the list induction to assemble a new traversal.
 The native read-only `realizable_of_resources` entry also drops the callback
 cost premise; the existing scalar sum consumer uses it, keeping instruction
@@ -576,13 +577,17 @@ totality, resources and a bound. Imported function identity is recovered from
 the actual call and its supplied table embedding, without opening callee bodies.
 The generic contract form keeps mathematical resource indices explicit: they
 cannot be reconstructed from raw list handles. The shared
-[`List.Fold.arenaMeasured`](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Measured.lean)
+[`List.Fold.arenaMeasured_of_ready`](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Measured.lean)
 entry now exposes the existing fold proof in ordinary mathematical/source
 arguments. `reverseAppend` consumes its actual measured execution directly,
 without assembling `functionPre`, a resource-index tuple or separate wrapper
 totality/resource/cost contracts. Callback correctness, admissibility, value
-ranges, remaining capacity and final numerical comparisons remain supplied
-proofs. `ArenaMeasured` only packages existing witnesses; there is no new
+ranges and remaining capacity remain supplied proofs. `reverseAppend` and
+`reverseSum` no longer supply callback time certificates to obtain these
+execution/space observations. Their independent structural cost proofs still
+consume those certificates and apply to the same execution; the older bounded
+`arenaMeasured` interface delegates to the new entry and adds that cost proof.
+`ArenaMeasured` only packages existing witnesses; there is no new
 interpreter or pricing model. The `measured using` call form retains those
 observations directly, including across imports. `with_spec` attaches an
 independent source specification to the same execution. The existing
