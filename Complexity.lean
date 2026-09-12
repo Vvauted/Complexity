@@ -93,6 +93,8 @@ import Complexity.Computability.Ram.Compiler.Language.ArrayFunction.Input
 import Complexity.Computability.Ram.Compiler.Language.Arena.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Basic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Call
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostTactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Execution
 import Complexity.Computability.Ram.Compiler.Language.Arena.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.Arena.Frame

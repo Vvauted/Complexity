@@ -971,9 +971,13 @@ The same binding interface supports `match` with exactly two List branches
 matching calls the real Uncons operation before matching its returned option;
 the head and tail projections are actual source operations. The branches retain
 their selected heap and return to one common continuation. Both `←` and `:=`
-forms currently require an explicit `List Nat` or `List Bool` result type and
-branch do-blocks ending in `return`. This result-type restriction remains even
-though function parameters and returns already support products/options of lists.
+forms require an explicit supported result type and branch do-blocks ending in
+`return`. Results may be scalars, linked Lists or their recursive products and
+options. The `headOr`, `headOption` and allocating `inspectOrPrepend` consumers
+have checked ordinary equations and generated source correspondence; they do
+not yet have separate end-to-end RAM theorems. Join initialization and copies
+remain real source operations. Bare node and buffer slots are not admitted,
+and preservation is composed only for proved-stable representations.
 
 `NativeViews.replaceHead` uses List matching and a subsequent constructor call.
 Its ordinary equation is `replaceHead replacement values = replacement :: values.tail`,
@@ -991,9 +995,12 @@ call and enclosing initialization/call/return/halt. Existing List and heap
 representation supply read success and payload ranges; the structural arena pass
 propagates the selected Option branch and its returned ranges to the later call.
 Word, code/stack and arena capacity remain explicit, with input loading excluded.
-The connection proof still selects imported callee certificates and writes the
-wrapper's structural budget; eliminating that remaining layout bookkeeping is
-separate work, not a completed automatic complexity interface.
+`ram_source_arena_cost` now infers `replaceHeadCost` from the actual body and
+two supplied callee certificates. Its `StmtArenaCostBound` certificate applies
+directly to the same measured execution; no call-table or field-count formula
+is handwritten in this wrapper. Callee selection, resource witnesses, ranges
+and capacity remain explicit. Other wrapper budgets, dependent bounds and
+allocating loops are not automatically inferred by this uniform fragment.
 
 The compiled `Native.sumFrom` consumer uses those generated declarations and
 the existing call proofs to reach the actual wrapper's halted RAM result.

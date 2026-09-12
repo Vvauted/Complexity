@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.List.Cons
 import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution
+import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionResources
 
 /-!
 # Compiling construction of represented linked lists
@@ -84,6 +85,29 @@ theorem ready_cost (kind : CellTy) (head : CellValue kind)
       ArenaExecutionCost ready (bodySteps kind) := by
   exact body_ready_cost kind ⟨args kind head tail, heap⟩ positive headFits
     (ValueFits.option_node positive tail) capacity
+
+/-- Every actual constructor execution has the same compiler-derived count.
+This is a fact about an existing execution, not a termination or capacity claim. -/
+theorem cost_eq (kind : CellTy) {w heapLimit depth cursor finalCursor steps : Nat}
+    {initial finish : Complexity.Language.State [kind.toTy, .option (.node kind)]}
+    {control : Control (.option (.node kind))}
+    {execution : Complexity.Language.Exec (program kind) (body kind) initial finish control}
+    {ready : ArenaReady execution w heapLimit depth cursor finalCursor}
+    (cost : ArenaExecutionCost ready steps) : steps = bodySteps kind := by
+  cases cost with
+  | consNode next =>
+      cases next with
+      | letPrim returned =>
+          cases returned
+          rfl
+
+/-- A reusable bound for the real allocating function, including its private
+initialization. Argument ranges and capacity belong to readiness, not its price. -/
+theorem arenaCostBound (kind : CellTy) (w heapLimit depth : Nat) :
+    FunctionArenaCostBound (program kind) ((program kind).body (entry kind))
+      id (fun _ _ => True) w heapLimit depth (fun _ => bodySteps kind + 2) := by
+  intro initial heap _ finish value execution cursor finalCursor ready steps cost
+  exact Nat.le_of_eq (congrArg (fun n => n + 2) (cost_eq kind cost))
 
 /-- Add the actual private-flag initialization, outer call and final halt to
 the proved body count. No additional budget is selected by the caller. -/

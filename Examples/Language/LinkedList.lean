@@ -426,6 +426,31 @@ source_program (native) NativeViews importing NativeConstruction where
     let result := NativeConstruction.prepend replacement tail
     return result
 
+  def headOr (fallback : Nat) (values : List Nat) : Nat := do
+    let result : Nat ← match values with
+      | [] => do
+        return fallback
+      | head :: _tail => do
+        return head
+    return result
+
+  def headOption (parts : Option (Nat × List Nat)) : Option Nat := do
+    let result : Option Nat ← match parts with
+      | none => do
+        return (none : Option Nat)
+      | some fields => do
+        return some fields.1
+    return result
+
+  def inspectOrPrepend (flag : Bool) (head : Nat) (values : List Nat) :
+      Option (Nat × List Nat) × List Nat := do
+    let result : Option (Nat × List Nat) × List Nat ← if flag then do
+      let grown := inspectAndPrepend head values
+      return grown
+    else do
+      return ((none : Option (Nat × List Nat)), values)
+    return result
+
 /-- The optional mathematical head and tail describe the actual node read. -/
 theorem nativeUncons_eq (values : List Nat) :
     NativeViews.uncons values = values.head?.map (fun head => (head, values.tail)) := rfl
@@ -452,6 +477,24 @@ theorem replaceHead_eq (replacement : Nat) (values : List Nat) :
     NativeViews.replaceHead replacement values = replacement :: values.tail := by
   cases values <;> rfl
 
+/-- Scalar branch results inherit the ordinary optional-head equation. -/
+theorem headOr_eq (fallback : Nat) (values : List Nat) :
+    NativeViews.headOr fallback values = values.head?.getD fallback := by
+  cases values <;> rfl
+
+/-- Matching a represented pair can return an ordinary optional scalar. -/
+theorem headOption_eq (parts : Option (Nat × List Nat)) :
+    NativeViews.headOption parts = parts.map Prod.fst := by
+  cases parts <;> rfl
+
+/-- A compound conditional result records only the selected allocation and
+retains the corresponding ordinary head/tail observation. -/
+theorem inspectOrPrepend_eq (flag : Bool) (head : Nat) (values : List Nat) :
+    NativeViews.inspectOrPrepend flag head values =
+      if flag then (values.head?.map (fun value => (value, values.tail)), head :: values)
+      else (none, values) := by
+  cases flag <;> rfl
+
 /-- Automatically generated correspondence retains both parts of the compound
 result at the same final heap, including the pre-allocation head/tail view. -/
 theorem inspectAndPrepend_correct :
@@ -470,5 +513,24 @@ theorem replaceHead_correct :
       (fun input result => result = input.1 :: input.2.tail) :=
   NativeViews.replaceHead_refines.of_math
     (fun input _ => replaceHead_eq input.1 input.2)
+
+/-- Scalar List matching has the same source result without a resource premise. -/
+theorem headOr_correct :
+    RepresentedFunction.Total NativeViews.program NativeViews.headOrId
+      NativeViews.headOr_representation (fun _ => True)
+      (fun input result => result = input.2.head?.getD input.1) :=
+  NativeViews.headOr_refines.of_math
+    (fun input _ => headOr_eq input.1 input.2)
+
+/-- A compound branch result combines ordinary mathematics with generated
+heap-indexed correspondence, including the allocating path. -/
+theorem inspectOrPrepend_correct :
+    RepresentedFunction.Total NativeViews.program NativeViews.inspectOrPrependId
+      NativeViews.inspectOrPrepend_representation (fun _ => True)
+      (fun input result => result =
+        if input.1 then (input.2.2.head?.map (fun head => (head, input.2.2.tail)),
+          input.2.1 :: input.2.2) else (none, input.2.2)) :=
+  NativeViews.inspectOrPrepend_refines.of_math
+    (fun input _ => inspectOrPrepend_eq input.1 input.2.1 input.2.2)
 
 end Complexity.Language.Examples.LinkedList

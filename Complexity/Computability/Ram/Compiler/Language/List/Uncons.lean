@@ -8,6 +8,7 @@ import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.CostBound
 import Complexity.Computability.Ram.Compiler.Language.MeasuredNode
 import Complexity.Computability.Ram.Compiler.Language.Arena.ExecutionCost
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
 
 /-!
 # Compiling decomposition of represented linked lists
@@ -94,6 +95,16 @@ theorem program_noHeapWrites (kind : CellTy) :
   refine Fin.cases ?_ (fun index => Fin.elim0 index) fn
   change NoHeapWrites (body kind)
   simp [body, NoHeapWrites]
+
+/-- The existing read-only body bound applies to every actual arena execution.
+The bridge checks that this body and all its callees perform no heap writes. -/
+theorem arenaCostBound (kind : CellTy) (w heapLimit depth : Nat) :
+    FunctionArenaCostBound (program kind) ((program kind).body (entry kind))
+      id (fun _ _ => True) w heapLimit depth (fun _ => (bodyCost kind).val + 2) := by
+  apply FunctionArenaCostBound.of_stmt
+  intro args heap _
+  exact StmtArenaCostBound.of_noHeapWrites ((bodyCost kind).property _)
+    (program_noHeapWrites kind (entry kind)) (program_noHeapWrites kind)
 
 private theorem readable_of_heapRep {kind : CellTy} {w heapLimit : Nat}
     {heap : Heap} {initial : Source.State w} {placement : Nat → Word w}

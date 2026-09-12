@@ -446,8 +446,8 @@ use statically selected pure callbacks or allocating callbacks imported from a
 completed native family, with scalar/product or List accumulators. Native
 callback correspondence uses the existing general fold contract and actual
 final-heap result relation. Native blocks compose immutable lets, registered
-calls, final returns and explicitly typed List conditional bindings. Each branch
-can allocate and return a List to a common later call or fold. The
+calls, final returns and explicitly typed conditional result bindings. Each branch
+can allocate and return a supported represented value to a common continuation. The
 `NativeBranches.choosePrepend` and `chooseSum` consumers have checked ordinary
 equations and generated relational correspondence on 0v0. The compiler reuses
 existing source branches and summarizes their actual result/heap relations before
@@ -456,10 +456,14 @@ checks recursive products/options containing Lists, their projections and
 preservation across actual allocation. Its List matches lower through the
 real Uncons call and existing Option match, with head/tail projection copies;
 Option matches retain the actual stored payload. Both support exactly two
-branches and an explicitly typed List-valued result binding. Ordinary equations
-and generated source correctness are checked, including `replaceHead` followed
-by a constructor call. General result joins, patterns, native recursion and
-escaping callbacks remain separate frontend work. This does not restrict the
+branches and an explicitly typed result binding over supported scalars, Lists,
+and their recursive products/options. Ordinary equations and generated source
+correctness are checked, including `replaceHead` followed by a constructor call.
+The new `headOr`, `headOption` and `inspectOrPrepend` joins have checked source
+correspondence, not separate end-to-end RAM theorems. Initialization and field
+copies remain actual source operations; bare node and buffer result slots are
+not admitted. General patterns, native recursion and escaping callbacks remain
+separate frontend work. This does not restrict the
 more general effectful fold library or change the existing `(pure)` path.
 
 The same frontend also accepts `List.cons`, `head :: tail`, explicitly typed
@@ -552,10 +556,12 @@ the cursor by three words. Its full invocation bound is independent of list
 length and includes node inspection, branch/payload/join copies and outer-call
 overhead. The structural pass propagates actual selected-branch equations and
 callee result ranges; the consumer supplies no manual raw-option cases or
-register proof. Its wrapper budget still names imported calls and compiler
-field counts, and publication still selects callee witnesses. These remaining
-mechanical costs must move to shared inference, not be mistaken for an
-author-facing complexity proof already free of layout details.
+register proof. `replaceHeadCost` now infers a uniform structural budget from
+the actual body and two supplied callee certificates. `StmtArenaCostBound`
+bounds the same actual arena cost, so publication applies that certificate
+without a handwritten call-table or field-count formula. Callee selection,
+resource witnesses, word ranges and capacity remain explicit; other wrappers,
+dependent bounds and allocating loops are not thereby automated.
 
 The [compiled native consumer](../Examples/Language/LinkedListCompiled.lean)
 now reaches the actual `Native.sumFrom` wrapper's halted RAM result, not merely
@@ -1122,12 +1128,13 @@ improvement should make another author reuse these interfaces without learning
 environment encodings or repeating source facts in a second resource proof.
 
 1. Extend the checked allocating-call proof pass from its current ordinary
-   constructor, fold and List-match consumers. Infer wrapper structural budgets
-   from the same arena execution rules and supplied callee bounds, removing
-   `replaceHeadBodyBound`'s explicit call-table/field-count formula and its
-   repeated call-identity normalization. The fixed-heap `StmtCostBound` cannot
-   silently stand in for a bound on allocating execution; reuse the existing
-   arena cost relation and function contracts. The `prependPair` and `reverseAppend`
+   constructor, fold and List-match consumers. The uniform `replaceHead` budget
+   now follows from `StmtArenaCostBound` and supplied callee certificates, without
+   a handwritten call-table/field-count formula. Continue migrating remaining
+   wrapper bookkeeping and composing the pass with dependent and loop budgets;
+   these are not consequences of the current uniform fragment. The fixed-heap
+   `StmtCostBound` cannot silently stand in for a bound on allocating execution;
+   retain the existing arena cost relation and function contracts. The `prependPair` and `reverseAppend`
    migrations include their leaf wrappers: removing argument environments from
    the outer theorem alone is not enough. The allocating fold now reuses its
    ordinary-parameter measured entry without constructing a resource index.
@@ -1147,12 +1154,12 @@ environment encodings or repeating source facts in a second resource proof.
    need less local-tuple projection; extend construct combinations only with
    matching real consumers. Dependent bounds, recursion descent and algorithmic
    potentials remain mathematical obligations, not guessed annotations.
-3. Extend the represented native frontend from its checked List-valued
-   conditionals and List/Option matches. Products/options containing Lists now
-   compose their heap-indexed relations, including across allocation, but branch
-   result slots still require a List type. Generalize typed result joins over
-   the supported representations, with real initialization and copy costs;
-   accepting the type name alone is insufficient. Retain the actual selected
+3. Extend the represented native frontend from its checked scalar, List and
+   recursive product/option result joins. These compose their heap-indexed
+   relations across allocation, with real slot initialization and field copies.
+   The new scalar/compound join consumers establish source correctness; they do
+   not yet have separate end-to-end RAM resource theorems. Reuse the shared cost
+   and execution interfaces when adding those connections. Retain the actual selected
    branch's heap, old shared tails and separate compiler-derived cost; do not
    evaluate or charge both branches. List matching already invokes the actual
    Uncons root/read operation before the existing Option match. Preserve that

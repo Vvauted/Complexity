@@ -132,6 +132,21 @@ private partial def rawTypeTerm : Ty → TermElabM (TSyntax `term)
   | .option value => do `(Option $(← rawTypeTerm value))
   | .buffer _ => throwError "native buffer syntax is not installed in this frontend"
 
+-- These are actual source expressions, not a decoding operation or an erased
+-- initializer. The ordinary typed normalizer hoists nested pair operands into
+-- source primitives; every selected branch then overwrites the complete slot.
+private partial def rawDefaultTerm : Ty → TermElabM (TSyntax `term)
+  | .nat => `(0)
+  | .bool => `(false)
+  | .unit => `(())
+  | .option _ => `(none)
+  | .prod left right => do
+      let left ← rawDefaultTerm left
+      let right ← rawDefaultTerm right
+      `(($left:term, $right:term))
+  | .node _ | .buffer _ =>
+      throwError "a native join cannot initialize an unguarded heap reference"
+
 private def actualTypeTerm (type : Ty) : TermElabM (TSyntax `term) := do
   `(Complexity.Language.Value $(← termOfExpr (coreTypeExpr type)))
 
@@ -608,7 +623,7 @@ private partial def sequence (family : TSyntax `ident)
     if let some (name, annotation, expression) := binding? then
       if let some (matched, first, firstBody, second, secondBody) := matchParts? expression then
         let some annotation := annotation
-          | throwErrorAt name "a native match binding requires an explicit List result type"
+          | throwErrorAt name "a native match binding requires an explicit result type"
         let discriminant ← value scope matched
         if let .list _ := discriminant.type then
           let (nilBody, head, tail, consBody) ←
@@ -648,8 +663,6 @@ private partial def sequence (family : TSyntax `ident)
             pure (secondBody, payload, firstBody)
           else throwErrorAt expression "an Option match needs exactly none and some payload branches"
         let selectedType ← resolveType annotation
-        let .list _ := selectedType
-          | throwErrorAt annotation "native match bindings currently merge List Nat or List Bool results"
         let `(do $noneElements:doSeq) := noneBody
           | throwErrorAt noneBody "a native match branch must be a do block ending in return"
         let `(do $someElements:doSeq) := someBody
@@ -665,6 +678,7 @@ private partial def sequence (family : TSyntax `ident)
         let (someRaw, someNative, someCalls, someResult) ←
           sequence family imports selectedType (payload :: scope) (getDoElems someElements).toList
         let rawType ← rawTypeTerm selectedType.coreTy
+        let initial ← rawDefaultTerm selectedType.coreTy
         let nativeType ← termOfExpr selectedType.nativeType
         let slot := mkIdent (← mkFreshUserName (name.getId.appendAfter "_join"))
         let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
@@ -682,11 +696,12 @@ private partial def sequence (family : TSyntax `ident)
           (fun ($payloadName:ident : $payloadNativeType) => $(someResult.model)))
         let binding : Binding := {
           name, type := selectedType, rawName, relationName,
-          model, rawModel := ⟨rawName.raw⟩, observation := .named relationName.getId }
+          model, rawModel := ⟨rawName.raw⟩,
+          observation := if selectedType.isPure then .refl else .named relationName.getId }
         let (rawRest, nativeRest, later, returned) ←
           sequence family imports resultType (binding :: scope) rest
         let rawPrefix := #[
-          ← `(doElem| let mut $slot:ident : $rawType := none),
+          ← `(doElem| let mut $slot:ident : $rawType := $initial:term),
           ← `(doElem| match $(discriminant.raw):term with
             | none => $noneBlock:doSeq
             | some $payloadName:ident => $someBlock:doSeq),
@@ -697,10 +712,8 @@ private partial def sequence (family : TSyntax `ident)
           returned)
       if let some (test, yes, no) := conditionalParts? expression then
         let some annotation := annotation
-          | throwErrorAt name "a native conditional binding requires an explicit List result type"
+          | throwErrorAt name "a native conditional binding requires an explicit result type"
         let selectedType ← resolveType annotation
-        let .list _ := selectedType
-          | throwErrorAt annotation "native conditional bindings currently return List Nat or List Bool"
         let condition ← value scope test
         expect test (← resolveType (← `(Bool))) condition.type
         let `(do $yesElements:doSeq) := yes
@@ -712,6 +725,7 @@ private partial def sequence (family : TSyntax `ident)
         let (noRaw, noNative, noCalls, noResult) ←
           sequence family imports selectedType scope (getDoElems noElements).toList
         let rawType ← rawTypeTerm selectedType.coreTy
+        let initial ← rawDefaultTerm selectedType.coreTy
         let nativeType ← termOfExpr selectedType.nativeType
         let slot := mkIdent (← mkFreshUserName (name.getId.appendAfter "_join"))
         let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
@@ -727,11 +741,12 @@ private partial def sequence (family : TSyntax `ident)
         let model ← `(if $(condition.model) then $(yesResult.model) else $(noResult.model))
         let binding : Binding := {
           name, type := selectedType, rawName, relationName,
-          model, rawModel := ⟨rawName.raw⟩, observation := .named relationName.getId }
+          model, rawModel := ⟨rawName.raw⟩,
+          observation := if selectedType.isPure then .refl else .named relationName.getId }
         let (rawRest, nativeRest, later, returned) ←
           sequence family imports resultType (binding :: scope) rest
         let rawPrefix := #[
-          ← `(doElem| let mut $slot:ident : $rawType := none),
+          ← `(doElem| let mut $slot:ident : $rawType := $initial:term),
           ← `(doElem| if $(condition.raw) then $yesBlock:doSeq else $noBlock:doSeq),
           ← `(doElem| let $name:ident : $rawType := $slot:ident)]
         let nativeBinding ← `(doElem| let $name:ident : $nativeType := $nativeChoice)
@@ -804,7 +819,7 @@ private partial def sequence (family : TSyntax `ident)
         let result ← value scope expression
         expect element resultType result.type
         return (#[← `(doElem| return $(result.raw))], #[← `(doElem| return $(result.native))], #[], result)
-    | _ => throwError "native source blocks support immutable lets, registered calls, List conditional bindings and return"
+    | _ => throwError "native source blocks support immutable lets, registered calls, typed conditional/match bindings and return"
 
 private def prepareFunction (family : TSyntax `ident)
     (imports : ImportedPrograms) (stx : TSyntax `sourceFunction) : PrepareM Unit := do
@@ -1254,8 +1269,12 @@ private partial def observationProof (observation : Observation) (heap : TSyntax
       if purePair then
         if first then `(congrArg Prod.fst $pair) else `(congrArg Prod.snd $pair)
       else if first then `(And.left $pair) else `(And.right $pair)
-  | .none payload =>
-      `(Complexity.Language.Representation.option_none $(← termOfExpr payload.representation) $heap)
+  | .none payload => do
+      let nativeType ← termOfExpr payload.nativeType
+      let coreType ← termOfExpr (coreTypeExpr payload.coreTy)
+      let representation ← termOfExpr payload.representation
+      `(Complexity.Language.Representation.option_none
+        ($representation : Complexity.Language.Representation $nativeType $coreType) $heap)
   | .some payload => observationProof payload heap relations
   | .binary operation left right =>
       `(congrArg₂ $operation $(← observationProof left heap relations)

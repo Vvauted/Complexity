@@ -367,7 +367,7 @@ The checked consumer proves the ordinary equation
 Generated correspondence follows the actual selected branch's allocation and
 returned root, preserves both old lists, and then composes the fold at that
 branch's final heap. The author needs no intermediate-heap proof. The `:= if`
-form uses the same lowering; this fragment requires an explicit List result type
+form uses the same lowering; this fragment requires an explicit supported result type
 and returning branch blocks. General native patterns and recursion remain
 separate work. The local result slot and its copies are real source operations,
 not uncharged mathematical selection.
@@ -400,9 +400,14 @@ Option matching supports `none` and `some payload` in the same form. Products
 and options may recursively contain lists as parameters and results; their
 projections and heap-indexed observations compose through allocation. The
 existing `inspectAndPrepend` consumer retains the old optional head/tail and
-returns a new list together. Matching still requires exactly two branches,
-returning do-blocks and an explicit `List Nat` or `List Bool` result binding;
-arbitrary result joins and general patterns remain unfinished.
+returns a new list together. Conditional and match result bindings now also
+support scalars and recursive products/options containing Lists. Matching still
+requires exactly two branches, returning do-blocks and an explicit result type.
+The `headOr`, `headOption` and `inspectOrPrepend` consumers have checked source
+correctness and generated correspondence, not separate end-to-end RAM theorems.
+Initialization and payload copies remain real source operations; bare node and
+buffer slots and general patterns remain outside this fragment. Heap preservation
+is composed only from proved-stable representations.
 
 A fold callback can itself construct a list. Declare that native family before
 the family that imports it:
@@ -471,9 +476,13 @@ copies, subsequent constructor and outer invocation. The shared pass handles
 both actual Option paths and inherits payload ranges from the read's readiness
 certificate; no manual raw-option split is needed in the connection proof.
 Input loading is excluded, and finite-word/code/stack/arena conditions remain
-explicit. The resource proof still names callee certificates and the wrapper's
-structural budget; those are remaining inference tasks, unlike the ordinary
-correctness theorem above.
+explicit. The [structural arena cost pass](##Complexity.Computability.Ram.Compiler.Language.Arena.CostTactic)
+now infers `replaceHeadCost` from the actual body and two supplied callee
+certificates. Its [statement bound](##Ram.LanguageCompiler.StmtArenaCostBound)
+applies to the same measured execution, without a handwritten call-table or
+field-count formula. Callee selection, resource witnesses, ranges and capacity
+remain explicit; other wrapper budgets, dependent bounds and allocating loops
+are not automatically inferred by this uniform fragment.
 
 The [allocating-fold consumer](##Examples.Language.LinkedListFoldAllocation)
 proves `reverseAppend_execute` for the actual generated wrapper above, not just
