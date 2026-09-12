@@ -136,9 +136,10 @@ private theorem fold_realizable {w : Nat} (positive : 0 < w) (values : List Nat)
     FunctionRealizable Native.Operations.fold0.program w 1 Native.Operations.fold0.foldId
       (List.Fold.onArgs fun initial root heap =>
         NodeRef.Contents heap root values ∧ initial + values.sum < 2 ^ w) := by
-  refine Ram.LanguageCompiler.List.Fold.Native.realizable (kind := .nat) (accTy := .nat)
+  refine Ram.LanguageCompiler.List.Fold.Native.realizable_of_resources
+    (kind := .nat) (accTy := .nat)
     (step := Nat.add) (add_fold_contract w) (add_fold_resources w 0)
-    (add_fold_costBound w 0) ?_ positive ?_
+    ?_ positive ?_
   · intro fn
     cases Fin.fin_one_eq_zero fn
     trivial

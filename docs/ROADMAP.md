@@ -43,7 +43,7 @@ yet have separate consumer coverage. Dynamic top-tree operations remain open.
 | [Traversal](../Examples/Language/Traversal.lean) | Actual range `for`, native `Array.map` result and outside-buffer frame; independent guard/body contracts feed correctness and resource proofs; uniform budgets are inferred once and a loop-specific tactic normalizes local coordinates | Connection-layer consumers still select generated views and set up resource contracts. Ordinary-parameter resource entry points should remove that remaining transport. |
 | [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts preserve both actual results, including disjoint slices of one object | Routine contents/frame consequences are manually transferred between calls. This is an automation gap, not permission to assume all buffers are independent. |
 | [Structured values](../Examples/Language/OptionalBuffer.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Native products/options across imports and actual RAM returns; initialized allocation, non-escaping reclamation and repeated-workspace bounds | General sums/recursive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
-| [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner; factorial uses the shared typed execution result | Compiler cost names and traversal's loop-view/publication transport still need work. |
+| [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner; both use the shared typed execution result | Compiler cost names and traversal's loop-view/resource-contract setup still need work. |
 | [Imported compiled traversal](../Examples/Language/ImportsTraversalCompiled.lean) | Existing behavior and resource contracts are reused without a new loop proof | Import transport is implemented. Its existence does not finish frame automation, total-function interfaces or data-dependent numerical bounds. |
 | [Splay](../Examples/Language/Splay/Sequence.lean) | One in-place recursive source, a shared mathematical contract and typed RAM results with amortized sequence costs | Mathematical tree descent and potential analysis remain author obligations. Complete container APIs and source-facing peak-space claims remain open. |
 
@@ -429,6 +429,12 @@ range and cost proofs similarly feed the fold through the shared
 [finite-function bridge](../Complexity/Computability/Ram/Compiler/Language/Arena/FunctionResources/Finite.lean).
 The fold itself now exports [callable resource contracts](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Resources.lean),
 so a containing program can reuse its body bound and allocation allowance.
+Its `ready` and `functionResources_of_ready` interfaces need no callback time
+bound. The shared readiness proof lifts the already proved finite source loop;
+it no longer repeats the list induction to assemble a new traversal.
+The native read-only `realizable_of_resources` entry also drops the callback
+cost premise; the existing scalar sum consumer uses it, keeping instruction
+analysis in its separate cost proof.
 These interfaces retain initialization and actual intermediate heaps; a caller
 must still compose its own calls and charge its own complete invocation.
 
@@ -554,9 +560,10 @@ independent source specification to the same execution. The existing
 certificates without unpacking and rebuilding execution/readiness/cost witnesses;
 their final RAM publication uses the same measured proof directly. The old
 ready/cost entry points retain their signatures through a shared extraction rule.
-The shared allocating-loop cost rule below bounds
-actual executions; automatically deriving loop readiness, recursive contracts
-and further operation resource adapters remains follow-up work.
+The shared allocating-loop cost rule below bounds actual executions. The
+corresponding readiness rule now composes supplied guard/body proofs at changing
+cursors. Automatically finding their range/capacity invariants, recursive
+contracts and further operation resource adapters remains follow-up work.
 
 `NativeViews.replaceHead` now joins the same actual Uncons call, optional-payload
 match and allocating constructor. Its checked `replaceHead_execute_le` returns
@@ -591,6 +598,19 @@ mathematical inequality is not inferred by the structural pass. The shared
 uses an author-supplied ghost index, invariant and potential over the actual states.
 It includes false exits and early returns, retaining the actual changing heaps
 and cursor endpoints. It bounds an already given execution, not its termination.
+
+The [indexed readiness rule](../Complexity/Computability/Ram/Compiler/Language/Arena/Loop.lean)
+likewise follows an existing successful finite source loop, but requires no time
+potential. Its invariant carries a mathematical index and the actual arena
+cursor. Actual guard and body endpoints are connected internally; normal rounds
+choose a next index, and early returns retain their own postcondition. It does
+not restrict allocating rounds to a fixed cursor. The
+[fold readiness proof](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Ready.lean)
+uses the existing source `loop_total`, callback resources and accumulated
+reservation to instantiate this rule, retaining ranges and shared-tail
+observations at the actual new heap. No second list/termination induction or
+callback time bound is required. This is a reusable proof rule, not automatic
+invariant discovery or a peak-live-space result.
 
 The [fold cost proof](../Complexity/Computability/Ram/Compiler/Language/List/Fold/CostBound.lean)
 uses this rule and the existing source iteration postcondition. Its
@@ -1208,9 +1228,11 @@ environment encodings or repeating source facts in a second resource proof.
    the allocating `reverseSum` path uses this to traverse its actual new List.
    Direct measured-call composition now removes execution-witness unpacking in
    the reverse/append and allocation-then-traversal resource proofs. Continue
-   removing remaining resource-result bookkeeping and composing supplied
-   loop contracts; arbitrary potentials, budget comparisons and readiness are not
-   thereby inferred. The fixed-heap
+   composing supplied loop contracts: the fold now lifts its existing finite
+   source loop through the shared indexed readiness rule, with time bounds
+   applied separately to that same execution. Remove remaining resource-result
+   bookkeeping without assuming arbitrary potentials, budget comparisons or
+   guard/body admissibility can be inferred. The fixed-heap
    `StmtCostBound` cannot silently stand in for a bound on allocating execution;
    retain the existing arena cost relation and function contracts. The `prependPair`
    and `reverseAppend` migrations include their leaf wrappers: removing argument environments from

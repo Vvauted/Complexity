@@ -542,6 +542,20 @@ ranges or spare capacity. The old callable bound delegates to this proof with it
 stronger precondition. Constructing the actual ready execution still requires the
 original range and capacity proofs; the cost-only rule does not remove them.
 
+Conversely, [fold readiness](##Ram.LanguageCompiler.List.Fold.ready) and its
+[callable resource certificate](##Ram.LanguageCompiler.List.Fold.functionResources_of_ready)
+need no callback time bound. They reuse the independently proved finite source
+loop through [indexed loop lifting](##Ram.LanguageCompiler.ArenaReady.while_of_exec_indexed).
+The invariant tracks the actual cursor and remaining callback reservations;
+real guard/body endpoints and immutable shared-tail observations pass between
+rounds. The fold does not repeat its list or termination induction in the
+resource proof. Its existing measured interface then applies the independent
+cost certificate to that same ready execution. The native read-only
+[realization entry](##Ram.LanguageCompiler.List.Fold.Native.realizable_of_resources)
+also needs no time bound; the existing scalar sum consumer uses it, while its
+separate cost proof still supplies the callback's instruction bound. Range and capacity arguments
+remain necessary, and the reservation is not an exact peak-live-space bound.
+
 The [allocation-then-traversal consumer](##Examples.Language.LinkedListComposition)
 connects the existing `NativeLists.reverseSum` to RAM. It allocates the actual
 reversed List, then traverses that returned root with the original addition
