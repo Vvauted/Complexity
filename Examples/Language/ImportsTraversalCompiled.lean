@@ -80,17 +80,10 @@ theorem boundedMapPair_realizable {w : Nat} (hw : 0 < w)
       | exact ⟨leftLengthFits, limitFits⟩
       | exact ⟨observedLeft, leftLengthFits, limitFits⟩
       | omega
-  obtain ⟨_, frameLeft⟩ := ‹xs.Contents _ _ ∧ xs.PreservesOutside heap _›
-  have rightAfter := frameLeft ys rightContents separated observedRight
   ram_source_call using (Traversal.boundedMap_realizable hw rightContents rightIncrementsFit),
     (Traversal.boundedMap_total_frame rightContents)
     via Implementation.imports.Traversal.Implementation.embedding
-  all_goals
-    first
-    | assumption
-    | exact ⟨rightLengthFits, limitFits⟩
-    | exact ⟨rightAfter, rightLengthFits, limitFits⟩
-    | trivial
+  all_goals buffer_frame
 
 /-- The imported callees retain their actual instruction bounds and frame
 overhead. The client's unchanged call structure therefore admits the original
@@ -106,11 +99,10 @@ theorem boundedMapPair_costBound (leftContents rightContents : Array Nat) :
     ram_source_call using (Traversal.boundedMap_costBound leftContents),
       (Traversal.boundedMap_total_frame leftContents)
       via Implementation.imports.Traversal.Implementation.embedding
-    obtain ⟨_, frameLeft⟩ := ‹xs.Contents _ _ ∧ xs.PreservesOutside heap _›
-    have rightAfter := frameLeft ys rightContents separated observedRight
     ram_source_call using (Traversal.boundedMap_costBound rightContents),
       (Traversal.boundedMap_total_frame rightContents)
       via Implementation.imports.Traversal.Implementation.embedding
+    all_goals buffer_frame
   · ram_source_cost_step
     simp only [Traversal.boundedMapPairBodyBound,
       callCost_embeds Implementation.imports.Traversal.Implementation.embedding]

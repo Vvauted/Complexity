@@ -50,16 +50,9 @@ theorem boundedMapPair_realizable {w : Nat} (hw : 0 < w)
       | exact ⟨leftLengthFits, limitFits⟩
       | exact ⟨observedLeft, leftLengthFits, limitFits⟩
       | omega
-  obtain ⟨_, frameLeft⟩ := ‹xs.Contents _ _ ∧ xs.PreservesOutside heap _›
-  have rightAfter := frameLeft ys rightContents separated observedRight
   ram_source_call using (boundedMap_realizable hw rightContents rightIncrementsFit),
     (boundedMap_total_frame rightContents)
-  all_goals
-    first
-    | assumption
-    | exact ⟨rightLengthFits, limitFits⟩
-    | exact ⟨rightAfter, rightLengthFits, limitFits⟩
-    | trivial
+  all_goals buffer_frame
 
 /-- Infer both calls and the complete function wrapper from their actual
 contracts. Its numeric witness depends only on the two input sizes; the first
@@ -81,9 +74,8 @@ private abbrev boundedMapPairCost (leftSize rightSize : Nat) : { bound : Nat //
   rcases input with ⟨observedLeft, observedRight, separated⟩
   ram_source_cost_step
   ram_source_call using leftCost, (boundedMap_total_frame leftContents)
-  obtain ⟨_, frameLeft⟩ := ‹xs.Contents _ _ ∧ xs.PreservesOutside heap _›
-  have rightAfter := frameLeft ys rightContents separated observedRight
-  ram_source_call using rightCost, (boundedMap_total_frame rightContents)⟩
+  ram_source_call using rightCost, (boundedMap_total_frame rightContents)
+  all_goals buffer_frame⟩
 
 /-- The inferred complete pair budget is shared by direct and imported callers,
 without reproducing either callee's body or manually adding call overhead. -/

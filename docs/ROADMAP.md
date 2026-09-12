@@ -41,7 +41,7 @@ yet have separate consumer coverage. Dynamic top-tree operations remain open.
 | --- | --- | --- |
 | [Factorial](../Examples/Language/Factorial.lean), [Scalar](../Examples/Language/Scalar.lean) and [Remainder](../Examples/Language/Remainder.lean) | Generated native functions, including finite-range iteration; ordinary equality proofs, one native termination argument for self-recursion, automatic source correspondence and total-contract conversion | Pure general `while`, mutually recursive families and buffers remain unsupported; this is not a restriction on the effectful function table. Mathematical proofs and separate resource arguments remain author work. |
 | [Traversal](../Examples/Language/Traversal.lean) | Actual range `for`, native `Array.map` result and outside-buffer frame; independent guard/body contracts feed correctness and resource proofs; named-loop tactics select capture views, lexical frames and totality conversion, alongside inferred uniform budgets | Mathematical mutable-coordinate patterns remain in loop proof leaves. General potential and allocation-aware loop setup still use their public rules. |
-| [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts preserve both actual results, including disjoint slices of one object | Routine contents/frame consequences are manually transferred between calls. This is an automation gap, not permission to assume all buffers are independent. |
+| [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts and shared frame automation preserve both actual results, including disjoint slices of one object | The author still supplies the contracts and real separation facts. Arbitrary overlap, footprint inclusion and array identities are not inferred. |
 | [Structured values](../Examples/Language/OptionalBuffer.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Native products/options across imports and actual RAM returns; initialized allocation, non-escaping reclamation and repeated-workspace bounds | General sums/recursive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
 | [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner; both use the shared typed execution result, and traversal reuses its source loop contracts without manual capture/totality setup | Further operation resource interfaces and source-facing numerical bounds remain open; named-loop automation does not infer mathematical invariants or ranges. |
 | [Imported compiled traversal](../Examples/Language/ImportsTraversalCompiled.lean) | Existing behavior and resource contracts are reused without a new loop proof | Import transport is implemented. Its existence does not finish frame automation, total-function interfaces or data-dependent numerical bounds. |
@@ -200,6 +200,22 @@ contents through actual execution, including faults. It permits allocation
 initialization but conservatively rejects explicit cell writes; the allocation
 consumer's `retained_frame` now uses this rule.
 
+The shared [`buffer_frame`](../Complexity/Language/Heap/Tactic.lean) finishing
+tactic composes already supplied `Buffer.PreservesOutside` and `Contents`
+observations through their actual endpoint heaps. It reuses Aesop's logical
+rules and the symmetry of known `Buffer.Disjoint` facts, without global Aesop
+rule registration, array simplification or new alias assumptions. The two-call
+correctness proof uses both supplied callee contracts through
+[`source_vc`](../Complexity/Language/Verification/Tactic.lean): standard `mspec`
+steps continue their actual WP. Beyond standard logical conversions, only
+generated argument projections are simplified before the shared frame finish.
+The allocating `Buffer.Copy.append` proof also reuses it for the second input
+and final frame. Its fresh allocation, copied-array
+identity and capacity inequalities remain explicit mathematical work.
+Direct and imported traversal resource proofs reuse the same frame finish for
+their second call, without unpacking the first callee's postcondition by hand.
+Their actual launch conditions and independent instruction bounds are unchanged.
+
 Borrowed-buffer APIs remain useful for explicitly in-place algorithms. Their
 specifications should expose ordinary contents, lengths, results and permitted
 updates. Library rules retain the actual heap internally; clients must not
@@ -212,10 +228,11 @@ confuse an old contents observation with the state after a mutating call.
    guard/body sequencing and impossible control exits belong in shared rules,
    not repeated algorithm proofs. Keep general effectful guards and genuine
    early-return behavior intact.
-2. Compose supplied callee contracts and transport their proven frame
-   consequences. Reuse `Buffer.Contents`, `Disjoint`, `PreservesOutside` and
-   native `Std.Do` rules before adding new proof machinery. Contract content,
-   real overlap conditions and algorithmic invariants remain author choices.
+2. Retain the checked composition of supplied callee frames with `buffer_frame`.
+   Extend it only where real consumers need further consequences of
+   `Buffer.Contents`, `Disjoint`, `PreservesOutside` and native `Std.Do` rules.
+   Contract content, footprint inclusion, real overlap conditions and
+   algorithmic invariants remain author choices.
 3. Share invariant and shape consequences with realizability and cost proofs.
    A different resource proof should not repeat the array-correctness argument
    merely to recover a length or unchanged region.

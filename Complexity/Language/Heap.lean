@@ -608,6 +608,15 @@ def PreservesOutside {τ : CellTy} (buffer : Buffer τ) (initial finish : Heap) 
   ∀ {σ : CellTy} (other : Buffer σ) (contents : Array (CellValue σ)),
     buffer.Disjoint other → other.Contents initial contents → other.Contents finish contents
 
+/-- Transport an observed array through a frame for a disjoint borrowed view.
+Both heaps are the actual endpoints of the supplied frame. -/
+theorem PreservesOutside.contents {τ σ : CellTy} {buffer : Buffer τ} {other : Buffer σ}
+    {initial finish : Heap} {values : Array (CellValue σ)}
+    (preserved : buffer.PreservesOutside initial finish)
+    (separated : buffer.Disjoint other) (observed : other.Contents initial values) :
+    other.Contents finish values :=
+  preserved other values separated observed
+
 /-- An unchanged heap preserves every outside observation. -/
 theorem PreservesOutside.refl {τ : CellTy} (buffer : Buffer τ) (heap : Heap) :
     buffer.PreservesOutside heap heap := by

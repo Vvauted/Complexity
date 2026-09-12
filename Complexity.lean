@@ -415,6 +415,7 @@ import Complexity.Language.Heap.Restriction
 import Complexity.Language.Heap.Backward
 import Complexity.Language.Heap.Node
 import Complexity.Language.Heap.Shape
+import Complexity.Language.Heap.Tactic
 import Complexity.Language.Heap.Tree
 import Complexity.Language.Heap.Tree.Update
 import Complexity.Language.Linking.Basic
@@ -450,6 +451,7 @@ import Complexity.Language.Syntax.Types
 import Complexity.Language.Verification
 import Complexity.Language.Verification.Heap
 import Complexity.Language.Verification.Recursion
+import Complexity.Language.Verification.Tactic
 import Complexity.LinearAlgebra.Matrix.Update
 import Complexity.Tactic.Ram.Array
 import Complexity.Tactic.Ram.Basic

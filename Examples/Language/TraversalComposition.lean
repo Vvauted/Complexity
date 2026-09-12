@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Examples.Language.Traversal
+import Complexity.Language.Verification.Tactic
 
 /-!
 # Sequential calls on disjoint borrowed buffers
@@ -35,19 +36,7 @@ theorem boundedMapPair_spec (xs ys : Buffer .nat) (limit : Nat)
   have leftSpec := Implementation.boundedMap_spec (boundedMap_total_frame leftContents) xs limit
   have rightSpec := Implementation.boundedMap_spec (boundedMap_total_frame rightContents) ys limit
   rw [Implementation.boundedMapPair_eq]
-  mvcgen [leftSpec]
-  rename_i heap input
-  rcases input with ⟨same, observedLeft, observedRight⟩
-  subst heap
-  refine ⟨observedLeft, ?_⟩
-  intro value middle mappedLeft frameLeft
-  mvcgen [rightSpec]
-  refine ⟨frameLeft ys rightContents separated observedRight, ?_⟩
-  intro value finish mappedRight frameRight
-  mvcgen
-  refine ⟨frameRight xs _ separated.symm mappedLeft, mappedRight, ?_⟩
-  intro kind other contents outsideLeft outsideRight observed
-  exact frameRight other contents outsideRight (frameLeft other contents outsideLeft observed)
+  source_vc [leftSpec, rightSpec]
 
 /-- The same two calls terminate with both mapped arrays in their actual final
 heap, preserving every initial observation outside both borrowed views. -/

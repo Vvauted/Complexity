@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Language.Syntax
 import Complexity.Language.Eval.Locals.Verification
 import Complexity.Language.Heap.Prefix
+import Complexity.Language.Heap.Tactic
 import Complexity.Control.Triple
 import Init.Data.Array.MapIdx
 import Std.Tactic.Do
@@ -341,16 +342,16 @@ theorem append_spec (left right : Buffer .nat) (leftValues rightValues : Array N
       right target left.length
     mvcgen [rightSpec]
     simp only [Copy.copyInto_onArgs, Env.head_cons, Env.tail_cons]
-    refine ⟨⟨frameLeft right rightValues separatedRight rightNow, copiedLeft,
-      separatedRight, ?_⟩, ?_⟩
+    refine ⟨⟨?_, copiedLeft, separatedRight, ?_⟩, ?_⟩
+    · buffer_frame
     · simp only [copied_size, initialValues, Array.size_replicate, observedRight.size_eq]
       exact Nat.le_refl _
     · intro value finish rightKept appended frameRight
       mvcgen
-      refine ⟨?_, fresh, Buffer.PreservesOutside.trans initialFrame
-        (Buffer.PreservesOutside.trans frameLeft frameRight)⟩
-      simpa only [initialValues, ← observedLeft.size_eq, ← observedRight.size_eq,
-        copied_append] using appended
+      refine ⟨?_, fresh, ?_⟩
+      · simpa only [initialValues, ← observedLeft.size_eq, ← observedRight.size_eq,
+          copied_append] using appended
+      · buffer_frame
 
 /-- Public append uses ordinary `Array.append`, fresh output storage, and an
 arbitrary-old-heap frame. No separation assumption is imposed between inputs. -/

@@ -796,6 +796,34 @@ call's current input; the second preserves the first result. The resulting
 contract retains both `Array.map` results and all initially valid views disjoint
 from both buffers. Disjoint slices of the same object are allowed. Neither
 callee body nor its array invariant is unfolded in the caller proof.
+The shared [contract-composition tactic](##Complexity.Language.Verification.Tactic)
+continues the two explicit specifications with standard `mspec` rules, and its
+[frame finish](##Complexity.Language.Heap.Tactic) supplies their routine logical
+consequences:
+
+```lean
+have leftSpec := Implementation.boundedMap_spec (boundedMap_total_frame leftContents) xs limit
+have rightSpec := Implementation.boundedMap_spec (boundedMap_total_frame rightContents) ys limit
+rw [Implementation.boundedMapPair_eq]
+source_vc [leftSpec, rightSpec]
+```
+
+Beyond the standard `Triple`/WP logical conversions, `source_vc` only simplifies
+the generated `Env.head_cons`/`tail_cons` projections. Each supplied callee
+specification is a separate local Aesop rule. In this example it continues the WP
+inside the contracts' ordinary logical preconditions, where one `mvcgen` pass
+stops. It does not infer a callee contract or loop invariant.
+`buffer_frame` forwards known `Buffer.Contents` observations along supplied
+`Buffer.PreservesOutside` relations, using existing `Buffer.Disjoint` facts in
+either orientation. It reuses Aesop locally; it does not unfold array mathematics
+or callee bodies, invent separation facts, or alter other `aesop` invocations.
+Mathematical facts must be supplied separately; missing facts cause the tactic
+to fail. The allocating
+`Buffer.Copy.append` proof also uses it to retain the second input and compose
+the final frame; fresh allocation and the `Array.append` identity are still proved
+separately. Direct and imported traversal resource proofs use the same finish to
+establish their second call's current input, keeping their original RAM bounds.
+
 Calls can name local functions or functions from explicitly imported source programs:
 
 ```lean

@@ -386,8 +386,9 @@ uses distinct contents contracts for two calls to the same traversal. The first
 call's actual frame supplies the second input; the final runner retains both
 mapped arrays and the outside-both frame in one represented heap. Its bound
 reuses the original two-call bound via the proved equality of call overhead.
-This is not automatic discovery of contracts or frame consequences: the author
-still selects the contents and supplies the mathematical separation argument.
+Routine consequences of supplied frames are automated; contracts and separation
+facts are not discovered. The author still selects the contents and supplies the
+mathematical separation argument.
 
 ### Current surface and intended traversal extension
 
@@ -788,7 +789,11 @@ condition is imposed by the rule. The
 [two-buffer composition](../Examples/Language/TraversalComposition.lean) applies
 the existing mutating traversal twice using these named contracts. The first
 callee's frame preserves the second input, and the second frame preserves the
-first result; neither traversal body is unfolded. The rule does not guess
+first result. Its proof uses `source_vc [leftSpec, rightSpec]`: standard `mspec`
+steps continue the explicitly supplied contracts inside ordinary logical
+obligations, and `buffer_frame` transports the supplied contents and frames
+through actual intermediate heaps, including the outside-both conclusion. Neither
+traversal body is unfolded. The rule does not guess
 the callee's mathematical contract or register it globally. The scalar consumer proves
 ordinary function equations by rewriting and Nat reasoning, and generated
 contract conversion hides the typed argument packing. General mutable helper/loop
@@ -1167,8 +1172,15 @@ contents of initially valid disjoint views; successful writes establish it, and
 it composes through intermediate heaps and permits interval enlargement. This
 is not ownership of handles, whole-heap equality or a ban on overlapping aliases.
 The named traversal exports this relation with its array result through the
-source function contract and the same actual compiled invocation. General
-indexed-traversal and effectful-call frame automation remain unfinished.
+source function contract and the same actual compiled invocation.
+[`buffer_frame`](../Complexity/Language/Heap/Tactic.lean) now closes routine
+logical consequences of these supplied observations with local Aesop rules.
+It uses existing separation facts in either orientation, not object inequality
+or a global no-aliasing assumption. Both the two-buffer caller and allocating
+append reuse it; array identities, footprint inclusion and new separation
+proofs remain explicit. Direct and imported resource proofs use the same frame
+finish for their second call, retaining the original ranges, launch conditions
+and instruction bounds. General indexed-traversal frame inference is unfinished.
 
 A checked [source-frame rule](../Complexity/Language/Effects/Heap.lean) uses `Stmt.NoCellWrites`
 for the statement and all callees yields `Exec.heap_prefix` and
