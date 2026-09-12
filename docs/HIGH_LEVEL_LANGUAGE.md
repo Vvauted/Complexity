@@ -973,9 +973,9 @@ the head and tail projections are actual source operations. The branches retain
 their selected heap and return to one common continuation. Both `←` and `:=`
 forms require an explicit supported result type and branch do-blocks ending in
 `return`. Results may be scalars, linked Lists or their recursive products and
-options. The `headOr`, `headOption` and allocating `inspectOrPrepend` consumers
-have checked ordinary equations and generated source correspondence; they do
-not yet have separate end-to-end RAM theorems. Join initialization and copies
+options. `headOr` and allocating `inspectOrPrepend` have checked ordinary equations,
+generated source correspondence and end-to-end RAM theorems; `headOption` still
+has only source correctness and correspondence. Join initialization and copies
 remain real source operations. Bare node and buffer slots are not admitted,
 and preservation is composed only for proved-stable representations.
 
@@ -998,9 +998,23 @@ Word, code/stack and arena capacity remain explicit, with input loading excluded
 `ram_source_arena_cost` now infers `replaceHeadCost` from the actual body and
 two supplied callee certificates. Its `StmtArenaCostBound` certificate applies
 directly to the same measured execution; no call-table or field-count formula
-is handwritten in this wrapper. Callee selection, resource witnesses, ranges
-and capacity remain explicit. Other wrapper budgets, dependent bounds and
-allocating loops are not automatically inferred by this uniform fragment.
+is handwritten in this wrapper. The inferred `prependCost` and `prependPairCost`
+also replace the two straight-line wrappers' formulas while preserving their
+separately proved exact execution counts. The shared `ArenaMeasured.execute_le`
+combines a measured body, its structural bound and an independent `FunctionTotal`
+specification, retaining one actual outcome and adding invocation overhead once.
+The mathematical specification needs no cost premise. Actual callee readiness,
+certificate selection, ranges and capacity remain explicit. Other wrapper budgets,
+dependent bounds and allocating loops are not automatically inferred by this fragment.
+
+The typed-join RAM consumer uses these same interfaces. `headOr_execute_le`
+returns `values.head?.getD fallback` with unchanged heap and cursor.
+`inspectOrPrepend_execute_le` returns the represented optional head/tail together
+with a List, retaining the original List observation and allocating three words
+only on its true path. The false path has no cursor growth. Their uniform full
+invocation bounds include actual join initialization and field copies; they are
+not exact branch-dependent instruction counts. Input loading stays outside the
+boundary, and real launch and selected-path capacity conditions remain required.
 
 The compiled `Native.sumFrom` consumer uses those generated declarations and
 the existing call proofs to reach the actual wrapper's halted RAM result.

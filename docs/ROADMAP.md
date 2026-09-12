@@ -459,9 +459,10 @@ Option matches retain the actual stored payload. Both support exactly two
 branches and an explicitly typed result binding over supported scalars, Lists,
 and their recursive products/options. Ordinary equations and generated source
 correctness are checked, including `replaceHead` followed by a constructor call.
-The new `headOr`, `headOption` and `inspectOrPrepend` joins have checked source
-correspondence, not separate end-to-end RAM theorems. Initialization and field
-copies remain actual source operations; bare node and buffer result slots are
+`headOr` and `inspectOrPrepend` also have end-to-end RAM theorems for their scalar
+and compound results; `headOption` remains at source correctness and generated
+correspondence. Initialization and field copies remain actual source operations;
+bare node and buffer result slots are
 not admitted. General patterns, native recursion and escaping callbacks remain
 separate frontend work. This does not restrict the
 more general effectful fold library or change the existing `(pure)` path.
@@ -559,9 +560,25 @@ callee result ranges; the consumer supplies no manual raw-option cases or
 register proof. `replaceHeadCost` now infers a uniform structural budget from
 the actual body and two supplied callee certificates. `StmtArenaCostBound`
 bounds the same actual arena cost, so publication applies that certificate
-without a handwritten call-table or field-count formula. Callee selection,
-resource witnesses, word ranges and capacity remain explicit; other wrappers,
+without a handwritten call-table or field-count formula. `prependCost` and
+`prependPairCost` similarly infer the two straight-line constructor wrappers'
+budgets while retaining their separately proved exact execution counts.
+The shared `ArenaMeasured.execute_le` combines a measured body, its structural
+bound and an independent `FunctionTotal` specification in one halted outcome,
+transporting heap/value/cursor observations and adding invocation overhead once.
+Mathematical correctness does not acquire a cost premise. Actual callee readiness,
+word ranges, capacity and certificate selection remain supplied; other wrappers,
 dependent bounds and allocating loops are not thereby automated.
+
+The [typed-join RAM consumer](../Examples/Language/LinkedListViewsCompiled.lean)
+uses the same inferred bounds and publication rule. `headOr_execute_le` returns
+`values.head?.getD fallback` and preserves the entire heap and cursor.
+`inspectOrPrepend_execute_le` returns its represented optional head/tail and List
+together, retains the original List, and advances the cursor by three words only
+on the true branch, with no growth on the false branch. Both bound the complete
+preloaded invocation, including actual result-slot initialization and field copies.
+Their uniform instruction bounds do not assert an exact branch-dependent count
+or remove the real launch and selected-path capacity conditions.
 
 The [compiled native consumer](../Examples/Language/LinkedListCompiled.lean)
 now reaches the actual `Native.sumFrom` wrapper's halted RAM result, not merely
@@ -1128,14 +1145,15 @@ improvement should make another author reuse these interfaces without learning
 environment encodings or repeating source facts in a second resource proof.
 
 1. Extend the checked allocating-call proof pass from its current ordinary
-   constructor, fold and List-match consumers. The uniform `replaceHead` budget
-   now follows from `StmtArenaCostBound` and supplied callee certificates, without
-   a handwritten call-table/field-count formula. Continue migrating remaining
-   wrapper bookkeeping and composing the pass with dependent and loop budgets;
+   constructor, fold and typed-join consumers. Uniform wrapper budgets follow
+   from `StmtArenaCostBound` and supplied callee certificates; the two straight-line
+   constructor wrappers retain their exact counts. `ArenaMeasured.execute_le`
+   shares publication with independent mathematical specifications. Continue
+   migrating remaining wrapper bookkeeping and composing the pass with dependent and loop budgets;
    these are not consequences of the current uniform fragment. The fixed-heap
    `StmtCostBound` cannot silently stand in for a bound on allocating execution;
-   retain the existing arena cost relation and function contracts. The `prependPair` and `reverseAppend`
-   migrations include their leaf wrappers: removing argument environments from
+   retain the existing arena cost relation and function contracts. The `prependPair`
+   and `reverseAppend` migrations include their leaf wrappers: removing argument environments from
    the outer theorem alone is not enough. The allocating fold now reuses its
    ordinary-parameter measured entry without constructing a resource index.
    Extend that operation interface where actual consumers still assemble one,
@@ -1157,10 +1175,11 @@ environment encodings or repeating source facts in a second resource proof.
 3. Extend the represented native frontend from its checked scalar, List and
    recursive product/option result joins. These compose their heap-indexed
    relations across allocation, with real slot initialization and field copies.
-   The new scalar/compound join consumers establish source correctness; they do
-   not yet have separate end-to-end RAM resource theorems. Reuse the shared cost
-   and execution interfaces when adding those connections. Retain the actual selected
-   branch's heap, old shared tails and separate compiler-derived cost; do not
+   Scalar `headOr` and compound `inspectOrPrepend` have same-invocation RAM
+   resource theorems; `headOption` still has only source correctness. Extend
+   remaining operation and pattern interfaces through these shared cost and
+   publication rules, retaining actual callee readiness and capacity. Preserve the
+   selected branch's heap, old shared tails and separate compiler-derived cost; do not
    evaluate or charge both branches. List matching already invokes the actual
    Uncons root/read operation before the existing Option match. Preserve that
    path, not a heap-independent inverse or free mathematical decomposition.

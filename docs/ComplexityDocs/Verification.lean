@@ -403,8 +403,9 @@ existing `inspectAndPrepend` consumer retains the old optional head/tail and
 returns a new list together. Conditional and match result bindings now also
 support scalars and recursive products/options containing Lists. Matching still
 requires exactly two branches, returning do-blocks and an explicit result type.
-The `headOr`, `headOption` and `inspectOrPrepend` consumers have checked source
-correctness and generated correspondence, not separate end-to-end RAM theorems.
+`headOr` and `inspectOrPrepend` have checked source correctness, generated
+correspondence and the end-to-end RAM theorems described below. `headOption`
+still has only source correctness and generated correspondence.
 Initialization and payload copies remain real source operations; bare node and
 buffer slots and general patterns remain outside this fragment. Heap preservation
 is composed only from proved-stable representations.
@@ -480,9 +481,28 @@ explicit. The [structural arena cost pass](##Complexity.Computability.Ram.Compil
 now infers `replaceHeadCost` from the actual body and two supplied callee
 certificates. Its [statement bound](##Ram.LanguageCompiler.StmtArenaCostBound)
 applies to the same measured execution, without a handwritten call-table or
-field-count formula. Callee selection, resource witnesses, ranges and capacity
-remain explicit; other wrapper budgets, dependent bounds and allocating loops
-are not automatically inferred by this uniform fragment.
+field-count formula. The inferred `prependCost` and `prependPairCost` likewise
+replace the two straight-line wrappers' formulas; their exact ready/execution
+equalities remain proved, not inferred from an upper-bound certificate alone.
+Actual callee readiness, certificate selection, ranges and capacity remain
+explicit; other wrapper budgets, dependent bounds and allocating loops are not
+automatically inferred by this uniform fragment.
+
+The [shared publication rule](##Ram.LanguageCompiler.ArenaMeasured.execute_le)
+combines a measured body and its structural bound with an independent
+`FunctionTotal` specification. It retains the same actual result, heap and cursor
+and adds initialization, outer call and halt once. The mathematical specification
+does not acquire a time-budget premise or select a different execution.
+
+The [typed-join RAM consumer](##Examples.Language.LinkedListViewsCompiled) uses
+this rule for both scalar and compound results. `headOr_execute_le` returns
+`values.head?.getD fallback` and leaves the heap and cursor unchanged.
+`inspectOrPrepend_execute_le` returns its represented optional head/tail and List
+together, retains the original List, and advances the cursor by three words only
+on the true path. The false path has no cursor growth. Both have uniform full
+invocation bounds including actual join initialization and field copies, not
+exact branch-dependent instruction counts. Real launch and selected-path capacity
+conditions remain explicit; input loading is outside this boundary.
 
 The [allocating-fold consumer](##Examples.Language.LinkedListFoldAllocation)
 proves `reverseAppend_execute` for the actual generated wrapper above, not just

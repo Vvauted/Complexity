@@ -8,6 +8,7 @@ import Complexity.Computability.Ram.Compiler.Language.List.Cons
 import Complexity.Computability.Ram.Compiler.Language.List.Uncons
 import Complexity.Computability.Ram.Compiler.Language.Arena.Tactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostTactic
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.FunctionExecution
 
 /-!
 # Executing a native linked-list constructor on RAM
@@ -27,13 +28,16 @@ namespace Complexity.Language.Examples.LinkedList
 
 open Ram.LanguageCompiler
 
+/-- Infer the straight-line wrapper's bound from its actual body and the
+constructor certificate. The measured theorem below establishes the exact count. -/
+def prependCost : { bound : Nat // ∀ w heapLimit initial,
+    StmtArenaCostBound NativeConstruction.Source.program w heapLimit 1
+      (NativeConstruction.Source.program.body NativeConstruction.Source.prependId) initial bound } := by
+  ram_source_arena_cost [(Ram.LanguageCompiler.List.Cons.arenaCostBound .nat _ _ 0)
+    via NativeConstruction.Source.imports.NativeConstruction.Operations.consNat.embedding]
+
 /-- The actual imported constructor call and the wrapper's own return. -/
-def prependBodySteps : Nat :=
-  callCost NativeConstruction.Source.program
-    (NativeConstruction.Source.imports.NativeConstruction.Operations.consNat.map.toFun
-      NativeConstruction.Operations.consNat.consId)
-    (Ram.LanguageCompiler.List.Cons.bodySteps .nat + 2) +
-      (2 * fieldCount (.option (.node .nat)) + 2)
+def prependBodySteps : Nat := prependCost.val
 
 /-- Full instruction count for the generated wrapper, including its outer
 invocation, private-flag initialization and final halt exactly once. -/
@@ -50,9 +54,7 @@ theorem prepend_arenaCostBound (w heapLimit : Nat) :
       id (fun _ _ => True) w heapLimit 1 (fun _ => prependBodySteps + 2) := by
   apply FunctionArenaCostBound.of_stmt
   intro args heap _
-  unfold prependBodySteps
-  ram_source_arena_cost [(Ram.LanguageCompiler.List.Cons.arenaCostBound .nat w heapLimit 0)
-    via NativeConstruction.Source.imports.NativeConstruction.Operations.consNat.embedding]
+  exact prependCost.property w heapLimit ⟨args, heap⟩
 
 /-- The generated constructor body exposes its exact allocation and instruction
 count in ordinary arguments, so later callers reuse it at their current heap
@@ -130,13 +132,17 @@ theorem prepend_execute {w heapLimit cursor : Nat} {placement : Nat → Ram.Word
   rw [outcome.steps_eq, bodyEq]
   rfl
 
+/-- Infer both actual wrapper calls and the final return from the generated body.
+The exact execution theorem below retains both calls at the same nesting depth. -/
+def prependPairCost : { bound : Nat // ∀ w heapLimit initial,
+    StmtArenaCostBound NativeConstruction.Source.program w heapLimit 2
+      (NativeConstruction.Source.program.body NativeConstruction.Source.prependPairId)
+      initial bound } := by
+  ram_source_arena_cost [(prepend_arenaCostBound _ _)]
+
 /-- Two sequential calls to the same generated constructor reuse its exact body
 count. Each call pays its own frame work; the final return belongs to the caller. -/
-def prependPairBodySteps : Nat :=
-  callCost NativeConstruction.Source.program NativeConstruction.Source.prependId
-      (prependBodySteps + 2) +
-    (callCost NativeConstruction.Source.program NativeConstruction.Source.prependId
-      (prependBodySteps + 2) + (2 * fieldCount (.option (.node .nat)) + 2))
+def prependPairBodySteps : Nat := prependPairCost.val
 
 /-- The actual two-constructor wrapper's complete invocation count, including
 its own initialization, outer call and final halt. -/
@@ -388,23 +394,11 @@ theorem replaceHead_execute_le {w heapLimit cursor : Nat} {placement : Nat → R
         NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
     all_goals
       exact ⟨_, rfl⟩
-  obtain ⟨finish, value, _, _, execution, ready, cost, rfl⟩ :=
-    ArenaMeasured.exists_returned_iff.mp measured
-  have bounded := replaceHeadCost.property w heapLimit _ execution ready cost
-  obtain ⟨outcome, _, heapEq, cursorEq, bodyEq⟩ :=
-    cost.execute (fn := NativeViews.Source.replaceHeadId) launch
-  obtain ⟨_, result, rfl⟩ :=
-    outcome.post (replaceHead_correct (replacement, values) trivial) ⟨rfl, observed⟩
-  have shape : heap.ShapeExtends outcome.heap := by
-    rw [heapEq]
-    exact execution.heap_shapeExtends
-  have bodyBound : outcome.bodySteps ≤ replaceHeadBodyBound + 2 := by
-    rw [bodyEq]
-    exact Nat.add_le_add_right bounded 2
-  refine ⟨outcome, result, Representation.list_mono observed shape, shape,
-    cursorEq, bodyBound, ?_⟩
-  rw [outcome.steps_eq]
-  exact Nat.add_le_add_right
-    (Ram.LocalCompiler.Function.callSteps_mono _ _ bodyBound) 1
+  obtain ⟨outcome, cursorEq, ⟨_, result, rfl⟩, shape, bodyBound, stepsBound⟩ :=
+    measured.execute_le (P := fun _ _ finalCursor => finalCursor = cursor + 3)
+      (replaceHeadCost.property w heapLimit _)
+      (replaceHead_correct (replacement, values) trivial) launch ⟨rfl, observed⟩
+  exact ⟨outcome, result, Representation.list_mono observed shape, shape,
+    cursorEq, bodyBound, stepsBound⟩
 
 end Complexity.Language.Examples.LinkedList

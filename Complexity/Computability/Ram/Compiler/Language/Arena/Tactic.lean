@@ -83,9 +83,17 @@ private def normalizeLeaves : TacticM Unit := do
           [Ram.LanguageCompiler.ValueFits.option_node, and_true, true_and] at * <;>
           try exact Nat.one_lt_two_pow (Nat.ne_of_gt (by assumption)))))
     Ram.LanguageCompiler.Tactic.onGoals closeConjunct
-    evalTactic (← `(tactic|
-      all_goals try solve
-        | (repeat' apply And.intro) <;> rfl))
+    Ram.LanguageCompiler.Tactic.onGoals do
+      Tactic.tryCatchRestore (focusAndDone do
+        evalTactic (← `(tactic|
+          (repeat' apply And.intro) <;>
+            first
+            | assumption
+            | exact Nat.two_pow_pos _
+            | exact Nat.one_lt_two_pow (Nat.ne_of_gt (by assumption))
+            | rfl
+            | skip))
+        Ram.LanguageCompiler.Tactic.onGoals closeConjunct) fun _ => pure ()
 
 /-- Select a branch from its actual condition when reflexivity or a local proof
 determines it. Otherwise introduce the two selected-path obligations. -/
