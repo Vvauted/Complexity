@@ -199,25 +199,50 @@ or support for arbitrary Lean callbacks.
 
 ## State a correctness-and-complexity task
 
-An array task can keep its mathematical specification separate from its runtime
-requirement, asking for one fixed implementation:
+The [fixed-type interface](##Complexity.Program.Basic) separates a mathematical
+input/output requirement from a bound on the same compiled implementation:
 
 ```lean
 def Task : Prop :=
-  ∃ solve : Complexity.Language.ArrayFunction,
-    solve.Correct isLegal answer ∧
-    solve.TimeO isLegal (fun n => n + 1)
+  ∃ solve : Complexity.Program (Array Nat) Nat,
+    solve.Correct isLegal (fun cards result => result = answer cards) ∧
+    solve.TimeO isLegal Array.size (fun n => n + 1)
 ```
 
-The [shared array interface](##Complexity.Computability.Ram.Compiler.Language.ArrayFunction)
-fixes input representation and result observation. `Correct` requires successful
-source evaluation on every legal array without a time budget. `TimeO` uses
-mathlib's `IsBigO` and requires actual halted executions of that same compiled
-function, uniformly over all admitted word widths. The width rule is a fixed
-constant multiple of logarithmic input size/value width; a candidate cannot
-replace it by a predicate that excludes inconvenient inputs. The shared result
-rule connects the mathematical answer and instruction bound to one execution.
-This is explicitly a preloaded-array invocation boundary, not an input loader.
+`solve` is a source program, not an arbitrary Lean function or a record
+containing its own desired answer. `Correct` takes an ordinary input/output
+relation, so a task can describe acceptable results without selecting one
+reference algorithm. `TimeO` separately takes the input-size function and
+growth bound. Both obligations refer to this same `solve`.
+
+The [typed-program example](##Examples.Language.Program) selects the existing
+bounded-increment declaration as `Program (Nat × Nat) Nat`. Its proof applies
+`Program.Correct.of_functionTotal` to the generated source contract, then reuses
+the ordinary minimum equation. This keeps invocation and evaluation bookkeeping
+in the library; it does not require another implementation or argument adapter.
+
+The [input instances](##Complexity.Program.Input) supply scalars, a natural
+array, and right-associated scalar prefixes such as `Nat × Array Nat` as
+separate source parameters. Results include scalars, natural arrays, products
+and options. Task authors fix these conventions before choosing a candidate.
+An ordinary record can be registered through an injective field presentation;
+that registration is not automatic support for record syntax in the frontend.
+General products of independently heap-backed inputs still need a shared layout.
+
+The [RAM interface](##Complexity.Computability.Ram.Compiler.Language.Program)
+requires actual halted executions uniformly over all admitted word widths.
+The width rule is a fixed constant multiple of logarithmic input size/value
+width; capacity is established inside the execution proof, not used as a
+precondition excluding inconvenient inputs. The shared `TimeO.runs_correct`
+rule combines the mathematical postcondition and instruction bound on one
+execution. Inputs are preloaded; an executable loader is not silently included.
+Correctness remains independent of word widths and time budgets.
+
+The
+[compatibility bridge](##Complexity.Computability.Ram.Compiler.Language.Program.ArrayFunction)
+preserves source correctness and actual RAM time for existing
+`ArrayFunction` clients viewed as `Program (Array Nat) Nat`; it does not require
+another algorithm proof.
 
 ## Work directly with word-RAM source
 

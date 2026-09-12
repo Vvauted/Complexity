@@ -1086,6 +1086,22 @@ input loading, a persistent pure container API or a replacement cost semantics.
 The interface and actual RAM connection are checked; existing clients can reuse
 them through the fixed-type program wrapper below.
 
+**Fixed-type program wrapper — checked:** `Complexity.Program Input Output`
+selects the same typed source function with externally fixed input and output
+representations. `Correct valid post` accepts an ordinary mathematical relation;
+`TimeO valid size growth` keeps the task's size measure explicit and uses the
+existing actual RAM execution. The source wrapper, scalar/single-array inputs,
+scalar-prefix tuples, structural outputs and compatibility with `ArrayFunction`
+are checked. The [typed-program consumer](../Examples/Language/Program.lean)
+publishes an existing two-argument source function using its generated total
+contract and ordinary mathematical equation. `Correct.of_functionTotal` supplies
+the shared invocation bridge, without a second algorithm or environment adapter.
+Registration must be fixed by the interface, not supplied by a candidate as free preprocessing
+or answer decoding. Arbitrary combinations of heap-backed inputs and automatic
+registration of array-bearing records are not provided yet. This wrapper does
+not extend the frontend to compile arbitrary Lean functions or make resource
+proofs follow from mathematical correctness alone.
+
 Keep three layers distinct: mathematical behavior; resource arguments over the
 same source implementation; and a concrete backend adequacy theorem. Ordinary
 function equality belongs to the first, not a way to recover the other two.

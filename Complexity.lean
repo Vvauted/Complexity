@@ -191,6 +191,9 @@ import Complexity.Computability.Ram.Compiler.Language.MeasuredSimulation
 import Complexity.Computability.Ram.Compiler.Language.MeasuredNode
 import Complexity.Computability.Ram.Compiler.Language.MeasuredValues
 import Complexity.Computability.Ram.Compiler.Language.Placement
+import Complexity.Computability.Ram.Compiler.Language.Program
+import Complexity.Computability.Ram.Compiler.Language.Program.ArrayFunction
+import Complexity.Computability.Ram.Compiler.Language.Program.Input
 import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Compiler.Language.Realization.Finite
 import Complexity.Computability.Ram.Compiler.Language.Realization.Loop
@@ -453,6 +456,9 @@ import Complexity.Language.Verification.Heap
 import Complexity.Language.Verification.Recursion
 import Complexity.Language.Verification.Tactic
 import Complexity.LinearAlgebra.Matrix.Update
+import Complexity.Program.ArrayFunction
+import Complexity.Program.Basic
+import Complexity.Program.Input
 import Complexity.Tactic.Ram.Array
 import Complexity.Tactic.Ram.Basic
 import Complexity.Tactic.Ram.Budget
@@ -476,6 +482,7 @@ reusable library, but not the examples or manual.
 - `Complexity.Computability.Recurrence`: comparison and solution bounds for recurrences.
 - `Complexity.Computability.Ram`: the word-RAM, source language, compiler and proof interfaces.
 - `Complexity.Data` and `Complexity.LinearAlgebra`: lemmas on ordinary Lean/mathlib objects.
+- `Complexity.Program`: fixed mathematical input/output interfaces for source programs.
 - `Complexity.Tactic.Ram`: proof automation for the implemented RAM interfaces.
 
 Module paths identify subjects within this library; declaration namespaces identify

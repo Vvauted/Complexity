@@ -20,6 +20,7 @@ import Examples.Language.LinkedListFoldAllocation
 import Examples.Language.LinkedListViewsCompiled
 import Examples.Language.OptionalBuffer
 import Examples.Language.OptionalBufferCompiled
+import Examples.Language.Program
 import Examples.Language.Remainder
 import Examples.Language.Scalar
 import Examples.Language.ScalarCompiled
