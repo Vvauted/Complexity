@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Call
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
 /-!
@@ -11,8 +11,11 @@ import Complexity.Computability.Ram.Compiler.Language.Tactic
 
 `ram_source_arena_cost [certificate via embedding, ...]` composes the proved
 `StmtArenaCostBound` rules for an actual source body. A certificate is an existing
-uniform `FunctionArenaCostBound`; its optional embedding identifies an imported
-source program. Calls retain their real target entry and frame overhead.
+`FunctionArenaCostBound`; `certificate at index` selects a mathematical input
+for a dependent bound and leaves its argument equality and precondition as proof
+obligations. Without an index the certificate is uniform. An optional embedding
+identifies an imported source program. Calls retain their real target entry and
+frame overhead; mathematical indices are not guessed from runtime handles.
 
 The tactic also introduces a bound in a goal of the form
 `{ bound : Nat // ∀ entry, StmtArenaCostBound program w heapLimit depth body entry bound }`.
@@ -28,6 +31,7 @@ open Lean Meta Elab Tactic
 
 private structure Certificate where
   proof : TSyntax `term
+  index : Option (TSyntax `term) := none
   embedding : Option (TSyntax `term) := none
 
 /-- Introduce only the requested bound witness. Its value is determined by
@@ -58,7 +62,7 @@ private def certificateFunction (certificate : TSyntax `term) : TacticM (TSyntax
     let proof ← Term.elabTerm certificate none
     let type := (← instantiateMVars (← inferType proof)).consumeMData.headBeta.consumeMData
     unless type.isAppOf ``Ram.LanguageCompiler.FunctionArenaCostBound do
-      throwErrorAt certificate "expected a uniform FunctionArenaCostBound certificate"
+      throwErrorAt certificate "expected a FunctionArenaCostBound certificate"
     let body := type.getAppArgs[5]!.consumeMData.headBeta.consumeMData
     if body.isAppOf ``Complexity.Language.Program.body then
       return ← Term.exprToSyntax body.getAppArgs[2]!
@@ -78,15 +82,29 @@ private partial def applyCallee (statement : Lean.Expr)
         match certificate.embedding with
         | none =>
             let fn ← Term.exprToSyntax statement.getAppArgs[3]!
-            applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_uniform
-              (fn := $fn) $bounded))
+            match certificate.index with
+            | none =>
+                applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_uniform
+                  (fn := $fn) $bounded))
+            | some index =>
+                applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at
+                  (fn := $fn) $bounded $index))
         | some embedding =>
-            Tactic.tryCatchRestore
-              (applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_uniform_imported
-                $embedding $bounded))) fun _ => do
-                  let fn ← certificateFunction bounded
-                  applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_uniform_imported
-                    $embedding (fn := $fn) $bounded))) fun error => do
+            match certificate.index with
+            | none =>
+                Tactic.tryCatchRestore
+                  (applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_uniform_imported
+                    $embedding $bounded))) fun _ => do
+                      let fn ← certificateFunction bounded
+                      applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_uniform_imported
+                        $embedding (fn := $fn) $bounded))
+            | some index =>
+                Tactic.tryCatchRestore
+                  (applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at_imported
+                    $embedding $bounded $index))) fun _ => do
+                      let fn ← certificateFunction bounded
+                      applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at_imported
+                        $embedding (fn := $fn) $bounded $index))) fun error => do
           if remaining.isEmpty then throw error
           applyCallee statement remaining
 
@@ -124,7 +142,7 @@ private partial def cost (certificates : List Certificate) : TacticM Unit := do
         Ram.LanguageCompiler.Tactic.onGoals (cost certificates)
       else
         Ram.LanguageCompiler.Tactic.normalizeSourceCoordinates #[``and_true, ``true_and]
-        evalTactic (← `(tactic| all_goals try assumption))
+        evalTactic (← `(tactic| all_goals try first | rfl | assumption))
 
 private def start (certificates : List Certificate) : TacticM Unit := focus do
   withMainContext do
@@ -133,18 +151,23 @@ private def start (certificates : List Certificate) : TacticM Unit := focus do
   cost certificates
 
 declare_syntax_cat arenaCostCertificate
-syntax term:max (&"via" term:max)? : arenaCostCertificate
+syntax term:max (&"at" term:max)? (&"via" term:max)? : arenaCostCertificate
 
-/-- Infer a structural bound using existing uniform arena function certificates.
-An optional `via` supplies the actual program embedding for an imported call. -/
+/-- Infer a structural bound using existing arena function certificates.
+An optional `at` selects an input-dependent bound; `via` supplies the actual
+program embedding for an imported call. -/
 syntax "ram_source_arena_cost" ("[" arenaCostCertificate,* "]")? : tactic
 
 private def parseCertificate (stx : TSyntax `arenaCostCertificate) :
     TacticM Certificate := do
   match stx with
+  | `(arenaCostCertificate| $proof:term at $index:term via $embedding:term) =>
+      return { proof, index := some index, embedding := some embedding }
+  | `(arenaCostCertificate| $proof:term at $index:term) =>
+      return { proof, index := some index }
   | `(arenaCostCertificate| $proof:term via $embedding:term) =>
-      return ⟨proof, some embedding⟩
-  | `(arenaCostCertificate| $proof:term) => return ⟨proof, none⟩
+      return { proof, embedding := some embedding }
+  | `(arenaCostCertificate| $proof:term) => return { proof }
   | _ => throwUnsupportedSyntax
 
 elab_rules : tactic

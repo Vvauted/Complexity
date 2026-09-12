@@ -547,8 +547,9 @@ without assembling `functionPre`, a resource-index tuple or separate wrapper
 totality/resource/cost contracts. Callback correctness, admissibility, value
 ranges, remaining capacity and final numerical comparisons remain supplied
 proofs. `ArenaMeasured` only packages existing witnesses; there is no new
-interpreter or pricing model. General allocating loops, recursion and automatic
-selection of further operation resource adapters remain follow-up work.
+interpreter or pricing model. The shared allocating-loop cost rule below bounds
+actual executions; automatically deriving loop readiness, recursive contracts
+and further operation resource adapters remains follow-up work.
 
 `NativeViews.replaceHead` now joins the same actual Uncons call, optional-payload
 match and allocating constructor. Its checked `replaceHead_execute_le` returns
@@ -567,8 +568,30 @@ The shared `ArenaMeasured.execute_le` combines a measured body, its structural
 bound and an independent `FunctionTotal` specification in one halted outcome,
 transporting heap/value/cursor observations and adding invocation overhead once.
 Mathematical correctness does not acquire a cost premise. Actual callee readiness,
-word ranges, capacity and certificate selection remain supplied; other wrappers,
-dependent bounds and allocating loops are not thereby automated.
+word ranges, capacity and certificate selection remain supplied.
+
+The [indexed arena call rules](../Complexity/Computability/Ram/Compiler/Language/Arena/CostBound/Call.lean)
+select an existing callee bound at a mathematical input index, checking its actual
+arguments and entry-heap precondition. The structural cost pass accepts
+`certificate at index via embedding`; it does not infer a List from its root or
+guess an input-dependent price. The shared
+[allocating-loop rule](../Complexity/Computability/Ram/Compiler/Language/Arena/CostBound/Loop.lean)
+uses an author-supplied ghost index, invariant and potential over the actual states.
+It includes false exits and early returns, retaining the actual changing heaps
+and cursor endpoints. It bounds an already given execution, not its termination.
+
+The [fold cost proof](../Complexity/Computability/Ram/Compiler/Language/List/Fold/CostBound.lean)
+uses this rule and the existing source iteration postcondition. Its
+`functionCostBound_of_actual` needs mathematical admissibility, accumulator
+representation and List contents, but no separate resource contract, word-range
+proof or spare-capacity premise. Those remain necessary when constructing a
+ready execution. The compatibility `functionCostBound` delegates to this proof;
+it no longer constructs a comparison traversal at cursor zero.
+`pushCost` and length-indexed `reverseAppendCost` now infer the callback and native
+wrapper costs from their actual bodies and existing callee certificates. The
+ordinary reverse/append equation, affine invocation bound and three-word-per-head
+allocation allowance are unchanged. General potential discovery, readiness
+inference and result-dependent continuation budgets are not automated.
 
 The [typed-join RAM consumer](../Examples/Language/LinkedListViewsCompiled.lean)
 uses the same inferred bounds and publication rule. `headOr_execute_le` returns
@@ -1148,9 +1171,12 @@ environment encodings or repeating source facts in a second resource proof.
    constructor, fold and typed-join consumers. Uniform wrapper budgets follow
    from `StmtArenaCostBound` and supplied callee certificates; the two straight-line
    constructor wrappers retain their exact counts. `ArenaMeasured.execute_le`
-   shares publication with independent mathematical specifications. Continue
-   migrating remaining wrapper bookkeeping and composing the pass with dependent and loop budgets;
-   these are not consequences of the current uniform fragment. The fixed-heap
+   shares publication with independent mathematical specifications. Indexed calls
+   now compose supplied mathematical-input bounds, and the shared ghost-indexed
+   arena loop rule is used by the actual-only fold cost proof. `push` and
+   `reverseAppend` use inferred wrapper costs, preserving their published bounds.
+   Continue removing remaining resource-result bookkeeping and composing supplied
+   loop contracts; arbitrary potentials and readiness are not thereby inferred. The fixed-heap
    `StmtCostBound` cannot silently stand in for a bound on allocating execution;
    retain the existing arena cost relation and function contracts. The `prependPair`
    and `reverseAppend` migrations include their leaf wrappers: removing argument environments from

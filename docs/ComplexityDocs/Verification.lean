@@ -485,8 +485,18 @@ field-count formula. The inferred `prependCost` and `prependPairCost` likewise
 replace the two straight-line wrappers' formulas; their exact ready/execution
 equalities remain proved, not inferred from an upper-bound certificate alone.
 Actual callee readiness, certificate selection, ranges and capacity remain
-explicit; other wrapper budgets, dependent bounds and allocating loops are not
-automatically inferred by this uniform fragment.
+explicit. For input-dependent calls, the pass also accepts a supplied mathematical
+index with `certificate at index via embedding`. The
+[indexed call rules](##Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Call)
+check that index's actual arguments and precondition; they do not decode a List
+from its raw root or guess a callee price. The continuation's bound must still be
+uniform over that invocation's possible returned values and heaps.
+
+The [arena loop cost rule](##Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Loop)
+accepts a ghost index, invariant and potential over actual source states. It
+retains changing heaps and cursor endpoints and includes false-exit and early-return
+costs. It bounds an already supplied finite execution; it does not establish
+termination or automatically discover the potential.
 
 The [shared publication rule](##Ram.LanguageCompiler.ArenaMeasured.execute_le)
 combines a measured body and its structural bound with an independent
@@ -515,6 +525,16 @@ three, and final cursor at most the initial cursor plus `3 * values.length`.
 The count includes callback and wrapper initialization, calls, returns and halt.
 Word, code/stack and arena conditions remain explicit; input loading is separate.
 The cursor bound is not an exact peak-live-space claim.
+
+Its `pushCost` and length-indexed `reverseAppendCost` infer callback and wrapper
+costs from their actual bodies and existing callee certificates. The
+[fold cost-only certificate](##Ram.LanguageCompiler.List.Fold.functionCostBound_of_actual)
+uses the shared arena loop rule and the source iteration's existing correctness
+postcondition. It requires mathematical admissibility, accumulator representation
+and List contents, but not a second ready execution, a resource contract, word
+ranges or spare capacity. The old callable bound delegates to this proof with its
+stronger precondition. Constructing the actual ready execution still requires the
+original range and capacity proofs; the cost-only rule does not remove them.
 
 The correctness proof needs only the mathematical List equation. The
 [structural arena tactics](##Complexity.Computability.Ram.Compiler.Language.Arena.Tactic) now generate

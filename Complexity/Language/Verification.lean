@@ -77,6 +77,16 @@ variable {program : Program signatures} {stmt : Stmt signatures Γ result}
 variable {normal normal' : State Γ → Prop}
 variable {returned returned' : Value result → State Γ → Prop} {entry : State Γ}
 
+/-- Total correctness describes every actual execution from the same entry,
+by determinism. Reusing its postcondition requires no second execution proof. -/
+theorem postcondition (h : TotalWP program stmt normal returned entry)
+    {finish : State Γ} {control : Control result}
+    (execution : Exec program stmt entry finish control) :
+    control.Satisfies normal returned finish := by
+  obtain ⟨otherFinish, otherControl, actual, post⟩ := h
+  obtain ⟨rfl, rfl⟩ := actual.deterministic execution
+  exact post
+
 /-- Weaken either successful postcondition without admitting faults. -/
 theorem mono_post (h : TotalWP program stmt normal returned entry)
     (hnormal : ∀ finish, normal finish → normal' finish)

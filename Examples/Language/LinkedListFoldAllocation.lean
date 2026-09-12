@@ -6,8 +6,11 @@ Authors: vvauted
 import Examples.Language.LinkedList
 import Complexity.Computability.Ram.Compiler.Language.List.Cons
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.Resources
+import Complexity.Computability.Ram.Compiler.Language.List.Fold.CostBound
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.Asymptotics
 import Complexity.Computability.Ram.Compiler.Language.Arena.Tactic
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostTactic
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.FunctionExecution
 
 /-!
 # Allocating native list folds on RAM
@@ -27,14 +30,17 @@ namespace Complexity.Language.Examples.LinkedList
 
 open Ram.LanguageCompiler
 
-/-- The actual constructor call and native callback return, before the callback's
-two initialization instructions. No cost is assigned to native list notation. -/
-def pushBodySteps : Nat :=
-  callCost ListReducer.Source.program
-    (ListReducer.Source.imports.ListReducer.Operations.consNat.map.toFun
-      ListReducer.Operations.consNat.consId)
-    (Ram.LanguageCompiler.List.Cons.bodySteps .nat + 2) +
-      (2 * fieldCount (.option (.node .nat)) + 2)
+/-- Infer the actual callback's constructor call and return costs from its body,
+using the constructor's independent cost certificate. -/
+def pushCost : { bound : Nat // ∀ w heapLimit initial,
+    StmtArenaCostBound ListReducer.Source.program w heapLimit 1
+      (ListReducer.Source.program.body ListReducer.Source.pushId) initial bound } := by
+  ram_source_arena_cost [(Ram.LanguageCompiler.List.Cons.arenaCostBound .nat _ _ 0)
+    via ListReducer.Source.imports.ListReducer.Operations.consNat.embedding]
+
+/-- The callback's inferred body count, before its two initialization instructions.
+Its exact equality is established by the measured execution below. -/
+def pushBodySteps : Nat := pushCost.val
 
 /-- The native callback reuses the constructor-call rule with its two arguments
 in callback order. Its result shares the original tail in the actual new heap. -/
@@ -89,15 +95,7 @@ theorem push_fold_costBound (w heapLimit : Nat) :
       w heapLimit 1 (fun _ _ => pushBodySteps + 2) := by
   rintro ⟨mathematical, accumulator, head⟩ heap _ finish value execution
     cursor finalCursor ready steps cost
-  cases cost with
-  | callReturn calleeCost returnCost =>
-      cases returnCost
-      cases calleeCost with
-      | consNode someCost =>
-          cases someCost with
-          | letPrim resultCost =>
-              cases resultCost
-              exact Nat.le_refl _
+  exact Nat.add_le_add_right (pushCost.property w heapLimit _ execution ready cost) 2
 
 /-- The fold's complete callable-body bound is affine in the traversed list
 length. Its coefficient uses the actual relocated callback and compiler costs. -/
@@ -122,12 +120,47 @@ theorem reverseAppendFoldBound_eq (initial values : List Nat) :
     NativeLists.Operations.fold0.program, Nat.mul_add]
   omega
 
-/-- The native wrapper pays its actual imported fold call and its own return. -/
-def reverseAppendBodyBound (length : Nat) : Nat :=
-  callCost NativeLists.Source.program
-    (NativeLists.Source.imports.NativeLists.Operations.fold0.map.toFun
-      NativeLists.Operations.fold0.foldId)
-    (reverseAppendFoldBound length) + (2 * fieldCount (.option (.node .nat)) + 2)
+/-- The fold's existing affine bound at a fixed mathematical input length.
+Only the represented input and callback domain occur in its precondition;
+readiness and spare capacity are not needed to bound an already given execution. -/
+theorem reverseAppendFold_costBound (w heapLimit length : Nat) :
+    FunctionArenaCostBound NativeLists.Operations.fold0.program
+      (NativeLists.Operations.fold0.program.body NativeLists.Operations.fold0.foldId)
+      List.Fold.functionArgs
+      (fun input heap =>
+        List.Fold.functionCostPre (Representation.list .nat) ListReducer.push
+          (fun _ _ => True) input heap ∧ input.2.1.length = length)
+      w heapLimit 2 (fun _ => reverseAppendFoldBound length) := by
+  intro input heap allowed finish value execution cursor finalCursor ready steps cost
+  have bounded := List.Fold.functionCostBound_of_actual
+    NativeLists.Operations.fold0.callback_contract (push_fold_costBound w heapLimit)
+    input heap allowed.1 finish value execution ready cost
+  dsimp only at bounded
+  rw [reverseAppendFoldBound_eq, allowed.2] at bounded
+  exact bounded
+
+/-- Infer the native wrapper's bound from a length-indexed fold certificate.
+The mathematical inputs select that certificate; only the two roots are passed
+to the real source function. No wrapper call-table or field-count formula is supplied. -/
+def reverseAppendCost (length : Nat) : { bound : Nat //
+    ∀ w heapLimit (values tailValues : List Nat) (root tail : Option (NodeRef .nat)) (heap : Heap),
+      values.length = length → (Representation.list .nat).Rel values root heap →
+      (Representation.list .nat).Rel tailValues tail heap →
+      StmtArenaCostBound NativeLists.Source.program w heapLimit 3
+        (NativeLists.Source.program.body NativeLists.Source.reverseAppendId)
+        ⟨NativeLists.Source.reverseAppend_args root tail, heap⟩ bound } :=
+  ⟨_, by
+    intro w heapLimit values tailValues root tail heap lengthEq observed tailObserved
+    have allowed :
+        List.Fold.functionCostPre (kind := .nat) (Representation.list .nat) ListReducer.push
+          (fun _ _ => True) (tailValues, values, tail, root) heap ∧ values.length = length :=
+      ⟨⟨fun _ _ _ _ => trivial, tailObserved, observed⟩, lengthEq⟩
+    ram_source_arena_cost [(reverseAppendFold_costBound w heapLimit length)
+      at (tailValues, values, tail, root)
+      via NativeLists.Source.imports.NativeLists.Operations.fold0.embedding]⟩
+
+/-- The native wrapper's inferred length-dependent body bound. -/
+def reverseAppendBodyBound (length : Nat) : Nat := (reverseAppendCost length).val
 
 /-- The complete native invocation adds its own initialization, outer call and
 halt exactly once. The fold and callback bounds already include their own calls. -/
@@ -146,7 +179,7 @@ theorem reverseAppendInvocationBound_affine (length : Nat) :
             2 * fieldCount (.option (.node .nat)) + 45) +
         reverseAppendInvocationBound 0 := by
   simp only [reverseAppendInvocationBound, reverseAppendBodyBound,
-    reverseAppendFoldBound, callCost, Ram.LocalCompiler.Function.callSteps_eq,
+    reverseAppendCost, reverseAppendFoldBound, callCost, Ram.LocalCompiler.Function.callSteps_eq,
     Nat.zero_mul]
   omega
 
@@ -177,18 +210,26 @@ theorem reverseAppend_ready_cost {w heapLimit cursor : Nat}
     rw [Ram.LanguageCompiler.List.Fold.accumulated_const]
     omega
   obtain ⟨finalAcc, finalHeap, finalCursor, steps, execution, ready, cost,
-      coreBound, cursorBound⟩ := Ram.LanguageCompiler.List.Fold.measured
+      _coreBound, cursorBound⟩ := Ram.LanguageCompiler.List.Fold.measured
     NativeLists.Operations.fold0.callback_contract
     (push_fold_resources positive) (push_fold_costBound w heapLimit)
     tailValues values tail root heap cursor positive admissible tailObserved
     (ValueFits.option_node positive tail) headFits capacity observed
-  rw [reverseAppendFoldBound_eq] at coreBound
   rw [Ram.LanguageCompiler.List.Fold.accumulated_const,
     Nat.mul_comm values.length 3] at cursorBound
-  apply ArenaMeasured.exists_returned_iff.mp
-  ram_source_arena_call exact using cost
-    via NativeLists.Source.imports.NativeLists.Operations.fold0.embedding
-  exact ⟨_, rfl, Nat.add_le_add_right (callCost_mono _ _ coreBound) _, cursorBound⟩
+  have measured : ArenaMeasured NativeLists.Source.program w heapLimit 3
+      (NativeLists.Source.program.body NativeLists.Source.reverseAppendId)
+      (fun _ control finalCursor _ =>
+        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
+      ⟨NativeLists.Source.reverseAppend_args root tail, heap⟩ cursor := by
+    ram_source_arena_call exact using cost
+      via NativeLists.Source.imports.NativeLists.Operations.fold0.embedding
+    exact ⟨_, rfl, cursorBound⟩
+  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, cursorBound⟩ :=
+    ArenaMeasured.exists_returned_iff.mp measured
+  exact ⟨finish, value, finalCursor, steps, execution, ready, cost,
+    (reverseAppendCost values.length).property w heapLimit values tailValues root tail heap
+      rfl observed tailObserved execution ready cost, cursorBound⟩
 
 /-- The actual native `reverseAppend` halts with its ordinary mathematical
 result. The original lists remain observable in the same extended heap, and the
@@ -218,29 +259,28 @@ theorem reverseAppend_execute {w heapLimit cursor : Nat} {placement : Nat → Ra
       outcome.result.steps ≤ reverseAppendInvocationBound values.length := by
   have headFits := Ram.LanguageCompiler.List.Fold.contents_valueFits
     launch.arena.heapRep observed
-  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, stepBound, cursorBound⟩ :=
+  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, _stepBound, cursorBound⟩ :=
     reverseAppend_ready_cost values tailValues root tail heap launch.positive
       observed tailObserved headFits space
-  obtain ⟨outcome, _, heapEq, cursorEq, bodyEq⟩ :=
-    cost.execute (fn := NativeLists.Source.reverseAppendId) launch
-  have represented := outcome.post
-    (NativeLists.reverseAppend_refines (values, tailValues) trivial) ⟨observed, tailObserved⟩
+  have measured : ArenaMeasured NativeLists.Source.program w heapLimit 3
+      (NativeLists.Source.program.body NativeLists.Source.reverseAppendId)
+      (fun _ control finalCursor _ =>
+        ∃ value, control = .returned value ∧ finalCursor ≤ cursor + 3 * values.length)
+      ⟨NativeLists.Source.reverseAppend_args root tail, heap⟩ cursor :=
+    ArenaMeasured.exists_returned_iff.mpr
+      ⟨finish, value, finalCursor, steps, execution, ready, cost, cursorBound⟩
+  obtain ⟨outcome, cursorBound, represented, shape, bodyBound, stepsBound⟩ :=
+    measured.execute_le (P := fun _ _ finalCursor => finalCursor ≤ cursor + 3 * values.length)
+      ((reverseAppendCost values.length).property w heapLimit values tailValues root tail heap
+        rfl observed tailObserved)
+      (NativeLists.reverseAppend_refines (values, tailValues) trivial) launch
+      ⟨observed, tailObserved⟩
   have result : (Representation.list .nat).Rel (values.reverse ++ tailValues)
       outcome.value outcome.heap := by
     change (Representation.list .nat).Rel (NativeLists.reverseAppend values tailValues)
       outcome.value outcome.heap at represented
     simpa only [reverseAppend_eq] using represented
-  have shape : heap.ShapeExtends outcome.heap := by
-    rw [heapEq]
-    exact execution.heap_shapeExtends
-  have bodyBound : outcome.bodySteps ≤ reverseAppendBodyBound values.length + 2 := by
-    rw [bodyEq]
-    exact Nat.add_le_add_right stepBound 2
-  refine ⟨outcome, result, Representation.list_mono observed shape,
-    Representation.list_mono tailObserved shape, shape, ?_, bodyBound, ?_⟩
-  · simpa only [cursorEq] using cursorBound
-  · rw [outcome.steps_eq]
-    exact Nat.add_le_add_right
-      (Ram.LocalCompiler.Function.callSteps_mono _ _ bodyBound) 1
+  exact ⟨outcome, result, Representation.list_mono observed shape,
+    Representation.list_mono tailObserved shape, shape, cursorBound, bodyBound, stepsBound⟩
 
 end Complexity.Language.Examples.LinkedList

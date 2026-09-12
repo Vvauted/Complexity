@@ -94,6 +94,9 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Basic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Call
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Call
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Loop
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Node
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostTactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Execution
 import Complexity.Computability.Ram.Compiler.Language.Arena.ExecutionCost
@@ -169,6 +172,8 @@ import Complexity.Computability.Ram.Compiler.Language.List.Cons
 import Complexity.Computability.Ram.Compiler.Language.List.Cons.Call
 import Complexity.Computability.Ram.Compiler.Language.List.Fold
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.Asymptotics
+import Complexity.Computability.Ram.Compiler.Language.List.Fold.CostBound
+import Complexity.Computability.Ram.Compiler.Language.List.Fold.Function
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.Native
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.ReadOnly
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.Resources

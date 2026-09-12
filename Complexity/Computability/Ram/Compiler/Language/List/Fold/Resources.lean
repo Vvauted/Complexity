@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.List.Fold
+import Complexity.Computability.Ram.Compiler.Language.List.Fold.CostBound
 
 /-!
 # Resource contracts for calling the shared list fold
@@ -16,11 +16,10 @@ mathematical inputs and their actual source representations.
 
 The precondition includes word ranges and enough total arena capacity for the
 accumulated callback reservations. Resource readiness uses the caller's actual
-cursor and its stronger remaining-capacity premise. The cost predicate has no
-incoming capacity premise, so its proof constructs a comparison witness at
-numeric cursor zero and uses cost determinism to reach the caller's actual
-execution. This does not reset the running program's cursor, require a physical
-heap at address zero, or discard callback heap effects.
+cursor and its stronger remaining-capacity premise. The cost contract reuses
+the separate bound on the supplied actual execution, without constructing
+another execution or changing its cursor. Its stronger input precondition and
+resource parameters are retained for compatibility with existing callers.
 
 Bounds include the fold body's two initialization instructions. Its caller adds
 call-frame work separately; a standalone outer invocation also adds halt. These
@@ -35,39 +34,6 @@ open Complexity.Language
 universe u
 
 variable {α : Type u} {accTy : Ty} {kind : CellTy} {signatures : _root_.List Signature}
-
-/-- The mathematical accumulator and list are ghost indices; only the actual
-accumulator and linked root are passed to the source function. -/
-def functionArgs
-    (input : α × _root_.List (CellValue kind) × Value accTy × Option (NodeRef kind)) :
-    Env [accTy, .option (.node kind)] :=
-  foldArgs input.2.2.1 input.2.2.2
-
-/-- The shared fold's represented input, callback domain and finite-word
-conditions. Total reserved capacity supports a cost witness independent of the
-caller's cursor; zero-growth callbacks have zero accumulated reservation. -/
-def functionPre (representation : Representation α accTy)
-    (step : α → CellValue kind → α) (domain : α → CellValue kind → Prop)
-    (w heapLimit : Nat) (reserve : α → CellValue kind → Nat)
-    (input : α × _root_.List (CellValue kind) × Value accTy × Option (NodeRef kind))
-    (heap : Heap) : Prop :=
-  Complexity.Language.List.Fold.Admissible step domain input.1 input.2.1 ∧
-    representation.Rel input.1 input.2.2.1 heap ∧
-    NodeRef.Contents heap input.2.2.2 input.2.1 ∧
-    ValueFits w input.2.2.1 ∧
-    (∀ head ∈ input.2.1, ValueFits w (kind.toValue head)) ∧
-    accumulated step reserve input.1 input.2.1 ≤ heapLimit
-
-/-- The callable body's envelope includes initialization but not its caller's
-frame or halt. Callback charges use their actual relocated function table. -/
-def functionBound (sourceProgram : Complexity.Language.Program signatures)
-    (fn : Fin signatures.length)
-    (same : signatures[fn] = Complexity.Language.List.Fold.stepSignature accTy kind)
-    (step : α → CellValue kind → α) (bound : α → CellValue kind → Nat)
-    (mathematical : α) (values : _root_.List (CellValue kind)) : Nat :=
-  remainingCost (Complexity.Language.List.Fold.program sourceProgram fn same)
-    (Complexity.Language.List.Fold.calleeEntry accTy kind fn)
-    accTy step bound mathematical values + 2 * fieldCount accTy + 23
 
 /-- Execute the actual fold entry from ordinary mathematical and source
 arguments, reusing the callback's independent correctness and resource proofs.
@@ -171,9 +137,10 @@ theorem functionResources
   cases Control.returned.inj sameControl
   exact ⟨finalCursor, ready, cursorBound⟩
 
-/-- The actual fold entry inherits its measured body bound for every supplied
-arena execution. The cursor-zero witness is used only to compare compiler
-counts, never to change the caller's cursor, final heap or actual execution. -/
+set_option linter.unusedVariables false in
+/-- The existing callable interface reuses the independent cost bound of the
+supplied arena execution. Its resource and positive-width parameters remain for
+compatibility; the actual cost proof needs only the represented input and domain. -/
 theorem functionCostBound
     {sourceProgram : Complexity.Language.Program signatures} {fn : Fin signatures.length}
     {same : signatures[fn] = Complexity.Language.List.Fold.stepSignature accTy kind}
@@ -191,14 +158,9 @@ theorem functionCostBound
       functionArgs (functionPre representation step domain w heapLimit reserve)
       w heapLimit (depth + 1)
       (fun input => functionBound sourceProgram fn same step bound input.1 input.2.1) := by
-  rintro ⟨mathematical, values, accumulator, root⟩ heap input finish value execution
-    cursor finalCursor ready steps cost
-  rcases input with ⟨allowed, related, observed, accFits, headFits, capacity⟩
-  obtain ⟨finalAcc, finalHeap, measuredCursor, measuredSteps, measured, measuredReady,
-    measuredCost, coreBound, _⟩ :=
-    measured correct resources bounded mathematical values accumulator root heap 0
-      positive allowed related accFits headFits (by simpa only [Nat.zero_add] using capacity) observed
-  have sameSteps : steps = measuredSteps := cost.deterministic measuredCost
-  simpa only [sameSteps] using coreBound
+  clear resources positive
+  intro input heap pre finish value execution cursor finalCursor ready steps cost
+  exact functionCostBound_of_actual correct bounded input heap
+    ⟨pre.1, pre.2.1, pre.2.2.1⟩ finish value execution ready cost
 
 end Ram.LanguageCompiler.List.Fold
