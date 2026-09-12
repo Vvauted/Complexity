@@ -86,6 +86,9 @@ theorem renameCalls {source target : List Signature}
   | scopeEscape _ escapes ih => exact .scopeEscape ih escapes
   | read loaded _ ih => exact .read loaded ih
   | readFault failed => exact .readFault failed
+  | readNode loaded _ ih => exact .readNode loaded ih
+  | readNodeFault missing => exact .readNodeFault missing
+  | consNode _ ih => exact .consNode ih
   | write written => exact .write written
   | writeFault failed => exact .writeFault failed
   | slice sliced _ ih => exact .slice sliced ih

@@ -104,6 +104,8 @@ private partial def depth (callees : List (TSyntax `term)) : TacticM Unit := do
           applyDepthRule (← `(Ram.LanguageCompiler.StmtDepthBound.letPrim))
         else if statement.isAppOf ``Complexity.Language.Stmt.read then
           applyDepthRule (← `(Ram.LanguageCompiler.StmtDepthBound.read_of_success))
+        else if statement.isAppOf ``Complexity.Language.Stmt.readNode then
+          applyDepthRule (← `(Ram.LanguageCompiler.StmtDepthBound.readNode_of_success))
         else if statement.isAppOf ``Complexity.Language.Stmt.write then
           applyDepthRule (← `(Ram.LanguageCompiler.StmtDepthBound.write))
         else if statement.isAppOf ``Complexity.Language.Stmt.slice then

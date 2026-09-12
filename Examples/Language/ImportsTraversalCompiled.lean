@@ -116,6 +116,47 @@ theorem boundedMapPair_costBound (leftContents rightContents : Array Nat) :
       callCost_embeds Implementation.imports.Traversal.Implementation.embedding]
     omega
 
+/-- The imported client's invocation budget includes its own outer call and
+final halt, reusing the library pair's inferred body budget. -/
+def boundedMapPairInvocationBound (leftSize rightSize : Nat) : Nat :=
+  Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
+    (lowerFunc Implementation.program Implementation.boundedMapPairId)
+    (Traversal.boundedMapPairBodyBound leftSize rightSize) + 1
+
+/-- The imported client returns both ordinary mapped arrays in one typed actual
+execution, preserving observations outside both borrowed views. The launch keeps
+the combined program's original code/stack capacities and argument ranges. -/
+theorem boundedMapPair_execute {w heapLimit : Nat} {placement : Nat → Ram.Word w}
+    (xs ys : Buffer .nat) (limit : Nat) (leftContents rightContents : Array Nat) {heap : Heap}
+    (observedLeft : xs.Contents heap leftContents)
+    (observedRight : ys.Contents heap rightContents) (separated : xs.Disjoint ys)
+    (leftIncrementsFit : ∀ j (hj : j < leftContents.size), leftContents[j] + 1 < 2 ^ w)
+    (rightIncrementsFit : ∀ j (hj : j < rightContents.size), rightContents[j] + 1 < 2 ^ w)
+    {entry : Ram.Source.State w}
+    (launch : FunctionLaunch Implementation.program Implementation.boundedMapPairId 2 heapLimit
+      placement (Implementation.boundedMapPair_args xs ys limit) heap entry) :
+    ∃ outcome : FunctionExecution Implementation.program Implementation.boundedMapPairId heapLimit
+        placement (Implementation.boundedMapPair_args xs ys limit) heap entry,
+      xs.Contents outcome.heap (leftContents.map fun x => min (x + 1) limit) ∧
+      ys.Contents outcome.heap (rightContents.map fun x => min (x + 1) limit) ∧
+      (∀ {kind : CellTy} (other : Buffer kind) (contents : Array (CellValue kind)),
+        xs.Disjoint other → ys.Disjoint other →
+          other.Contents heap contents → other.Contents outcome.heap contents) ∧
+      outcome.result.steps ≤ boundedMapPairInvocationBound leftContents.size rightContents.size := by
+  have arguments : EnvFits (Γ := [.buffer .nat, .buffer .nat, .nat]) w
+      (Implementation.boundedMapPair_args xs ys limit) := launch.arguments
+  have leftLengthFits : xs.length < 2 ^ w := arguments .here
+  have rightLengthFits : ys.length < 2 ^ w := arguments (.there .here)
+  have limitFits : limit < 2 ^ w := arguments (.there (.there .here))
+  obtain ⟨outcome, property, bounded⟩ :=
+    (boundedMapPair_realizable launch.positive leftContents rightContents
+      leftIncrementsFit rightIncrementsFit).execute_le
+      (boundedMapPair_total leftContents rightContents)
+      (boundedMapPair_costBound leftContents rightContents) launch
+      ⟨observedLeft, observedRight, separated, leftLengthFits, rightLengthFits, limitFits⟩
+      ⟨observedLeft, observedRight, separated⟩ ⟨observedLeft, observedRight, separated⟩
+  exact ⟨outcome, property.1, property.2.1, property.2.2, bounded⟩
+
 /-- The actual imported-traversal client halts with both mapped arrays and the
 outside-both frame in one represented final heap. The independent instruction
 bound covers both calls; capacity allows the client, traversal and helper frames. -/

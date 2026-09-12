@@ -130,6 +130,50 @@ theorem read_uniform {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : 
     StmtDepthBound program (.read buffer index continuation) entry bound :=
   read_of_success (fun value _ => body value)
 
+/-- Reading a node introduces no call frame. Its actual head and shared tail
+remain available when choosing the continuation's sufficient capacity. -/
+theorem readNode {kind : CellTy} {ref : Atom Γ (.node kind)}
+    {continuation : Complexity.Language.Stmt signatures
+      (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+    {nextBound : CellValue kind → Option (NodeRef kind) → Nat}
+    (body : ∀ head tail,
+      entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) →
+      StmtDepthBound program continuation
+        (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) entry) (nextBound head tail))
+    (combine : ∀ head tail,
+      entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) →
+      nextBound head tail ≤ bound) :
+    StmtDepthBound program (.readNode ref continuation) entry bound := by
+  intro w depth finish control execution
+  cases execution with
+  | @readNode Γ result kind depth ref continuation entry finish control head tail
+      found valueFits bodyExec =>
+      exact .readNode found valueFits
+        ((body head tail found bodyExec).mono_depth (combine head tail found))
+
+/-- A uniform capacity can still use the actual node lookup equation. -/
+theorem readNode_of_success {kind : CellTy} {ref : Atom Γ (.node kind)}
+    {continuation : Complexity.Language.Stmt signatures
+      (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+    (body : ∀ head tail,
+      entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) →
+      StmtDepthBound program continuation
+        (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) entry) bound) :
+    StmtDepthBound program (.readNode ref continuation) entry bound :=
+  readNode (nextBound := fun _ _ => bound) body (fun _ _ _ => Nat.le_refl _)
+
+/-- A node read with a result-independent capacity needs no lookup contract. -/
+theorem readNode_uniform {kind : CellTy} {ref : Atom Γ (.node kind)}
+    {continuation : Complexity.Language.Stmt signatures
+      (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+    (body : ∀ head tail, StmtDepthBound program continuation
+      (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+        (kind.toValue head, tail) entry) bound) :
+    StmtDepthBound program (.readNode ref continuation) entry bound :=
+  readNode_of_success (fun head tail _ => body head tail)
+
 /-- An actual store has no internal call nesting; its changed heap is retained. -/
 theorem write {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
     (value : Atom Γ kind.toTy) (entry : Complexity.Language.State Γ) :

@@ -10,7 +10,9 @@ import Mathlib.Order.Interval.Set.Disjoint
 /-!
 # Shared source objects and borrowed buffers
 
-The heap contains native arrays with a scalar type tag. A buffer is only an
+The heap contains scalar arrays and immutable scalar nodes with typed tail
+references. Array accesses reject nodes, so ordinary buffer writes cannot
+modify their payloads or links. A buffer is only an
 object identifier, offset and length: copying a handle or taking a slice does
 not copy its contents. Overlapping views of one object therefore observe the
 same writes. Object identifiers are not machine addresses.
@@ -43,8 +45,22 @@ abbrev CellValue : CellTy → Type
   | .nat => Nat
   | .bool => Bool
 
-/-- An object owns one native array and its element type. -/
-abbrev HeapObject := Σ τ : CellTy, Array (CellValue τ)
+/-- The source identity of an immutable node, not a machine address.
+The element type alone does not assert that the identifier is present. -/
+structure NodeRef (τ : CellTy) where
+  object : Nat
+  deriving DecidableEq, Repr
+
+/-- Mutable scalar arrays and immutable nodes occupy distinct object kinds.
+Node links are typed source identities; scalar array cells remain scalars. -/
+inductive HeapObject where
+  | buffer (τ : CellTy) (values : Array (CellValue τ))
+  | node (τ : CellTy) (head : CellValue τ) (tail : Option (NodeRef τ))
+
+/-- The scalar element type of an object, independently of its storage kind. -/
+@[simp] def HeapObject.kind : HeapObject → CellTy
+  | .buffer τ _ => τ
+  | .node τ _ _ => τ
 
 /-- A borrowed view. Equal or overlapping views need not be distinct handles. -/
 structure Buffer (τ : CellTy) where
@@ -61,30 +77,74 @@ namespace Heap
 
 /-- Failed object/type lookup, an invalid whole view, or an invalid local index. -/
 inductive Error where
-  /-- The identifier is absent or its object has a different scalar type. -/
+  /-- The identifier is absent or its object has a different type or storage kind. -/
   | invalidObject
   | invalidView
   | outOfBounds
   deriving DecidableEq, Repr
 
 private def objectValues? : (τ : CellTy) → HeapObject → Option (Array (CellValue τ))
-  | .nat, ⟨.nat, values⟩ => some values
-  | .bool, ⟨.bool, values⟩ => some values
+  | .nat, .buffer .nat values => some values
+  | .bool, .buffer .bool values => some values
   | _, _ => none
 
-/-- Look up the current array, checking the stored element type. -/
+/-- Look up the current array, checking its element type and rejecting nodes. -/
 def object? (heap : Heap) (τ : CellTy) (object : Nat) : Option (Array (CellValue τ)) :=
   heap.objects[object]?.bind (objectValues? τ)
+
+private def nodeValues? : (τ : CellTy) → HeapObject →
+    Option (CellValue τ × Option (NodeRef τ))
+  | .nat, .node .nat head tail => some (head, tail)
+  | .bool, .node .bool head tail => some (head, tail)
+  | _, _ => none
+
+/-- Look up an immutable node of the requested element type, rejecting arrays. -/
+def node? (heap : Heap) (τ : CellTy) (object : Nat) :
+    Option (CellValue τ × Option (NodeRef τ)) :=
+  heap.objects[object]?.bind (nodeValues? τ)
 
 /-- Typed lookup is exactly lookup of the corresponding native array object. -/
 theorem object?_eq_some_iff {heap : Heap} {τ : CellTy} {object : Nat}
     {values : Array (CellValue τ)} :
-    heap.object? τ object = some values ↔ heap.objects[object]? = some ⟨τ, values⟩ := by
+    heap.object? τ object = some values ↔
+      heap.objects[object]? = some (.buffer τ values) := by
   cases found : heap.objects[object]? with
   | none => simp [object?, found]
   | some stored =>
-      rcases stored with ⟨kind, contents⟩
-      cases kind <;> cases τ <;> simp [object?, objectValues?, found]
+      cases stored with
+      | buffer kind contents =>
+          cases kind <;> cases τ <;> simp [object?, objectValues?, found]
+      | node kind head tail =>
+          cases kind <;> cases τ <;> simp [object?, objectValues?, found]
+
+/-- Typed node lookup exposes exactly the actual stored payload and tail link. -/
+theorem node?_eq_some_iff {heap : Heap} {τ : CellTy} {object : Nat}
+    {head : CellValue τ} {tail : Option (NodeRef τ)} :
+    heap.node? τ object = some (head, tail) ↔
+      heap.objects[object]? = some (.node τ head tail) := by
+  cases found : heap.objects[object]? with
+  | none => simp [node?, found]
+  | some stored =>
+      cases stored with
+      | buffer kind contents =>
+          cases kind <;> cases τ <;> simp [node?, nodeValues?, found]
+      | node kind storedHead storedTail =>
+          cases kind <;> cases τ <;> simp [node?, nodeValues?, found]
+
+/-- A successful array lookup excludes a node at the same identifier. -/
+theorem node?_eq_none_of_object {heap : Heap} {τ σ : CellTy} {object : Nat}
+    {values : Array (CellValue τ)} (found : heap.object? τ object = some values) :
+    heap.node? σ object = none := by
+  cases τ <;> cases σ <;>
+    simp [node?, nodeValues?, object?_eq_some_iff.mp found]
+
+/-- A successful node lookup excludes every scalar-array view of its identifier. -/
+theorem object?_eq_none_of_node {heap : Heap} {τ σ : CellTy} {object : Nat}
+    {head : CellValue τ} {tail : Option (NodeRef τ)}
+    (found : heap.node? τ object = some (head, tail)) :
+    heap.object? σ object = none := by
+  cases τ <;> cases σ <;>
+    simp [object?, objectValues?, node?_eq_some_iff.mp found]
 
 /-- A successful typed lookup denotes an existing object slot. -/
 theorem object_lt_size {heap : Heap} {τ : CellTy} {object : Nat}
@@ -92,10 +152,16 @@ theorem object_lt_size {heap : Heap} {τ : CellTy} {object : Nat}
     object < heap.objects.size :=
   (Array.getElem?_eq_some_iff.mp (object?_eq_some_iff.mp found)).choose
 
+/-- A successfully observed node names an existing object slot. -/
+theorem node_lt_size {heap : Heap} {τ : CellTy} {object : Nat}
+    {head : CellValue τ} {tail : Option (NodeRef τ)}
+    (found : heap.node? τ object = some (head, tail)) : object < heap.objects.size :=
+  (Array.getElem?_eq_some_iff.mp (node?_eq_some_iff.mp found)).choose
+
 /-- Mathematical replacement of an object slot. Operational writes below first
 check that this slot exists and preserve its element type and length. -/
 def replace (heap : Heap) (object : Nat) {τ : CellTy} (values : Array (CellValue τ)) : Heap :=
-  ⟨heap.objects.setIfInBounds object ⟨τ, values⟩⟩
+  ⟨heap.objects.setIfInBounds object (.buffer τ values)⟩
 
 /-- Replacing an existing object exposes precisely its new native contents. -/
 theorem object?_replace_self {heap : Heap} {object : Nat} {τ : CellTy}
@@ -109,6 +175,12 @@ theorem object?_replace_ne {heap : Heap} {object other : Nat} {τ σ : CellTy}
     {values : Array (CellValue τ)} (different : object ≠ other) :
     (heap.replace object values).object? σ other = heap.object? σ other := by
   simp only [object?, replace, Array.getElem?_setIfInBounds_ne different]
+
+/-- Array replacement leaves every different node lookup unchanged. -/
+theorem node?_replace_ne {heap : Heap} {object other : Nat} {τ σ : CellTy}
+    {values : Array (CellValue τ)} (different : object ≠ other) :
+    (heap.replace object values).node? σ other = heap.node? σ other := by
+  simp only [node?, replace, Array.getElem?_setIfInBounds_ne different]
 
 end Heap
 
@@ -207,7 +279,8 @@ theorem write_eq_set {heap : Heap} {τ : CellTy} {buffer : Buffer τ} {index : N
     (value : CellValue τ) :
     heap.write buffer index value = .ok
       ⟨heap.objects.set buffer.object
-        ⟨τ, values.set (buffer.offset + index) value (by omega)⟩ (object_lt_size found)⟩ := by
+        (.buffer τ (values.set (buffer.offset + index) value (by omega)))
+        (object_lt_size found)⟩ := by
   simp [write, found, extent, bound, replace, Array.setIfInBounds_def,
     object_lt_size found, show buffer.offset + index < values.size by omega]
 
@@ -220,6 +293,30 @@ theorem object?_write_of_ne {heap finish : Heap} {τ σ : CellTy} {buffer : Buff
     finish.object? σ other = heap.object? σ other := by
   obtain ⟨values, _, _, _, rfl⟩ := write_eq_ok_iff.mp written
   exact object?_replace_ne different
+
+/-- A successful scalar write preserves every node lookup, including absence
+and type mismatches. Its checked array tag rules out overwriting a node. -/
+theorem node?_write {heap finish : Heap} {τ σ : CellTy} {buffer : Buffer τ}
+    {index object : Nat} {value : CellValue τ}
+    (written : heap.write buffer index value = .ok finish) :
+    finish.node? σ object = heap.node? σ object := by
+  obtain ⟨values, found, _, _, rfl⟩ := write_eq_ok_iff.mp written
+  by_cases same : buffer.object = object
+  · subst object
+    exact (node?_eq_none_of_object (σ := σ)
+      (object?_replace_self (heap := heap)
+        (values := values.setIfInBounds (buffer.offset + index) value)
+        (object_lt_size found))).trans
+        (node?_eq_none_of_object found).symm
+  · exact node?_replace_ne same
+
+/-- The payload and tail of an existing immutable node survive every scalar write. -/
+theorem node?_write_of_some {heap finish : Heap} {τ σ : CellTy} {buffer : Buffer τ}
+    {index object : Nat} {value : CellValue τ} {head : CellValue σ}
+    {tail : Option (NodeRef σ)} (written : heap.write buffer index value = .ok finish)
+    (found : heap.node? σ object = some (head, tail)) :
+    finish.node? σ object = some (head, tail) :=
+  (node?_write written).trans found
 
 /-- Reads from another object are unchanged, including their error outcomes. -/
 theorem read_write_of_ne {heap finish : Heap} {τ σ : CellTy} {buffer : Buffer τ}
@@ -301,11 +398,11 @@ theorem Valid.write {heap finish : Heap} {τ σ : CellTy} {buffer : Buffer τ}
   obtain ⟨values, found, _, _, rfl⟩ := Heap.write_eq_ok_iff.mp written
   obtain ⟨otherValues, otherFound, otherExtent⟩ := valid
   by_cases sameObject : buffer.object = other.object
-  · have sameStored : (⟨τ, values⟩ : HeapObject) = ⟨σ, otherValues⟩ := by
+  · have sameStored : HeapObject.buffer τ values = .buffer σ otherValues := by
       apply Option.some.inj
       exact (Heap.object?_eq_some_iff.mp found).symm.trans
         (by simpa only [← sameObject] using Heap.object?_eq_some_iff.mp otherFound)
-    have sameType : τ = σ := congrArg Sigma.fst sameStored
+    have sameType : τ = σ := congrArg HeapObject.kind sameStored
     subst σ
     have sameValues : otherValues = values := by
       rw [← sameObject, found] at otherFound
@@ -490,11 +587,11 @@ theorem Contents.write_of_disjoint {τ σ : CellTy} {buffer : Buffer τ} {other 
   · have intervals := separated.resolve_left (fun different => different sameObject)
     obtain ⟨values, found, _, bound, _⟩ := Heap.write_eq_ok_iff.mp written
     obtain ⟨otherValues, otherFound, _⟩ := observed.valid
-    have sameStored : (⟨τ, values⟩ : HeapObject) = ⟨σ, otherValues⟩ := by
+    have sameStored : HeapObject.buffer τ values = .buffer σ otherValues := by
       apply Option.some.inj
       exact (Heap.object?_eq_some_iff.mp found).symm.trans
         (by simpa only [← sameObject] using Heap.object?_eq_some_iff.mp otherFound)
-    have sameType : τ = σ := congrArg Sigma.fst sameStored
+    have sameType : τ = σ := congrArg HeapObject.kind sameStored
     subst σ
     have writtenCell : buffer.offset + index ∈
         Set.Ico buffer.offset (buffer.offset + buffer.length) := ⟨by omega, by omega⟩

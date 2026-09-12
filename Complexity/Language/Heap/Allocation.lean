@@ -26,7 +26,7 @@ namespace Heap
 def alloc (heap : Heap) {τ : CellTy} (length : Nat) (initial : CellValue τ) :
     Buffer τ × Heap :=
   (⟨heap.objects.size, 0, length⟩,
-    ⟨heap.objects.push ⟨τ, Array.replicate length initial⟩⟩)
+    ⟨heap.objects.push (.buffer τ (Array.replicate length initial))⟩)
 
 @[simp] theorem alloc_object (heap : Heap) {τ : CellTy} (length : Nat)
     (initial : CellValue τ) : (heap.alloc length initial).1.object = heap.objects.size := rfl
@@ -40,7 +40,7 @@ def alloc (heap : Heap) {τ : CellTy} (length : Nat) (initial : CellValue τ) :
 @[simp] theorem alloc_objects (heap : Heap) {τ : CellTy} (length : Nat)
     (initial : CellValue τ) :
     (heap.alloc length initial).2.objects =
-      heap.objects.push ⟨τ, Array.replicate length initial⟩ := rfl
+      heap.objects.push (.buffer τ (Array.replicate length initial)) := rfl
 
 /-- Allocation increases the object domain by one, independently of the cell count. -/
 @[simp] theorem alloc_size (heap : Heap) {τ : CellTy} (length : Nat)
@@ -67,6 +67,19 @@ theorem object?_alloc_of_lt (heap : Heap) {τ σ : CellTy} (length : Nat)
     (heap.alloc length initial).2.object? σ object = heap.object? σ object :=
   heap.object?_alloc_of_ne length initial (Nat.ne_of_lt bound)
 
+/-- Appending a scalar array preserves every different immutable-node lookup. -/
+theorem node?_alloc_of_ne (heap : Heap) {τ σ : CellTy} (length : Nat)
+    (initial : CellValue τ) {object : Nat} (different : object ≠ heap.objects.size) :
+    (heap.alloc length initial).2.node? σ object = heap.node? σ object := by
+  unfold node?
+  rw [getElem?_alloc_of_ne heap length initial different]
+
+/-- Every old immutable node retains its exact payload and shared tail. -/
+theorem node?_alloc_of_lt (heap : Heap) {τ σ : CellTy} (length : Nat)
+    (initial : CellValue τ) {object : Nat} (bound : object < heap.objects.size) :
+    (heap.alloc length initial).2.node? σ object = heap.node? σ object :=
+  heap.node?_alloc_of_ne length initial (Nat.ne_of_lt bound)
+
 /-- The newly returned view denotes precisely the initialized native array. -/
 theorem object?_alloc_new (heap : Heap) {τ : CellTy} (length : Nat)
     (initial : CellValue τ) :
@@ -78,12 +91,14 @@ theorem object?_alloc_new (heap : Heap) {τ : CellTy} (length : Nat)
 /-- Allocation extends object shape while preserving the stronger old-content facts above. -/
 theorem shapeExtends_alloc (heap : Heap) {τ : CellTy} (length : Nat)
     (initial : CellValue τ) : heap.ShapeExtends (heap.alloc length initial).2 := by
-  refine ⟨?_, ?_⟩
+  refine ⟨?_, ?_, ?_⟩
   · simp only [alloc_size]
     omega
   · intro σ object values found
     exact ⟨values,
       (heap.object?_alloc_of_lt length initial (object_lt_size found)).trans found, rfl⟩
+  · intro σ object head tail found
+    exact (heap.node?_alloc_of_lt length initial (node_lt_size found)).trans found
 
 /-- The returned whole-object view has the requested ordinary mathematical contents. -/
 theorem alloc_contents (heap : Heap) {τ : CellTy} (length : Nat)

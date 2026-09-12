@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Linking.Reflection
+import Complexity.Language.RepresentedFunction
 
 /-!
 # Function correctness contracts through typed source embeddings
@@ -17,9 +18,39 @@ the contract. No machine representation or resource budget occurs in this layer.
 
 namespace Complexity.Language
 
+namespace TotalWP
+
+/-- Apply an existing function contract through a proved complete signature.
+The equality transports types only; the selected source body still executes. -/
+theorem callOfEq {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    {program : Program signatures} {fn : Fin signatures.length} {signature : Signature}
+    (same : signatures[fn] = signature)
+    {args : Args Γ signature.params}
+    {continuation : Stmt signatures (signature.result :: Γ) result}
+    {normal : State Γ → Prop} {returned : Value result → State Γ → Prop}
+    {entry : State Γ}
+    {pre : Env signature.params → Heap → Prop}
+    {post : Env signature.params → Heap → Value signature.result → Heap → Prop}
+    (callee : FunctionTotal program fn
+      (cast (congrArg (fun s => Env s.params → Heap → Prop) same.symm) pre)
+      (cast (congrArg (fun s =>
+        Env s.params → Heap → Value s.result → Heap → Prop) same.symm) post))
+    (hpre : pre (args.eval entry.locals) entry.heap)
+    (body : ∀ value finalHeap, post (args.eval entry.locals) entry.heap value finalHeap →
+      TotalWP program continuation (fun finish => normal finish.tail)
+        (fun result finish => returned result finish.tail)
+        (State.cons value ⟨entry.locals, finalHeap⟩)) :
+    TotalWP program (Stmt.callOfEq fn same args continuation) normal returned entry := by
+  cases same
+  exact TotalWP.call callee hpre body
+
+end TotalWP
+
 namespace FunctionTotal
 
-private theorem cast_iff {signatures : List Signature} (program : Program signatures)
+/-- Observe a function contract at a proved complete signature. This transports
+the existing body and both mathematical predicates, without changing execution. -/
+theorem cast_iff {signatures : List Signature} (program : Program signatures)
     (fn : Fin signatures.length) {signature : Signature}
     (same : signatures[fn] = signature)
     (pre : Env signature.params → Heap → Prop)
@@ -101,5 +132,30 @@ theorem renameCalls_iff {source target : List Signature}
   ⟨of_renameCalls embedded, renameCalls embedded⟩
 
 end FunctionTotal
+
+namespace RepresentedFunction
+
+universe u v
+
+/-- A represented mathematical function retains its complete correspondence
+through an actual source-table embedding, including both heap observations. -/
+theorem Refines.renameCalls {α : Type u} {β : α → Type v}
+    {source target : List Signature}
+    {sourceProgram : Program source} {targetProgram : Program target}
+    {map : SignatureMap source target}
+    (embedded : sourceProgram.Embeds map targetProgram)
+    {fn : Fin source.length}
+    {representation : FunctionRepresentation α β source[fn]}
+    {pre : α → Prop} {function : (input : α) → β input}
+    (refinement : Refines sourceProgram fn representation pre function) :
+    Refines targetProgram (map.toFun fn)
+      (cast (congrArg (FunctionRepresentation α β) (map.signature_eq fn).symm)
+        representation) pre function := by
+  apply (Refines.cast_iff targetProgram (map.toFun fn) (map.signature_eq fn).symm
+    representation pre function).mpr
+  intro input valid
+  exact FunctionTotal.renameCalls embedded (refinement input valid)
+
+end RepresentedFunction
 
 end Complexity.Language

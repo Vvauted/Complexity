@@ -198,9 +198,17 @@ automatically proved source correspondence. The checked
 `Implementation.factorial n = Nat.factorial n`, using induction and one native
 termination proof; Scalar and Remainder use the same interface. This pure subset
 also includes the [structured metadata helper](##Examples.Language.OptionalBuffer).
-It supports self-recursion and acyclic calls, not pure `while`, mutual recursion
-or buffers. Buffer programs retain their mathematical effectful contracts;
+Finite-range `for` generates a native total iteration and a proved connection to
+the same source while. The iterative factorial uses one accumulator and ordinary
+fold/product mathematics; its total source contract needs no second termination
+argument. The pure frontend supports self-recursion and acyclic calls,
+not general `while`, mutual recursion or buffers. Buffer programs retain their
+mathematical effectful contracts;
 neither interface identifies Lean runtime with certified RAM instruction cost.
+Uniform structural instruction budgets can be inferred by the compiler's existing
+cost rules and reused by callers. Mathematical invariants, data-dependent bounds
+and potentials remain separate proofs; inferred time charges do not establish
+peak live-space or turn mutable returned buffers into persistent pure values.
 
 ## Fold through an expression or a proved function
 

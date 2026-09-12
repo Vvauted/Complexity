@@ -88,9 +88,11 @@ on callee-local assignments. -/
   | .assign target _ => target.index ≠ v.index
   | .letPrim _ continuation => continuation.PreservesLocal (.there v)
   | .read _ _ continuation => continuation.PreservesLocal (.there v)
+  | .readNode _ continuation => continuation.PreservesLocal (.there v)
   | .write _ _ _ => True
   | .slice _ _ _ continuation => continuation.PreservesLocal (.there v)
   | .alloc _ _ continuation => continuation.PreservesLocal (.there v)
+  | .consNode _ _ continuation => continuation.PreservesLocal (.there v)
   | .scope body => body.PreservesLocal v
   | .call _ _ continuation => continuation.PreservesLocal (.there v)
   | .seq first second => first.PreservesLocal v ∧ second.PreservesLocal v
@@ -115,11 +117,17 @@ theorem NoLocalWrites.preservesLocal {signatures : List Signature} {Γ : List Ty
   | read buffer index continuation ih =>
       intro unchanged τ v
       exact ih unchanged (.there v)
+  | readNode ref continuation ih =>
+      intro unchanged τ v
+      exact ih unchanged (.there v)
   | write => intro _ τ v; trivial
   | slice buffer offset length continuation ih =>
       intro unchanged τ v
       exact ih unchanged (.there v)
   | alloc length initial continuation ih =>
+      intro unchanged τ v
+      exact ih unchanged (.there v)
+  | consNode head tail continuation ih =>
       intro unchanged τ v
       exact ih unchanged (.there v)
   | scope body ih =>
@@ -170,6 +178,11 @@ theorem get_eq {signatures : List Signature} {program : Program signatures}
       simpa only [State.locals_tail, Env.get_tail, State.locals_cons, Env.cons_there] using
         ih (.there v) preserved
   | readFault => intro τ v _; rfl
+  | readNode loaded body ih =>
+      intro τ v preserved
+      simpa only [State.locals_tail, Env.get_tail, State.locals_cons, Env.cons_there] using
+        ih (.there v) preserved
+  | readNodeFault => intro τ v _; rfl
   | write => intro τ v _; rfl
   | writeFault => intro τ v _; rfl
   | slice sliced body ih =>
@@ -178,6 +191,10 @@ theorem get_eq {signatures : List Signature} {program : Program signatures}
         ih (.there v) preserved
   | sliceFault => intro τ v _; rfl
   | alloc body ih =>
+      intro τ v preserved
+      simpa only [State.locals_tail, Env.get_tail, State.locals_cons, Env.cons_there] using
+        ih (.there v) preserved
+  | consNode body ih =>
       intro τ v preserved
       simpa only [State.locals_tail, Env.get_tail, State.locals_cons, Env.cons_there] using
         ih (.there v) preserved

@@ -38,6 +38,9 @@ theorem realized_at_steps {signatures : List Signature}
   | @read Γ result kind depth buffer index continuation entry finish control value
       bufferFits indexFits loaded valueFits body steps _ ih =>
       exact .read bufferFits indexFits loaded valueFits (ih.mono_depth (by omega))
+  | @readNode Γ result kind depth ref continuation entry finish control head tail
+      found valueFits body steps _ ih =>
+      exact .readNode found valueFits (ih.mono_depth (by omega))
   | @write Γ result kind depth buffer index value entry heap
       bufferFits indexFits valueFits written =>
       exact .write bufferFits indexFits valueFits written

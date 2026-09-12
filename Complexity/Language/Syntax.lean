@@ -5,36 +5,45 @@ Authors: vvauted
 -/
 import Complexity.Language.Eval.Continuation
 import Complexity.Language.Eval.Verification
+import Complexity.Language.Eval.Node.Verification
 import Complexity.Language.Eval.Locals.Composition
 import Complexity.Language.Eval.Locals.Continuation
 import Complexity.Language.Eval.Locals.Effects
 import Complexity.Language.Eval.Locals.Verification
 import Complexity.Language.Eval.Locals.Captures
+import Complexity.Language.Eval.Locals.Range
 import Complexity.Language.Linking.Eval
 import Complexity.Language.Linking.Extension
 import Complexity.Language.Syntax.Imports
 import Complexity.Language.Syntax.Pure
+import Complexity.Language.RepresentedFunction
 import Std.Do.WP.SimpLemmas
 import Lean.Elab.Command
 import Lean.Elab.Do
 import Lean.Elab.PreDefinition.TerminationHint
+import Lean.Elab.Tactic.Conv.Basic
 import Lean.Meta.Closure
 import Lean.Parser.Do
+import Lean.PrettyPrinter.Delaborator
 
 /-!
 # Named source programs with shared buffers and allocation
 
 `source_program P where` declares an independent typed source program from
 Lean-style function headers and `do` blocks. The supported types are
-`Nat`, `Bool`, `Unit`, `Buffer Nat`, `Buffer Bool`, products and `Option`, with lexical `let` and
-`let mut`, assignment, named first-order calls, `if`/`then`/`else`, `while` and `return`.
+`Nat`, `Bool`, `Unit`, Nat/Bool buffers and node references, products and `Option`, with lexical `let` and
+`let mut`, assignment, named first-order calls, `if`/`then` with optional `else`,
+`while` and `return`.
 Only the nearest mutable binding may be assigned; ordinary `let` bindings and
 parameters are immutable. `x ← action` rebinds a mutable local to the actual
-result of a supported named call, buffer read, slice or allocation. Natural arithmetic and
+result of a supported named call, buffer or node read, slice or allocation. Natural arithmetic and
 comparisons may be nested in bindings, assignments, return values, conditions
 and call arguments. Their operands are normalized left to right into actual
-lexical primitive bindings; no host
-computation replaces the generated operations.
+lexical primitive bindings; no host computation replaces the generated operations.
+Natural comparisons include `<`, `≤`/`<=`, `>` and `≥`/`>=`; `=`/`==` and
+`≠`/`!=` compare either two naturals or two Booleans. Boolean `!`, `&&` and `||`
+use actual typed branches. The right operand of `&&` or `||` is evaluated only
+in its selected branch, including its normalized intermediate operations.
 
 Products use ordinary pairs and `.1`/`.2` or `.fst`/`.snd` projections. Options
 use `none`, `some value` and an exhaustive `match` with `none` and `some value`
@@ -45,14 +54,21 @@ Immutable bindings also accept nested product patterns and `_`, including
 `let (x, y) ← call` and `some (x, y)` branches. The right-hand side is evaluated
 once; named fields are obtained by actual primitive projections and copies.
 
-Effectful source functions support `for i in [:stop]` and `for i in [start:stop]`
-with frozen bound values, unit step and an immutable index. A literal, immutable
-Nat local or immutable buffer's length may be reused directly in the guard;
-the actual repeated guard work remains counted. Other bounds are captured once.
+Source functions support `for i in [:stop]`, `for i in [start:stop]` and
+explicit positive strides `[start:stop:step]` or `[:stop:step]`. Bounds and the
+stride are frozen; the index is immutable. A literal or immutable Nat local may
+be reused directly, as may an immutable buffer's length in the guard. Other
+expressions are captured once. The actual guard, increment and capture work
+remain counted. Lean checks stride positivity using `omega`, including dynamic
+expressions such as `k + 1`; zero or an unproved positive stride is rejected,
+not silently changed into a different range.
 `for x in xs` borrows a
 fixed buffer view and reads its current cell on each iteration, not a snapshot.
 These constructs lower to the existing while semantics and named-loop rules.
-Pure `for`, explicit range steps, `break` and `continue` are not supported yet.
+Pure finite ranges also generate executable native Lean iteration and its
+source correspondence. `source_pure_simp [P.f]` reduces an always-continuing
+native range to ordinary fold mathematics without return flags or cursor
+bookkeeping. Pure unbounded `while`, `break` and `continue` are not supported.
 
 A named function returning `Unit` may be called directly as a `do` statement.
 Other return types require an explicit binding; results are not silently discarded.
@@ -87,6 +103,22 @@ Buffers expose `xs.length`, `let x ← xs.get i`, `xs.set i value` and
 heap; copying, passing or returning a buffer does not copy its contents. Buffer
 parameters and results use the existing `Buffer .nat`/`Buffer .bool` Lean types.
 There are no buffer literals, object-identifier constructors or host callbacks.
+
+`NodeRef Nat` and `NodeRef Bool` denote typed immutable-node handles in effectful
+parameters, results, products and options. Passing or copying a handle preserves
+its identity. `let (head, tail) ← ref.read` reads the actual stored payload and
+optional shared tail using `Stmt.readNode`; its generated monadic equation uses
+`NodeRef.readM`. The receiver must be a node handle, not an `Option`: match an
+optional root before reading it. Reading also supports `let mut` and rebinding;
+a missing or wrongly typed node faults without changing the current heap.
+`let ref ← NodeRef.cons head tail` allocates one immutable node with a Nat or
+Bool payload and a same-kind optional tail, returning its actual fresh handle.
+The generated `Stmt.consNode` and `NodeRef.consM` equation neither scan nor
+validate the shared tail. Construction also supports `let mut` and rebinding.
+These operations do not provide a native List facade. Node reads, construction
+and node-reference parameters and results are excluded from the heap-free pure
+frontend, including handles nested inside products or options. Finite-machine
+capacity and word ranges remain separate compilation obligations.
 
 `let xs ← Buffer.alloc length initial` creates a fresh initialized object in the
 actual source heap. The initial scalar determines its Nat or Bool element type;
@@ -137,6 +169,28 @@ namespace Complexity.Language.Syntax
 open Lean
 open Lean.Parser.Term
 
+/-- Checked coordinate rewrite declarations belonging to one generated source loop.
+The key is its actual `Code` declaration; no body, semantics or cost is stored here. -/
+structure LoopCoordinates where
+  rules : Array Name
+
+private initialize loopCoordinatesExt :
+    SimplePersistentEnvExtension (Name × LoopCoordinates) (NameMap LoopCoordinates) ←
+  registerSimplePersistentEnvExtension {
+    addEntryFn := fun state entry => state.insert entry.1 entry.2
+    addImportedFn := mkStateFromImportedEntries
+      (fun state entry => state.insert entry.1 entry.2) {}
+  }
+
+/-- Find the coordinate rules registered for an actual generated loop body. -/
+def getLoopCoordinates? (env : Environment) (code : Name) : Option LoopCoordinates :=
+  (loopCoordinatesExt.getState env).find? code
+
+private structure LoopCoordinateRegistration where
+  code : TSyntax `ident
+  rules : Array (TSyntax `ident)
+  nativeTypes : Array (TSyntax `term)
+
 /-- One explicitly typed source parameter. -/
 declare_syntax_cat sourceParameter
 syntax "(" ident " : " term ")" : sourceParameter
@@ -166,9 +220,35 @@ syntax (name := importingPureSourceProgram)
 /-- A lexical allocation scope; returns still leave the enclosing source function. -/
 syntax (name := sourceScratch) "with_scratch " "do " doSeq : doElem
 
+-- Preserve finite-range origin until both source and native views are emitted.
+syntax (name := sourceFiniteRange)
+  "source_range% " "(" ident "," term "," term ")" " do " doSeq : doElem
+
 -- Internal emission point: infer an equation from its checked proof instead of
 -- inventing an unresolved right-hand side in a theorem header.
 syntax (name := inferredSourceEquation) "source_equation% " ident " := " term : command
+
+-- Pure layout temporaries remain real source primitives. They are absent from
+-- the native view only when a registered operation reconstructs that view.
+syntax (name := sourceRawValue) "source_raw_value% " "(" term ")" : term
+syntax (name := sourceRawNativeValue) "source_raw_value% " "(" term ")" "(" term ")" : term
+
+macro_rules
+  | `(source_raw_value% ($value)) => pure value
+  | `(source_raw_value% ($value) ($_native)) => pure value
+
+-- Obtain the converter's equality directly, without transporting a separate
+-- reflexive proposition through the same normalization.
+syntax (name := sourceConversion) "source_conversion% " term " => "
+  Lean.Parser.Tactic.Conv.convSeq : term
+
+elab_rules : term
+  | `(source_conversion% $term => $steps:convSeq) => do
+      let lhs ← Lean.Elab.Term.elabTermAndSynthesize term none
+      let (_, proof) ← (Lean.Elab.Tactic.Conv.convert lhs
+        (Lean.Elab.Tactic.evalTactic steps)
+        { elaborator := ``sourceConversion, recover := false }).run' { goals := [] }
+      return proof
 
 elab_rules : command
   | `(command| source_equation% $name:ident := $proof:term) => do
@@ -178,18 +258,23 @@ elab_rules : command
           rawName.replacePrefix `_root_ Name.anonymous
         else currentNamespace ++ rawName
       Lean.Elab.Command.liftTermElabM do
-        let value ← Lean.Elab.Term.elabTerm proof none
-        Lean.Elab.Term.synthesizeSyntheticMVarsNoPostponing
+        let value ← Lean.Elab.Term.withoutErrToSorry <|
+          Lean.Elab.Term.elabTermAndSynthesize proof none
         if (← Lean.Elab.Term.logUnassignedUsingErrorInfos (← Lean.Meta.getMVars value)) then
           Lean.Elab.throwAbortTerm
         let value ← Lean.instantiateMVars value
         let type ← Lean.instantiateMVars (← Lean.Meta.inferType value)
-        let closed ← Lean.Meta.Closure.mkValueTypeClosure type value false
+        -- Source locals are already curried. Use Lean's let-expanding closure
+        -- strategy; the declaration below still kernel-checks the full proof.
+        let closed ← Lean.Meta.Closure.mkValueTypeClosure type value (zetaDelta := true)
+        -- Match ordinary theorem elaboration: share repeated expression nodes
+        -- across the closed proposition and proof before kernel checking.
+        let shared := ShareCommon.shareCommon' #[closed.type, closed.value]
         Lean.addDecl (.thmDecl {
           name := declName
           levelParams := closed.levelParams.toList
-          type := closed.type
-          value := closed.value
+          type := shared[0]!
+          value := shared[1]!
         })
         Lean.addDocStringCore declName
           "One source-block observation equation derived from the proved semantic composition rules."
@@ -198,12 +283,26 @@ private structure Parameter where
   name : TSyntax `ident
   type : Ty
 
+private structure NativeView where
+  header : NativeHeader
+  parameterTypes : Array (TSyntax `term)
+  resultType : TSyntax `term
+  parameterEncodings : Array (TSyntax `term)
+  parameterRebuilds : Array (TSyntax `term)
+  resultEncoding : TSyntax `term
+  parameterEmbeddings : Array (TSyntax `term)
+  resultEmbedding : TSyntax `term
+  parameterEquivs : Array (TSyntax `term)
+  resultEquiv : TSyntax `term
+  simplifications : Array (TSyntax `ident)
+
 private structure Function where
   name : TSyntax `ident
   params : Array Parameter
   result : Ty
   body : TSyntax `term
   termination : TSyntax ``Lean.Parser.Termination.suffix
+  nativeView : Option NativeView := none
 
 private structure Callee where
   name : TSyntax `ident
@@ -213,6 +312,7 @@ private structure Callee where
   observation : TSyntax `ident
   fold : TSyntax `ident
   native : Option (TSyntax `ident) := none
+  pureEquation : Option (TSyntax `ident) := none
 
 private structure ImportedProgram where
   name : TSyntax `ident
@@ -230,11 +330,16 @@ private structure ImportDeclarations where
   signatures : TSyntax `term
   embeddings : Array ImportEmbedding
 
+private structure NativeCoordinate where
+  type : TSyntax `term
+  equiv : TSyntax `term
+
 private structure Binding where
   name : Option Name
   proofName : TSyntax `ident
   type : Ty
   isMutable : Bool
+  native : Option NativeCoordinate := none
 
 private abbrev Scope := List Binding
 
@@ -249,12 +354,21 @@ private structure Primitive where
   atom : Option (TSyntax `term)
   value : TSyntax `term
 
+private structure FiniteRange where
+  cursor : TSyntax `ident
+  stop : TSyntax `term
+  stride : TSyntax `term
+  body : Array (TSyntax `doElem)
+  fallsThrough : Bool
+
 private structure BlockSite where
   name : TSyntax `ident
   scope : Scope
   result : Ty
   guard : Option (TSyntax `term)
   body : TSyntax `term
+  finiteRange : Option FiniteRange
+  nativeResult : Option NativeCoordinate := none
 
 private structure LoweredBlock where
   term : TSyntax `term
@@ -293,11 +407,15 @@ private def typeName : Ty → String
   | .unit => "Unit"
   | .buffer .nat => "Buffer Nat"
   | .buffer .bool => "Buffer Bool"
+  | .node .nat => "NodeRef Nat"
+  | .node .bool => "NodeRef Bool"
   | .prod left right => s!"({typeName left} × {typeName right})"
   | .option value => s!"Option ({typeName value})"
 
 private partial def parseType (stx : TSyntax `term) : MacroM Ty := do
   match stx with
+  | `(source_native_type% ($raw) ($_native) via ($_equiv)) => parseType raw
+  | `(source_native_type% ($raw) ($_native)) => parseType raw
   | `(($type:term)) => parseType type
   | `(Nat) => return .nat
   | `(Bool) => return .bool
@@ -306,12 +424,16 @@ private partial def parseType (stx : TSyntax `term) : MacroM Ty := do
   | `(Buffer Bool) => return .buffer .bool
   | `(Complexity.Language.Buffer Complexity.Language.CellTy.nat) => return .buffer .nat
   | `(Complexity.Language.Buffer Complexity.Language.CellTy.bool) => return .buffer .bool
+  | `(NodeRef Nat) => return .node .nat
+  | `(NodeRef Bool) => return .node .bool
+  | `(Complexity.Language.NodeRef Complexity.Language.CellTy.nat) => return .node .nat
+  | `(Complexity.Language.NodeRef Complexity.Language.CellTy.bool) => return .node .bool
   | `($left × $right) | `(Prod $left $right) =>
       return .prod (← parseType left) (← parseType right)
   | `(Option $value) => return .option (← parseType value)
   | _ =>
       Macro.throwErrorAt stx
-        "supported source types are Nat, Bool, Unit, Buffer Nat, Buffer Bool, products and Option"
+        "supported source types are Nat, Bool, Unit, Buffer Nat/Bool, NodeRef Nat/Bool, products and Option"
 
 private def typeTerm : Ty → MacroM (TSyntax `term)
   | .nat => `(Complexity.Language.Ty.nat)
@@ -319,6 +441,8 @@ private def typeTerm : Ty → MacroM (TSyntax `term)
   | .unit => `(Complexity.Language.Ty.unit)
   | .buffer .nat => `(Complexity.Language.Ty.buffer Complexity.Language.CellTy.nat)
   | .buffer .bool => `(Complexity.Language.Ty.buffer Complexity.Language.CellTy.bool)
+  | .node .nat => `(Complexity.Language.Ty.node Complexity.Language.CellTy.nat)
+  | .node .bool => `(Complexity.Language.Ty.node Complexity.Language.CellTy.bool)
   | .prod left right => do
       `(Complexity.Language.Ty.prod $(← typeTerm left) $(← typeTerm right))
   | .option value => do
@@ -330,6 +454,8 @@ private def valueTypeTerm : Ty → MacroM (TSyntax `term)
   | .unit => `(Unit)
   | .buffer .nat => `(Complexity.Language.Buffer Complexity.Language.CellTy.nat)
   | .buffer .bool => `(Complexity.Language.Buffer Complexity.Language.CellTy.bool)
+  | .node .nat => `(Complexity.Language.NodeRef Complexity.Language.CellTy.nat)
+  | .node .bool => `(Complexity.Language.NodeRef Complexity.Language.CellTy.bool)
   | .prod left right => do
       `($(← valueTypeTerm left) × $(← valueTypeTerm right))
   | .option value => do
@@ -397,6 +523,42 @@ private def scopeValueTypes (scope : Scope) : MacroM (TSyntax `term) := do
   for binding in scope.reverse do
     values ← `($(← valueTypeTerm binding.type) × $values)
   return values
+
+private def bindingNativeType (binding : Binding) : MacroM (TSyntax `term) :=
+  match binding.native with
+  | some native => pure native.type
+  | none => valueTypeTerm binding.type
+
+private def scopeNativeTypes (scope : Scope) : MacroM (TSyntax `term) := do
+  let mut values ← `(Unit)
+  for binding in scope.reverse do
+    values ← `($(← bindingNativeType binding) × $values)
+  return values
+
+private def scopeNativeEquiv (scope : Scope) : MacroM (TSyntax `term) := do
+  let mut equiv ← `(Equiv.refl Unit)
+  for binding in scope.reverse do
+    let head ← match binding.native with
+      | some native => pure native.equiv
+      | none => `(Equiv.refl $(← valueTypeTerm binding.type))
+    equiv ← `(Equiv.prodCongr $head $equiv)
+  return equiv
+
+private def encodeNativeField (binding : Binding) (value : TSyntax `term) :
+    MacroM (TSyntax `term) := do
+  match binding.native with
+  | some native => `(($(native.equiv)) $value)
+  | none => pure value
+
+private def decodeNativeField (binding : Binding) (value : TSyntax `term) :
+    MacroM (TSyntax `term) := do
+  match binding.native with
+  | some native => `(($(native.equiv)).symm $value)
+  | none => pure value
+
+private def encodeNativeFields (scope : Scope) (values : Array (TSyntax `term)) :
+    MacroM (Array (TSyntax `term)) :=
+  (scope.toArray.zip values).mapM fun (binding, value) => encodeNativeField binding value
 
 private def scopeView (scope : Scope) : MacroM (TSyntax `term) := do
   let mut view ← `(Complexity.Language.Env.equivUnit)
@@ -476,6 +638,18 @@ private def quantifyScope (scope : Scope) (body : TSyntax `term) : MacroM (TSynt
     result ← `(∀ ($(binding.proofName):ident : $(← valueTypeTerm binding.type)), $result)
   return result
 
+private def curryNativeScope (scope : Scope) (body : TSyntax `term) : MacroM (TSyntax `term) := do
+  let mut result := body
+  for binding in scope.reverse do
+    result ← `(fun ($(binding.proofName):ident : $(← bindingNativeType binding)) => $result)
+  return result
+
+private def quantifyNativeScope (scope : Scope) (body : TSyntax `term) : MacroM (TSyntax `term) := do
+  let mut result := body
+  for binding in scope.reverse do
+    result ← `(∀ ($(binding.proofName):ident : $(← bindingNativeType binding)), $result)
+  return result
+
 private def scopeApplication (scope : Scope) (name : TSyntax `ident) : TSyntax `term :=
   Lean.Syntax.mkApp ⟨name.raw⟩ (scope.toArray.map fun binding => ⟨binding.proofName.raw⟩)
 
@@ -495,7 +669,7 @@ private def parseFunction (stx : TSyntax `sourceFunction) : MacroM Function := d
               Macro.throwErrorAt param "duplicate source parameter name"
             params := params.push ⟨param, ← parseType type⟩
         | _ => Macro.throwErrorAt parameter "expected a source parameter '(name : type)'"
-      return ⟨name, params, ← parseType result, body, termination⟩
+      return ⟨name, params, ← parseType result, body, termination, none⟩
   | _ => Macro.throwErrorAt stx "expected 'def name (argument : type) : type := do ...'"
 
 private def variableTerm (index : Nat) : MacroM (TSyntax `term) := do
@@ -517,6 +691,8 @@ private def lookupVariable (scope : Scope) (name : TSyntax `ident) : MacroM Atom
 
 private partial def parseAtom (scope : Scope) (stx : TSyntax `term) : MacroM Atomic := do
   match stx with
+  | `(source_native% ($raw) ($_native) ($_nativeType) via ($_equiv)) => parseAtom scope raw
+  | `(source_native% ($raw) ($_native) ($_nativeType)) => parseAtom scope raw
   | `(($value:term : $type:term)) =>
       let atom ← parseAtom scope value
       expectType type atom.type (← parseType type)
@@ -556,6 +732,14 @@ private def parseBuffer (scope : Scope) (stx : TSyntax `term) : MacroM (CellTy �
   | .buffer kind => return (kind, buffer)
   | _ => Macro.throwErrorAt stx s!"expected a source buffer, found {typeName buffer.type}"
 
+private def parseNodeRef (scope : Scope) (stx : TSyntax `term) : MacroM (CellTy × Atomic) := do
+  let ref ← parseAtom scope stx
+  match ref.type with
+  | .node kind => return (kind, ref)
+  | _ =>
+      Macro.throwErrorAt stx
+        s!"expected a source node reference, found {typeName ref.type}; match an optional root before reading it"
+
 private def binaryPrimitive (scope : Scope) (left right : TSyntax `term)
     (result : Ty) (constructor native : Name) : MacroM Primitive := do
   let lhs ← parseAtom scope left
@@ -567,8 +751,55 @@ private def binaryPrimitive (scope : Scope) (left right : TSyntax `term)
   let value ← if result == .bool then `(decide $nativeApp) else pure nativeApp
   return ⟨result, ← `($op $(lhs.term) $(rhs.term)), none, value⟩
 
+private def nativeProofValue (scope : Scope) (value : TSyntax `term) :
+    MacroM (TSyntax `term) := do
+  let value ← value.raw.replaceM fun node => do
+    if node.isIdent then
+      if let some binding := scope.find? (fun binding => binding.name == some node.getId) then
+        return some binding.proofName.raw
+    return none
+  return ⟨value⟩
+
+-- Hidden layout temporaries remain complete lexical coordinates of the loop.
+-- Their native-side values encode already checked native operands; no source
+-- instruction, temporary or charge is removed by this proof-side reconstruction.
+private partial def rawValueInNativeScope (scope : Scope) (value : TSyntax `term) :
+    MacroM (TSyntax `term) := do
+  let value ← value.raw.replaceM fun node => do
+    match node with
+    | `(source_native% ($_raw) ($native) ($_type) via ($equiv)) =>
+        return some (← `(($equiv : _ ≃ _) $native)).raw
+    | `(source_native% ($raw) ($_native) ($_type)) =>
+        return some (← rawValueInNativeScope scope raw).raw
+    | `(source_raw_value% ($_raw) ($native)) => return some native.raw
+    | `(source_raw_value% ($raw)) => return some (← rawValueInNativeScope scope raw).raw
+    | _ => pure ()
+    if node.isIdent then
+      if let some binding := scope.find? (fun binding => binding.proofName.getId == node.getId) then
+        if let some native := binding.native then
+          return some (← `(($(native.equiv) : _ ≃ _) $(binding.proofName):ident)).raw
+    return none
+  return ⟨value⟩
+
 private partial def parsePrimitive (scope : Scope) (stx : TSyntax `term)
     (expected : Option Ty := none) : MacroM Primitive := do
+  if let `(source_raw_value% ($raw)) := stx then
+    let parsed ← parsePrimitive scope raw expected
+    let native ← rawValueInNativeScope scope parsed.value
+    return { parsed with value := ← `(source_raw_value% ($(parsed.value)) ($native)) }
+  if let `(source_raw_value% ($raw) ($_native)) := stx then
+    let parsed ← parsePrimitive scope raw expected
+    let native ← rawValueInNativeScope scope parsed.value
+    return { parsed with value := ← `(source_raw_value% ($(parsed.value)) ($native)) }
+  if let `(source_native% ($raw) ($native) ($nativeType) via ($equiv)) := stx then
+    let parsed ← parsePrimitive scope raw expected
+    let native ← nativeProofValue scope native
+    return { parsed with value := ←
+      `(source_native% ($(parsed.value)) ($native) ($nativeType) via ($equiv)) }
+  if let `(source_native% ($raw) ($native) ($nativeType)) := stx then
+    let parsed ← parsePrimitive scope raw expected
+    let native ← nativeProofValue scope native
+    return { parsed with value := ← `(source_native% ($(parsed.value)) ($native) ($nativeType)) }
   if let some (receiver, field) := fieldAccess? stx then
     if field == `length then
       let (_, buffer) ← parseBuffer scope receiver
@@ -618,6 +849,9 @@ private partial def parsePrimitive (scope : Scope) (stx : TSyntax `term)
   | `($left < $right) => binaryPrimitive scope left right .bool ``Prim.lt ``LT.lt
   | `($left ≤ $right) => binaryPrimitive scope left right .bool ``Prim.le ``LE.le
   | `($left <= $right) => binaryPrimitive scope left right .bool ``Prim.le ``LE.le
+  | `($left > $right) => binaryPrimitive scope right left .bool ``Prim.lt ``LT.lt
+  | `($left ≥ $right) => binaryPrimitive scope right left .bool ``Prim.le ``LE.le
+  | `($left >= $right) => binaryPrimitive scope right left .bool ``Prim.le ``LE.le
   | _ =>
       let atom ← parseAtom scope stx
       return ⟨atom.type, ← `(Complexity.Language.Prim.atom $(atom.term)), some atom.term,
@@ -627,6 +861,26 @@ private def checkAnnotation (annotation : Option (TSyntax `term)) (actual : Ty) 
   if let some annotation := annotation then
     expectType annotation actual (← parseType annotation)
 
+private def bindingValueType (type : Ty) (annotation : Option (TSyntax `term))
+    (value : Option (TSyntax `term) := none) :
+    MacroM (TSyntax `term) := do
+  if let some value := value then
+    if let `(source_native% ($_raw) ($_native) ($nativeType) via ($equiv)) := value then
+      return ← `(source_native_type% ($(← valueTypeTerm type)) ($nativeType) via ($equiv))
+    if let `(source_native% ($_raw) ($_native) ($nativeType)) := value then
+      return ← `(source_native_type% ($(← valueTypeTerm type)) ($nativeType))
+  if let some annotation := annotation then
+    if let `(source_native_type% ($_raw) ($native) via ($equiv)) := annotation then
+      return ← `(source_native_type% ($(← valueTypeTerm type)) ($native) via ($equiv))
+    if let `(source_native_type% ($_raw) ($native)) := annotation then
+      return ← `(source_native_type% ($(← valueTypeTerm type)) ($native))
+  return ← valueTypeTerm type
+
+private def bindingNativeCoordinate (annotation : TSyntax `term) : Option NativeCoordinate :=
+  match annotation with
+  | `(source_native_type% ($_raw) ($native) via ($equiv)) => some ⟨native, equiv⟩
+  | _ => none
+
 private def lookupFunction (functions : Array Callee) (name : TSyntax `ident) : MacroM Callee := do
   let some fn := functions.find? (fun fn => fn.name.getId == name.getId)
     | Macro.throwErrorAt name s!"unknown source function '{name.getId}'; name a local function or a qualified imported function"
@@ -635,6 +889,34 @@ private def lookupFunction (functions : Array Callee) (name : TSyntax `ident) : 
 private def parseBinding (functions : Array Callee)
     (scope : Scope) (stx : TSyntax `term) :
     MacroM (Ty × TSyntax `term × TSyntax `term) := do
+  let (head, operands) := match stx with
+    | `($head:term $operands:term*) => (head, operands)
+    | _ => (stx, #[])
+  if head.raw.getId == `NodeRef.cons &&
+      !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+    unless operands.size == 2 do
+      Macro.throwErrorAt stx "node construction expects a scalar head and an optional tail"
+    let value ← parseAtom scope operands[0]!
+    let kind : CellTy ← match value.type with
+      | .nat => pure CellTy.nat
+      | .bool => pure CellTy.bool
+      | _ => Macro.throwErrorAt operands[0]! "node construction requires a Nat or Bool head"
+    let tail ← parseAtom scope operands[1]!
+    expectType operands[1]! tail.type (.option (.node kind))
+    let kindTerm ← match kind with
+      | CellTy.nat => `(Complexity.Language.CellTy.nat)
+      | CellTy.bool => `(Complexity.Language.CellTy.bool)
+    return (.node kind,
+      ← `(Complexity.Language.Stmt.consNode (kind := $kindTerm) $(value.term) $(tail.term)),
+      ← `(Complexity.Language.NodeRef.consM (kind := $kindTerm) $(value.value) $(tail.value)))
+  if let some (receiver, field) := fieldAccess? head then
+    if field == `read && !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+      unless operands.isEmpty do
+        Macro.throwErrorAt stx "a node read takes no arguments"
+      let (kind, ref) ← parseNodeRef scope receiver
+      return (.prod kind.toTy (.option (.node kind)),
+        ← `(Complexity.Language.Stmt.readNode $(ref.term)),
+        ← `(Complexity.Language.NodeRef.readM $(ref.value)))
   if let `($head:term $operands:term*) := stx then
     if head.raw.getId == `Buffer.alloc &&
         !functions.any (fun fn => fn.name.getId == head.raw.getId) then
@@ -782,16 +1064,17 @@ private def loopProofBody (site : BlockSite) : MacroM (Array (TSyntax `doElem)) 
   let error ← freshProofName site.name `error
   let invocation := scopeApplication site.scope site.name
   let mut elements := #[← `(doElem|
-    let ($control:ident, $locals:ident) ← MonadLift.monadLift $invocation),
-    ← `(doElem| match $control:ident with
-      | .normal => pure ()
-      | .returned $value:ident => return $value:ident
-      | .fault $error:ident => throw $error:ident)]
+    let ($control:ident, $locals:ident) ← MonadLift.monadLift $invocation)]
   let fields ← tupleFields site.scope ⟨locals.raw⟩
   for binding in site.scope, field in fields do
     if binding.isMutable then
       elements := elements.push (← `(doElem| $(binding.proofName):ident := $field))
-  return elements
+  -- An enclosing block must retain the actual final mutable values even when
+  -- this nested block returns. These are pure local assignments, not heap writes.
+  return elements.push (← `(doElem| match $control:ident with
+    | .normal => pure ()
+    | .returned $value:ident => return $value:ident
+    | .fault $error:ident => throw $error:ident))
 
 private partial def guardElements (condition : TSyntax `term) : MacroM (List (TSyntax `doElem)) :=
   match condition with
@@ -801,6 +1084,15 @@ private partial def guardElements (condition : TSyntax `term) : MacroM (List (TS
 
 -- Normalize only the supported expression vocabulary. Fresh lexical names are
 -- consumed by the ordinary typed translator and cannot capture user bindings.
+private def normalizeBooleanBranch (stx : TSyntax `term)
+    (condition yes no : NormalizedValue) : MacroM NormalizedValue := do
+  let name ← freshProofName stx `boolean
+  let initial ← `(doElem| let mut $name:ident : Bool := false)
+  let yesBody := doSequence (yes.bindings.push (← `(doElem| $name:ident := $(yes.value))))
+  let noBody := doSequence (no.bindings.push (← `(doElem| $name:ident := $(no.value))))
+  let branch ← `(doElem| if $(condition.value) then $yesBody:doSeq else $noBody:doSeq)
+  return ⟨condition.bindings ++ #[initial, branch], ⟨name.raw⟩, true⟩
+
 private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool)
     (expected : Option Ty := none) :
     MacroM NormalizedValue := withRef stx do
@@ -816,6 +1108,31 @@ private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool)
     let value ← normalizeValue value true valueType
     return (⟨value.bindings, ← rebuild value.value, false⟩ : NormalizedValue)
   let normalized ← (match stx with
+    | `(source_native% ($raw) ($native) ($nativeType) via ($equiv)) => do
+        let raw ← normalizeValue raw false expected
+        let bindings ← raw.bindings.mapM fun binding => do
+          match binding with
+          | `(doElem| let $name:ident $[: $type:term]? := $value:term) =>
+              `(doElem| let $name:ident $[: $type:term]? := source_raw_value% ($value))
+          | _ => Macro.throwErrorAt binding "a native layout expansion must contain only primitive bindings"
+        return { raw with
+          bindings := bindings
+          value := ← `(source_native% ($(raw.value)) ($native) ($nativeType) via ($equiv))
+          atomic := false }
+    | `(source_native% ($raw) ($native) ($nativeType)) => do
+        let raw ← normalizeValue raw false expected
+        let bindings ← raw.bindings.mapM fun binding => do
+          match binding with
+          | `(doElem| let $name:ident $[: $type:term]? := $value:term) =>
+              `(doElem| let $name:ident $[: $type:term]? := source_raw_value% ($value))
+          | _ => Macro.throwErrorAt binding "a native layout expansion must contain only primitive bindings"
+        return { raw with
+          bindings := bindings
+          value := ← `(source_native% ($(raw.value)) ($native) ($nativeType))
+          atomic := false }
+    | `(source_raw_value% ($raw)) => do
+        let raw ← normalizeValue raw false expected
+        return { raw with value := ← `(source_raw_value% ($(raw.value))), atomic := false }
     | `(($value:term : $type:term)) => do
         let value ← normalizeValue value false (some (← parseType type))
         return { value with value := ← `(($(value.value) : $type)) }
@@ -843,6 +1160,22 @@ private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool)
     | `($left < $right) => binary left right fun a b => `($a < $b)
     | `($left ≤ $right) => binary left right fun a b => `($a ≤ $b)
     | `($left <= $right) => binary left right fun a b => `($a <= $b)
+    | `($left > $right) => binary left right fun a b => `($a > $b)
+    | `($left ≥ $right) => binary left right fun a b => `($a ≥ $b)
+    | `($left >= $right) => binary left right fun a b => `($a >= $b)
+    | `(!$value) => do
+        let condition ← normalizeValue value true (some .bool)
+        normalizeBooleanBranch stx condition ⟨#[], ← `(false), true⟩ ⟨#[], ← `(true), true⟩
+    | `($left && $right) => do
+        let condition ← normalizeValue left true (some .bool)
+        let yes ← normalizeValue right false (some .bool)
+        normalizeBooleanBranch stx condition yes ⟨#[], ← `(false), true⟩
+    | `($left || $right) => do
+        let condition ← normalizeValue left true (some .bool)
+        let no ← normalizeValue right false (some .bool)
+        normalizeBooleanBranch stx condition ⟨#[], ← `(true), true⟩ no
+    | `($left != $right) | `($left ≠ $right) => do
+        normalizeValue (← `(!($left == $right))) false expected
     | _ => do
         if let some (receiver, field) := fieldAccess? stx then
           if field == `length || field == `fst || field == `snd then
@@ -856,8 +1189,48 @@ private partial def normalizeValue (stx : TSyntax `term) (atomize : Bool)
   else
     return normalized
 
-private def normalizeCall (functions : Array Callee) (stx : TSyntax `term) :
+-- Operand bindings must enter the lexical scope before overloaded equality is
+-- resolved. Boolean equality uses the existing typed branch/assignment core.
+private partial def normalizeTypedValue (scope : Scope) (stx : TSyntax `term)
+    (atomize : Bool) (expected : Option Ty := none) : MacroM NormalizedValue := do
+  let normalized ← normalizeValue stx atomize expected
+  if !normalized.bindings.isEmpty then
+    return normalized
+  match normalized.value with
+  | `(($value:term : $type:term)) =>
+      let value ← normalizeTypedValue scope value false (some (← parseType type))
+      return { value with value := ← `(($(value.value) : $type)) }
+  | `($left == $right) | `($left = $right) =>
+      let lhs ← parseAtom scope left
+      let rhs ← parseAtom scope right
+      if lhs.type == .bool || rhs.type == .bool then
+        expectType left lhs.type .bool
+        expectType right rhs.type .bool
+        let no ← normalizeValue (← `(!$right)) false (some .bool)
+        normalizeBooleanBranch stx ⟨#[], left, true⟩ ⟨#[], right, true⟩ no
+      else
+        return normalized
+  | _ => return normalized
+
+private def normalizeCall (functions : Array Callee) (scope : Scope) (stx : TSyntax `term) :
     MacroM (Array (TSyntax `doElem) × TSyntax `term) := withRef stx do
+  if let `($head:term $operands:term*) := stx then
+    if head.raw.getId == `NodeRef.cons &&
+        !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+      unless operands.size == 2 do
+        Macro.throwErrorAt stx "node construction expects a scalar head and an optional tail"
+      let value ← normalizeValue operands[0]! true
+      -- Install the head's real primitive bindings before inferring its kind.
+      -- The tail is normalized only afterwards, with its precise option type.
+      if !value.bindings.isEmpty then
+        return (value.bindings, Lean.Syntax.mkApp head #[value.value, operands[1]!])
+      let valueAtom ← parseAtom scope value.value
+      let kind : CellTy ← match valueAtom.type with
+        | .nat => pure CellTy.nat
+        | .bool => pure CellTy.bool
+        | _ => Macro.throwErrorAt operands[0]! "node construction requires a Nat or Bool head"
+      let tail ← normalizeValue operands[1]! true (some (.option (.node kind)))
+      return (tail.bindings, Lean.Syntax.mkApp head #[value.value, tail.value])
   match stx with
   | `($head:term $operands:term*) =>
       let mut bindings := #[]
@@ -866,7 +1239,7 @@ private def normalizeCall (functions : Array Callee) (stx : TSyntax `term) :
       let mut head := head
       if callee.isNone then
         if let some (receiver, field) := fieldAccess? head then
-          if field == `get || field == `set || field == `slice then
+          if field == `get || field == `set || field == `slice || field == `read then
             let normalized ← normalizeValue receiver true
             bindings := normalized.bindings
             head ← `($(normalized.value).$(mkIdent field):ident)
@@ -876,7 +1249,13 @@ private def normalizeCall (functions : Array Callee) (stx : TSyntax `term) :
         bindings := bindings ++ normalized.bindings
         arguments := arguments.push normalized.value
       return (bindings, Lean.Syntax.mkApp head arguments)
-  | _ => return (#[], stx)
+  | _ =>
+      if let some (receiver, field) := fieldAccess? stx then
+        if field == `read && !functions.any (fun fn => fn.name.getId == stx.raw.getId) then
+          let normalized ← normalizeValue receiver true
+          return (normalized.bindings,
+            ← `($(normalized.value).$(mkIdent field):ident))
+      return (#[], stx)
 
 private def optionMatch? (element : TSyntax `doElem) :
     Option (TSyntax `term × TSyntax `term × TSyntax ``doSeq × TSyntax `term × TSyntax ``doSeq) :=
@@ -956,27 +1335,27 @@ private def normalizeElement (functions : Array Callee) (scope : Scope) (result 
     (element : TSyntax `doElem) :
     MacroM (Array (TSyntax `doElem) × TSyntax `doElem) := withRef element do
   if let some (value, first, firstBody, second, secondBody) := optionMatch? element then
-    let normalized ← normalizeValue value true
+    let normalized ← normalizeTypedValue scope value true
     return (normalized.bindings, ← `(doElem| match $(normalized.value):term with
       | $first:term => $firstBody:doSeq
       | $second:term => $secondBody:doSeq))
   match element with
   | `(doElem| let mut $name:ident $[: $annotation:term]? := $value:term) =>
-      let normalized ← normalizeValue value false (← annotation.mapM parseType)
+      let normalized ← normalizeTypedValue scope value false (← annotation.mapM parseType)
       return (normalized.bindings,
         ← `(doElem| let mut $name:ident $[: $annotation:term]? := $(normalized.value)))
   | `(doElem| let $name:ident $[: $annotation:term]? := $value:term) =>
-      let normalized ← normalizeValue value false (← annotation.mapM parseType)
+      let normalized ← normalizeTypedValue scope value false (← annotation.mapM parseType)
       return (normalized.bindings,
         ← `(doElem| let $name:ident $[: $annotation:term]? := $(normalized.value)))
   | `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term) =>
-      let (bindings, action) ← normalizeCall functions action
+      let (bindings, action) ← normalizeCall functions scope action
       return (bindings, ← `(doElem| let mut $name:ident $[: $annotation:term]? ← $action:term))
   | `(doElem| let $name:ident $[: $annotation:term]? ← $action:term) =>
-      let (bindings, action) ← normalizeCall functions action
+      let (bindings, action) ← normalizeCall functions scope action
       return (bindings, ← `(doElem| let $name:ident $[: $annotation:term]? ← $action:term))
   | `(doElem| let $pattern:term := $value:term) =>
-      let normalized ← normalizeValue value false
+      let normalized ← normalizeTypedValue scope value false
       if !normalized.bindings.isEmpty then
         return (normalized.bindings,
           ← `(doElem| let $pattern:term := $(normalized.value)))
@@ -987,7 +1366,7 @@ private def normalizeElement (functions : Array Callee) (scope : Scope) (result 
       let expanded := #[initial] ++ (← patternBindings pattern parsed.type ⟨name.raw⟩)
       return (expanded.pop, expanded.back!)
   | `(doElem| let $pattern:term ← $action:term) =>
-      let (bindings, action) ← normalizeCall functions action
+      let (bindings, action) ← normalizeCall functions scope action
       if !bindings.isEmpty then
         return (bindings, ← `(doElem| let $pattern:term ← $action:term))
       let pattern ← checkedBindingPattern pattern
@@ -998,37 +1377,48 @@ private def normalizeElement (functions : Array Callee) (scope : Scope) (result 
       return (expanded.pop, expanded.back!)
   | `(doElem| $name:ident := $value:term) =>
       let (binding, _) ← lookupBinding scope name
-      let normalized ← normalizeValue value false (some binding.type)
+      let normalized ← normalizeTypedValue scope value false (some binding.type)
       return (normalized.bindings, ← `(doElem| $name:ident := $(normalized.value)))
   | `(doElem| $name:ident ← $action:term) =>
-      let (bindings, action) ← normalizeCall functions action
+      let (bindings, action) ← normalizeCall functions scope action
       return (bindings, ← `(doElem| $name:ident ← $action:term))
   | `(doElem| return $value:term) =>
-      let normalized ← normalizeValue value false (some result)
+      let normalized ← normalizeTypedValue scope value false (some result)
       return (normalized.bindings, ← `(doElem| return $(normalized.value)))
   | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) =>
-      let normalized ← normalizeValue condition false
+      let normalized ← normalizeTypedValue scope condition false
+      return (normalized.bindings,
+        ← `(doElem| if $(normalized.value) then $yes:doSeq else $no:doSeq))
+  | `(doElem| if $condition:term then $yes:doSeq) =>
+      let normalized ← normalizeTypedValue scope condition false
+      let no := doSequence #[]
       return (normalized.bindings,
         ← `(doElem| if $(normalized.value) then $yes:doSeq else $no:doSeq))
   | `(doElem| while $_condition do $_body) => return (#[], element)
   | `(doElem| with_scratch do $_body:doSeq) => return (#[], element)
   | `(doElem| $action:term) =>
-      let (bindings, action) ← normalizeCall functions action
+      let (bindings, action) ← normalizeCall functions scope action
       return (bindings, ← `(doElem| $action:term))
   | _ => return (#[], element)
 
-private partial def stableRangeBound (scope : Scope) (value : TSyntax `term) : MacroM Bool := do
+private partial def stableRangeBound (scope : Scope) (value : TSyntax `term)
+    (allowLength : Bool := true) : MacroM Bool := do
   match value with
-  | `(($value:term)) => stableRangeBound scope value
+  | `(source_native% ($raw) ($_native) ($_type) via ($_equiv)) =>
+      stableRangeBound scope raw allowLength
+  | `(source_native% ($raw) ($_native) ($_type)) =>
+      stableRangeBound scope raw allowLength
+  | `(($value:term)) => stableRangeBound scope value allowLength
   | `($_:num) => return true
   | _ =>
       if let some (receiver, field) := fieldAccess? value then
-        if field == `length then
+        if allowLength && field == `length then
           if let `($name:ident) := receiver then
             let (binding, _) ← lookupBinding scope name
             return !binding.isMutable && match binding.type with
               | .buffer _ => true
               | _ => false
+        return false
       if let `($name:ident) := value then
         let (binding, _) ← lookupBinding scope name
         return !binding.isMutable && binding.type == .nat
@@ -1060,7 +1450,7 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       | _ => do
           pure (payloadName.getId, ← patternBindings pattern payloadType ⟨payloadName.raw⟩)
     let noneCode ← recurse scope result (getDoElems noneBody).toList nextIndex
-    let someCode ← recurse (⟨some sourceName, payloadName, payloadType, false⟩ :: scope)
+    let someCode ← recurse (⟨some sourceName, payloadName, payloadType, false, none⟩ :: scope)
       result (bindings.toList ++ (getDoElems someBody).toList) (nextIndex + noneCode.sites.size)
     let normal ← `(doElem| pure ())
     let noneBody := noneCode.proofSequence normal
@@ -1081,7 +1471,7 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       expectType condition parsed.type .bool
       let saved ← freshProofName condition `condition
       let inner := if parsed.atom.isSome then scope
-        else ⟨none, saved, Ty.bool, false⟩ :: scope
+        else ⟨none, saved, Ty.bool, false, none⟩ :: scope
       let yesCode ← recurse inner result (getDoElems yes).toList nextIndex
       let noCode ← recurse inner result (getDoElems no).toList (nextIndex + yesCode.sites.size)
       let term ← match parsed.atom with
@@ -1107,13 +1497,35 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       let guardCode ← recurse scope .bool (← guardElements condition) (nextIndex + 1)
       let bodyCode ← recurse scope result (getDoElems body).toList
         (nextIndex + 1 + guardCode.sites.size)
-      let site : BlockSite := ⟨name, scope, result, some guardCode.term, bodyCode.term⟩
+      let site : BlockSite := ⟨name, scope, result, some guardCode.term, bodyCode.term, none, none⟩
       let code := loopMember site "Code"
       return ⟨⟨code.raw⟩, ← loopProofBody site, true,
         guardCode.sites ++ bodyCode.sites |>.push site⟩
+  | `(doElem| source_range% ($cursor:ident, $stop:term, $stride:term) do $body:doSeq) =>
+      let name := generatedName family owner s!"_loop{nextIndex}"
+      let condition ← `($cursor:ident < $stop)
+      let guardCode ← recurse scope .bool (← guardElements condition) (nextIndex + 1)
+      let bodyCode ← recurse scope result (getDoElems body).toList
+        (nextIndex + 1 + guardCode.sites.size)
+      let (cursorBinding, _) ← lookupBinding scope cursor
+      let stopValue ← parsePrimitive scope stop (some .nat)
+      let strideValue ← parsePrimitive scope stride (some .nat)
+      let metadata : FiniteRange :=
+        ⟨cursorBinding.proofName, stopValue.value, strideValue.value,
+          bodyCode.proofBody, bodyCode.fallsThrough⟩
+      let site : BlockSite :=
+        ⟨name, scope, result, some guardCode.term, bodyCode.term, some metadata, none⟩
+      let code := loopMember site "Code"
+      let positive ← freshProofName element `positiveStep
+      let checked ← `(doElem| have $positive:ident : 0 < $(strideValue.value) := by
+        simp (config := { zetaDelta := true, failIfUnchanged := false }) only
+          [Nat.add_eq] <;> omega)
+      return ⟨⟨code.raw⟩, #[checked] ++ (← loopProofBody site), true,
+        guardCode.sites ++ bodyCode.sites |>.push site⟩
   | `(doElem| for $pattern:term in $collection:term do $body:doSeq) =>
       let isRange := match collection with
-        | `([ : $_stop]) | `([ $_start : $_stop ]) => true
+        | `([ : $_stop]) | `([ $_start : $_stop ]) |
+          `([ : $_stop : $_stride ]) | `([ $_start : $_stop : $_stride ]) => true
         | _ => false
       let cursorName := if isRange then match pattern with
           | `($name:ident) => name.getId.eraseMacroScopes
@@ -1121,39 +1533,51 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
         else `index
       let cursor ← freshProofName element cursorName
       let limit ← freshProofName element `stop
-      let rangeInitial (start stop : TSyntax `term) := do
+      let stepName ← freshProofName element `step
+      let rangeInitial (start stop stride : TSyntax `term) := do
         let cursorBinding ← `(doElem| let mut $cursor:ident : Nat := $start)
-        if ← stableRangeBound scope stop then
-          pure (#[cursorBinding], stop)
+        let (initial, stop) ← if ← stableRangeBound scope stop then
+            pure (#[cursorBinding], stop)
+          else
+            pure (#[cursorBinding, ← `(doElem| let $limit:ident : Nat := $stop)],
+              (⟨limit.raw⟩ : TSyntax `term))
+        if ← stableRangeBound scope stride false then
+          pure (initial, stop, stride)
         else
-          pure (#[cursorBinding, ← `(doElem| let $limit:ident : Nat := $stop)],
-            (⟨limit.raw⟩ : TSyntax `term))
-      let (initial, stop, elementBinding) ← match collection with
+          pure (initial.push (← `(doElem| let $stepName:ident : Nat := $stride)), stop,
+            (⟨stepName.raw⟩ : TSyntax `term))
+      let (initial, stop, stride, elementBinding) ← match collection with
         | `([ : $stop]) => do
-            let (initial, stop) ← rangeInitial (← `(0)) stop
-            pure (initial, stop,
+            let (initial, stop, stride) ← rangeInitial (← `(0)) stop (← `(1))
+            pure (initial, stop, stride,
               ← `(doElem| let $pattern:term := $cursor:ident))
         | `([ $start : $stop ]) => do
-            let (initial, stop) ← rangeInitial start stop
-            pure (initial, stop,
+            let (initial, stop, stride) ← rangeInitial start stop (← `(1))
+            pure (initial, stop, stride,
               ← `(doElem| let $pattern:term := $cursor:ident))
-        | `([ $_start : $_stop : $_step ]) | `([ : $_stop : $_step ]) =>
-            Macro.throwErrorAt collection "source for currently supports unit-step bounded ranges"
+        | `([ : $stop : $stride ]) => do
+            let (initial, stop, stride) ← rangeInitial (← `(0)) stop stride
+            pure (initial, stop, stride,
+              ← `(doElem| let $pattern:term := $cursor:ident))
+        | `([ $start : $stop : $stride ]) => do
+            let (initial, stop, stride) ← rangeInitial start stop stride
+            pure (initial, stop, stride,
+              ← `(doElem| let $pattern:term := $cursor:ident))
         | _ => do
             let buffer ← freshProofName collection `buffer
             pure (#[← `(doElem| let $buffer:ident := $collection),
               ← `(doElem| let $limit:ident : Nat := ($buffer:ident).length),
               ← `(doElem| let mut $cursor:ident : Nat := 0)],
-              (⟨limit.raw⟩ : TSyntax `term),
+              (⟨limit.raw⟩ : TSyntax `term), ← `(1),
               ← `(doElem| let $pattern:term ← ($buffer:ident).get $cursor:ident))
-      let advance ← `(doElem| $cursor:ident := $cursor:ident + 1)
+      let advance ← `(doElem| $cursor:ident := $cursor:ident + $stride)
       let iteration := doSequence (#[elementBinding] ++ getDoElems body ++ #[advance])
-      let loop ← `(doElem| while $cursor:ident < $stop do $iteration:doSeq)
+      let loop ← `(doElem| source_range% ($cursor:ident, $stop, $stride) do $iteration:doSeq)
       recurse scope result (initial.toList ++ [loop]) nextIndex
   | `(doElem| with_scratch do $body:doSeq) =>
       let name := generatedName family owner s!"_scope{nextIndex}"
       let bodyCode ← recurse scope result (getDoElems body).toList (nextIndex + 1)
-      let site : BlockSite := ⟨name, scope, result, none, bodyCode.term⟩
+      let site : BlockSite := ⟨name, scope, result, none, bodyCode.term, none, none⟩
       let code := loopMember site "Code"
       -- The observation exposes Control rather than a syntactically terminal
       -- return. Retain its normal continuation just as for a named loop.
@@ -1162,7 +1586,7 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
   | `(doElem| $action:term) => actionCode functions scope action
   | _ =>
       Macro.throwErrorAt element
-        "unsupported source statement; use let, let mut, assignment, a named call, buffer access or allocation, with_scratch, if/then/else, Option match, while, bounded for, or return"
+        "unsupported source statement; use let, let mut, assignment, a named call, buffer access or allocation, node read or construction, with_scratch, if/then/else, Option match, while, bounded for, or return"
 
 private partial def blockCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident) (scope : Scope) (result : Ty)
@@ -1179,9 +1603,10 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let parsed ← parsePrimitive scope value (← annotation.mapM parseType)
           checkAnnotation annotation parsed.type
           let proofName ← freshProofName name name.getId
+          let type ← bindingValueType parsed.type annotation (some parsed.value)
           let body ← blockCode family functions owner
-            (⟨some name.getId, proofName, parsed.type, true⟩ :: scope) result rest nextIndex
-          let type ← valueTypeTerm parsed.type
+            (⟨some name.getId, proofName, parsed.type, true, bindingNativeCoordinate type⟩ :: scope)
+            result rest nextIndex
           let binding ← `(doElem| let mut $proofName:ident : $type := $(parsed.value))
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
@@ -1189,9 +1614,10 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let parsed ← parsePrimitive scope value (← annotation.mapM parseType)
           checkAnnotation annotation parsed.type
           let proofName ← freshProofName name name.getId
+          let type ← bindingValueType parsed.type annotation (some parsed.value)
           let body ← blockCode family functions owner
-            (⟨some name.getId, proofName, parsed.type, false⟩ :: scope) result rest nextIndex
-          let type ← valueTypeTerm parsed.type
+            (⟨some name.getId, proofName, parsed.type, false, bindingNativeCoordinate type⟩ :: scope)
+            result rest nextIndex
           let binding ← `(doElem| let $proofName:ident : $type := $(parsed.value))
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
@@ -1199,9 +1625,10 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let (bindingType, statement, invocation) ← parseBinding functions scope action
           checkAnnotation annotation bindingType
           let proofName ← freshProofName name name.getId
+          let type ← bindingValueType bindingType annotation
           let body ← blockCode family functions owner
-            (⟨some name.getId, proofName, bindingType, true⟩ :: scope) result rest nextIndex
-          let type ← valueTypeTerm bindingType
+            (⟨some name.getId, proofName, bindingType, true, bindingNativeCoordinate type⟩ :: scope)
+            result rest nextIndex
           let binding ← `(doElem| let mut $proofName:ident : $type ← $invocation:term)
           return ⟨← `($statement $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
@@ -1209,9 +1636,10 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let (bindingType, statement, invocation) ← parseBinding functions scope action
           checkAnnotation annotation bindingType
           let proofName ← freshProofName name name.getId
+          let type ← bindingValueType bindingType annotation
           let body ← blockCode family functions owner
-            (⟨some name.getId, proofName, bindingType, false⟩ :: scope) result rest nextIndex
-          let type ← valueTypeTerm bindingType
+            (⟨some name.getId, proofName, bindingType, false, bindingNativeCoordinate type⟩ :: scope)
+            result rest nextIndex
           let binding ← `(doElem| let $proofName:ident : $type ← $invocation:term)
           return ⟨← `($statement $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
@@ -1233,9 +1661,12 @@ private def functionCode (family : TSyntax `ident) (functions : Array Callee)
     (fn : Function) : MacroM LoweredBlock := do
   match fn.body with
   | `(do $body:doSeq) =>
-      let scope : Scope := fn.params.toList.map fun param =>
-        ⟨some param.name.getId, param.name, param.type, false⟩
-      blockCode family functions fn.name scope fn.result (getDoElems body).toList 1
+      let scope : Scope := fn.params.toList.zipIdx.map fun (param, index) =>
+        ⟨some param.name.getId, param.name, param.type, false,
+          fn.nativeView.map fun view => ⟨view.parameterTypes[index]!, view.parameterEquivs[index]!⟩⟩
+      let result ← blockCode family functions fn.name scope fn.result (getDoElems body).toList 1
+      return { result with sites := result.sites.map fun site =>
+        { site with nativeResult := fn.nativeView.map fun view => ⟨view.resultType, view.resultEquiv⟩ } }
   | _ => Macro.throwErrorAt fn.body "source function bodies must be supported 'do' blocks"
 
 private def loopCodeDeclarations (signatures : TSyntax `ident) (site : BlockSite) :
@@ -1271,7 +1702,11 @@ private def loopCodeDeclarations (signatures : TSyntax `ident) (site : BlockSite
           $view:ident $entry:ident = $projected := rfl)).raw,
     (← `(command| /-- Restore complete lexical coordinates without unfolding proof fields. -/
       theorem $viewSymmApply:ident ($values:ident : $locals:ident) :
-          ($view:ident).symm $values:ident = $restored := rfl)).raw]
+          ($view:ident).symm $values:ident = $restored := by
+        apply ($view:ident).injective
+        simp only [Equiv.apply_symm_apply, $viewApply:ident,
+          Complexity.Language.Env.cons_here, Complexity.Language.Env.cons_there] <;>
+          (symm; exact $(← tupleExtProof site.scope)))).raw]
   if let some guardTerm := site.guard then
     declarations := declarations.push (← `(command|
       /-- The actual value-producing guard, reevaluated on every iteration. -/
@@ -1331,6 +1766,7 @@ private def loopCaptureDeclarations (site : BlockSite) : MacroM (Array Syntax) :
   let view := loopMember site "View"
   let captureView := loopMember site "CaptureView"
   let captureViewApply := loopMember site "captureView_apply"
+  let captureViewSymmApply := loopMember site "captureView_symm_apply"
   let types ← scopeTypes site.scope
   let values ← freshProofName site.name `values
   let grouped ← freshProofName site.name `grouped
@@ -1369,7 +1805,66 @@ private def loopCaptureDeclarations (site : BlockSite) : MacroM (Array Syntax) :
       def $captureView:ident : Complexity.Language.Env $types ≃
           ($mutable:ident × $captured:ident) := ($view:ident).trans $regroup:ident)).raw,
     (← `(command| theorem $captureViewApply:ident ($entry:ident : Complexity.Language.Env $types) :
-      $captureView:ident $entry:ident = $projected := rfl)).raw]
+      $captureView:ident $entry:ident = $projected := rfl)).raw,
+    (← `(command| /-- Restore grouped locals using the checked coordinate projection laws. -/
+      theorem $captureViewSymmApply:ident ($grouped:ident : $mutable:ident × $captured:ident) :
+          ($captureView:ident).symm $grouped:ident = ($view:ident).symm $restored := by
+        simp only [$captureView:ident, Equiv.symm_trans_apply, $regroupSymmApply:ident])).raw]
+
+private def hasNativeCoordinates (site : BlockSite) : Bool :=
+  site.nativeResult.isSome || site.scope.any (·.native.isSome)
+
+private def loopNativeCaptureDeclarations (site : BlockSite) : MacroM (Array Syntax) := do
+  unless hasNativeCoordinates site do return #[]
+  let mutableScope := site.scope.filter (·.isMutable)
+  let capturedScope := site.scope.filter (! ·.isMutable)
+  let mutable := loopMember site "NativeMutable"
+  let captured := loopMember site "NativeCaptured"
+  let view := loopMember site "NativeCaptureView"
+  let viewApply := loopMember site "native_captureView_apply"
+  let symmApply := loopMember site "native_captureView_symm_apply"
+  let rawView := loopMember site "CaptureView"
+  let rawViewApply := loopMember site "captureView_apply"
+  let regroupSymm := loopMember site "regroup_symm_apply"
+  let viewSymm := loopMember site "view_symm_apply"
+  let types ← scopeTypes site.scope
+  let coordinate ← `(Equiv.prodCongr $(← scopeNativeEquiv mutableScope)
+    $(← scopeNativeEquiv capturedScope))
+  let entry ← freshProofName site.name `entry
+  let mut entryFields := #[]
+  for (binding, index) in site.scope.zipIdx do
+    let field ← `(Complexity.Language.Env.get $entry:ident $(← variableTerm index))
+    entryFields := entryFields.push (← decodeNativeField binding field)
+  let (mutableEntries, capturedEntries) := splitScopeFields site.scope entryFields
+  let projected ← `(($(← fieldsTuple mutableEntries), $(← fieldsTuple capturedEntries)))
+  let grouped ← freshProofName site.name `grouped
+  let fields := mergeScopeFields site.scope
+    (← tupleFields mutableScope (← `(($grouped:ident).1)))
+    (← tupleFields capturedScope (← `(($grouped:ident).2)))
+  let encoded ← encodeNativeFields site.scope fields
+  let mut restored ← `(Complexity.Language.Env.empty)
+  for (binding, field) in (site.scope.toArray.zip encoded).reverse do
+    restored ← `(Complexity.Language.Env.cons (τ := $(← typeTerm binding.type)) $field $restored)
+  return #[
+    (← `(command| /-- Mutable loop coordinates in their registered native types. -/
+      abbrev $mutable:ident := $(← scopeNativeTypes mutableScope))).raw,
+    (← `(command| /-- Immutable captures in their registered native types. -/
+      abbrev $captured:ident := $(← scopeNativeTypes capturedScope))).raw,
+    (← `(command| /-- A native view of the same environment, with no runtime conversion. -/
+      def $view:ident : Complexity.Language.Env $types ≃ ($mutable:ident × $captured:ident) :=
+        ($rawView:ident).trans ($coordinate).symm)).raw,
+    (← `(command| /-- Observe native loop coordinates without unfolding registered equivalences. -/
+      theorem $viewApply:ident ($entry:ident : Complexity.Language.Env $types) :
+          $view:ident $entry:ident = $projected := by
+        simp only [$view:ident, Equiv.trans_apply, Equiv.prodCongr_symm,
+          Equiv.prodCongr_apply, Equiv.refl_symm, Equiv.refl_apply, Prod.map,
+          $rawViewApply:ident])).raw,
+    (← `(command| /-- Restore native loop coordinates without unfolding equivalence proofs. -/
+      theorem $symmApply:ident ($grouped:ident : $mutable:ident × $captured:ident) :
+          ($view:ident).symm $grouped:ident = $restored := by
+        simp only [$view:ident, $rawView:ident, Equiv.symm_trans_apply, Equiv.symm_symm,
+          Equiv.prodCongr_apply, Equiv.refl_apply, Prod.map, $regroupSymm:ident,
+          $viewSymm:ident])).raw]
 
 private def loopCaptureFrameDeclarations (program : TSyntax `ident) (site : BlockSite)
     (sites : Array BlockSite) : MacroM (Array Syntax) := do
@@ -1410,6 +1905,82 @@ private def loopCaptureFrameDeclarations (program : TSyntax `ident) (site : Bloc
             ($captureView:ident ($entry:ident).locals).2 := by
         simp only [$captureViewApply:ident]
         exact $capturesProof)).raw
+    if hasNativeCoordinates site then
+      let nativeName := loopMember site ("native_" ++ suffix)
+      let nativeView := loopMember site "NativeCaptureView"
+      let capturedEquiv ← scopeNativeEquiv (site.scope.filter (! ·.isMutable))
+      declarations := declarations.push (← `(command|
+        /-- The same actual exit preserves its native immutable captures. -/
+        theorem $nativeName:ident {$entry:ident $finish:ident : Complexity.Language.State $types}
+            {$control:ident : Complexity.Language.Control $result}
+            ($execution:ident : Complexity.Language.Exec $program:ident $code:ident
+              $entry:ident $finish:ident $control:ident) :
+            ($nativeView:ident ($finish:ident).locals).2 =
+              ($nativeView:ident ($entry:ident).locals).2 :=
+          congrArg (fun captures => ($capturedEquiv).symm captures) ($name:ident $execution:ident))).raw
+  return declarations
+
+private def loopNativeContractDeclarations (program : TSyntax `ident) (site : BlockSite) :
+    MacroM (Array Syntax) := do
+  unless hasNativeCoordinates site do return #[]
+  let mutableScope := site.scope.filter (·.isMutable)
+  let capturedScope := site.scope.filter (! ·.isMutable)
+  let afterScope := (← freshMutableScope site "after_").filter (·.isMutable)
+  let mutable := loopMember site "NativeMutable"
+  let captured := loopMember site "NativeCaptured"
+  let view := loopMember site "NativeCaptureView"
+  let before ← freshProofName site.name `before
+  let after ← freshProofName site.name `after
+  let heap ← freshProofName site.name `heap
+  let finish ← freshProofName site.name `finish
+  let value ← freshProofName site.name `value
+  let pre ← freshProofName site.name `pre
+  let normal ← freshProofName site.name `normal
+  let returned ← freshProofName site.name `returned
+  let beforeFields ← tupleFields mutableScope ⟨before.raw⟩
+  let afterFields ← tupleFields mutableScope (← `(($after:ident).1))
+  let app (name : TSyntax `ident) (arguments : Array (TSyntax `term)) :=
+    Lean.Syntax.mkApp ⟨name.raw⟩ arguments
+  let preType ← quantifyNativeScope mutableScope (← `(Complexity.Language.Heap → Prop))
+  let normalType ← quantifyNativeScope mutableScope (← `(Complexity.Language.Heap →
+    $(← quantifyNativeScope afterScope (← `(Complexity.Language.Heap → Prop)))))
+  let rawPre ← `(fun ($before:ident : $mutable:ident) ($heap:ident : Complexity.Language.Heap) =>
+    $(app pre (beforeFields.push ⟨heap.raw⟩)))
+  let rawNormal ← `(fun ($before:ident : $mutable:ident) ($heap:ident : Complexity.Language.Heap)
+    ($after:ident : $mutable:ident × $captured:ident) ($finish:ident : Complexity.Language.Heap) =>
+    $(app normal (beforeFields ++ #[⟨heap.raw⟩] ++ afterFields ++ #[⟨finish.raw⟩])))
+  let captures ← scopeTuple capturedScope
+  let mut declarations := #[]
+  for (suffix, codeSuffix, result) in
+      [("native_guard_contract", "Guard", Ty.bool),
+       ("native_body_contract", "Body", site.result),
+       ("native_contract", "Code", site.result)] do
+    let name := loopMember site suffix
+    let code := loopMember site codeSuffix
+    let rawResult ← valueTypeTerm result
+    let nativeResult := if codeSuffix == "Guard" then none else site.nativeResult
+    let resultType ← match nativeResult with
+      | some native => pure native.type
+      | none => pure rawResult
+    let decoded ← match nativeResult with
+      | some native => `(($(native.equiv)).symm $value:ident)
+      | none => pure (⟨value.raw⟩ : TSyntax `term)
+    let returnedType ← quantifyNativeScope mutableScope (← `(Complexity.Language.Heap →
+      $resultType → $(← quantifyNativeScope afterScope (← `(Complexity.Language.Heap → Prop)))))
+    let rawReturned ← `(fun ($before:ident : $mutable:ident) ($heap:ident : Complexity.Language.Heap)
+      ($value:ident : $rawResult) ($after:ident : $mutable:ident × $captured:ident)
+      ($finish:ident : Complexity.Language.Heap) =>
+      $(app returned (beforeFields ++ #[⟨heap.raw⟩, decoded] ++ afterFields ++ #[⟨finish.raw⟩])))
+    let type ← quantifyNativeScope capturedScope (← `($preType → $normalType → $returnedType → Prop))
+    let definition ← curryNativeScope capturedScope (← `(fun $pre:ident $normal:ident $returned:ident =>
+      Complexity.Language.Stmt.BlockSpec
+        (fun ($before:ident : $mutable:ident) =>
+          Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident
+            ($before:ident, $captures)) $rawPre $rawNormal $rawReturned))
+    declarations := declarations.push (← `(command|
+      /-- The actual block contract with native mutable parameters and fixed captures.
+      Only the returned predicate decodes the source value; control and both heaps stay unchanged. -/
+      abbrev $name:ident : $type := $definition)).raw
   return declarations
 
 private def loopContractDeclarations (program : TSyntax `ident) (site : BlockSite) :
@@ -1523,11 +2094,18 @@ private def loopContractDeclarations (program : TSyntax `ident) (site : BlockSit
         rcases $outcome:ident with ⟨control, locals⟩
         cases control <;> rfl
       · rfl)
+    -- `Prod.forall` also exposes a product-valued individual binding. Expand
+    -- exactly those source types, stopping before the opaque Triple itself.
+    let rec productCongr (type : Ty) (proof : TSyntax `term) : MacroM (TSyntax `term) := do
+      match type with
+      | .prod left right => productCongr left (← productCongr right proof)
+      | _ =>
+          let parameter ← freshProofName site.name `mutableField
+          `(forall_congr' (fun ($parameter:ident : $(← valueTypeTerm type)) => $proof))
     let mut matchProof ← `(forall_congr' (fun ($heap:ident : Complexity.Language.Heap) =>
       imp_congr_right (fun _ => $postProof)))
     for binding in mutableScope.reverse do
-      let type ← valueTypeTerm binding.type
-      matchProof ← `(forall_congr' (fun ($(binding.proofName):ident : $type) => $matchProof))
+      matchProof ← productCongr binding.type matchProof
     let proof ← curryScope capturedScope (← `(fun $pre:ident $normal:ident $returned:ident => by
       simp only [$name:ident, $captureView:ident, Complexity.Language.Stmt.observe_reindex]
       simp only [Complexity.Language.Stmt.BlockSpec.map_iff]
@@ -1886,10 +2464,15 @@ private def loopTerminationDeclaration (program : TSyntax `ident) (site : BlockS
 private def loopEquationDeclarations (site : BlockSite) (sites : Array BlockSite)
     (calleeFolds : Array (TSyntax `ident)) : MacroM (Array Syntax) := do
   let loopCode := loopMember site "Code"
-  let expandedFolds ← sites.mapM fun other => do
+  let nestedSites := sites.filter fun other =>
+    other.name.getId != site.name.getId &&
+      (site.body.raw.hasIdent (loopMember other "Code").getId ||
+        site.guard.any (fun guard => guard.raw.hasIdent (loopMember other "Code").getId))
+  let expandedFolds ← nestedSites.mapM fun other => do
     return (other, ← freshProofName other.name `nestedObservation)
   let expandedFoldArgs ← namedSimpArgs (expandedFolds.map (·.2))
-  let viewDefinitions ← namedSimpArgs (sites.map fun other => loopMember other "View")
+  let viewDefinitions ← namedSimpArgs ((#[site] ++ nestedSites).map fun other =>
+    loopMember other "View")
   let foldNames ← namedSimpArgs (sites.flatMap fun other =>
     #[loopMember other "body_observe", loopMember other "observe"] ++
       if other.guard.isSome then #[loopMember other "guard_observe"] else #[])
@@ -1902,6 +2485,7 @@ private def loopEquationDeclarations (site : BlockSite) (sites : Array BlockSite
     ``Complexity.Language.Stmt.observe_seq, ``Complexity.Language.Stmt.observe_ite,
     ``Complexity.Language.Stmt.observe_matchOption,
     ``Complexity.Language.Stmt.observe_letPrim, ``Complexity.Language.Stmt.observe_read,
+    ``Complexity.Language.Stmt.observe_readNode, ``Complexity.Language.Stmt.observe_consNode,
     ``Complexity.Language.Stmt.observe_write, ``Complexity.Language.Stmt.observe_slice,
     ``Complexity.Language.Stmt.observe_alloc, ``Complexity.Language.Stmt.observe_call]
   let sharedArgs := compositionArgs ++ nestedLoops ++ viewNames ++ calleeFolds ++
@@ -1915,21 +2499,31 @@ private def loopEquationDeclarations (site : BlockSite) (sites : Array BlockSite
     let code := loopMember site codeSuffix
     let applied := scopeApplication site.scope name
     let allArgs := (← namedSimpArgs #[code]) ++ sharedArgs
-    let mut proof ← `(by
-      have equation : $applied = $applied := rfl
-      conv at equation =>
-        lhs
+    -- Ordinary blocks normalize through the proved projection equations. Only
+    -- actual nested blocks need their composed and named views aligned below.
+    let initialProof ← if nestedSites.isEmpty then `(source_conversion% $applied =>
         unfold $name:ident
-        simp only [$allArgs,*]
-        simp (config := { failIfUnchanged := false }) only [$viewDefinitions,*]
-        simp (config := { failIfUnchanged := false }) only [$expandedFoldArgs,*]
+        simp (config := { implicitDefEqProofs := false }) only [$allArgs,*]
         dsimp only [Complexity.Language.Env.equivProd, Complexity.Language.Env.equivUnit,
           Equiv.symm]
-        simp (config := { failIfUnchanged := false }) only
+        simp (config := { failIfUnchanged := false, implicitDefEqProofs := false }) only
           [Equiv.coe_fn_mk, Complexity.Language.Env.cons_here,
             Complexity.Language.Env.cons_there, Complexity.Language.Env.head_cons,
-            Complexity.Language.Env.tail_cons, Complexity.Language.Env.get_tail]
-      exact equation.symm)
+            Complexity.Language.Env.tail_cons, Complexity.Language.Env.get_tail])
+    else `(source_conversion% $applied =>
+        unfold $name:ident
+        simp (config := { implicitDefEqProofs := false }) only [$allArgs,*]
+        simp (config := { failIfUnchanged := false, implicitDefEqProofs := false }) only
+          [$viewDefinitions,*]
+        simp (config := { failIfUnchanged := false, implicitDefEqProofs := false }) only
+          [$expandedFoldArgs,*]
+        dsimp only [Complexity.Language.Env.equivProd, Complexity.Language.Env.equivUnit,
+          Equiv.symm]
+        simp (config := { failIfUnchanged := false, implicitDefEqProofs := false }) only
+          [Equiv.coe_fn_mk, Complexity.Language.Env.cons_here,
+            Complexity.Language.Env.cons_there, Complexity.Language.Env.head_cons,
+            Complexity.Language.Env.tail_cons, Complexity.Language.Env.get_tail])
+    let mut proof := initialProof
     -- Composing lexical bindings constructs a view definitionally equal to a
     -- nested block's named View. Normalize just these equation-local copies;
     -- public views stay opaque to the separate continuation and frame proofs.
@@ -1948,14 +2542,10 @@ private def loopEquationDeclarations (site : BlockSite) (sites : Array BlockSite
   let applied := scopeApplication site.scope name
   let composition := mkCIdent (if site.guard.isSome then
     ``Complexity.Language.Stmt.observe_while else ``Complexity.Language.Stmt.observe_scope)
-  let proof ← curryScope site.scope (← `(by
-    have equation : $applied = $applied := rfl
-    conv at equation =>
-      lhs
+  let proof ← curryScope site.scope (← `(source_conversion% $applied =>
       unfold $name:ident
       rw [$loopCode:ident, $composition:ident]
-      simp only [$foldNames,*]
-    exact equation.symm))
+      simp only [$foldNames,*]))
   declarations := declarations.push (← `(command| source_equation% $equation:ident := $proof)).raw
   return declarations
 
@@ -2137,6 +2727,7 @@ private def equationDeclaration (family programName : TSyntax `ident)
     ``Complexity.Language.Stmt.evalWith_ite, ``Complexity.Language.Stmt.evalWith_matchOption,
     ``Complexity.Language.Stmt.evalWith_call,
     ``Complexity.Language.Stmt.evalWith_read, ``Complexity.Language.Stmt.evalWith_write,
+    ``Complexity.Language.Stmt.evalWith_readNode, ``Complexity.Language.Stmt.evalWith_consNode,
     ``Complexity.Language.Stmt.evalWith_slice, ``Complexity.Language.Stmt.evalWith_alloc]
   let allArgs := (← namedSimpArgs (#[bodyName] ++ importFolds)) ++ loopContinuations ++ loopViews ++
     (← viewSimpArgs) ++ compositionArgs ++ (← valueSimpArgs) ++
@@ -2381,17 +2972,128 @@ private def importedObservationDeclaration (program map embedded : TSyntax `iden
 
 private def pureValueType : Ty → Bool
   | .nat | .bool | .unit => true
-  | .buffer _ => false
+  | .buffer _ | .node _ => false
   | .prod left right => pureValueType left && pureValueType right
   | .option value => pureValueType value
 
 -- These identifiers were resolved by the source parser, and local proof
 -- variables have fresh names. Replacing them cannot capture a source binder.
-private def pureBody (callees : Array Callee) (body : LoweredBlock) :
-    MacroM (TSyntax ``doSeq) := do
+private def pureProofElements (body : LoweredBlock) : Array (TSyntax `doElem) :=
+  body.proofBody ++ body.sites.flatMap fun site =>
+    site.finiteRange.map (·.body) |>.getD #[]
+
+private def rangeMutableScope (site : BlockSite) : Scope :=
+  (site.scope.filter (·.isMutable)).drop 1
+
+private def nativeMarkedValue (value : TSyntax `term) : MacroM (TSyntax `term) := do
+  let value ← value.raw.replaceM fun node => do
+    match node with
+    | `(source_native% ($_raw) ($native) ($_nativeType) via ($_equiv)) => return some native.raw
+    | `(source_native% ($_raw) ($native) ($_nativeType)) => return some native.raw
+    | `(source_native_type% ($_raw) ($native) via ($_equiv)) => return some native.raw
+    | `(source_native_type% ($_raw) ($native)) => return some native.raw
+    | _ => return none
+  return ⟨value⟩
+
+mutual
+
+private partial def nativeRangeStep (callees : Array Callee) (sites : Array BlockSite)
+    (site : BlockSite) : MacroM (TSyntax `term) := do
+  let some range := site.finiteRange
+    | Macro.throwErrorAt site.name "expected a finite source range"
+  let mutableScope := rangeMutableScope site
+  let mutableType ← scopeNativeTypes mutableScope
+  let result ← match site.nativeResult with
+    | some native => pure native.type
+    | none => valueTypeTerm site.result
+  let index ← freshProofName site.name `index
+  let mutable ← freshProofName site.name `mutable
+  let fields ← tupleFields mutableScope ⟨mutable.raw⟩
+  let mut declarations := #[← `(doElem| let mut $(range.cursor):ident : Nat := $index:ident)]
+  for binding in mutableScope, field in fields do
+    declarations := declarations.push (← `(doElem|
+      let mut $(binding.proofName):ident : $(← bindingNativeType binding) := $field))
+  let returnedLocals ← scopeTuple mutableScope
+  let iteration ← pureElements callees sites range.body (some returnedLocals)
+  let ending ← if range.fallsThrough then do
+      pure #[← `(doElem| return (none, $returnedLocals))]
+    else pure #[]
+  let body := doSequence (declarations ++ iteration ++ ending)
+  return ← `(fun ($index:ident : Nat) ($mutable:ident : $mutableType) =>
+    (Id.run (do $body:doSeq) : Option $result × $mutableType))
+
+private partial def nativeRangeIteration (callees : Array Callee) (sites : Array BlockSite)
+    (site : BlockSite) (positive : Option (TSyntax `term) := none) :
+    MacroM (TSyntax `term) := do
+  let some range := site.finiteRange
+    | Macro.throwErrorAt site.name "expected a finite source range"
+  let mutableScope := rangeMutableScope site
+  let mutableType ← scopeNativeTypes mutableScope
+  let result ← match site.nativeResult with
+    | some native => pure native.type
+    | none => valueTypeTerm site.result
+  let step ← nativeRangeStep callees sites site
+  let positive ← match positive with
+    | some proof => pure proof
+    | none => `(by
+        simp (config := { zetaDelta := true, failIfUnchanged := false }) only
+          [Nat.add_eq] <;> omega)
+  let start : TSyntax `term := ⟨range.cursor.raw⟩
+  let initial ← scopeTuple mutableScope
+  return ← `(Id.run (forIn (m := Id)
+    ({ start := $start, stop := $(range.stop), step := $(range.stride), step_pos := $positive } : Std.Legacy.Range)
+    ((none, ($start, $initial)) : Option $result × (Nat × $mutableType))
+    (fun index state =>
+      let outcome := ($step:term) index state.2.2
+      outcome.1.elim (pure (ForInStep.yield (none, (index + $(range.stride), outcome.2))))
+        (fun value => pure (ForInStep.done (some value, (index, outcome.2)))))))
+
+private partial def nativeRangeValue (callees : Array Callee) (sites : Array BlockSite)
+    (site : BlockSite) (positive : Option (TSyntax `term) := none) :
+    MacroM (TSyntax `term) := do
+  let outcome ← freshProofName site.name `outcome
+  let iteration ← nativeRangeIteration callees sites site positive
+  let mutableFields ← tupleFields (site.scope.filter (·.isMutable))
+    (← `(($outcome:ident).2))
+  let capturedFields := (site.scope.filter (! ·.isMutable)).toArray.map
+    fun binding => (⟨binding.proofName.raw⟩ : TSyntax `term)
+  let locals ← fieldsTuple (mergeScopeFields site.scope mutableFields capturedFields)
+  return ← `(let $outcome:ident := $iteration; (($outcome:ident).1, $locals))
+
+private partial def pureElements (callees : Array Callee) (sites : Array BlockSite)
+    (body : Array (TSyntax `doElem)) (returnedLocals : Option (TSyntax `term) := none) :
+    MacroM (Array (TSyntax `doElem)) := do
   let mut elements := #[]
-  for element in body.proofBody do
+  for element in body do
     let replaced ← element.raw.replaceM fun node => do
+      match node with
+      | `(doElem| let $name:ident $[: $type:term]? := source_raw_value% ($_raw) ($native)) =>
+          return some (← `(doElem| let $name:ident $[: $type:term]? := $native)).raw
+      | `(doElem| let $_name:ident $[: $_type:term]? := source_raw_value% ($_raw)) =>
+          return some (← `(doElem| pure ())).raw
+      | `(source_native% ($_raw) ($native) ($_nativeType) via ($_equiv)) => return some native.raw
+      | `(source_native% ($_raw) ($native) ($_nativeType)) => return some native.raw
+      | `(source_native_type% ($_raw) ($native) via ($_equiv)) => return some native.raw
+      | `(source_native_type% ($_raw) ($native)) => return some native.raw
+      | `(doElem| let ($control:ident, $locals:ident) ← MonadLift.monadLift $invocation:term) =>
+          if let some site := sites.find? (fun site => invocation.raw.hasIdent site.name.getId) then
+            return some (← `(doElem| let ($control:ident, $locals:ident) :=
+              $(← nativeRangeValue callees sites site))).raw
+      | `(doElem| match $control:ident with
+          | .normal => pure ()
+          | .returned $value:ident => return $returned:term
+          | .fault $_error:ident => throw $_thrown:term) =>
+          let returned ← match returnedLocals with
+            | none => pure returned
+            | some locals => `((some $returned, $locals))
+          return some (← `(doElem| match $control:ident with
+            | none => pure ()
+            | some $value:ident => return $returned)).raw
+      | `(doElem| return $value:term) =>
+          if let some locals := returnedLocals then
+            let value ← nativeMarkedValue value
+            return some (← `(doElem| return (some $value, $locals))).raw
+      | _ => pure ()
       if node.isIdent then
         if let some callee := callees.find? (fun fn => fn.observation.getId == node.getId) then
           let some native := callee.native
@@ -2400,7 +3102,13 @@ private def pureBody (callees : Array Callee) (body : LoweredBlock) :
           return some native.raw
       return none
     elements := elements.push (⟨replaced⟩ : TSyntax `doElem)
-  return ⟨Lean.Elab.Term.Do.mkDoSeq (elements.map (·.raw))⟩
+  return elements
+
+end
+
+private def pureBody (callees : Array Callee) (body : LoweredBlock) :
+    MacroM (TSyntax ``doSeq) := do
+  return doSequence (← pureElements callees body.sites body.proofBody)
 
 -- Native Lean checks each self-recursive definition. Acyclic inter-function
 -- calls are emitted in dependency order, including forward source references.
@@ -2411,7 +3119,7 @@ private def pureFunctionOrder (family : TSyntax `ident) (functions : Array Funct
   while !pending.isEmpty do
     let some next := pending.find? (fun (fn, body) =>
         pending.all fun (dependency, _) => dependency.name.getId == fn.name.getId ||
-          !body.proofBody.any
+          !(pureProofElements body).any
             (fun element => element.raw.hasIdent
               (actionName family dependency.name true).getId))
       | Macro.throwErrorAt family
@@ -2423,16 +3131,368 @@ private def pureFunctionOrder (family : TSyntax `ident) (functions : Array Funct
 private def nativeDeclaration (family : TSyntax `ident) (fn : Function)
     (callees : Array Callee) (body : LoweredBlock) : MacroM Syntax := do
   let name := generatedName family fn.name ""
-  let parameters ← fn.params.mapM fun param => do
-    let parameterType ← valueTypeTerm param.type
+  let parameters ← fn.params.mapIdxM fun index param => do
+    let parameterType ← match fn.nativeView with
+      | some view => pure view.parameterTypes[index]!
+      | none => valueTypeTerm param.type
     `(bracketedBinder| ($(param.name):ident : $parameterType))
-  let result ← valueTypeTerm fn.result
+  let result ← match fn.nativeView with
+    | some view => pure view.resultType
+    | none => valueTypeTerm fn.result
   let nativeBody ← pureBody callees body
   return (← `(command|
     /-- Executable total value function generated from the same buffer-free source block. -/
     def $name:ident $parameters:bracketedBinder* : $result :=
       Id.run (do $nativeBody:doSeq)
       $(fn.termination):suffix)).raw
+
+private def nativeRangeCorrespondenceDeclarations (program : TSyntax `ident)
+    (callees : Array Callee) (sites : Array BlockSite) (site : BlockSite)
+    (nativeResult : NativeCoordinate) (nativeSimplifications : Array (TSyntax `ident)) :
+    MacroM (Array Syntax) := do
+  let some range := site.finiteRange
+    | Macro.throwErrorAt site.name "expected a finite source range"
+  let name := loopMember site "eq_pure"
+  let nativeName := loopMember site "eq_pure_native"
+  let view := loopMember site "View"
+  let captureView := loopMember site "CaptureView"
+  let regroup := loopMember site "regroup_apply"
+  let regroupSymm := loopMember site "regroup_symm_apply"
+  let code := loopMember site "Code"
+  let guard := loopMember site "Guard"
+  let body := loopMember site "Body"
+  let guardObserved := loopMember site "guard_observe"
+  let bodyObserved := loopMember site "body_observe"
+  let guardEquation := loopMember site "guard_eq"
+  let bodyObservation := loopMember site "body"
+  let nativeGuardEquation := loopMember site "native_guard_eq"
+  let nativeBodyTransport := loopMember site "native_body_eq_of_eq"
+  let nativeBodyEquation := loopMember site "native_body_eq"
+  let nativeCaptured := loopMember site "NativeCaptured"
+  let nativeRangeStop := loopMember site "nativeRangeStop"
+  let nativeRangeStride := loopMember site "nativeRangeStep"
+  let nativeBodyStep := loopMember site "nativeBodyStep"
+  let resultType ← typeTerm site.result
+  let mutableScope := rangeMutableScope site
+  let mutableType ← scopeNativeTypes mutableScope
+  let capturedScope := site.scope.filter (! ·.isMutable)
+  let captures ← scopeTuple capturedScope
+  let capturedFields ← encodeNativeFields capturedScope (capturedScope.toArray.map fun binding =>
+    (⟨binding.proofName.raw⟩ : TSyntax `term))
+  let nativeCaptureView := loopMember site "NativeCaptureView"
+  let index ← freshProofName site.name `index
+  let mutable ← freshProofName site.name `mutable
+  let outcome ← freshProofName site.name `outcome
+  let value ← freshProofName site.name `value
+  let next ← freshProofName site.name `nextMutable
+  let groupedCaptures ← freshProofName site.name `captures
+  let groupedFields ← tupleFields capturedScope ⟨groupedCaptures.raw⟩
+  let bindCaptures (term : TSyntax `term) : MacroM (TSyntax `term) := do
+    let mut term := term
+    for (binding, field) in (capturedScope.toArray.zip groupedFields).reverse do
+      if term.raw.hasIdent binding.proofName.getId then
+        term ← `(let $(binding.proofName):ident : $(← bindingNativeType binding) := $field; $term)
+    return term
+  let groupedStop ← bindCaptures (← nativeMarkedValue range.stop)
+  let groupedStride ← bindCaptures (← nativeMarkedValue range.stride)
+  let tupleEta ← freshProofName site.name `mutableTupleEta
+  let bodyPure ← freshProofName site.name `bodyPure
+  let positive ← freshProofName site.name `positiveStep
+  let tupleEtaRules := if mutableScope.isEmpty then #[] else #[tupleEta]
+  let tupleEtaArgs ← namedSimpArgs tupleEtaRules
+  let guardTupleEta ← if mutableScope.isEmpty then `(tactic| cases $mutable:ident) else do
+    let rebuilt ← fieldsTuple (← tupleFields mutableScope ⟨mutable.raw⟩)
+    `(tactic| have $tupleEta:ident : $rebuilt = $mutable:ident := $(← tupleExtProof mutableScope))
+  let bodyTupleEta ← if mutableScope.isEmpty then `(tactic| cases $next:ident) else do
+    let rebuilt ← fieldsTuple (← tupleFields mutableScope ⟨next.raw⟩)
+    `(tactic| have $tupleEta:ident : $rebuilt = $next:ident := $(← tupleExtProof mutableScope))
+  let step ← nativeRangeStep callees sites site
+  let groupedStep ← bindCaptures step
+  let initial ← scopeTuple mutableScope
+  let inputFields ← encodeNativeFields mutableScope
+    (← tupleFields mutableScope ⟨mutable.raw⟩)
+  let bodyInvocation := Lean.Syntax.mkApp ⟨bodyObservation.raw⟩
+    (mergeScopeFields site.scope (#[⟨index.raw⟩] ++ inputFields) capturedFields)
+  let outputFields ← encodeNativeFields mutableScope
+    (← tupleFields mutableScope (← `(($outcome:ident).2)))
+  let normalLocals ← fieldsTuple (mergeScopeFields site.scope
+    (#[← `($index:ident + $(range.stride))] ++ outputFields) capturedFields)
+  let returnedLocals ← fieldsTuple (mergeScopeFields site.scope
+    (#[⟨index.raw⟩] ++ outputFields) capturedFields)
+  let encode ← `(($(nativeResult.equiv)).toFun)
+  let bodyPremise ← `(∀ ($index:ident : Nat) ($mutable:ident : $mutableType),
+    $index:ident < $(range.stop) → $bodyInvocation =
+      (let $outcome:ident := ($step:term) $index:ident $mutable:ident
+       pure (match ($outcome:ident).1 with
+         | none => (Complexity.Language.Control.normal, $normalLocals)
+         | some $value:ident =>
+             (Complexity.Language.Control.returned ($encode $value:ident), $returnedLocals))))
+  let nativeGuardType ← `(∀ ($index:ident : Nat) ($mutable:ident : $mutableType),
+    Complexity.Language.Stmt.observe $nativeCaptureView:ident $guard:ident $program:ident
+      (($index:ident, $mutable:ident), $captures) =
+      pure (Complexity.Language.Control.returned (decide ($index:ident < $(range.stop))),
+        (($index:ident, $mutable:ident), $captures)))
+  let nativeBodyType ← `(∀ ($index:ident : Nat) ($mutable:ident : $mutableType),
+    $index:ident < $(range.stop) →
+    Complexity.Language.Stmt.observe $nativeCaptureView:ident $body:ident $program:ident
+      (($index:ident, $mutable:ident), $captures) =
+      pure (match ($step:term) $index:ident $mutable:ident with
+        | (none, $next:ident) => (Complexity.Language.Control.normal,
+            (($index:ident + $(range.stride), $next:ident), $captures))
+        | (some $value:ident, $next:ident) =>
+            (Complexity.Language.Control.returned ($encode $value:ident),
+              (($index:ident, $next:ident), $captures))))
+  let groupedGuardType ← `(∀ ($groupedCaptures:ident : $nativeCaptured:ident)
+    ($index:ident : Nat) ($mutable:ident : $mutableType),
+    Complexity.Language.Stmt.observe $nativeCaptureView:ident $guard:ident $program:ident
+      (($index:ident, $mutable:ident), $groupedCaptures:ident) =
+      pure (Complexity.Language.Control.returned
+        (decide ($index:ident < $nativeRangeStop:ident $groupedCaptures:ident)),
+        (($index:ident, $mutable:ident), $groupedCaptures:ident)))
+  let groupedBodyType ← `(∀ ($groupedCaptures:ident : $nativeCaptured:ident)
+    ($index:ident : Nat) ($mutable:ident : $mutableType),
+    $index:ident < $nativeRangeStop:ident $groupedCaptures:ident →
+    Complexity.Language.Stmt.observe $nativeCaptureView:ident $body:ident $program:ident
+      (($index:ident, $mutable:ident), $groupedCaptures:ident) =
+      pure (match $nativeBodyStep:ident $groupedCaptures:ident $index:ident $mutable:ident with
+        | (none, $next:ident) => (Complexity.Language.Control.normal,
+            (($index:ident + $nativeRangeStride:ident $groupedCaptures:ident, $next:ident),
+              $groupedCaptures:ident))
+        | (some $value:ident, $next:ident) =>
+            (Complexity.Language.Control.returned ($encode $value:ident),
+              (($index:ident, $next:ident), $groupedCaptures:ident))))
+  let groupedProof (type proof : TSyntax `term) : MacroM (TSyntax `term) := do
+    let checked ← freshProofName site.name `checked
+    let capturedEta ← freshProofName site.name `capturedTupleEta
+    let rebuilt ← fieldsTuple groupedFields
+    let applied := Lean.Syntax.mkApp ⟨checked.raw⟩ groupedFields
+    `(by
+      intro $groupedCaptures:ident
+      have $checked:ident : $(← quantifyNativeScope capturedScope type) := $proof
+      have $capturedEta:ident : $rebuilt = $groupedCaptures:ident := $(← tupleExtProof capturedScope)
+      simpa only [$nativeRangeStop:ident, $nativeRangeStride:ident, $nativeBodyStep:ident, $capturedEta:ident,
+        Equiv.refl_symm, Equiv.refl_apply] using $applied)
+  let nativeGuardProof ← `(by
+    intro $index:ident $mutable:ident
+    $guardTupleEta:tactic
+    simp only [$nativeCaptureView:ident, Complexity.Language.Stmt.observe_reindex, $captureView:ident,
+      $guardObserved:ident, $regroupSymm:ident,
+      Equiv.symm_symm, Equiv.prodCongr_apply, Equiv.prodCongr_symm,
+      Equiv.refl_symm, Equiv.refl_apply, Prod.map]
+    simp only [$guardEquation:ident, map_pure, $regroup:ident,
+      Equiv.prodCongr_apply, Equiv.prodCongr_symm, Equiv.refl_symm, Equiv.refl_apply,
+      Equiv.symm_apply_apply, Prod.map, Prod.mk.eta, $tupleEtaArgs,*])
+  let nativeBodyProof ← `(fun $bodyPure:ident => by
+    intro $index:ident $mutable:ident inside
+    simp only [$nativeCaptureView:ident, Complexity.Language.Stmt.observe_reindex, $captureView:ident,
+      $bodyObserved:ident, $regroupSymm:ident,
+      Equiv.symm_symm, Equiv.prodCongr_apply, Equiv.prodCongr_symm,
+      Equiv.refl_symm, Equiv.refl_apply, Prod.map]
+    simp only [Equiv.refl_apply] at $bodyPure:ident
+    rw [$bodyPure:ident $index:ident $mutable:ident inside]
+    cases stepEq : ($step:term) $index:ident $mutable:ident with
+    | mk returned $next:ident =>
+        $bodyTupleEta:tactic
+        cases returned <;> simp only [stepEq, map_pure, $regroup:ident,
+          Equiv.prodCongr_apply, Equiv.prodCongr_symm, Equiv.refl_symm, Equiv.refl_apply,
+          Equiv.symm_apply_apply, Prod.map, Prod.mk.eta, $tupleEtaArgs,*])
+  let capturedArguments := capturedScope.toArray.map fun binding =>
+    (⟨binding.proofName.raw⟩ : TSyntax `term)
+  let guardApplication := Lean.Syntax.mkApp ⟨nativeGuardEquation.raw⟩ #[captures]
+  let bodyTransportApplication := Lean.Syntax.mkApp ⟨nativeBodyTransport.raw⟩ capturedArguments
+  let priorSites := sites.takeWhile (fun other => other.name.getId != site.name.getId)
+  let bodyElements := range.body ++ priorSites.flatMap fun other =>
+    other.finiteRange.map (·.body) |>.getD #[]
+  let dependencies := callees.filter fun callee =>
+    bodyElements.any (fun element => element.raw.hasIdent callee.observation.getId)
+  let equations ← dependencies.mapM fun callee => do
+    let some equation := callee.pureEquation
+      | Macro.throwErrorAt callee.name "a pure source callee must have a correspondence theorem"
+    return equation
+  let equations := equations ++ nativeSimplifications
+  let loopRules := priorSites.map fun other => loopMember other "eq_pure"
+  let bodyRules := sites.map fun other => loopMember other "body_eq"
+  let nativeBodyEquationProof ← curryNativeScope capturedScope (← `(by
+    apply $bodyTransportApplication
+    source_pure_block_correspondence [$equations:ident,*]
+      ranges% [$loopRules:ident,*] blocks% [$bodyRules:ident,*]))
+  let native ← nativeRangeValue callees sites site (some ⟨positive.raw⟩)
+  let actualArguments ← encodeNativeFields site.scope (site.scope.toArray.map fun binding =>
+    (⟨binding.proofName.raw⟩ : TSyntax `term))
+  let actualInvocation := Lean.Syntax.mkApp ⟨site.name.raw⟩ actualArguments
+  let actualLocals ← fieldsTuple actualArguments
+  let finalLocals ← fieldsTuple (← encodeNativeFields site.scope
+    (← tupleFields site.scope (← `(($outcome:ident).2))))
+  let observedResult ← `(let $outcome:ident := $native
+     pure ((($outcome:ident).1.elim
+       (Complexity.Language.Control.normal (result := $resultType))
+       (fun value => Complexity.Language.Control.returned (result := $resultType) ($encode value))),
+       $finalLocals))
+  let conclusion ← `($actualInvocation = $observedResult)
+  let unquantified ← `(∀ ($positive:ident : 0 < $(range.stride)), $bodyPremise → $conclusion)
+  let mut nativeType := unquantified
+  let mut nativeProof ← `(fun $positive:ident $bodyPure:ident => by
+    have actual := Complexity.Language.Stmt.observe_while_eq_forIn_range_step_encoded
+      $nativeCaptureView:ident $program:ident $guard:ident $body:ident $captures
+      $(range.stop) $(range.stride) $positive:ident $encode $step
+      $guardApplication ($bodyTransportApplication $bodyPure:ident)
+      $(range.cursor):ident $initial
+    change Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident
+      $actualLocals = _
+    rw [$code:ident]
+    funext heap
+    apply Complexity.Language.Stmt.observe_eq_some_iff.mpr
+    have execution := Complexity.Language.Stmt.observe_eq_some_iff.mp (congrFun actual heap)
+    simpa only [$nativeCaptureView:ident, $captureView:ident, Equiv.symm_trans_apply, $regroupSymm:ident,
+      Equiv.symm_symm, Equiv.prodCongr_apply, Equiv.prodCongr_symm,
+      Equiv.refl_symm, Equiv.refl_apply, Prod.map] using execution)
+  for binding in site.scope.reverse do
+    let type ← bindingNativeType binding
+    nativeType ← `(∀ ($(binding.proofName):ident : $type), $nativeType)
+    nativeProof ← `(fun ($(binding.proofName):ident : $type) => $nativeProof)
+  -- Quantify raw coordinates for reliable rewriting at arbitrary source locals.
+  -- The checked inverse is used only in this theorem, never in source execution.
+  let mut rawScope : Scope := []
+  let mut decodedArguments : Array (TSyntax `term) := #[]
+  for binding in site.scope do
+    let raw ← freshProofName site.name binding.proofName.getId
+    rawScope := rawScope ++ [{ binding with proofName := raw, native := none }]
+    decodedArguments := decodedArguments.push (← decodeNativeField binding ⟨raw.raw⟩)
+  -- A rewrite rule must expose the raw invocation itself, not an
+  -- encode/decode round trip around metavariables that rewriting cannot infer.
+  let rawConclusion ← `($(scopeApplication rawScope site.name) = $observedResult)
+  let mut rawType ← `(∀ ($positive:ident : 0 < $(range.stride)), $bodyPremise → $rawConclusion)
+  for (binding, decoded) in (site.scope.toArray.zip decodedArguments).reverse do
+    rawType ← `(let $(binding.proofName):ident : $(← bindingNativeType binding) := $decoded; $rawType)
+  rawType ← quantifyScope rawScope rawType
+  let nativeApplication := Lean.Syntax.mkApp ⟨nativeName.raw⟩ decodedArguments
+  let rawProof ← curryScope rawScope (← `(by
+    simpa only [Equiv.apply_symm_apply, Equiv.refl_apply, Equiv.refl_symm]
+      using $nativeApplication))
+  return #[
+    (← `(command|
+      /-- The actual fixed range endpoint selected from this loop's native captures. -/
+      def $nativeRangeStop:ident ($groupedCaptures:ident : $nativeCaptured:ident) : Nat :=
+        $groupedStop)).raw,
+    (← `(command|
+      /-- The actual fixed stride selected from this loop's native captures. -/
+      def $nativeRangeStride:ident ($groupedCaptures:ident : $nativeCaptured:ident) : Nat :=
+        $groupedStride)).raw,
+    (← `(command|
+      /-- The generated pure single-step view, with native mutable values and possible early return.
+      Naming this view adds neither a source operation nor a separate user-written implementation. -/
+      def $nativeBodyStep:ident ($groupedCaptures:ident : $nativeCaptured:ident) :
+          Nat → $mutableType → Option $(nativeResult.type) × $mutableType := $groupedStep)).raw,
+    (← `(command|
+      /-- The actual guard observed at native mutable locals and fixed captures. -/
+      theorem $nativeGuardEquation:ident : $groupedGuardType :=
+        $(← groupedProof nativeGuardType (← curryNativeScope capturedScope nativeGuardProof)))).raw,
+    (← `(command|
+      /-- Transport the same body equation into native locals, retaining actual early returns. -/
+      theorem $nativeBodyTransport:ident :
+          $(← quantifyNativeScope capturedScope (← `($bodyPremise → $nativeBodyType))) :=
+        $(← curryNativeScope capturedScope nativeBodyProof))).raw,
+    (← `(command|
+      /-- The same source body in native locals, using the already proved callee correspondences.
+      Its result keeps normal continuation and early return distinct and preserves the heap. -/
+      theorem $nativeBodyEquation:ident : $groupedBodyType :=
+        $(← groupedProof nativeBodyType nativeBodyEquationProof))).raw,
+    (← `(command|
+      /-- The existing source range in checked native local coordinates. Encoding
+      changes neither its iterations, early exits, heap nor source operation costs. -/
+      theorem $nativeName:ident : $nativeType := $nativeProof)).raw,
+    (← `(command|
+      /-- The same range correspondence at arbitrary raw locals, reconstructed
+      through the registered lossless native coordinates for theorem composition. -/
+      theorem $name:ident : $rawType := $rawProof)).raw]
+
+private def rangeCorrespondenceDeclarations (program : TSyntax `ident)
+    (callees : Array Callee) (sites : Array BlockSite) (site : BlockSite)
+    (nativeSimplifications : Array (TSyntax `ident)) : MacroM Syntax := do
+  if let some native := site.nativeResult then
+    return mkNullNode
+      (← nativeRangeCorrespondenceDeclarations program callees sites site native nativeSimplifications)
+  let some range := site.finiteRange
+    | Macro.throwErrorAt site.name "expected a finite source range"
+  let name := loopMember site "eq_pure"
+  let view := loopMember site "View"
+  let captureView := loopMember site "CaptureView"
+  let regroup := loopMember site "regroup_apply"
+  let regroupSymm := loopMember site "regroup_symm_apply"
+  let code := loopMember site "Code"
+  let guard := loopMember site "Guard"
+  let body := loopMember site "Body"
+  let guardObserved := loopMember site "guard_observe"
+  let bodyObserved := loopMember site "body_observe"
+  let guardEquation := loopMember site "guard_eq"
+  let bodyObservation := loopMember site "body"
+  let resultType ← typeTerm site.result
+  let mutableScope := rangeMutableScope site
+  let mutableType ← scopeValueTypes mutableScope
+  let capturedScope := site.scope.filter (! ·.isMutable)
+  let captures ← scopeTuple capturedScope
+  let capturedFields := capturedScope.toArray.map fun binding =>
+    (⟨binding.proofName.raw⟩ : TSyntax `term)
+  let index ← freshProofName site.name `index
+  let mutable ← freshProofName site.name `mutable
+  let outcome ← freshProofName site.name `outcome
+  let value ← freshProofName site.name `value
+  let bodyPure ← freshProofName site.name `bodyPure
+  let positive ← freshProofName site.name `positiveStep
+  let step ← nativeRangeStep callees sites site
+  let initial ← scopeTuple mutableScope
+  let inputFields ← tupleFields mutableScope ⟨mutable.raw⟩
+  let bodyInvocation := Lean.Syntax.mkApp ⟨bodyObservation.raw⟩
+    (mergeScopeFields site.scope (#[⟨index.raw⟩] ++ inputFields) capturedFields)
+  let outputFields ← tupleFields mutableScope (← `(($outcome:ident).2))
+  let normalLocals ← fieldsTuple (mergeScopeFields site.scope
+    (#[← `($index:ident + $(range.stride))] ++ outputFields) capturedFields)
+  let returnedLocals ← fieldsTuple (mergeScopeFields site.scope
+    (#[⟨index.raw⟩] ++ outputFields) capturedFields)
+  let bodyPremise ← `(∀ ($index:ident : Nat) ($mutable:ident : $mutableType),
+    $index:ident < $(range.stop) → $bodyInvocation =
+      (let $outcome:ident := ($step:term) $index:ident $mutable:ident
+       pure (match ($outcome:ident).1 with
+         | none => (Complexity.Language.Control.normal, $normalLocals)
+         | some $value:ident => (Complexity.Language.Control.returned $value:ident, $returnedLocals))))
+  let native ← nativeRangeValue callees sites site (some ⟨positive.raw⟩)
+  let conclusion ← `($(scopeApplication site.scope site.name) =
+    (let $outcome:ident := $native
+     pure ((($outcome:ident).1.elim
+       (Complexity.Language.Control.normal (result := $resultType))
+       (Complexity.Language.Control.returned (result := $resultType))),
+       ($outcome:ident).2)))
+  let type ← quantifyScope site.scope
+    (← `(∀ ($positive:ident : 0 < $(range.stride)), $bodyPremise → $conclusion))
+  let proof ← curryScope site.scope (← `(fun $positive:ident $bodyPure:ident => by
+    have actual := Complexity.Language.Stmt.observe_while_eq_forIn_range_step
+      $captureView:ident $program:ident $guard:ident $body:ident $captures
+      $(range.stop) $(range.stride) $positive:ident $step
+      (by
+        intro $index:ident $mutable:ident
+        simp only [$captureView:ident, Complexity.Language.Stmt.observe_reindex,
+          $guardObserved:ident, $regroupSymm:ident]
+        simp [$guardEquation:ident, $regroup:ident])
+      (by
+        intro $index:ident $mutable:ident inside
+        simp only [$captureView:ident, Complexity.Language.Stmt.observe_reindex,
+          $bodyObserved:ident, $regroupSymm:ident]
+        rw [$bodyPure:ident $index:ident $mutable:ident inside]
+        cases stepEq : ($step:term) $index:ident $mutable:ident with
+        | mk returned next =>
+            cases returned <;> simp only [stepEq, map_pure, $regroup:ident] <;> rfl)
+      $(range.cursor):ident $initial
+    change Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident
+      $(← scopeTuple site.scope) = _
+    rw [$code:ident]
+    funext heap
+    apply Complexity.Language.Stmt.observe_eq_some_iff.mpr
+    have execution := Complexity.Language.Stmt.observe_eq_some_iff.mp (congrFun actual heap)
+    simpa only [$captureView:ident, Equiv.symm_trans_apply, $regroupSymm:ident] using execution))
+  return (← `(command|
+    /-- Finite iteration correspondence, with its one-body obligation left in
+    the enclosing function's callee and recursive-hypothesis scope. -/
+    theorem $name:ident : $type := $proof)).raw
 
 private def pureCorrespondenceDeclaration (family : TSyntax `ident) (fn : Function)
     (callees : Array Callee) (body : LoweredBlock) : MacroM Syntax := do
@@ -2441,23 +3501,41 @@ private def pureCorrespondenceDeclaration (family : TSyntax `ident) (fn : Functi
   let equation := generatedName family fn.name "_action_eq"
   let native := generatedName family fn.name ""
   let arguments : Array (TSyntax `term) := fn.params.map fun param => ⟨param.name.raw⟩
-  let actual := Lean.Syntax.mkApp ⟨action.raw⟩ arguments
+  let actualArguments := match fn.nativeView with
+    | none => arguments
+    | some view => (view.parameterEncodings.zip arguments).map fun (encode, argument) =>
+        Lean.Syntax.mkApp encode #[argument]
+  let actual := Lean.Syntax.mkApp ⟨action.raw⟩ actualArguments
   let value := Lean.Syntax.mkApp ⟨native.raw⟩ arguments
+  let encodedValue := match fn.nativeView with
+    | none => value
+    | some view => Lean.Syntax.mkApp view.resultEncoding #[value]
   let result ← valueTypeTerm fn.result
   let dependencies := callees.filter fun callee =>
     callee.observation.getId != action.getId &&
-      body.proofBody.any (fun element => element.raw.hasIdent callee.observation.getId)
-  let equations := dependencies.map fun callee =>
-    mkIdentFrom callee.observation
-      (callee.observation.getId.getPrefix ++
-        Name.mkSimple (callee.observation.getId.getString! ++ "_eq_pure"))
-  let mut type ← `($actual = (pure $value : ExceptT Complexity.Language.Fault
+      (pureProofElements body).any (fun element => element.raw.hasIdent callee.observation.getId)
+  let equations ← dependencies.mapM fun callee => do
+    let some equation := callee.pureEquation
+      | Macro.throwErrorAt callee.name "a pure source callee must have a correspondence theorem"
+    return equation
+  let loopRules := body.sites.map fun site => loopMember site "eq_pure"
+  let bodyRules := body.sites.map fun site => loopMember site "body_eq"
+  let mut type ← `($actual = (pure $encodedValue : ExceptT Complexity.Language.Fault
     (StateT Complexity.Language.Heap Part) $result))
-  let mut proof ← `(by
-    source_pure_correspondence $value using $equation:ident [$equations:ident,*])
-  for param in fn.params.reverse do
+  let baseProof : TSyntax `term ← match fn.nativeView with
+    | none => `(by
+        source_pure_correspondence $value using $equation:ident [$equations:ident,*]
+          ranges% [$loopRules:ident,*] blocks% [$bodyRules:ident,*])
+    | some view => `(by
+        source_pure_correspondence $value using $equation:ident [$equations:ident,*]
+          encodings% [$(view.simplifications):ident,*]
+          ranges% [$loopRules:ident,*] blocks% [$bodyRules:ident,*])
+  let mut proof := baseProof
+  for (param, index) in fn.params.zipIdx.reverse do
     let parameter := param.name
-    let parameterType ← valueTypeTerm param.type
+    let parameterType ← match fn.nativeView with
+      | none => valueTypeTerm param.type
+      | some view => pure view.parameterTypes[index]!
     type ← `(∀ ($parameter:ident : $parameterType), $type)
     proof ← `(fun ($parameter:ident : $parameterType) => $proof)
   return (← `(command|
@@ -2465,12 +3543,39 @@ private def pureCorrespondenceDeclaration (family : TSyntax `ident) (fn : Functi
     preserves every initial heap. Lean's native recursion principle proves this once. -/
     theorem $name:ident : $type := $proof)).raw
 
+private def pureRawCorrespondenceDeclaration (family : TSyntax `ident)
+    (fn : Function) (view : NativeView) : MacroM Syntax := do
+  let name := generatedName family fn.name "_action_eq_pure_raw"
+  let action := actionName family fn.name true
+  let correspondence := generatedName family fn.name "_action_eq_pure"
+  let native := generatedName family fn.name ""
+  let arguments : Array (TSyntax `term) := fn.params.map fun param => ⟨param.name.raw⟩
+  let rebuilt := (view.parameterRebuilds.zip arguments).map fun (rebuild, argument) =>
+    Lean.Syntax.mkApp rebuild #[argument]
+  let actual := Lean.Syntax.mkApp ⟨action.raw⟩ arguments
+  let value := Lean.Syntax.mkApp view.resultEncoding
+    #[Lean.Syntax.mkApp ⟨native.raw⟩ rebuilt]
+  let result ← valueTypeTerm fn.result
+  let mut type ← `($actual = (pure $value : ExceptT Complexity.Language.Fault
+    (StateT Complexity.Language.Heap Part) $result))
+  let mut proof := Lean.Syntax.mkApp ⟨correspondence.raw⟩ rebuilt
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let parameterType ← valueTypeTerm param.type
+    type ← `(∀ ($parameter:ident : $parameterType), $type)
+    proof ← `(fun ($parameter:ident : $parameterType) => $proof)
+  return (← `(command|
+    /-- Observe any raw layout through its checked native reconstruction.
+    Reconstruction is proof-side transport, not an additional source operation. -/
+    theorem $name:ident : $type := $proof)).raw
+
 private def pureTotalDeclaration (family program : TSyntax `ident)
     (fn : Function) : MacroM Syntax := do
   let name := generatedName family fn.name "_total"
   let native := generatedName family fn.name ""
   let observed := generatedName family fn.name "_observe"
-  let correspondence := generatedName family fn.name "_action_eq_pure"
+  let correspondence := generatedName family fn.name
+    (if fn.nativeView.isSome then "_action_eq_pure_raw" else "_action_eq_pure")
   let id := generatedName family fn.name "Id"
   let params ← parameterTypes fn.params
   let env ← freshProofName fn.name `arguments
@@ -2482,7 +3587,14 @@ private def pureTotalDeclaration (family program : TSyntax `ident)
   for _ in fn.params do
     values := values.push (← `(Complexity.Language.Env.head $remaining))
     remaining ← `(Complexity.Language.Env.tail $remaining)
-  let value := Lean.Syntax.mkApp ⟨native.raw⟩ values
+  let nativeValues := match fn.nativeView with
+    | none => values
+    | some view => (view.parameterRebuilds.zip values).map fun (rebuild, value) =>
+        Lean.Syntax.mkApp rebuild #[value]
+  let nativeValue := Lean.Syntax.mkApp ⟨native.raw⟩ nativeValues
+  let value := match fn.nativeView with
+    | none => nativeValue
+    | some view => Lean.Syntax.mkApp view.resultEncoding #[nativeValue]
   return (← `(command|
     /-- Exact total source contract inherited from the generated native function. -/
     theorem $name:ident :
@@ -2497,19 +3609,105 @@ private def pureTotalDeclaration (family program : TSyntax `ident)
       · intro _ _ _
         exact ⟨rfl, rfl⟩)).raw
 
+private def nativeInputType : List (TSyntax `term) → MacroM (TSyntax `term)
+  | [] => `(Unit)
+  | [type] => pure type
+  | type :: rest => do `($type × $(← nativeInputType rest))
+
+private def nativeInputFields (count : Nat) (input : TSyntax `term) :
+    MacroM (Array (TSyntax `term)) := do
+  let mut fields := #[]
+  let mut rest := input
+  for index in [:count] do
+    if index + 1 < count then
+      fields := fields.push (← `(Prod.fst $rest))
+      rest ← `(Prod.snd $rest)
+    else
+      fields := fields.push rest
+  return fields
+
+private def nativeRefinementDeclarations (family program : TSyntax `ident)
+    (fn : Function) (view : NativeView) : MacroM (Array Syntax) := do
+  let inputName := generatedName family fn.name "_inputEmbedding"
+  let representation := generatedName family fn.name "_representation"
+  let refinement := generatedName family fn.name "_refines"
+  let arguments := generatedName family fn.name "_args"
+  let native := generatedName family fn.name ""
+  let observed := generatedName family fn.name "_observe"
+  let correspondence := generatedName family fn.name "_action_eq_pure"
+  let id := generatedName family fn.name "Id"
+  let params ← parameterTypes fn.params
+  let result ← typeTerm fn.result
+  let inputType ← nativeInputType view.parameterTypes.toList
+  let input ← freshProofName fn.name `input
+  let left ← freshProofName fn.name `left
+  let right ← freshProofName fn.name `right
+  let same ← freshProofName fn.name `same
+  let raw ← freshProofName fn.name `arguments
+  let fields ← nativeInputFields fn.params.size ⟨input.raw⟩
+  let encodedFields := (view.parameterEncodings.zip fields).map fun (encode, field) =>
+    Lean.Syntax.mkApp encode #[field]
+  let rawArguments := Lean.Syntax.mkApp ⟨arguments.raw⟩ encodedFields
+  let nativeValue := Lean.Syntax.mkApp ⟨native.raw⟩ fields
+  let encodedValue := Lean.Syntax.mkApp view.resultEncoding #[nativeValue]
+  let mut rawRest ← `($raw:ident)
+  let mut equalities := #[]
+  for embedding in view.parameterEmbeddings do
+    let projection ← `(fun ($raw:ident : Complexity.Language.Env $params) =>
+      Complexity.Language.Env.head $rawRest)
+    equalities := equalities.push (← `(Function.Embedding.injective $embedding
+      (congrArg $projection $same:ident)))
+    rawRest ← `(Complexity.Language.Env.tail $rawRest)
+  let mut injectivity ← `(Subsingleton.elim $left:ident $right:ident)
+  for (equality, index) in equalities.zipIdx.reverse do
+    injectivity ← if index + 1 == equalities.size then pure equality
+      else `(Prod.ext $equality $injectivity)
+  let inputDeclaration ← `(command|
+    /-- Canonical proof-side encoding of this function's native arguments.
+    It does not insert an uncharged runtime conversion. -/
+    def $inputName:ident : $inputType ↪ Complexity.Language.Env $params where
+      toFun $input:ident := $rawArguments
+      inj' $left:ident $right:ident $same:ident := $injectivity)
+  let resultEmbedding := view.resultEmbedding
+  let output ← `(fun (_ : $inputType) => $resultEmbedding)
+  let model ← `(fun ($input:ident : $inputType) => $nativeValue)
+  let representationDeclaration ← `(command|
+    /-- Native mathematical arguments and results of this actual source function. -/
+    def $representation:ident : Complexity.Language.FunctionRepresentation
+        $inputType (fun _ => $(view.resultType))
+        { params := $params, result := $result } :=
+      Complexity.Language.FunctionRepresentation.ofEmbedding $inputName:ident $output)
+  let refinementDeclaration ← `(command|
+    /-- The generated ordinary native function describes this same source body. -/
+    theorem $refinement:ident : Complexity.Language.RepresentedFunction.Refines
+        $program:ident $id:ident $representation:ident (fun _ => True) $model := by
+      change Complexity.Language.RepresentedFunction.Refines $program:ident $id:ident
+        (Complexity.Language.FunctionRepresentation.ofEmbedding $inputName:ident $output)
+        (fun _ => True) $model
+      apply Complexity.Language.RepresentedFunction.Refines.of_encoded_eq_pure
+        (program := $program:ident) (fn := $id:ident) (pre := fun _ => True)
+        $inputName:ident $output $model
+      intro $input:ident _
+      change Complexity.Language.Program.eval $program:ident $id:ident $rawArguments =
+        pure $encodedValue
+      rw [$observed:ident]
+      exact $(Lean.Syntax.mkApp ⟨correspondence.raw⟩ fields))
+  return #[inputDeclaration.raw, representationDeclaration.raw, refinementDeclaration.raw]
+
 private def programDeclarations (family : TSyntax `ident)
     (sources : Array (TSyntax `sourceFunction)) (imports : Array ImportedProgram)
-    (pureMode : Bool) :
-    MacroM (Syntax × Array FunctionInfo) := do
+    (pureMode : Bool) (nativeViews : Array NativeView := #[]) :
+    MacroM (Syntax × Array FunctionInfo × Array LoopCoordinateRegistration) := do
   let mut functions : Array Function := #[]
   for source in sources do
     let fn ← parseFunction source
+    let fn := { fn with nativeView := nativeViews.find? (fun view => view.header.name.getId == fn.name.getId) }
     if functions.any (fun previous => previous.name.getId == fn.name.getId) then
       Macro.throwErrorAt fn.name "duplicate source function name"
     if pureMode then
       unless pureValueType fn.result && fn.params.all (pureValueType ·.type) do
         Macro.throwErrorAt fn.name
-          "pure source functions support Nat, Bool, Unit and their products/options, but no nested buffers"
+          "pure source functions support Nat, Bool, Unit and their products/options, but no nested buffers or node references"
     functions := functions.push fn
   let signaturesName := mkIdentFrom family (family.getId ++ `signatures)
   let localSignaturesName := mkIdentFrom family (family.getId ++ `localSignatures)
@@ -2543,7 +3741,9 @@ private def programDeclarations (family : TSyntax `ident)
   let mut callees : Array Callee := functions.map fun fn =>
     ⟨fn.name, fn.params, fn.result, generatedName family fn.name "Id",
       actionName family fn.name pureMode, generatedName family fn.name "_observe",
-      if pureMode then some (generatedName family fn.name "") else none⟩
+      if pureMode then some (generatedName family fn.name "") else none,
+      if pureMode then some (generatedName family fn.name
+        (if fn.nativeView.isSome then "_action_eq_pure_raw" else "_action_eq_pure")) else none⟩
   let mut importedProofs : Array Syntax := #[]
   let mut importedObservations : Array Syntax := #[]
   let mut importFolds : Array (TSyntax `ident) := #[]
@@ -2584,7 +3784,10 @@ private def programDeclarations (family : TSyntax `ident)
           fn.result, id,
           mkCIdent (entry.source.family ++
             Name.mkSimple (fn.name.toString ++ if fn.pure then "_action" else "")), fold,
-          if fn.pure then some (mkCIdent (entry.source.family ++ fn.name)) else none⟩
+          if fn.pure then some (mkCIdent (entry.source.family ++ fn.name)) else none,
+          if fn.pure then some (mkCIdent (entry.source.family ++
+            Name.mkSimple (fn.name.toString ++
+              if fn.nativeHeader.isSome then "_action_eq_pure_raw" else "_action_eq_pure"))) else none⟩
         callees := callees.push callee
         importFolds := importFolds.push fold
         importedObservations := importedObservations.push (← importedObservationDeclaration
@@ -2598,13 +3801,19 @@ private def programDeclarations (family : TSyntax `ident)
     if pureMode && body.term.raw.hasIdent ``Complexity.Language.Stmt.alloc then
       Macro.throwErrorAt fn.name
         "buffer allocation is effectful and is not supported by 'source_program (pure)'"
+    if pureMode && body.term.raw.hasIdent ``Complexity.Language.Stmt.readNode then
+      Macro.throwErrorAt fn.name
+        "node reading is effectful and is not supported by 'source_program (pure)'"
+    if pureMode && body.term.raw.hasIdent ``Complexity.Language.Stmt.consNode then
+      Macro.throwErrorAt fn.name
+        "node construction is effectful and is not supported by 'source_program (pure)'"
     if pureMode then
       if body.sites.any (fun site => site.guard.isNone) then
         Macro.throwErrorAt fn.name
           "scratch allocation scopes are effectful and are not supported by 'source_program (pure)'"
-      unless body.sites.isEmpty do
+      if body.sites.any (fun site => site.finiteRange.isNone) then
         Macro.throwErrorAt fn.name
-          "the pure frontend currently supports recursive calls, not while or for loops"
+          "pure source loops must be finite ranges; unbounded while is not supported"
       if body.fallsThrough then
         Macro.throwErrorAt fn.name "every pure source function path must return a value"
     loweredBodies := loweredBodies.push body
@@ -2646,12 +3855,14 @@ private def programDeclarations (family : TSyntax `ident)
     declarations := declarations ++ (← loopObservationDeclarations programName site)
     if site.guard.isSome then
       declarations := declarations ++ (← loopCaptureDeclarations site)
+      declarations := declarations ++ (← loopNativeCaptureDeclarations site)
   for site in loopSites do
     declarations := declarations ++ (← loopEquationDeclarations site loopSites calleeFolds)
     declarations := declarations.push (← loopContinuationDeclaration programName site loopSites)
     if site.guard.isSome then
       declarations := declarations ++ (← loopCaptureFrameDeclarations programName site loopSites)
       declarations := declarations ++ (← loopContractDeclarations programName site)
+      declarations := declarations ++ (← loopNativeContractDeclarations programName site)
       declarations := declarations.push (← loopIndependentContractDeclaration programName site false)
       declarations := declarations.push (← loopIndependentContractDeclaration programName site true)
       declarations := declarations.push (← loopTerminationDeclaration programName site false)
@@ -2669,17 +3880,185 @@ private def programDeclarations (family : TSyntax `ident)
     for (fn, body) in order do
       declarations := declarations.push
         (← nativeDeclaration family fn callees body)
+      for site in body.sites do
+        declarations := declarations.push
+          (← rangeCorrespondenceDeclarations programName callees body.sites site
+            (fn.nativeView.map (·.simplifications) |>.getD #[]))
       declarations := declarations.push
         (← pureCorrespondenceDeclaration family fn callees body)
-      declarations := declarations.push
-        (← pureTotalDeclaration family programName fn)
-  return (mkNullNode declarations, functions.map fun fn =>
-    ⟨fn.name.getId, fn.params.map (fun param => (param.name.getId, param.type)), fn.result, pureMode⟩)
+      match fn.nativeView with
+      | none => declarations := declarations.push (← pureTotalDeclaration family programName fn)
+      | some view =>
+          declarations := declarations.push (← pureRawCorrespondenceDeclaration family fn view)
+          declarations := declarations.push (← pureTotalDeclaration family programName fn)
+          declarations := declarations ++ (← nativeRefinementDeclarations family programName fn view)
+  let mut coordinates : Array LoopCoordinateRegistration := #[]
+  for site in loopSites do
+    if site.guard.isSome then
+      let mut rules := #["view_apply", "view_symm_apply", "captureView_apply",
+        "captureView_symm_apply", "regroup_apply", "regroup_symm_apply"].map
+        (loopMember site)
+      if hasNativeCoordinates site then
+        rules := rules ++ #[loopMember site "native_captureView_apply",
+          loopMember site "native_captureView_symm_apply"]
+      if pureMode && site.nativeResult.isSome && site.finiteRange.isSome then
+        rules := rules ++ #[loopMember site "nativeRangeStop", loopMember site "nativeRangeStep"]
+      let nativeTypes := site.scope.toArray.filterMap (fun binding => binding.native.map (·.type))
+      coordinates := coordinates.push {
+        code := loopMember site "Code", rules := rules, nativeTypes := nativeTypes
+      }
+  return (mkNullNode declarations, (functions.map fun fn =>
+    ⟨fn.name.getId, fn.params.map (fun param => (param.name.getId, param.type)), fn.result,
+      pureMode, fn.nativeView.map (·.header)⟩), coordinates)
+
+private def nativeExprSyntax (value : Lean.Expr) : Lean.Elab.Term.TermElabM (TSyntax `term) :=
+  Lean.withOptions (fun options => options.setBool `pp.fullNames true) do
+    Lean.PrettyPrinter.delab value
+
+private partial def registeredTypeNames (type : Lean.Expr) : Lean.Meta.MetaM (Array Name) := do
+  let type ← Lean.Meta.whnf type
+  if let .const name _ := type then
+    if let some info := getStructureTypeInfo? (← Lean.getEnv) name then
+      let mut names := #[name ++ `sourceEncode, name ++ `sourceEmbedding,
+        name ++ `sourceEquiv_apply, name ++ `sourceEquiv_symm_apply]
+      for field in info.fields do
+        names := names ++ (← registeredTypeNames field.type.nativeType)
+      return names
+  let mut names := #[]
+  for argument in type.getAppArgs do
+    names := names ++ (← registeredTypeNames argument)
+  return names
+
+private def registerLoopCoordinates (entries : Array LoopCoordinateRegistration) :
+    Lean.Elab.Command.CommandElabM Unit := do
+  for entry in entries do
+    let code ← Lean.resolveGlobalConstNoOverload entry.code
+    let mut rules ← entry.rules.mapM (fun rule => Lean.resolveGlobalConstNoOverload rule)
+    let nativeRules ← Lean.Elab.Command.liftTermElabM do
+      let mut names := #[]
+      for type in entry.nativeTypes do
+        let type ← Lean.Elab.Term.elabTermAndSynthesize type none
+        names := names ++ (← registeredTypeNames type)
+      return names
+    for rule in nativeRules do
+      unless rules.contains rule do
+        -- These declarations have already been checked by `source_type` and the
+        -- native-coordinate derivation; registration never adds a proof premise.
+        discard <| Lean.getConstInfo rule
+        rules := rules.push rule
+    modifyEnv fun env => loopCoordinatesExt.addEntry env (code, ⟨rules⟩)
+
+private def nativeView (header : NativeHeader) : Lean.Elab.Term.TermElabM NativeView := do
+  let mut simplifications := #[``Function.Embedding.coe_refl, ``Function.Embedding.coe_prodMap,
+    ``Prod.map, ``id, ``Equiv.refl_apply, ``Equiv.refl_symm,
+    ``Equiv.toFun_as_coe, ``Equiv.invFun_as_coe]
+  for parameter in header.params do
+    simplifications := simplifications ++ (← registeredTypeNames parameter.type.nativeType)
+  simplifications := simplifications ++ (← registeredTypeNames header.result.nativeType)
+  return {
+    header := header
+    parameterTypes := ← header.params.mapM (fun parameter => nativeExprSyntax parameter.type.nativeType)
+    resultType := ← nativeExprSyntax header.result.nativeType
+    parameterEncodings := ← header.params.mapM (fun parameter => nativeExprSyntax parameter.type.encoding)
+    parameterRebuilds := ← header.params.mapM (fun parameter => do
+      let rebuild ← nativeExprSyntax (← nativeReconstruction parameter.type)
+      let rawType ← Lean.Elab.liftMacroM (valueTypeTerm parameter.type.coreTy)
+      let nativeType ← nativeExprSyntax parameter.type.nativeType
+      `(($rebuild : $rawType → $nativeType)))
+    resultEncoding := ← nativeExprSyntax header.result.encoding
+    parameterEmbeddings := ← header.params.mapM (fun parameter => nativeExprSyntax parameter.type.embedding)
+    resultEmbedding := ← nativeExprSyntax header.result.embedding
+    parameterEquivs := ← header.params.mapM (fun parameter => nativeEquivalence parameter.type)
+    resultEquiv := ← nativeEquivalence header.result
+    simplifications := simplifications.map mkCIdent
+  }
+
+private partial def mentionsRegisteredConstructor (stx : Syntax) :
+    Lean.Elab.Term.TermElabM Bool := do
+  if stx.isIdent then
+    try
+      let name ← Lean.resolveGlobalConstNoOverload stx
+      if (getStructureConstructorInfo? (← Lean.getEnv) name).isSome then return true
+    catch _ => pure ()
+  for argument in stx.getArgs do
+    if ← mentionsRegisteredConstructor argument then return true
+  return false
+
+private def prepareNativeSources (family : TSyntax `ident)
+    (sources : Array (TSyntax `sourceFunction)) (imports : Array ImportedProgram) :
+    Lean.Elab.Term.TermElabM (Array (TSyntax `sourceFunction) × Array NativeView) := do
+  let mut headers : Array NativeHeader := #[]
+  let mut needed := false
+  for source in sources do
+    let `(sourceFunction| def $name:ident $parameters:sourceParameter* : $result:term := $body:term
+        $_termination:suffix) := source
+      | Lean.throwErrorAt source "expected a named source function"
+    let mut params : Array NativeParameter := #[]
+    for parameter in parameters do
+      let `(sourceParameter| ($param:ident : $type:term)) := parameter
+        | Lean.throwErrorAt parameter "expected a named source parameter"
+      let type ← elabPureType type
+      needed := needed || !(← registeredTypeNames type.nativeType).isEmpty
+      params := params.push { name := param, type := type }
+    let result ← elabPureType result
+    needed := needed || !(← registeredTypeNames result.nativeType).isEmpty
+    needed := needed || (← mentionsRegisteredConstructor body.raw)
+    headers := headers.push {
+      name := name, params := params, result := result, native := generatedName family name ""
+    }
+  for source in imports do
+    needed := needed || source.functions.any (·.nativeHeader.isSome)
+  unless needed do return (sources, #[])
+  let mut callees := headers
+  for source in imports do
+    for fn in source.functions do
+      unless fn.pure do continue
+      let name := mkIdentFrom source.name (source.name.getId ++ fn.name)
+      let native := mkCIdent (source.family ++ fn.name)
+      let header : NativeHeader ← match fn.nativeHeader with
+        | some header => pure { header with name := name, native := native }
+        | none => do
+            let params ← fn.params.mapM fun (param, type) => do
+              return ({
+                name := mkIdentFrom source.name param
+                type := ← resolvePureType (Lean.mkApp (Lean.mkConst ``Value) (coreTypeExpr type)) } :
+                NativeParameter)
+            pure ({
+              name := name
+              params := params
+              native := native
+              result := ← resolvePureType (Lean.mkApp (Lean.mkConst ``Value) (coreTypeExpr fn.result)) } :
+              NativeHeader)
+      callees := callees.push header
+  let mut lowered := #[]
+  let mut views := #[]
+  for source in sources, header in headers do
+    let `(sourceFunction| def $name:ident $_parameters:sourceParameter* : $_result:term := $body:term
+        $termination:suffix) := source
+      | Lean.throwErrorAt source "expected a named source function"
+    let body ← lowerNativeBody callees header body
+    let parameters ← header.params.mapM fun parameter => do
+      let type ← Lean.Elab.liftMacroM (valueTypeTerm parameter.type.coreTy)
+      `(sourceParameter| ($(parameter.name):ident : $type))
+    let result ← Lean.Elab.liftMacroM (valueTypeTerm header.result.coreTy)
+    lowered := lowered.push (← `(sourceFunction| def $name:ident $parameters:sourceParameter* : $result:term := $body:term
+      $termination:suffix))
+    views := views.push (← nativeView header)
+  return (lowered, views)
 
 private def elaborateProgram (family : TSyntax `ident)
     (functions : Array (TSyntax `sourceFunction)) (libraries : Array (TSyntax `ident))
     (pureMode : Bool := false) :
     Lean.Elab.Command.CommandElabM Unit := do
+  let mut imports : Array ImportedProgram := #[]
+  for library in libraries do
+    let (name, functions) ← getProgramInfo library
+    if imports.any (fun imported => imported.family == name) then
+      Lean.throwErrorAt library "duplicate source program import"
+    imports := imports.push ⟨library, name, functions⟩
+  let (functions, nativeViews) ← if pureMode then
+      Lean.Elab.Command.liftTermElabM (prepareNativeSources family functions imports)
+    else pure (functions, #[])
   for source in functions do
     let fn ← Lean.Elab.liftMacroM (parseFunction source)
     let hints ← Lean.Elab.elabTerminationHints fn.termination
@@ -2688,16 +4067,11 @@ private def elaborateProgram (family : TSyntax `ident)
         Lean.throwErrorAt fn.termination "pure source functions must terminate; partial fixed points are not supported"
     else if hints.isNotNone then
       Lean.throwErrorAt fn.termination "termination hints are checked by 'source_program (pure)'"
-  let mut imports : Array ImportedProgram := #[]
-  for library in libraries do
-    let (name, functions) ← getProgramInfo library
-    if imports.any (fun imported => imported.family == name) then
-      Lean.throwErrorAt library "duplicate source program import"
-    imports := imports.push ⟨library, name, functions⟩
-  let (declarations, information) ←
-    Lean.Elab.liftMacroM (programDeclarations family functions imports pureMode)
+  let (declarations, information, coordinates) ←
+    Lean.Elab.liftMacroM (programDeclarations family functions imports pureMode nativeViews)
   Lean.Elab.Command.elabCommand declarations
   registerProgramInfo family information
+  registerLoopCoordinates coordinates
 
 elab_rules : command
   | `(command| source_program $family:ident where $functions:sourceFunction*) => do

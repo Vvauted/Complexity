@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Syntax
+import Complexity.Language.RepresentedFunction
 import Complexity.Language.Eval.Locals.Verification
 import Complexity.Data.Array.MapIdx
 import Complexity.Control.Part.StateT
@@ -259,5 +260,38 @@ theorem boundedMap_total_frame (contents : Array Nat) :
   intro xs limit heap observed
   obtain ⟨finish, executed, updated, preserved⟩ := boundedMap_eval_frame xs limit observed
   exact ⟨(), finish, executed, updated, preserved⟩
+
+/-- Observe ordinary array input and output without changing the in-place
+implementation or its `Unit` return. The output is read at the final heap. -/
+def boundedMapRepresentation :
+    FunctionRepresentation (Array Nat × Nat) (fun _ => Array Nat)
+      Implementation.signatures[Implementation.boundedMapId] :=
+  FunctionRepresentation.ofArgument
+    (ArgumentRepresentation.cons (Representation.array .nat)
+      (ArgumentRepresentation.single Representation.nat)) .here
+    (fun _ => Representation.array .nat)
+
+/-- The existing implementation proof supplies the shared mathematical
+correspondence; it is not another implementation or loop induction. -/
+theorem boundedMap_refines :
+    RepresentedFunction.Refines Implementation.program Implementation.boundedMapId
+      boundedMapRepresentation (fun _ => True)
+      (fun input => input.1.map fun x => min (x + 1) input.2) := by
+  rintro ⟨contents, limit⟩ _
+  apply (boundedMap_total contents).consequence
+  · intro args heap represented
+    exact represented.1
+  · intro args initial value finish represented result
+    have limit_eq : limit = args.tail.head := represented.2
+    simpa only [boundedMapRepresentation, FunctionRepresentation.ofArgument,
+      Representation.array, limit_eq] using result
+
+/-- An ordinary array theorem composes with implementation correspondence.
+This proves a property of the same source execution without reopening its loop. -/
+theorem boundedMap_preserves_length :
+    RepresentedFunction.Total Implementation.program Implementation.boundedMapId
+      boundedMapRepresentation (fun _ => True)
+      (fun input output => output.size = input.1.size) :=
+  boundedMap_refines.of_math (by intros; simp)
 
 end Complexity.Language.Examples.Traversal

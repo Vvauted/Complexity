@@ -275,6 +275,26 @@ theorem FunctionTotal.iff_eval {signatures : List Signature} {program : Program 
     obtain ⟨finish, execution, sameHeap⟩ := Program.eval_eq_ok_iff.mp returned
     exact ⟨finish, value, execution, sameHeap.symm ▸ property⟩
 
+/-- State the existing total-correctness/evaluation equivalence at a
+propositionally equal complete signature. Both observations retain the same
+actual final heap; no separate argument decoder or execution is introduced. -/
+theorem FunctionTotal.cast_iff_eval {signatures : List Signature}
+    (program : Program signatures) (fn : Fin signatures.length) {signature : Signature}
+    (same : signatures[fn] = signature)
+    (pre : Env signature.params → Heap → Prop)
+    (post : Env signature.params → Heap → Value signature.result → Heap → Prop) :
+    FunctionTotal program fn
+      (cast (congrArg (fun s => Env s.params → Heap → Prop) same.symm) pre)
+      (cast (congrArg (fun s =>
+        Env s.params → Heap → Value s.result → Heap → Prop) same.symm) post) ↔
+      ∀ args initialHeap, pre args initialHeap → ∃ value finalHeap,
+        (cast (congrArg (fun s => Env s.params →
+          ExceptT Fault (StateT Heap Part) (Value s.result)) same)
+          (program.eval fn)) args initialHeap = Part.some (.ok value, finalHeap) ∧
+        post args initialHeap value finalHeap := by
+  cases same
+  exact FunctionTotal.iff_eval
+
 /-- Transfer a mathematical specification of a pure function through its proved
 source correspondence. The correspondence supplies successful termination and
 preservation of every starting heap; the specification need not reason about

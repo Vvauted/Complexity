@@ -155,6 +155,25 @@ budget belongs to this source-level correctness rule. -/
   · rintro ⟨finish, control, execution, post⟩
     exact ⟨finish.tail, control, .alloc execution, post⟩
 
+/-- Node construction binds its actual fresh reference in the extended heap.
+The tail is stored as supplied, and the continuation retains all later effects.
+Tail validity and machine capacity are not source-level allocation premises. -/
+@[simp] theorem consNode_iff {kind : CellTy} (head : Atom Γ kind.toTy)
+    (tail : Atom Γ (.option (.node kind)))
+    (continuation : Stmt signatures (.node kind :: Γ) result) :
+    let allocated := entry.heap.cons (kind.ofValue (head.eval entry.locals))
+      (tail.eval entry.locals)
+    TotalWP program (.consNode head tail continuation) normal returned entry ↔
+      TotalWP program continuation (fun finish => normal finish.tail)
+        (fun value finish => returned value finish.tail)
+        (State.cons allocated.1 ⟨entry.locals, allocated.2⟩) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | consNode body => exact ⟨_, control, body, post⟩
+  · rintro ⟨finish, control, execution, post⟩
+    exact ⟨finish.tail, control, .consNode execution, post⟩
+
 /-- A scope must finish successfully without retaining a reference to a fresh
 object. Its postcondition observes the current contents of the entry objects,
 after discarding only the newly allocated suffix. Returns pass through this
@@ -202,6 +221,23 @@ The continuation may change the heap, return early or execute further calls. -/
     | readFault failed => exact False.elim post
   · rintro ⟨value, loaded, finish, control, execution, post⟩
     exact ⟨finish.tail, control, .read loaded execution, post⟩
+
+/-- A typed node lookup supplies its actual head and shared tail to the scoped
+body. Lookup failure is a finite fault, not a vacuous total-correctness case. -/
+@[simp] theorem readNode_iff {kind : CellTy} (ref : Atom Γ (.node kind))
+    (continuation : Stmt signatures (.prod kind.toTy (.option (.node kind)) :: Γ) result) :
+    TotalWP program (.readNode ref continuation) normal returned entry ↔
+      ∃ head tail, entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) ∧
+        TotalWP program continuation (fun finish => normal finish.tail)
+          (fun result finish => returned result finish.tail)
+          (State.cons (kind.toValue head, tail) entry) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | readNode found body => exact ⟨_, _, found, _, control, body, post⟩
+    | readNodeFault missing => exact False.elim post
+  · rintro ⟨head, tail, found, finish, control, execution, post⟩
+    exact ⟨finish.tail, control, .readNode found execution, post⟩
 
 /-- A write must succeed and its actual new heap satisfies the normal
 postcondition. It neither introduces a lexical binding nor returns a value. -/
@@ -483,6 +519,31 @@ theorem read_contents {kind : CellTy} {buffer : Atom Γ (.buffer kind)}
       (State.cons (kind.toValue contents[index.eval entry.locals]) entry)) :
     TotalWP program (.read buffer index continuation) normal returned entry :=
   read (observed.read bound) body
+
+/-- Compose one actual node lookup with a proof about its head and shared tail.
+The lookup itself preserves the heap; its continuation retains its real effects. -/
+theorem readNode {kind : CellTy} {ref : Atom Γ (.node kind)}
+    {continuation : Stmt signatures (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+    {head : CellValue kind} {tail : Option (NodeRef kind)}
+    (found : entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail))
+    (body : TotalWP program continuation (fun finish => normal finish.tail)
+      (fun result finish => returned result finish.tail)
+      (State.cons (kind.toValue head, tail) entry)) :
+    TotalWP program (.readNode ref continuation) normal returned entry :=
+  (readNode_iff ref continuation).mpr ⟨head, tail, found, body⟩
+
+/-- Compose node construction with a contract at its actual allocated state. -/
+theorem consNode {kind : CellTy} {head : Atom Γ kind.toTy}
+    {tail : Atom Γ (.option (.node kind))}
+    {continuation : Stmt signatures (.node kind :: Γ) result}
+    (body :
+      let allocated := entry.heap.cons (kind.ofValue (head.eval entry.locals))
+        (tail.eval entry.locals)
+      TotalWP program continuation (fun finish => normal finish.tail)
+        (fun value finish => returned value finish.tail)
+        (State.cons allocated.1 ⟨entry.locals, allocated.2⟩)) :
+    TotalWP program (.consNode head tail continuation) normal returned entry :=
+  (consNode_iff head tail continuation).mpr body
 
 /-- Compose the actual shared-heap update with a normal postcondition. -/
 theorem write {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}

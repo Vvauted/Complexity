@@ -76,6 +76,23 @@ inductive ArenaExecutionCost {signatures : List Signature}
       {steps : Nat} (tail : ArenaExecutionCost ready steps) :
       ArenaExecutionCost (.read (loaded := loaded) bufferFits indexFits valueFits ready)
         (readCodeSize + steps)
+  | readNode {Γ : List Ty} {result : Ty} {kind : CellTy} {depth next₀ next₁ : Nat}
+      {ref : Atom Γ (.node kind)}
+      {continuation : Complexity.Language.Stmt signatures
+        (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (.prod kind.toTy (.option (.node kind)) :: Γ)}
+      {control : Control result} {head : CellValue kind} {tail : Option (NodeRef kind)}
+      {found : entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail)}
+      {valueFits : ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
+        (kind.toValue head, tail)}
+      {body : Complexity.Language.Exec program continuation
+        (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) entry) finish control}
+      {ready : ArenaReady body w heapLimit depth next₀ next₁}
+      {steps : Nat} (bodyCost : ArenaExecutionCost ready steps) :
+      ArenaExecutionCost (.readNode (found := found) valueFits ready)
+        (readNodeCodeSize + steps)
   | write {Γ : List Ty} {result : Ty} {kind : CellTy} {depth next : Nat}
       {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
       {entry : Complexity.Language.State Γ} {heap : Heap}
@@ -120,6 +137,23 @@ inductive ArenaExecutionCost {signatures : List Signature}
       {steps : Nat} (tail : ArenaExecutionCost ready steps) :
       ArenaExecutionCost (.alloc initialFits capacity ready)
         (14 * length.eval entry.locals + 18 + steps)
+  | consNode {Γ : List Ty} {result : Ty} {kind : CellTy} {depth next₀ next₁ : Nat}
+      {head : Atom Γ kind.toTy} {tail : Atom Γ (.option (.node kind))}
+      {continuation : Complexity.Language.Stmt signatures (.node kind :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (.node kind :: Γ)} {control : Control result}
+      {body : Complexity.Language.Exec program continuation
+        (let allocated := entry.heap.cons (kind.ofValue (head.eval entry.locals))
+          (tail.eval entry.locals)
+         Complexity.Language.State.cons allocated.1 ⟨entry.locals, allocated.2⟩)
+        finish control}
+      {headFits : ValueFits w (head.eval entry.locals)}
+      {tailFits : ValueFits w (tail.eval entry.locals)}
+      {capacity : next₀ + 3 ≤ heapLimit}
+      {ready : ArenaReady body w heapLimit depth (next₀ + 3) next₁}
+      {steps : Nat} (bodyCost : ArenaExecutionCost ready steps) :
+      ArenaExecutionCost (.consNode headFits tailFits capacity ready)
+        (consNodeCodeSize + steps)
   | scope {Γ : List Ty} {result : Ty} {depth next₀ bodyCursor : Nat}
       {stmt : Complexity.Language.Stmt signatures Γ result}
       {entry finish : Complexity.Language.State Γ} {control : Control result}
@@ -268,6 +302,10 @@ theorem ArenaReady.exists_cost {signatures : List Signature}
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .read (bufferFits := bufferFits) (indexFits := indexFits)
         (loaded := loaded) (valueFits := valueFits) cost⟩
+  | @readNode Γ result kind w heapLimit depth next₀ next₁ ref continuation
+      entry finish control head tail found body valueFits ready ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .readNode (found := found) (valueFits := valueFits) cost⟩
   | @write Γ result kind w heapLimit depth next buffer index value entry heap
       written bufferFits indexFits valueFits =>
       exact ⟨_, .write (bufferFits := bufferFits) (indexFits := indexFits)
@@ -280,6 +318,10 @@ theorem ArenaReady.exists_cost {signatures : List Signature}
   | alloc initialFits capacity ready ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .alloc (initialFits := initialFits) (capacity := capacity) cost⟩
+  | consNode headFits tailFits capacity ready ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .consNode (headFits := headFits) (tailFits := tailFits)
+        (capacity := capacity) cost⟩
   | @scope Γ result w heapLimit depth next₀ bodyCursor stmt entry finish control body safe ready ih =>
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .scope (safe := safe) cost⟩
@@ -343,6 +385,9 @@ theorem ExecutionCost.arena {signatures : List Signature}
       bufferFits indexFits loaded valueFits body steps _ ih =>
       exact .read (bufferFits := bufferFits) (indexFits := indexFits)
         (loaded := loaded) (valueFits := valueFits) ih
+  | @readNode Γ result kind depth ref continuation entry finish control head tail
+      found valueFits body steps _ ih =>
+      exact .readNode (found := found) (valueFits := valueFits) ih
   | @write Γ result kind depth buffer index value entry heap
       bufferFits indexFits valueFits written =>
       exact .write (bufferFits := bufferFits) (indexFits := indexFits)
@@ -422,6 +467,17 @@ theorem deterministic {signatures : List Signature}
           have same : value = value' := Except.ok.inj (loaded.symm.trans loaded')
           subst value'
           rw [ih tail']
+  | @readNode Γ result kind depth next₀ next₁ ref continuation entry finish control
+      head tail found valueFits body ready steps bodyCost ih =>
+      intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
+      cases second with
+      | @readNode _ _ _ _ _ _ _ _ _ _ _ head' tail' found' _ _ _ _ bodyCost' =>
+          have same := Option.some.inj (found.symm.trans found')
+          have sameHead : head = head' := congrArg Prod.fst same
+          have sameTail : tail = tail' := congrArg Prod.snd same
+          subst head'
+          subst tail'
+          rw [ih bodyCost']
   | write =>
       intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
       cases second
@@ -438,6 +494,10 @@ theorem deterministic {signatures : List Signature}
       intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
       cases second with
       | alloc tail' => rw [ih tail']
+  | consNode bodyCost ih =>
+      intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
+      cases second with
+      | consNode bodyCost' => rw [ih bodyCost']
   | scope cost ih =>
       intro w' heapLimit' depth' next₀' next₁' finish' control' execution' ready' steps' second
       cases second with

@@ -27,17 +27,20 @@ imports. Correctness, realizability and counted execution compose across those
 imports, including two effectful calls at their actual intermediate heap.
 These results are retained; we do not need another execution model or backend.
 
-**Checked integration:** effectful range `for`, nested product patterns,
+**Checked capabilities:** effectful range `for`, nested product patterns,
 independent named loop contracts, their shared resource rules, the mathematical
-array-task interface and top-tree foundations build together on 0v0 with the
-complete library, Examples and manual. The buffer-element `for` lowering is
-implemented but has not yet been exercised by a dedicated verified consumer.
-Pure finite loops and dynamic top-tree operations remain separate work.
+array-task interface and top-tree foundations are joined by pure finite-range
+`for`, native iterative factorial and inferred uniform structural budgets.
+Factorial and the direct, composed and imported compiled traversal consumers
+exercise these additions; the library, Examples and manual pass together on 0v0.
+Buffer-element `for` is implemented without a dedicated verified consumer;
+nested ranges, early returns and self-recursive calls inside pure ranges do not
+yet have separate consumer coverage. Dynamic top-tree operations remain open.
 
 | Evidence | Working capability | Remaining author-facing problem |
 | --- | --- | --- |
-| [Factorial](../Examples/Language/Factorial.lean), [Scalar](../Examples/Language/Scalar.lean) and [Remainder](../Examples/Language/Remainder.lean) | Generated native scalar functions; ordinary equality proofs, one native termination argument for self-recursion, automatic source correspondence and total-contract conversion | The pure frontend does not support `while`/`for`, mutually recursive families or buffers; this is not a restriction on the effectful function table. Mathematical proofs and separate resource arguments remain author work. |
-| [Traversal](../Examples/Language/Traversal.lean) | Actual range `for`, native `Array.map` result and outside-buffer frame; independent guard/body contracts feed correctness and resource proofs | Connection-layer consumers still select generated views and compiler budget names. Structural cost inference and ordinary-parameter resource entry points can remove those choices. |
+| [Factorial](../Examples/Language/Factorial.lean), [Scalar](../Examples/Language/Scalar.lean) and [Remainder](../Examples/Language/Remainder.lean) | Generated native functions, including finite-range iteration; ordinary equality proofs, one native termination argument for self-recursion, automatic source correspondence and total-contract conversion | Pure general `while`, mutually recursive families and buffers remain unsupported; this is not a restriction on the effectful function table. Mathematical proofs and separate resource arguments remain author work. |
+| [Traversal](../Examples/Language/Traversal.lean) | Actual range `for`, native `Array.map` result and outside-buffer frame; independent guard/body contracts feed correctness and resource proofs; uniform budgets are inferred once and a loop-specific tactic normalizes local coordinates | Connection-layer consumers still select generated views and set up resource contracts. Ordinary-parameter resource entry points should remove that remaining transport. |
 | [Two-buffer composition](../Examples/Language/TraversalComposition.lean) | Callee contracts preserve both actual results, including disjoint slices of one object | Routine contents/frame consequences are manually transferred between calls. This is an automation gap, not permission to assume all buffers are independent. |
 | [Structured values](../Examples/Language/OptionalBuffer.lean), [allocation](../Examples/Language/Allocation.lean) and [scoped scratch](../Examples/Language/ScopeCompiled.lean) | Native products/options across imports and actual RAM returns; initialized allocation, non-escaping reclamation and repeated-workspace bounds | General sums/recursive data, arbitrary lifetimes and persistent pure collection encapsulation remain missing. |
 | [Compiled factorial](../Examples/Language/FactorialCompiled.lean) and [traversal](../Examples/Language/TraversalCompiled.lean) | Separate range, nesting and instruction-bound proofs reach the actual halted runner; factorial uses the shared typed execution result | Compiler cost names and traversal's loop-view/publication transport still need work. |
@@ -114,10 +117,16 @@ and charged. Do not select an empty heap and call this heap independence.
 **Status:** `source_program (pure)` generates native total functions over scalars
 and their products/options, checked action correspondence and total source contracts.
 Scalar, Remainder, self-recursive Factorial and OptionalBuffer's nested metadata
-helper pass on 0v0. In this pure frontend, the supported call graph is
-self-recursion plus acyclic calls; pure `while`/`for`, mutual recursion and buffers
-remain unsupported. Effectful declarations already resolve forward and mutually
-recursive calls through their shared signature table.
+helper pass on 0v0. Finite-range `for` also generates a native iteration and its
+source correspondence from one body. `Iterative.factorial` proves the ordinary
+`Nat.factorial` equation using fold/product identities, then reuses generated
+totality without another loop termination proof. In this pure frontend, the
+supported call graph is self-recursion plus acyclic calls; general `while`,
+mutual recursion and buffers remain unsupported. Effectful declarations already
+resolve forward and mutually recursive calls through their shared signature table.
+The iterative consumer covers one range with an accumulator; it does not yet
+establish consumer coverage for nested ranges, early returns or recursive calls
+inside a pure range.
 
 All source declarations expose ordinary-parameter `f_contract`, `f_args` and
 `f_onArgs` interfaces. They reuse the existing source contract and argument
@@ -184,8 +193,9 @@ specifications should expose ordinary contents, lengths, results and permitted
 updates. Library rules retain the actual heap internally; clients must not
 confuse an old contents observation with the state after a mutating call.
 
-1. Preserve the checked source/resource contract reuse while hiding remaining
-   view selection and compiler-derived budget plumbing. Lexical tuples,
+1. Preserve the checked source/resource contract reuse, inferred structural
+   budgets and loop-specific coordinate normalization while hiding remaining
+   view selection and resource-contract setup. Lexical tuples,
    guard/body sequencing and impossible control exits belong in shared rules,
    not repeated algorithm proofs. Keep general effectful guards and genuine
    early-return behavior intact.
@@ -199,8 +209,8 @@ confuse an old contents observation with the state after a mutating call.
    Abstract callees may export a callable upper-bound function with an `IsBigO`
    theorem. Its useful monotonicity is a property of the selected bound, not an
    assumption that exact runtime must be monotone.
-4. Complete the current captured-index traversal integration rather than add
-   another iterator model. Effectful `for i in [start:stop]` freezes its bounds
+4. Retain the checked captured-index traversal rather than add another iterator
+   model. Effectful `for i in [start:stop]` freezes its bounds
    and uses an immutable index; `for x in xs` borrows a fixed view and reads its
    current cell each round. Both lower to the existing while semantics, with
    actual guard/read/update costs. A snapshot is not mutable-loop semantics.
@@ -214,6 +224,402 @@ global no-aliasing or a special initial heap do not qualify.
 
 ## M3 — A language that can express structured algorithms
 
+### Language expansion scope
+
+The following is the author-facing scope, not a list of names to make the parser
+accept. Each capability needs the same source declaration, checked mathematical
+meaning, actual executable operations and a connection to the existing RAM and
+resource proofs. Representation lemmas alone do not complete a frontend feature.
+
+| Capability | Required end state | Current boundary |
+| --- | --- | --- |
+| Ordinary containers | Contiguous `Array α` and `Vector α n`, and an actual linked-node `List α`, with composable behavior and cost contracts for their operations | Actual Nat-buffer copy/append and Array contracts are checked. Immutable nodes have shared-tail contents and complete RAM representation. Callable List emptiness, uncons, cons and a real callback-based fold reach the same halted RAM execution and full invocation bounds. Fold accepts an arbitrary represented accumulator and retains the original list through callback effects. Native List declarations generate mathematical functions, real fold/cons calls and checked correspondence, including allocated List results, List-valued fold accumulators and imported allocating callbacks. The remaining operation library, general element layouts and a complete persistent container frontend remain open. The Buffer List view is explicitly named `bufferList`. |
+| User-defined data | Ordinary structures, `Sum`, recursive trees/lists, constructors, projections and useful pattern matching | Closed structures with direct scalar/scalar-product fields have checked registration, construction, projection, named calls and native mathematical proofs. Both the loop-free consumer and structure-valued finite ranges with helper calls reach the same halted RAM result and full instruction bound under explicit range/capacity conditions. General loops, structure recursion/matching, nested structures, general sums and recursive allocation remain open. |
+| Polymorphism and refinements | Type parameters, registered algebraic operations, `Fin n`, dependent vectors and proof-bearing subtype parameters | Representation can erase subtype proofs while retaining their mathematical predicates. Static specialization, native telescopes and runtime uses of indices must be implemented; an erased index is not a free runtime value. |
+| Higher-order programs | Function arguments/results, lambdas, closures and local functions | Statically known functions can be specialized first, but this does not complete escaping closures or higher-order return values. Their environments need real storage, root and cost rules. |
+| Numeric types | Native `Int`, `UInt64`, `BitVec`, `ZMod` and their arithmetic, powers and bit operations | Scalar encodings/range facts and actual signed Int negation, comparison and addition are checked through halted RAM execution and compiler-derived costs. Those operations still have raw pair source signatures; native frontend selection and the remaining operators are open. |
+| Control and effects | `break`, `continue`, explicit-step `for`, general matching, `try/catch` and ordinary I/O operations | Positive-stride ranges, including dynamic `k + 1`, have checked native correspondence. Exit-aware range rules also prove the actual guard/increment short circuits, but loop-exit syntax and arbitrary proof-bearing stride parameters remain open. Existing core faults are not catch handlers, and preloaded array invocation is not I/O. |
+| Storage | Nested/pointer elements, resizing, arbitrary release and persistent pure results | Fresh Nat-buffer copy/append and allocating resize are checked, including prefix preservation and zero padding. Resize returns a new handle, not a moved object or in-place growth. Arbitrary release and pointer-bearing cells require live-root and alias protocols; return-time contents do not establish permanent immutability. |
+
+The immediate dependency order is shared data representation and mathematical
+contracts, real reusable container/scalar operations, and native type/operation
+registration with automatically composed correspondence. Keep the existing raw
+source observations while adding native typed observations from the same lowering;
+do not replace them by a second hand-maintained algorithm. Control-flow work can
+advance independently through the same existing backend. Closure and pointer
+lifetimes must extend, not bypass, the current root/reclamation invariants.
+
+The checked copy/append contracts also support native Array, List and
+length-indexed Vector specifications through one source implementation.
+`append_list_length` uses only ordinary `List.length_append` after the shared
+refinement theorem. Fresh returned storage and every old contents observation
+remain in that contract. These are mathematical views of contiguous Nat buffers,
+not three runtime implementations or a complete native container frontend.
+In particular, this Array-backed List view does not complete List support and
+must not be selected as the default source List representation.
+
+The shared allocating [`Buffer.Map.body`](../Complexity/Language/Buffer/Map.lean)
+now has a checked `Array.map` correctness theorem. Each iteration performs an
+actual read, calls the selected source function and writes its returned value;
+the mathematical mapper occurs only in the supplied contract. The proof retains
+fresh output storage and all old contents, and permits a callback to allocate
+while preserving old contents. Its checked
+[`Buffer.Map.program`](../Complexity/Language/Buffer/Map/Program.lean) adds an
+actual callable entry through the existing program extension, preserving the
+original callback and all of its calls. The checked
+[`RAM connection`](../Complexity/Computability/Ram/Compiler/Language/Buffer/Map/Execution.lean)
+publishes the same fresh result and retained old contents, with initialized
+allocation, actual per-element calls and final return included in the bound.
+Its numerical interface separates the sum of callback bounds from linear
+traversal overhead; a constant callback bound gives a proved size-only affine
+bound. The checked [asymptotic interface](../Complexity/Computability/Ram/Compiler/Language/Buffer/Map/Asymptotics.lean)
+turns that same size-only budget into mathlib `IsBigO` in the input length,
+without exposing its compiler coefficients to clients. This numerical theorem
+does not discharge the actual invocation's word ranges or storage capacity.
+The shared
+[`scalar bridge`](../Complexity/Computability/Ram/Compiler/Language/Buffer/Map/Scalar.lean)
+reuses existing nonallocating `FunctionRealizable` and `FunctionCostBound` proofs
+without another callback resource proof. Arena growth counts retained output
+and permitted callback allocation, not exact peak live space. Frontend
+registration remains separate work: this is not yet native `xs.map f` syntax,
+dynamic closures or a persistent pure Array interface.
+
+### Concrete container implementations
+
+The default runtime must match the selected data structure, not merely its
+extensional mathematical contents:
+
+- `Array α` and `Vector α n` use contiguous indexed storage. Vector's length
+  proof is mathematical; persistence and copying still need an explicit policy.
+- `List α` uses immutable nodes containing an element and a link to the next
+  node. `cons` creates one node and shares its existing tail; `tail` returns the
+  actual link without copying the suffix. Lists may share tails, so requiring
+  global node disjointness is not an acceptable substitute for persistence.
+- Linked-list `append` copies the left spine and shares the right list.
+  Head/tail and cons should have constant structural cost for fixed-size element
+  representations; length, indexed traversal and append have the costs of real
+  link traversal. Element construction, allocation, callbacks and reclamation
+  retain their separately justified costs. These are implementation obligations,
+  not already proved complexity theorems.
+- A List-valued specification of an array remains useful as an explicit
+  mathematical view. It is not a reason to expose array copying or random access
+  as the default implementation of List operations. Representation-changing
+  conversions must execute and account for their actual work.
+
+The List foundation uses typed immutable nodes, shared-tail contents and lifetime
+rules connected to the existing heap and RAM representation. The source heap
+operations and measured RAM allocation/nonempty-read blocks are checked. The
+typed read and construction statements and their measured simulations are checked.
+Construction uses the allocation-aware path; a read also supports fixed heaps.
+Do not reinterpret Nat cells as arbitrary object pointers under the existing
+direct-root-only scratch rule. Prefer the smallest sufficient immutable-node
+protocol; this does not require choosing a general garbage collector first.
+
+The first lifetime dependency is checked in
+[`Heap.BackwardLinks`](../Complexity/Language/Heap/Backward.lean): when actual
+object references point to earlier objects, retaining a root's heap prefix
+preserves its entire reachable chain and those objects' current contents.
+The concrete reference projection follows only node tails. Its preservation
+rules and `NodeRef.Contents.take` retain a complete typed list when its root's
+prefix is kept. This does not permit arbitrary Nat cells to act as pointers.
+
+The source heap now distinguishes mutable scalar buffers from immutable nodes
+with a Nat or Bool payload and a typed optional tail reference. Buffer lookup
+rejects node objects; successful buffer writes preserve every node's actual
+payload and tail. `Heap.cons` appends one node and shares its tail; `Heap.uncons`
+performs the actual typed lookup. Their inductive `NodeRef.Contents` contract
+exposes ordinary Lean lists and preserves old shared tails under buffer writes,
+allocation and node allocation. The source operations and these preservation
+proofs pass on 0v0.
+
+Complete RAM heap representation now covers both object kinds. Nodes occupy
+three words: the head, tail tag and tail's actual placement address, with zero
+padding for `none`. Source identifiers need not fit a word. All-object separation,
+backward links, placement transport, arena reservation and prefix reclamation
+are checked together; buffer operations cannot overwrite represented nodes.
+The [allocation bridge](../Complexity/Computability/Ram/Compiler/Language/Arena/NodeExecution.lean)
+now connects one actual cursor update and three stores to the fresh node,
+complete arena representation and `head :: values` contents. The
+[read bridge](../Complexity/Computability/Ram/Compiler/Language/Heap/NodeExecution.lean)
+connects three loads to the same head and shared tail while preserving the
+entire heap. Their body costs, 21 and 13 instructions respectively, follow from
+the existing compiler and describe those same executions. Operand preparation,
+the empty-root branch, outer option packaging and call setup/return remain
+outside those block counts. The typed read now reuses this same endpoint and
+count in the general simulation. Typed construction additionally captures its
+three operand fields, giving a proved 27-instruction block before the lexical
+continuation. Complete callable operations retain their separate invocation
+counts; a source definition is not a constant-cost RAM axiom.
+The native proof facade must use the existing heap-indexed `Representation.Rel`:
+different shared node layouts can denote the same ordinary List. The pure
+structure frontend's lossless `Equiv` is not a global inverse for list handles.
+Operation correspondence and immutable-content preservation must compose this
+relation at actual intermediate heaps, without charging mathematical decoding
+as an executable operation or assuming a mutable handle is persistent.
+
+The first callable root operation is checked:
+[`List.IsEmpty`](../Complexity/Language/List/Basic.lean) matches the actual
+optional root, returns ordinary `List.isEmpty` and preserves the entire heap.
+Its [compiler bridge](../Complexity/Computability/Ram/Compiler/Language/List/IsEmpty.lean)
+connects that same source to a halted RAM result and a compiler-derived full
+invocation bound. It needs no node read or traversal. Preloading inputs remains
+outside the bound, and native `xs.isEmpty` registration remains open.
+[`List.Uncons`](../Complexity/Language/List/Uncons.lean) now supplies the next
+callable operation: it matches the root, reads a present node once, and returns
+the head and identical shared tail. Its independent correctness theorem refines
+ordinary `List.head?`/`List.tail` observations at the unchanged heap. The
+[compiler bridge](../Complexity/Computability/Ram/Compiler/Language/List/Uncons.lean)
+derives a constant full-invocation bound from the actual branch, read, option
+packaging, return and call rules. The existing input List representation and
+complete heap representation supply the lookup and word ranges; callers add no
+register proof or tail traversal. This is a typed callable operation, not yet
+native List method syntax or a persistent pure collection frontend.
+The [named client](../Examples/Language/LinkedList.lean) writes the same operation
+with `source_program`, optional-root matching and `ref.read`. Its generated body
+is definitionally the public operation, so correctness and refinement reuse the
+library theorems directly, without a per-client lowering adapter.
+
+[`List.Cons`](../Complexity/Language/List/Cons.lean) supplies callable construction.
+Its independent source contract gives `head :: values`, the exact fresh root
+and allocated heap, and preservation of all previously represented lists.
+The checked [compiler bridge](../Complexity/Computability/Ram/Compiler/Language/List/Cons.lean)
+returns that same halted execution, the actual cursor increment of three words
+and a full invocation bound including operand preparation, allocation, option
+packaging and outer-call overhead. The named client writes `NodeRef.cons head tail`
+and reuses the public contract by definitional equality. Its singleton also
+infers the type of `none`; neither client supplies a register proof.
+These root operations do not by themselves supply a native pure List API.
+
+The shared [linked fold](../Complexity/Language/List/Fold/Basic.lean) now follows
+actual tail pointers with a `while` loop and invokes the selected source callback.
+Its source correctness and [callable entry](../Complexity/Language/List/Fold/Program.lean)
+are checked on 0v0. The result refines ordinary `List.foldl` for an arbitrary
+represented accumulator. The callback domain need hold only along the actual
+mathematical accumulator trajectory. Callbacks may allocate or change mutable
+buffers; old immutable-list observations survive by the shared heap-shape rule,
+without an unchanged-heap assumption. Mathematical list induction supplies
+termination without a time budget or recursive fold invocation.
+
+The checked [fold RAM connection](../Complexity/Computability/Ram/Compiler/Language/List/Fold.lean)
+retains those same callback returns and final memory, separates
+accumulator-dependent callback bounds from linear traversal work, and includes
+outer call/return/halt. The traversal itself needs no length-dependent call
+depth. The initial reservation interface sums callback allowances; it does not
+yet distinguish retained growth from reusable scratch peaks. The checked
+[numerical interface](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Asymptotics.lean)
+expresses callback charges as an ordinary `List.mapIdx` sum over `take`/`foldl`
+prefixes. Uniform callback bounds give a size-only affine envelope and mathlib
+`IsBigO` in list length. A nonconstant bound only needs the common envelope at
+actually visited prefixes. These numerical facts do not discharge word ranges,
+capacity or callback correctness. Native fold syntax should select the same
+implementation through heap-indexed refinement, not force shared list layouts
+through the scalar frontend's lossless `Equiv`. Native construction and List
+function results and List-valued native fold accumulators use the relational
+facade below; general element layouts remain unfinished.
+
+The checked [native callback bridge](../Complexity/Language/List/Fold/Native.lean)
+accepts an allocating callback's actual evaluation and represented result through
+`Contract.of_eval`; `eval_exists` retains the resulting accumulator, original
+list and heap shape. Its pure specialization instead uses an injective
+accumulator encoding and gives exact result and unchanged-heap equations from
+the same generic fold contract. Neither route proves a second traversal or
+requires a heap-independent encoding of lists. Existing callback
+range and cost proofs similarly feed the fold through the shared
+[finite-function bridge](../Complexity/Computability/Ram/Compiler/Language/Arena/FunctionResources/Finite.lean).
+The fold itself now exports [callable resource contracts](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Resources.lean),
+so a containing program can reuse its body bound and allocation allowance.
+These interfaces retain initialization and actual intermediate heaps; a caller
+must still compose its own calls and charge its own complete invocation.
+
+The opt-in [represented frontend](../Complexity/Language/Syntax/Represented.lean)
+now generates ordinary Lean functions and node-backed source functions from
+one `source_program (native)` declaration. The checked
+[linked-list consumer](../Examples/Language/LinkedList.lean) includes a constant
+initial accumulator, reordered parameters, immutable locals, two consecutive
+folds and calls to earlier functions in the same family. Its mathematical
+proofs use ordinary List sum equations. Generated `_refines` proofs carry the
+actual input representations internally, and `Refines.of_math` combines them
+with the author's mathematical theorem. No disjointness is required between
+immutable input lists, and shared tails are not copied. Native fold operations
+use statically selected pure callbacks or allocating callbacks imported from a
+completed native family, with scalar/product or List accumulators. Native
+callback correspondence uses the existing general fold contract and actual
+final-heap result relation. Native blocks compose immutable lets, registered
+calls, final returns and explicitly typed List conditional bindings. Each branch
+can allocate and return a List to a common later call or fold. The
+`NativeBranches.choosePrepend` and `chooseSum` consumers have checked ordinary
+equations and generated relational correspondence on 0v0. The compiler reuses
+existing source branches and summarizes their actual result/heap relations before
+proving the common continuation once. General List matching, native recursion
+and escaping callbacks remain separate frontend work. This does not restrict the
+more general effectful fold library or change the existing `(pure)` path.
+
+The same frontend also accepts `List.cons`, `head :: tail`, explicitly typed
+empty lists and List-valued function results. The `NativeConstruction` consumer
+allocates and returns a list, composes two list-returning calls, and folds both
+the original input and its new extension after allocation. Ordinary List
+equations specialize its generated `_refines` without a per-function heap proof.
+The [constructor observation](../Complexity/Language/List/Cons/Native.lean)
+reuses the real allocating entry's existing total contract. Generated
+`_action_rel_native` proofs follow the actual returned roots and intermediate
+heaps; `Representation.list_mono` retains every earlier List observation across
+each call. Read-only scalar functions keep their existing exact unchanged-heap
+equations. Allocating functions do not get such an equation, and no mathematical
+List decoder or tail-validation traversal is introduced.
+
+`NativeLists` additionally imports an allocating cons callback into a List-valued
+fold. Its reverse/append, reverse, preceding cons and subsequent sum consumers
+have checked ordinary mathematical equations and generated correspondence on
+0v0. The reverse/append theorem reuses Lean's `List.foldl_flip_cons_eq_append'`;
+the author supplies no source-heap induction. Imported native functions retain
+their checked signatures and relational observations, so the same callback is
+available for both a direct call and an actual fold. This extends the native
+function boundary, not the node element layout or dynamic-closure semantics.
+
+The [native allocating consumer](../Examples/Language/LinkedListAllocation.lean)
+connects both `NativeConstruction.prepend` and `prependPair` themselves to the
+halted RAM runner.
+The shared [constructor-call bridge](../Complexity/Computability/Ram/Compiler/Language/List/Cons/Call.lean)
+reuses the imported constructor's measured execution and the existing call/return
+rules. The wrapper's exact instruction count includes both call levels,
+initialization, its own return and final halt. The same result retains the fresh
+root, actual final heap, shared old tail and cursor advance of three words,
+independent of tail length. Input loading remains outside the bound; word,
+code/stack and arena capacity remain explicit. The two-call consumer invokes the
+actual `prepend` body twice, retains the first call's heap and cursor, and proves
+an exact six-word cursor increase and complete invocation count. Sequential
+calls reuse the caller depth rather than summing their nesting allowances.
+The shared [allocating-call composition](../Complexity/Computability/Ram/Compiler/Language/Arena/FunctionResources/Call.lean)
+accepts either exact measured callees or independent correctness, resource and
+cost contracts. It retains actual returned values, heaps and cursors for the
+continuation, using the existing execution and compiler costs. These checked
+interfaces do not yet infer resource proofs for arbitrary native blocks.
+
+The same consumer's `choosePrepend_execute` crosses an actual native conditional
+and joins its selected List result into a common allocating call. It preserves
+both original lists and the actual final heap, proves exact cursor growth of
+nine words on the true path and six on the false path, and gives the complete
+compiler-derived invocation count. The shared arena rules and proof pass compose
+assignments, sequencing and conditionals with the existing call rules. Join-slot
+initialization and copies are charged, but the unselected branch is not executed
+or counted. Callee resource proofs and the selected path's capacity remain
+explicit; no new interpreter or per-consumer register proof is introduced.
+
+The [allocating-fold consumer](../Examples/Language/LinkedListFoldAllocation.lean)
+uses that contract-based rule for the actual generated `NativeLists.reverseAppend`
+wrapper. Its selected `ListReducer.push` executes the real cons operation; the
+existing generic fold resource proof sums its three-word allocation allowance
+and constant compiler-derived callback cost. The same halted wrapper returns
+`values.reverse ++ tail`, retains both original list observations and has a
+full size-only affine invocation bound. Its sufficient internal call depth is
+three, independent of list length; its final cursor is bounded by the initial
+cursor plus `3 * values.length`. Input loading, word and code/stack/arena
+conditions remain explicit. This is a cumulative fresh-allocation bound, not
+an exact peak-live-space theorem. Correctness uses the generated refinement and
+the ordinary reverse/append equation, with no repeated source loop induction.
+The checked [structural arena proof pass](../Complexity/Computability/Ram/Compiler/Language/Arena/Tactic.lean)
+now reads the actual call/let/return statements and composes their existing
+execution, readiness and cost rules. Both allocating consumers, including their
+`prepend` and `push` constructor wrappers, no longer construct `Args`/`EnvFits`,
+relocate callee proofs or build operational return continuations by hand.
+Exact calls consume a measured callee; contract calls consume independent source
+totality, resources and a bound. Imported function identity is recovered from
+the actual call and its supplied table embedding, without opening callee bodies.
+The generic contract form keeps mathematical resource indices explicit: they
+cannot be reconstructed from raw list handles. The shared
+[`List.Fold.measured`](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Resources.lean)
+entry now exposes the existing fold proof in ordinary mathematical/source
+arguments. `reverseAppend` consumes its actual measured execution directly,
+without assembling `functionPre`, a resource-index tuple or separate wrapper
+totality/resource/cost contracts. Callback correctness, admissibility, value
+ranges, remaining capacity and final numerical comparisons remain supplied
+proofs. `ArenaMeasured` only packages existing witnesses; there is no new
+interpreter or pricing model. General allocating loops, recursion and automatic
+selection of further operation resource adapters remain follow-up work.
+
+The [compiled native consumer](../Examples/Language/LinkedListCompiled.lean)
+now reaches the actual `Native.sumFrom` wrapper's halted RAM result, not merely
+the separately runnable fold operation. A bound on `initial + values.sum`
+supplies every intermediate addition range. Shared read-only bridges reuse
+the existing call-realizability and cost tactics; the resulting bound retains
+the wrapper's own call, return, initialization and outer halt. Source correctness
+and exact heap preservation still have no word-range or time-budget premise.
+The [ordinary-parameter resource interface](../Complexity/Computability/Ram/Compiler/Language/List/Fold/Native.lean)
+now constructs the fold's environment and representation index and supplies
+the zero-growth arena-to-fixed conversion. The consumer provides mathematical
+prefix admissibility, ranges and existing callback resource facts; it no longer
+repeats that generic environment/arena transport. This is not automatic resource
+inference for arbitrary native declarations. The additional `sumPair`, `sumTwice`
+and `sumWithPrepended` consumers have checked correspondence, but not yet their
+own published RAM bounds. The allocating `reverseAppend` wrapper is covered
+above; its `reverseWithHead` and `reverseSum` clients do not yet have their own
+complete invocation bounds.
+
+The allocation bridge now has `cons_of_rooted` and `cons_measured_of_rooted`:
+the raw node operation only needs an existing tail root, while its List
+specialization adds the complete mathematical contents. Both versions reuse
+the same actual allocation; neither performs a tail validation scan.
+
+The typed core now has `Ty.node`, with an optional reference as the list root.
+Existing option construction and matching handle the empty case. Its value
+encoding, rootedness, placement transport and effectful parameter/return syntax
+pass together on 0v0. A reference is encoded by its actual placement, never by
+truncating its source object ID, and is not accepted as a numeric scalar or a
+heap-free pure parameter. `Representation.list` uses the actual linked contents;
+the array-backed observation is separately named `Representation.bufferList`.
+
+`Stmt.readNode` binds the actual head and optional tail, with success and fault
+semantics, source proof/observation rules, linking and measured simulation on
+both fixed heaps and allocating continuations. The effectful frontend accepts
+`let (head, tail) ← ref.read`; this is a heap statement, not a pure `Prim` or a
+host callback. A missing or wrongly typed object faults without mutating the heap.
+`Stmt.consNode` similarly binds the fresh reference from the actual allocator;
+the effectful syntax is `let ref ← NodeRef.cons head tail`. Its continuation can
+allocate again at the updated cursor. Existing-object rootedness alone
+does not guarantee that a node's tail is rooted: `Exec.rooted_backward` explicitly
+preserves rooted values and backward links together, using the initial invariant
+already supplied by the complete arena representation.
+The first element layouts are Nat and Bool; general `List α` requires a separate
+extension of node payloads. Native list equations must compose heap-indexed
+contents refinement, rather than reuse the structure frontend's lossless `Equiv`.
+Native cons allocation and List-valued results use the same typed core through
+the relational facade above. The remaining traversal operations and general
+element layouts remain open.
+
+The shared action layer is checked in
+[`Eval.Node`](../Complexity/Language/Eval/Node/Basic.lean) and its
+[`Verification`](../Complexity/Language/Eval/Node/Verification.lean) rules.
+`NodeRef.consM` and `readM` use the same heap operations and existing
+exception/state monad. Default `@[spec]` rules carry raw operation facts;
+separate List rules carry ordinary cons contents, actual shared tails and old
+list preservation. The read statement's generated observation now reuses
+`readM` and these same specifications. The construction statement's observation
+likewise uses `consM`; neither rule adds a tail check.
+
+Keep the two operation boundaries explicit. A nonempty-node read binds the
+actual head and optional tail from one typed lookup; a missing or wrongly typed
+object faults in the unchanged heap. Node construction binds one fresh reference
+from `Heap.cons`; it neither traverses nor checks the tail. Existing option
+matching supplies the empty case. Successful mathematical List contracts supply
+the stronger finite typed-chain observation independently of these raw actions.
+
+The source safety proof must preserve rooted locals, rooted results and backward
+links together. Reading a tail uses the initial backward-link invariant;
+constructing a node preserves it because the operand's root belongs to the old
+domain. Existing arena simulations already carry that invariant in `HeapRep`.
+This changes the source preservation theorem's hypotheses, not the operations
+or the public arena launch conditions. Scope cleanup keeps the current prefix,
+and no runtime reachability scan or rollback is introduced. Ordinary fixed-heap
+simulation can handle reads; allocation belongs to the existing arena path.
+
+The current scalar `Refines.of_encoded_eq_pure` rule requires an unchanged heap;
+it is not the correspondence rule for an allocating List function. The native
+frontend instead uses `FunctionRepresentation.ofResult` and
+`RepresentedFunction.Refines` to relate List results to actual final-heap
+contents, while carrying preservation of existing immutable lists across calls.
+The mathematical function remains pure even though its implementation allocates;
+this does not erase that allocation from RAM execution, capacity or cost proofs.
+
 **Status:** first-order calls, while, recursion and the first structured-value
 layer are implemented. Native Lean `Prod` and `Option` values now pass through
 constructors, projections, assignment, real matching, calls, returns and imports.
@@ -225,12 +631,58 @@ operations. This does not implement general algebraic patterns, sums or recursiv
 data representations. The revised structured consumer's source and actual RAM
 theorems are checked together with the whole library.
 
+The new native-structure path is separately checked in
+[`Scalar`](../Examples/Language/Scalar.lean) and
+[`ScalarCompiled`](../Examples/Language/ScalarCompiled.lean). A registered
+ordinary structure is constructed, passed to a source callee, returned and
+projected; that callee imports the existing scalar helper. Its mathematical
+proof only reuses the helper's ordinary minimum equation. Generated native/core
+correspondence and total contracts feed the existing range and cost automation,
+and the final theorem describes the same halted RAM result. Reconstruction of
+raw scalar layouts is generated and checked once at the connection boundary,
+not written by the algorithm author or installed as an uncharged operation.
+This does not extend reconstruction to arbitrary partial representations such
+as bounded subtypes. The native-structure pass remains pure and nonrecursive,
+with only direct scalar or scalar-product fields.
+
+`StructuredRange.sum` additionally keeps a native structure as a mutable
+accumulator across actual helper calls inside a finite range, including dynamic
+positive stride and a helper call before entry. Its ordinary fold/sum theorem
+and generated total source contract are checked on 0v0. The connection layer
+transports native and raw loop coordinates through checked equivalences;
+algorithm authors do not supply encode/decode lemmas or a second loop proof.
+Its generated native guard/body equations now take one captures tuple, with
+endpoint/stride selectors derived from the actual range metadata. The shared
+[`while_range_encoded`](../Complexity/Computability/Ram/Compiler/Language/CostBound/Range.lean)
+rule supplies round-count descent and normal/early-return accounting using
+the existing compiler costs and `Std.Legacy.Range.size`. The complete function
+body has an inferred bound in its ordinary start/stop/step parameters, independent
+of the initial structure and heap. `structuredRangeSumBodyBound_eq` exposes it
+as a fixed per-round charge times the ordinary range length plus fixed overhead;
+both constants follow from the same compiler proof. Its consumer no longer builds private block
+contracts or guesses captured-variable positions. The checked shared
+[`RealizationWP.while_range_encoded_invariant`](../Complexity/Computability/Ram/Compiler/Language/Realization/Range.lean)
+also supplies finite-range termination while retaining the author's mathematical
+invariant at normal exit. The dedicated `structured_range_sum_execute_le`
+connects the same ordinary result and budget to an actual halted invocation,
+including outer call/return/halt. Its extra word conditions cover the final sum,
+last actual cursor and computed stride, even for empty ranges; the launch retains
+input, code and stack conditions. The shared
+[`ram_source_locals`](../Complexity/Computability/Ram/Compiler/Language/LocalsTactic.lean)
+pass selects the loop's registered view, endpoint and structure-encoding equations
+from its namespace. Standard tactic locations restrict which hypotheses or target
+are normalized; callee bodies, mathematical invariants and cost functions stay
+closed. This removes repeated coordinate lemma lists in the structured range
+and mutable traversal consumers. Selecting their loop contracts and views remains
+explicit; the next interface gap is that setup and resource composition, not
+another per-program termination or register proof.
+
 The existing multi-field ABI concatenates product fields and places an option
 tag before its fixed payload. `none` has canonical zero padding, not a default
 buffer; only the selected `some` branch receives a payload. Copying and matching
 have actual emitted costs. Recursive rootedness preserves the existing aliasing
 and scratch-escape conditions even when borrowed views are nested in a tuple or
-option. Object cells remain scalar; this adds neither a new allocator nor a
+option. Mutable buffer cells remain scalar; this adds neither a new allocator nor a
 global inverse of the buffer encoding.
 
 The [complete consumer](../Examples/Language/OptionalBufferCompiled.lean) imports
@@ -244,9 +696,14 @@ physical encoding consequences are separate projections of that same result.
 
 Effectful functions already share a typed table supporting different signatures
 and mutual calls; the pure native-function frontend has the narrower restriction
-described in M1. Pure loops, explicit range steps and source `break/continue`
-remain open. Their semantics and proof/cost interfaces must be supplied, not
-inferred from existing effectful loops or ordinary function return.
+described in M1. Explicit positive range steps now share the native range
+correspondence, including a dynamic `k + 1` consumer. The bounds and stride are
+frozen once. The current generated proof must establish positivity from the
+expression; a general user-supplied proof parameter is not yet accepted. The
+RAM range condition includes the last increment actually executed, which may
+exceed the stop value. Pure general `while` and source `break/continue` remain
+open. Their semantics and proof/cost interfaces must be supplied, not inferred
+from existing effectful loops or ordinary function return.
 
 Then add the pattern/recursion and collection interfaces justified by actual
 algorithms, reusing upstream data types as mathematical views. Structural
@@ -381,8 +838,14 @@ boundaries and remaining integration/lifetime obligations are:
    Input loading and output conversion need an explicit boundary too.
 5. **Escape and abstraction — scoped lifetime checked, encapsulation open.**
    A reset region cannot retain accessible aliases. `ScopeSafe` checks surviving
-   locals and returns against the entry object domain; current cells contain
-   scalars, not hidden pointers. Its source failure keeps the heap; compiled
+   locals and returns against the entry object domain; mutable buffer cells
+   contain scalars. Immutable nodes have explicit backward links, and the
+   all-object representation preserves their chains under prefix restriction.
+   Node references use entry-domain rootedness as language values.
+   `Exec.rooted_backward` preserves rooted values and backward links together,
+   including a read's exposed tail. The construction statement preserves this
+   invariant by sharing a tail rooted in the existing object domain.
+   Source failure keeps the heap; compiled
    success requires a proved-safe exit rather than an escape scanner.
    Escaping aliases must not let later writes change a promised persistent pure
    result; prove the relevant isolation/freeze boundary or perform a real copy.
@@ -422,6 +885,22 @@ with the known call depth retained. The scoped-workspace consumer now uses this
 shared result and its actual access-set bounds instead of assembling a large
 runner tuple. Concise loop-resource interfaces, further consumer migration,
 general live-space observations and problem-level composition remain unfinished.
+
+Uniform structural budgets are inferred through the existing checked cost rules.
+Traversal's guard/body witnesses are chosen before arbitrary locals and heaps,
+and its function wrapper is inferred around the supplied loop bound. Direct,
+two-call and imported clients reuse the named bounds instead of copied constants.
+`whileLinearBound` supplies structural loop charges; the author still supplies
+the iteration measure, potential inequalities and any data-dependent recurrence.
+This is neither a new operation-price table nor automatic complexity analysis.
+
+Pure finite ranges can reuse their generated guard/body correspondence directly:
+`while_range_encoded` supplies the exact native range-count descent internally,
+including empty ranges, positive dynamic stride and early function return.
+The structure-valued `StructuredRange.sum` consumer infers its complete function
+bound around that rule. Uniform component bounds remain proved compiler
+budgets, not assumed prices for native mathematical operations. General
+data-dependent loop bounds still need the author's invariant or potential.
 
 **Array-task integration:** the shared
 [`ArrayFunction`](../Complexity/Language/ArrayFunction.lean) interface selects one
@@ -611,10 +1090,10 @@ Scoped reclamation and its same-source physical workspace guarantee are checked;
 see [RECLAMATION_TODO.md](RECLAMATION_TODO.md). General lifetime inference and
 encapsulation are not consequences of those theorems. The first bottom-up allocation queue is complete; see
 [FOUNDATIONS_TODO.md](FOUNDATIONS_TODO.md) for its scope and checked builds.
-Allocation, linking, scalar pure correspondence, the revised frontend and loop
-contracts, array-task statements and top-tree mathematics build together with
-all Examples and the complete manual. This validates the current supported
-interfaces, not the missing pure loops, richer containers or dynamic algorithms.
+The checked foundations include allocation, linking, source/resource contracts,
+array-task statements, top-tree mathematics, native finite ranges and inferred
+uniform budgets. Their successful consumers establish the stated supported
+fragments, not missing container, lifetime or dynamic-algorithm interfaces.
 
 The complete splay path already uses shared mathematical input/output contracts,
 named cost selection and a typed runner result. Its tree descent, representation
@@ -622,23 +1101,45 @@ and logarithmic potential arguments remain genuine mathematical work. The next
 improvement should make another author reuse these interfaces without learning
 environment encodings or repeating source facts in a second resource proof.
 
-1. Extend the native total frontend to finite ranges while preserving their
-   origin during elaboration. Generate a genuine native `for` from the same
-   normalized body, then prove correspondence to the existing source while
-   through one shared finite-iteration theorem. Preserve early returns and
-   outer-local updates; do not ask the author for a recursive replacement or
-   a second termination argument.
-2. Infer uniform structural budget expressions through the existing checked
-   cost solver and publish them under names reused by callers. A surface binding
-   should not require hand-editing repeated numeric constants across clients.
-   Keep dependent numerical bounds and algorithmic potentials mathematical;
-   do not introduce an independent operation-price table. Further ordinary-argument
-   resource rules should hide generated views without losing the shared contracts.
-3. Add container operations and lifetime/encapsulation interfaces only where
-   existing proofs reveal a missing representation or operation. Reuse mathlib
-   mathematical views; neither tuples/options nor scoped reclamation already
-   provide a persistent pure collection. Keep richer pure constructs tied to a
-   single source declaration and termination argument.
+1. Extend the checked allocating-call proof pass from its current ordinary
+   constructor and fold consumers. The `prependPair` and `reverseAppend`
+   migrations include their leaf wrappers: removing argument environments from
+   the outer theorem alone is not enough. The allocating fold now reuses its
+   ordinary-parameter measured entry without constructing a resource index.
+   Extend that operation interface where actual consumers still assemble one,
+   and compose the structural pass with existing loop/recursion contracts. Arbitrary resource
+   indices cannot be guessed from raw handles; frontend metadata may expose the
+   correspondence, not assert operation prices. Reuse the loop-specific coordinate
+   pass while removing remaining view/contract setup and resource-result packaging
+   in existing consumers, retaining the supplied leaf contracts, ranges, capacity
+   and mathematical bounds. Reuse source totality and actual heaps without
+   another per-program termination proof. The traversal already uses
+   `TotalWP.of_blockSpec`; wrapping that conversion alone does not justify another
+   long loop interface. A shorter public theorem must not hide an equally long
+   private connection proof.
+2. Preserve native finite-range correspondence and inferred uniform budgets.
+   Improve generated mathematical equations so ordinary fold/product proofs
+   need less local-tuple projection; extend construct combinations only with
+   matching real consumers. Dependent bounds, recursion descent and algorithmic
+   potentials remain mathematical obligations, not guessed annotations.
+3. Extend the represented native frontend from its checked List conditional
+   bindings to the remaining container control flow and operation interfaces.
+   Preserve generated relational proofs through conditional allocation,
+   List-valued branch results and a subsequent call. Retain the actual selected
+   branch's heap, old shared tails and separate compiler-derived cost; do not
+   evaluate or charge both branches. Native List matching must invoke the
+   existing actual root/read operations, and richer results need composable
+   heap-indexed representations, not a heap-independent inverse of a handle.
+   Start with the existing product/option representations and the real Uncons
+   result `Option (cell × List)`. Compose preservation only for proved-stable
+   leaves and their combinations; mutable arrays and exact-heap observations
+   are not stable under arbitrary shape extension. Lower List cases through
+   that operation and the existing option match, retaining all reads and copies.
+   Extend List operations and their ordinary-parameter resource interfaces on
+   that basis, retaining one declaration and its mathematical function. Further
+   operations and lifetime machinery should follow concrete missing capabilities,
+   not an algorithm catalog. The current construction/fold/conditional fragment
+   is not a complete persistent collection library.
 4. Develop source-facing space observations and composition over the actual
    execution, separating sufficient capacity, reserved storage and peak live
    data. Keep input loading, query drivers, width policy and word-versus-bit cost

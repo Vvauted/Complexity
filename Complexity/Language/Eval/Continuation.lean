@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Eval.Composition
+import Complexity.Language.Eval.Node.Verification
 
 /-!
 # Source equations with normal continuations
@@ -96,6 +97,26 @@ theorem evalWith_alloc {kind : CellTy} (length : Atom Γ .nat)
   simp only [eval_alloc, Buffer.allocM, Part.bind_some, Part.bind_map, ExceptT.bindCont,
     evalWith, State.cons, State.tail]
 
+/-- Node construction uses the existing native allocation action. Its fresh
+reference is bound in the actual extended heap, and only normal scope exit
+invokes the outer continuation; returns and faults keep their final heap. -/
+theorem evalWith_consNode {kind : CellTy} (head : Atom Γ kind.toTy)
+    (tail : Atom Γ (.option (.node kind)))
+    (continuation : Stmt signatures (.node kind :: Γ) result) (entry : Env Γ)
+    (next : Env Γ → ExceptT Fault (StateT Heap Part) (Value result)) :
+    (Stmt.consNode head tail continuation).evalWith program entry next =
+      (do
+        let ref ← NodeRef.consM (kind.ofValue (head.eval entry)) (tail.eval entry)
+        continuation.evalWith program (Env.cons ref entry) (fun finish => next finish.tail)) := by
+  funext heap
+  change ((Stmt.consNode head tail continuation).eval program ⟨entry, heap⟩).bind _ =
+    (NodeRef.consM (kind.ofValue (head.eval entry)) (tail.eval entry) heap).bind
+      (fun outcome => ExceptT.bindCont
+        (fun ref => continuation.evalWith program (Env.cons ref entry)
+          (fun finish => next finish.tail)) outcome.1 outcome.2)
+  simp only [eval_consNode, NodeRef.consM, Part.bind_some, Part.bind_map, ExceptT.bindCont,
+    evalWith, State.cons, State.tail]
+
 /-- Run the scope boundary before interpreting its control outcome. Only a
 safe normal exit invokes `next`; a safe return keeps its value, and every fault
 bypasses `next` with the boundary's actual final heap. -/
@@ -132,6 +153,36 @@ theorem evalWith_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index :
     simp only [Buffer.readM, loaded, Part.bind_some, Part.bind_map, ExceptT.bindCont,
       evalWith, State.cons, State.tail]
   all_goals rfl
+
+/-- Node reading uses the same native typed lookup and passes its stored head
+and shared tail to the scoped body. Failure skips both continuations and keeps
+the actual current heap, rather than undoing earlier effects. -/
+theorem evalWith_readNode {kind : CellTy} (ref : Atom Γ (.node kind))
+    (continuation : Stmt signatures (.prod kind.toTy (.option (.node kind)) :: Γ) result)
+    (entry : Env Γ)
+    (next : Env Γ → ExceptT Fault (StateT Heap Part) (Value result)) :
+    (Stmt.readNode ref continuation).evalWith program entry next =
+      (do
+        let contents ← (ref.eval entry).readM
+        continuation.evalWith program
+          (Env.cons (kind.toValue contents.1, contents.2) entry)
+          (fun finish => next finish.tail)) := by
+  funext heap
+  change ((Stmt.readNode ref continuation).eval program ⟨entry, heap⟩).bind _ =
+    ((ref.eval entry).readM heap).bind (fun outcome =>
+      ExceptT.bindCont
+        (fun contents => continuation.evalWith program
+          (Env.cons (kind.toValue contents.1, contents.2) entry)
+          (fun finish => next finish.tail)) outcome.1 outcome.2)
+  rw [eval_readNode]
+  cases found : heap.node? kind (ref.eval entry).object with
+  | some contents =>
+      rcases contents with ⟨head, tail⟩
+      simp only [NodeRef.readM, found, Part.bind_some, Part.bind_map, ExceptT.bindCont,
+        evalWith, State.cons, State.tail]
+  | none =>
+      simp only [NodeRef.readM, found, Part.bind_some, ExceptT.bindCont]
+      rfl
 
 /-- A source write is the existing native heap action followed by normal
 continuation at its actual updated heap. A failed write retains prior effects. -/

@@ -63,9 +63,9 @@ theorem of_heapEqBelow {source next : Source.State w}
     (represented : HeapRep placement heapLimit heap source)
     (equal : HeapEqBelow heapLimit source.mem next.mem) :
     HeapRep placement heapLimit heap next := by
-  refine ⟨?_, represented.ranges, represented.separated⟩
-  intro τ object values found
-  have current := represented.objects found
+  refine ⟨?_, represented.fit, represented.disjoint, represented.backward⟩
+  intro object stored found
+  have current := represented.stored found
   refine ⟨⟨current.1.fits, ?_⟩, current.2⟩
   intro index bound
   exact (equal _ (current.addr_lt bound)).symm.trans (current.1.lookup index bound)

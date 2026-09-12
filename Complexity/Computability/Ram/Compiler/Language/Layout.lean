@@ -11,8 +11,9 @@ import Init.Data.List.Nat.Range
 /-!
 # Field layouts and parameter representation
 
-The backend represents natural numbers and booleans by one word, borrowed
-buffers by address and length, and Unit by no words. Products concatenate their
+The backend represents natural numbers and booleans by one word, node references
+by one placed address, borrowed buffers by address and length, and Unit by no words.
+Products concatenate their
 fields; options reserve a tag followed by the payload's fixed field region.
 Parameter layouts follow lexical parameter order without reserving dummy slots
 for Unit. The same field
@@ -59,6 +60,9 @@ theorem valueRegs_nodup (τ : Ty) (dst : Reg) : (valueRegs τ dst).Nodup := List
 
 @[simp] theorem valueRegs_buffer (kind : CellTy) (dst : Reg) :
     valueRegs (.buffer kind) dst = [dst, dst + 1] := rfl
+
+@[simp] theorem valueRegs_node (kind : CellTy) (dst : Reg) :
+    valueRegs (.node kind) dst = [dst] := rfl
 
 /-- Product reception concatenates both actual field regions. -/
 @[simp] theorem valueRegs_prod (left right : Ty) (dst : Reg) :
@@ -169,6 +173,12 @@ theorem set {env : Env Γ} (fits : EnvFits w env) (target : Var Γ τ)
       value.length < 2 ^ w ∧ EnvFits w env := by
   rw [cons_iff]
   rfl
+
+/-- A node reference carries a placed word address, not a word-sized object
+identifier. Existing-object and node-validity conditions are separate. -/
+@[simp] theorem cons_node_iff (value : NodeRef kind) (env : Env Γ) :
+    EnvFits w (Env.cons (τ := .node kind) value env) ↔ EnvFits w env := by
+  simp only [cons_iff, ValueFits, true_and]
 
 /-- Product parameter ranges are precisely the ranges of their two components. -/
 @[simp] theorem cons_prod_iff (value : Value (.prod left right)) (env : Env Γ) :

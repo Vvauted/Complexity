@@ -63,6 +63,20 @@ inductive RealizedExec {signatures : List Signature}
       (body : RealizedExec program w depth continuation
         (Complexity.Language.State.cons (kind.toValue value) entry) finish control) :
       RealizedExec program w depth (.read buffer index continuation) entry finish.tail control
+  | readNode {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
+      {ref : Atom Γ (.node kind)}
+      {continuation : Complexity.Language.Stmt signatures
+        (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (.prod kind.toTy (.option (.node kind)) :: Γ)}
+      {control : Control result} {head : CellValue kind} {tail : Option (NodeRef kind)}
+      (found : entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail))
+      (valueFits : ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
+        (kind.toValue head, tail))
+      (body : RealizedExec program w depth continuation
+        (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) entry) finish control) :
+      RealizedExec program w depth (.readNode ref continuation) entry finish.tail control
   | write {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
       {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
       {entry : Complexity.Language.State Γ} {heap : Heap}
@@ -195,6 +209,7 @@ theorem erase (execution : RealizedExec program w depth stmt entry finish contro
   | assign target value entry fits => exact .assign target value entry
   | letPrim fits body ih => exact .letPrim ih
   | read bufferFits indexFits loaded valueFits body ih => exact .read loaded ih
+  | readNode found valueFits body ih => exact .readNode found ih
   | write bufferFits indexFits valueFits written => exact .write written
   | slice bufferFits offsetFits lengthFits sliced viewFits body ih => exact .slice sliced ih
   | seqNormal head tail ihHead ihTail => exact .seqNormal ihHead ihTail
@@ -225,6 +240,7 @@ theorem outcome_fits (execution : RealizedExec program w depth stmt entry finish
   | assign => trivial
   | letPrim fits body ih => exact ih
   | read bufferFits indexFits loaded valueFits body ih => exact ih
+  | readNode found valueFits body ih => exact ih
   | write => trivial
   | slice bufferFits offsetFits lengthFits sliced viewFits body ih => exact ih
   | seqNormal head tail ihHead ihTail => exact ihTail
@@ -255,6 +271,7 @@ theorem mono_depth (execution : RealizedExec program w depth stmt entry finish c
   | letPrim fits body ih => exact .letPrim fits (ih capacity)
   | read bufferFits indexFits loaded valueFits body ih =>
       exact .read bufferFits indexFits loaded valueFits (ih capacity)
+  | readNode found valueFits body ih => exact .readNode found valueFits (ih capacity)
   | write bufferFits indexFits valueFits written =>
       exact .write bufferFits indexFits valueFits written
   | slice bufferFits offsetFits lengthFits sliced viewFits body ih =>
@@ -391,6 +408,28 @@ updated local, without imposing a time budget or changing the heap. -/
   · rintro ⟨bufferFits, indexFits, value, loaded, valueFits, finish, control, body, post⟩
     exact ⟨finish.tail, control, .read bufferFits indexFits loaded valueFits body, post⟩
 
+/-- Reading an immutable node binds its actual payload and shared tail. Only
+the returned fields need numerical ranges; source object identifiers are not
+machine addresses and are not required to fit a word. -/
+@[simp] theorem readNode_iff {kind : CellTy} (ref : Atom Γ (.node kind))
+    (continuation : Complexity.Language.Stmt signatures
+      (.prod kind.toTy (.option (.node kind)) :: Γ) result) :
+    RealizationWP program w depth (.readNode ref continuation) normal returned entry ↔
+      ∃ head tail, entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) ∧
+        ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) ∧
+        RealizationWP program w depth continuation (fun finish => normal finish.tail)
+          (fun value finish => returned value finish.tail)
+          (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+            (kind.toValue head, tail) entry) := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | readNode found valueFits body =>
+        exact ⟨_, _, found, valueFits, _, control, body, post⟩
+  · rintro ⟨head, tail, found, valueFits, finish, control, body, post⟩
+    exact ⟨finish.tail, control, .readNode found valueFits body, post⟩
+
 /-- A write exposes its actual updated shared heap, not a restored snapshot. -/
 @[simp] theorem write_iff {kind : CellTy} (buffer : Atom Γ (.buffer kind))
     (index : Atom Γ .nat) (value : Atom Γ kind.toTy) :
@@ -450,6 +489,29 @@ theorem read_of_success {kind : CellTy} {buffer : Atom Γ (.buffer kind)}
   obtain ⟨value, found, fits⟩ := loaded
   exact (read_iff buffer index continuation).mpr
     ⟨bufferFits, indexFits, value, found, fits, body value found fits⟩
+
+/-- Introduce the actual node payload, shared tail and their word ranges in the
+continuation. The lookup success is retained as a hypothesis, not recomputed by
+the compiled operation. -/
+theorem readNode_of_success {kind : CellTy} {ref : Atom Γ (.node kind)}
+    {continuation : Complexity.Language.Stmt signatures
+      (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+    (loaded : ∃ head tail,
+      entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) ∧
+        ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail))
+    (body : ∀ head tail,
+      entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) →
+        ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) →
+        RealizationWP program w depth continuation (fun finish => normal finish.tail)
+          (fun value finish => returned value finish.tail)
+          (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+            (kind.toValue head, tail) entry)) :
+    RealizationWP program w depth (.readNode ref continuation) normal returned entry := by
+  obtain ⟨head, tail, found, fits⟩ := loaded
+  exact (readNode_iff ref continuation).mpr
+    ⟨head, tail, found, fits, body head tail found fits⟩
 
 /-- Separate a successful source update from reasoning about its actual heap. -/
 theorem write_of_success {kind : CellTy} {buffer : Atom Γ (.buffer kind)}

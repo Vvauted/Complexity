@@ -72,6 +72,9 @@ theorem renameCalls {source target : List Signature}
   | @read Γ result kind w heapLimit depth next₀ next₁ buffer index continuation
       entry finish control value loaded body bufferFits indexFits valueFits _ ih =>
       exact .read (loaded := loaded) bufferFits indexFits valueFits ih
+  | @readNode Γ result kind w heapLimit depth next₀ next₁ ref continuation
+      entry finish control head tail found body valueFits _ ih =>
+      exact .readNode (found := found) valueFits ih
   | @write Γ result kind w heapLimit depth next buffer index value entry heap written
       bufferFits indexFits valueFits =>
       exact .write (written := written) bufferFits indexFits valueFits
@@ -79,6 +82,7 @@ theorem renameCalls {source target : List Signature}
       entry finish control view sliced body bufferFits offsetFits lengthFits viewFits _ ih =>
       exact .slice (sliced := sliced) bufferFits offsetFits lengthFits viewFits ih
   | alloc initialFits capacity _ ih => exact .alloc initialFits capacity ih
+  | consNode headFits tailFits capacity _ ih => exact .consNode headFits tailFits capacity ih
   | @scope Γ result w heapLimit depth next₀ bodyCursor stmt entry finish control body safe _ ih =>
       exact .scope (safe := safe) ih
   | seqNormal _ _ ihHead ihTail => exact .seqNormal ihHead ihTail
@@ -151,6 +155,12 @@ private theorem of_renameCalls_aux {source target : List Signature}
       cases statement <;> cases same
       obtain ⟨_, original⟩ := ih _ rfl
       exact ⟨_, .read (loaded := loaded) bufferFits indexFits valueFits original⟩
+  | @readNode Γ result kind w heapLimit depth next₀ next₁ ref continuation
+      entry finish control head tail found body valueFits _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      obtain ⟨_, original⟩ := ih _ rfl
+      exact ⟨_, .readNode (found := found) valueFits original⟩
   | @write Γ result kind w heapLimit depth next buffer index value entry heap written
       bufferFits indexFits valueFits =>
       intro statement same
@@ -167,6 +177,11 @@ private theorem of_renameCalls_aux {source target : List Signature}
       cases statement <;> cases same
       obtain ⟨_, original⟩ := ih _ rfl
       exact ⟨_, .alloc initialFits capacity original⟩
+  | consNode headFits tailFits capacity _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      obtain ⟨_, original⟩ := ih _ rfl
+      exact ⟨_, .consNode headFits tailFits capacity original⟩
   | @scope Γ result w heapLimit depth next₀ bodyCursor stmt entry finish control body safe _ ih =>
       intro statement same
       cases statement <;> cases same
@@ -348,6 +363,9 @@ theorem renameCalls {source target : List Signature}
       value bufferFits indexFits loaded valueFits body ready steps _ ih =>
       exact .read (bufferFits := bufferFits) (indexFits := indexFits)
         (loaded := loaded) (valueFits := valueFits) ih
+  | @readNode Γ result kind depth next₀ next₁ ref continuation entry finish control
+      head tail found valueFits body ready steps _ ih =>
+      exact .readNode (found := found) (valueFits := valueFits) ih
   | @write Γ result kind depth next buffer index value entry heap bufferFits indexFits
       valueFits written =>
       exact .write (bufferFits := bufferFits) (indexFits := indexFits)
@@ -359,6 +377,9 @@ theorem renameCalls {source target : List Signature}
   | @alloc Γ result kind depth next₀ next₁ length initial continuation entry finish control
       body initialFits capacity ready steps _ ih =>
       exact .alloc (initialFits := initialFits) (capacity := capacity) ih
+  | @consNode Γ result kind depth next₀ next₁ head tail continuation entry finish control
+      body headFits tailFits capacity ready steps _ ih =>
+      exact .consNode (headFits := headFits) (tailFits := tailFits) (capacity := capacity) ih
   | @scope Γ result depth next₀ bodyCursor stmt entry finish control body safe ready steps _ ih =>
       exact .scope (safe := safe) ih
   | seqNormal _ _ ihHead ihTail => exact .seqNormal ihHead ihTail

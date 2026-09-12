@@ -56,6 +56,14 @@ private theorem lowerAlloc_renameCalls {Γ : List Ty} {kind : CellTy}
   simp only [lowerAlloc, Source.Arena.Registers.allocate, Source.Arena.Registers.prepare,
     Source.Arena.Registers.fill, Source.Arena.Registers.fillBody, Ram.Stmt.renameCalls]
 
+private theorem lowerConsNode_renameCalls {Γ : List Ty} {kind : CellTy}
+    (layout : RegisterMap Γ) (next : Reg) (head : Atom Γ kind.toTy)
+    (tail : Atom Γ (.option (.node kind))) (ρ : Nat → Nat) :
+    (lowerConsNode layout next head tail).renameCalls ρ =
+      lowerConsNode layout next head tail := by
+  simp only [lowerConsNode, Source.Arena.Node.Registers.allocate,
+    Ram.Stmt.renameCalls, copyFields_renameCalls]
+
 private theorem lowerStmtCore_callOfEq {signatures : List Signature}
     {Γ : List Ty} {result : Ty} (layout : RegisterMap Γ) (next resultSlot flag : Reg)
     (fn : Fin signatures.length) {signature : Signature} (same : signatures[fn] = signature)
@@ -81,7 +89,8 @@ theorem lowerStmtCore_renameCalls {source target : List Signature}
   induction statement generalizing next resultSlot flag <;>
     simp_all only [Complexity.Language.Stmt.renameCalls, lowerStmtCore_callOfEq,
       lowerStmtCore, Ram.Stmt.renameCalls, lowerAssign, lowerPrim_renameCalls,
-      lowerRead, lowerWrite, lowerSlice, lowerAlloc_renameCalls,
+      lowerRead, lowerReadNode, lowerWrite, lowerSlice, lowerAlloc_renameCalls,
+      lowerConsNode_renameCalls,
       Source.Arena.Scope.capture, Source.Arena.Scope.release, lowerReturn, copyFields_renameCalls]
 
 private theorem lowerBody_cast {signatures : List Signature}

@@ -37,6 +37,13 @@ def primCodeSize {Γ : List Ty} {τ : Ty} : Prim Γ τ → Nat
 /-- Emitted buffer-read length, justified by `lowerRead_stmtSize`. -/
 def readCodeSize : Nat := 5
 
+/-- Emitted three-field node-read length, justified by `lowerReadNode_stmtSize`. -/
+def readNodeCodeSize : Nat := 13
+
+/-- Capture three actual operand fields and allocate one three-word node.
+`lowerConsNode_stmtSize` derives this count from those emitted operations. -/
+def consNodeCodeSize : Nat := 27
+
 /-- Emitted buffer-write length, justified by `lowerWrite_stmtSize`. -/
 def writeCodeSize : Nat := 5
 
@@ -52,6 +59,8 @@ def sourceCodeSize {signatures : List Signature} {Γ : List Ty} {result : Ty}
   | .assign _ value => primCodeSize value
   | .letPrim value body => primCodeSize value + sourceCodeSize localsTable body
   | .read _ _ body => readCodeSize + sourceCodeSize localsTable body
+  | .readNode _ body => readNodeCodeSize + sourceCodeSize localsTable body
+  | .consNode _ _ body => consNodeCodeSize + sourceCodeSize localsTable body
   | .write .. => writeCodeSize
   | .slice _ _ _ body => sliceCodeSize + sourceCodeSize localsTable body
   | .alloc _ _ body => 30 + sourceCodeSize localsTable body
@@ -153,6 +162,27 @@ theorem lowerRead_stmtSize (control : Nat) (localsTable : Nat → Nat)
     List.length_append, List.length_singleton, atomFieldExpr_compile_length,
     atomExpr_compile_length, readCodeSize]
 
+/-- The actual node base is already a source register. The three generated
+loads require no operand capture or auxiliary source register. -/
+theorem lowerReadNode_stmtSize (control : Nat) (localsTable : Nat → Nat)
+    (layout : RegisterMap Γ) (dst : Reg) (ref : Atom Γ (.node kind)) :
+    LocalCompiler.stmtSize control localsTable (lowerReadNode layout dst ref) =
+      readNodeCodeSize := by
+  cases ref
+  rfl
+
+/-- Three operand copies and the existing node allocator emit twenty-seven
+instructions, independently of the shared tail's length. -/
+theorem lowerConsNode_stmtSize (control : Nat) (localsTable : Nat → Nat)
+    (layout : RegisterMap Γ) (next : Reg)
+    (head : Atom Γ kind.toTy) (tail : Atom Γ (.option (.node kind))) :
+    LocalCompiler.stmtSize control localsTable (lowerConsNode layout next head tail) =
+      consNodeCodeSize := by
+  simp only [lowerConsNode, LocalCompiler.stmtSize_seq, copyFields_stmtSize,
+    List.map_append, List.sum_append, atomExprs_compile_lengths,
+    List.length_append, atomExprs_length, Source.Arena.Node.Registers.allocate_stmtSize]
+  cases kind <;> rfl
+
 /-- A write charges the actual address, cell materialization and store. -/
 theorem lowerWrite_stmtSize (control : Nat) (localsTable : Nat → Nat)
     (layout : RegisterMap Γ) (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
@@ -200,6 +230,12 @@ theorem lowerStmtCore_stmtSize {signatures : List Signature} {Γ : List Ty} {res
         ih, sourceCodeSize]
   | read buffer index body ih =>
       simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerRead_stmtSize,
+        ih, sourceCodeSize]
+  | readNode ref body ih =>
+      simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerReadNode_stmtSize,
+        ih, sourceCodeSize]
+  | consNode head tail body ih =>
+      simp only [lowerStmtCore, LocalCompiler.stmtSize_seq, lowerConsNode_stmtSize,
         ih, sourceCodeSize]
   | write buffer index value => exact lowerWrite_stmtSize control localsTable layout _ _ _
   | slice buffer offset length body ih =>

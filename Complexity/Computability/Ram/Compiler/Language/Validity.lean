@@ -40,7 +40,7 @@ theorem lowerPrim_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
     (dst : Reg) (prim : Prim Γ τ) : Compiler.CallsValid program (lowerPrim layout dst prim) := by
   cases τ with
   | nat | bool | unit => trivial
-  | buffer kind | prod left right | option τ =>
+  | buffer kind | node kind | prod left right | option τ =>
       exact copyFields_callsValid program dst (primExprs layout prim)
 
 /-- Updating an existing local introduces no function call. -/
@@ -53,6 +53,20 @@ theorem lowerAssign_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
 theorem lowerReturn_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
     (dst : Reg) (atom : Atom Γ τ) : Compiler.CallsValid program (lowerReturn layout dst atom) :=
   copyFields_callsValid program dst (atomExprs layout atom)
+
+/-- Reading all three node fields introduces no function call. -/
+theorem lowerReadNode_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
+    (dst : Reg) (ref : Atom Γ (.node kind)) :
+    Compiler.CallsValid program (lowerReadNode layout dst ref) :=
+  ⟨trivial, trivial, trivial⟩
+
+/-- Capturing a head and shared tail and allocating their node introduces no
+function call or additional entry in the generated function table. -/
+theorem lowerConsNode_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
+    (next : Reg) (head : Atom Γ kind.toTy) (tail : Atom Γ (.option (.node kind))) :
+    Compiler.CallsValid program (lowerConsNode layout next head tail) := by
+  refine ⟨copyFields_callsValid _ _ _, ?_⟩
+  simp [Source.Arena.Node.Registers.allocate, Compiler.CallsValid]
 
 /-- Every typed source call has exactly the generated callee's field counts. -/
 theorem call_callsValid {signatures : List Signature}
@@ -78,6 +92,8 @@ theorem lowerStmtCore_callsValid {signatures : List Signature}
   | letPrim value body ih =>
       exact ⟨lowerPrim_callsValid _ _ _ _, ih _ _ _ _⟩
   | read buffer index body ih => exact ⟨trivial, ih _ _ _ _⟩
+  | readNode ref body ih => exact ⟨lowerReadNode_callsValid _ _ _ _, ih _ _ _ _⟩
+  | consNode head tail body ih => exact ⟨lowerConsNode_callsValid _ _ _ _ _, ih _ _ _ _⟩
   | write buffer index value => trivial
   | slice buffer offset length body ih => exact ⟨⟨trivial, trivial⟩, ih _ _ _ _⟩
   | alloc length initial body ih => exact ⟨lowerAlloc_callsValid _ _ _ _ _, ih _ _ _ _⟩

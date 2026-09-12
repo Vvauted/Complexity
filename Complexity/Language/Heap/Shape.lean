@@ -8,9 +8,11 @@ import Complexity.Language.Heap
 /-!
 # Heap shape extension and rooted handles
 
-Shape extension retains every existing object's identifier, scalar type and
-extent, while allowing its contents to change and new objects to appear.
-Successful writes are shape extensions even when aliases observe changed cells.
+Shape extension retains every existing object's identifier and storage kind.
+Scalar arrays retain their element types and extents while their contents may
+change. Immutable nodes retain their complete payloads and tail links. New
+objects may appear. Successful scalar writes are shape extensions even when
+aliases observe changed cells.
 
 A rooted buffer names an existing object slot. Rootedness does not assert the
 stored scalar type or the validity of the view's offset and length. This weaker
@@ -21,8 +23,8 @@ namespace Complexity.Language
 
 namespace Heap
 
-/-- Existing object slots retain their scalar types and extents, but not
-necessarily their contents. Additional object slots are permitted. -/
+/-- Existing arrays retain their scalar types and extents, and immutable nodes
+retain their complete contents. Additional object slots are permitted. -/
 structure ShapeExtends (initial finish : Heap) : Prop where
   /-- Existing object identifiers remain within the heap's domain. -/
   size_le : initial.objects.size ≤ finish.objects.size
@@ -30,18 +32,21 @@ structure ShapeExtends (initial finish : Heap) : Prop where
   objects : ∀ {τ : CellTy} {object : Nat} {values : Array (CellValue τ)},
     initial.object? τ object = some values →
       ∃ newValues, finish.object? τ object = some newValues ∧ newValues.size = values.size
+  /-- Every old immutable node retains its actual element and shared tail. -/
+  nodes : ∀ {τ : CellTy} {object : Nat} {head : CellValue τ} {tail : Option (NodeRef τ)},
+    initial.node? τ object = some (head, tail) → finish.node? τ object = some (head, tail)
 
 namespace ShapeExtends
 
 /-- An unchanged heap retains its own shape. -/
 theorem refl (heap : Heap) : ShapeExtends heap heap :=
-  ⟨Nat.le_refl _, fun found => ⟨_, found, rfl⟩⟩
+  ⟨Nat.le_refl _, fun found => ⟨_, found, rfl⟩, fun found => found⟩
 
 /-- Successive shape extensions retain every original object's shape. -/
 theorem trans {initial middle finish : Heap}
     (first : ShapeExtends initial middle) (second : ShapeExtends middle finish) :
     ShapeExtends initial finish := by
-  refine ⟨first.size_le.trans second.size_le, ?_⟩
+  refine ⟨first.size_le.trans second.size_le, ?_, fun found => second.nodes (first.nodes found)⟩
   intro τ object values found
   obtain ⟨middleValues, middleFound, middleSize⟩ := first.objects found
   obtain ⟨finalValues, finalFound, finalSize⟩ := second.objects middleFound
@@ -55,15 +60,15 @@ theorem shapeExtends_write {heap finish : Heap} {τ : CellTy} {buffer : Buffer �
     (written : heap.write buffer index value = .ok finish) :
     ShapeExtends heap finish := by
   obtain ⟨values, found, _, _, rfl⟩ := write_eq_ok_iff.mp written
-  refine ⟨?_, ?_⟩
+  refine ⟨?_, ?_, ?_⟩
   · simp [replace]
   · intro σ object oldValues oldFound
     by_cases sameObject : buffer.object = object
-    · have sameStored : (⟨τ, values⟩ : HeapObject) = ⟨σ, oldValues⟩ := by
+    · have sameStored : HeapObject.buffer τ values = .buffer σ oldValues := by
         apply Option.some.inj
         exact (object?_eq_some_iff.mp found).symm.trans
           (by simpa only [← sameObject] using object?_eq_some_iff.mp oldFound)
-      have sameType : τ = σ := congrArg Sigma.fst sameStored
+      have sameType : τ = σ := congrArg HeapObject.kind sameStored
       subst σ
       have sameValues : oldValues = values := by
         rw [← sameObject, found] at oldFound
@@ -74,6 +79,8 @@ theorem shapeExtends_write {heap finish : Heap} {τ : CellTy} {buffer : Buffer �
         exact object?_replace_self (object_lt_size found)
       · simp only [Array.size_setIfInBounds]
     · exact ⟨oldValues, (object?_replace_ne sameObject).trans oldFound, rfl⟩
+  · intro σ object head tail nodeFound
+    exact node?_write_of_some written nodeFound
 
 end Heap
 

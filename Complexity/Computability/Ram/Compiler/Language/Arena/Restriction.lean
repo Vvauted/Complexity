@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Language.Heap.Restriction
 import Complexity.Computability.Ram.Compiler.Language.Arena.Basic
 import Complexity.Computability.Ram.Compiler.Language.Placement
+import Complexity.Computability.Ram.Compiler.Language.Heap.Shape
 
 /-!
 # Retaining current objects when restoring an arena cursor
@@ -24,17 +25,16 @@ namespace Ram.LanguageCompiler
 open Complexity.Language
 
 private theorem object_lt_take_count {heap : Complexity.Language.Heap} {count object : Nat}
-    {kind : CellTy} {values : Array (CellValue kind)}
-    (found : (heap.take count).object? kind object = some values) : object < count := by
-  have bound := Complexity.Language.Heap.object_lt_size found
+    {stored : HeapObject} (found : (heap.take count).objects[object]? = some stored) :
+    object < count := by
+  have bound := (Array.getElem?_eq_some_iff.mp found).choose
   rw [Complexity.Language.Heap.take_size] at bound
   exact lt_of_lt_of_le bound (Nat.min_le_left _ _)
 
-private theorem object?_of_take {heap : Complexity.Language.Heap} {count object : Nat}
-    {kind : CellTy} {values : Array (CellValue kind)}
-    (found : (heap.take count).object? kind object = some values) :
-    heap.object? kind object = some values :=
-  (heap.object?_take_of_lt count (object_lt_take_count found)).symm.trans found
+private theorem stored_of_take {heap : Complexity.Language.Heap} {count object : Nat}
+    {stored : HeapObject} (found : (heap.take count).objects[object]? = some stored) :
+    heap.objects[object]? = some stored :=
+  (heap.getElem?_take_of_lt count (object_lt_take_count found)).symm.trans found
 
 namespace HeapRep
 
@@ -44,15 +44,18 @@ theorem take {w heapLimit : Nat} {placement : Nat → Word w}
     {heap : Complexity.Language.Heap} {target : Source.State w}
     (represented : HeapRep placement heapLimit heap target) (count : Nat) :
     HeapRep placement heapLimit (heap.take count) target := by
-  refine ⟨?_, ?_, ?_⟩
-  · intro kind object values found
-    exact represented.objects (object?_of_take found)
-  · intro kind object values found index bound
-    exact represented.ranges (object?_of_take found) index bound
-  · intro kind otherKind object other values otherValues found otherFound different
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · intro object stored found
+    exact represented.stored (stored_of_take found)
+  · intro object stored found
+    exact represented.fit (stored_of_take found)
+  · intro object other stored otherStored found otherFound different
       index bound otherIndex otherBound
-    exact represented.separated (object?_of_take found) (object?_of_take otherFound)
+    exact represented.disjoint (stored_of_take found) (stored_of_take otherFound)
       different index bound otherIndex otherBound
+  · intro kind object head tail found
+    exact represented.backward (Heap.node?_eq_some_iff.mpr
+      (stored_of_take (Heap.node?_eq_some_iff.mp found)))
 
 end HeapRep
 
@@ -70,20 +73,23 @@ theorem take {w start stop heapLimit : Nat} {initial current : Complexity.Langua
     (agreement : Placement.Agrees initial initialPlacement currentPlacement) :
     ArenaRep currentPlacement start heapLimit (current.take initial.objects.size)
       (target.setMem 0 (BitVec.ofNat w start)) := by
-  have reserved : ∀ {kind : CellTy} {object : Nat} {values : Array (CellValue kind)},
-      (current.take initial.objects.size).object? kind object = some values →
-        ∀ index, index < values.size →
+  have reserved : ∀ {object : Nat} {stored : HeapObject},
+      (current.take initial.objects.size).objects[object]? = some stored →
+        ∀ index, index < (heapObjectWords currentPlacement stored).size →
           0 < (arrayAddr (currentPlacement object) index).toNat ∧
             (arrayAddr (currentPlacement object) index).toNat < start := by
-    intro kind object values found index bound
+    intro object stored found index bound
     have retained := object_lt_take_count found
-    obtain ⟨oldValues, oldFound, sameSize⟩ :=
-      growth.objects_of_lt retained (object?_of_take found)
-    have oldBound : index < oldValues.size := by simpa only [sameSize] using bound
-    simpa only [agreement retained] using initialArena.reserved oldFound index oldBound
+    obtain ⟨previous, oldFound, sameSize⟩ :=
+      heapObjectWords_size_of_shapeExtends_of_lt growth currentPlacement retained
+        (stored_of_take found)
+    have oldBound : index < (heapObjectWords initialPlacement previous).size := by
+      rw [heapObjectWords_size_eq initialPlacement currentPlacement previous]
+      simpa only [sameSize] using bound
+    simpa only [agreement retained] using initialArena.storedReserved oldFound index oldBound
   refine ⟨(finalArena.heapRep.take initial.objects.size).of_mem_eq_on ?_,
     initialArena.cursor_pos, initialArena.cursor_le, initialArena.limit_lt, ?_, reserved⟩
-  · intro kind object values found index bound
+  · intro object stored found index bound
     have positive := (reserved found index bound).1
     have nonzero : arrayAddr (currentPlacement object) index ≠ 0 := by
       intro same

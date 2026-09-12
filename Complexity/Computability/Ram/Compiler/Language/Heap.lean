@@ -13,11 +13,12 @@ import Init.Data.Array.Extract
 # Representing shared source objects in RAM memory
 
 One fixed mathematical placement gives each source object a RAM base address.
-The complete current native array is represented at that address; borrowed
-views derive their base and length without copying contents or storing an
-object table. Views of the same object may overlap or coincide. Distinct
-objects have disjoint actual cells, with no condition on empty objects' unused
-addresses.
+The complete current object is represented at that address: arrays contain
+their scalar cells, while immutable nodes contain a head, an option tag and
+the actual placement of their tail. Borrowed array views derive their base and
+length without copying contents or storing an object table. Views of the same
+object may overlap or coincide. Distinct objects have disjoint actual cells,
+with no condition on empty objects' unused addresses.
 
 Natural cells must fit the target word and Boolean cells use their exact
 zero-or-one encoding. Object intervals retain the existing non-strict endpoint
@@ -46,6 +47,40 @@ def cellWord (w : Nat) {τ : CellTy} (value : CellValue τ) : Word w :=
 def objectWords (w : Nat) {τ : CellTy} (values : Array (CellValue τ)) : Array (Word w) :=
   values.map (cellWord w)
 
+/-- Complete storage of either object kind. The optional link contains an
+actual address, not a numeric source identifier; `none` uses a separate zero tag. -/
+def heapObjectWords (placement : Nat → Word w) : HeapObject → Array (Word w)
+  | .buffer _ values => objectWords w values
+  | .node _ head none => #[cellWord w head, 0, 0]
+  | .node _ head (some tail) => #[cellWord w head, 1, placement tail.object]
+
+/-- Exact scalar payloads and node tags. Link addresses already have type `Word`. -/
+def heapObjectFits (w : Nat) : HeapObject → Prop
+  | .buffer _ values => ∀ (index : Nat) (bound : index < values.size),
+      cellToNat values[index] < 2 ^ w
+  | .node _ head _ => cellToNat head < 2 ^ w ∧ 1 < 2 ^ w
+
+@[simp] theorem heapObjectWords_buffer (placement : Nat → Word w) {τ : CellTy}
+    (values : Array (CellValue τ)) :
+    heapObjectWords placement (.buffer τ values) = objectWords w values := rfl
+
+@[simp] theorem heapObjectWords_buffer_size (placement : Nat → Word w) {τ : CellTy}
+    (values : Array (CellValue τ)) :
+    (heapObjectWords placement (.buffer τ values)).size = values.size := by
+  simp only [heapObjectWords, objectWords, Array.size_map]
+
+@[simp] theorem heapObjectWords_node_size (placement : Nat → Word w) {τ : CellTy}
+    (head : CellValue τ) (tail : Option (NodeRef τ)) :
+    (heapObjectWords placement (.node τ head tail)).size = 3 := by
+  cases tail <;> rfl
+
+/-- Storage extent depends on the object, not its placement or referenced addresses. -/
+theorem heapObjectWords_size_eq (left right : Nat → Word w) (object : HeapObject) :
+    (heapObjectWords left object).size = (heapObjectWords right object).size := by
+  cases object with
+  | buffer τ values => rfl
+  | node τ head tail => simp only [heapObjectWords_node_size]
+
 /-- Two-word metadata for a view of a placed object. This is not a runtime
 conversion and does not recover the source object's identity from the fields. -/
 def bufferRef (placement : Nat → Word w) {τ : CellTy} (buffer : Buffer τ) : ArrayRef w :=
@@ -60,52 +95,98 @@ theorem cellWord_toNat {τ : CellTy} {value : CellValue τ}
 The placement is fixed across heap updates and real function calls. -/
 structure HeapRep (placement : Nat → Word w) (heapLimit : Nat)
     (heap : Complexity.Language.Heap) (target : Source.State w) : Prop where
-  /-- Each successful typed object lookup describes its complete native contents. -/
-  objects : ∀ {τ : CellTy} {object : Nat} {values : Array (CellValue τ)},
-    heap.object? τ object = some values →
-      Source.ArrayAt heapLimit (placement object) (objectWords w values).toList target
-  /-- Every represented cell has its exact scalar value at the selected width. -/
-  ranges : ∀ {τ : CellTy} {object : Nat} {values : Array (CellValue τ)},
-    heap.object? τ object = some values →
-      ∀ (index : Nat) (bound : index < values.size), cellToNat values[index] < 2 ^ w
-  /-- Only different objects' actual cells are separated, never arbitrary views. -/
-  separated : ∀ {τ σ : CellTy} {object other : Nat}
-    {values : Array (CellValue τ)} {otherValues : Array (CellValue σ)},
-    heap.object? τ object = some values → heap.object? σ other = some otherValues →
-      object ≠ other → ∀ (index : Nat), index < values.size →
-        ∀ (otherIndex : Nat), otherIndex < otherValues.size →
-          arrayAddr (placement object) index ≠ arrayAddr (placement other) otherIndex
+  /-- Every actual object occupies its complete encoded interval. -/
+  stored : ∀ {id : Nat} {object : HeapObject}, heap.objects[id]? = some object →
+    Source.ArrayAt heapLimit (placement id) (heapObjectWords placement object).toList target
+  /-- Every payload and tag has its exact value at the selected width. -/
+  fit : ∀ {id : Nat} {object : HeapObject}, heap.objects[id]? = some object →
+    heapObjectFits w object
+  /-- Every pair of distinct objects has disjoint storage, regardless of kind. -/
+  disjoint : ∀ {id other : Nat} {object otherObject : HeapObject},
+    heap.objects[id]? = some object → heap.objects[other]? = some otherObject →
+      id ≠ other → ∀ (index : Nat), index < (heapObjectWords placement object).size →
+        ∀ (otherIndex : Nat), otherIndex < (heapObjectWords placement otherObject).size →
+          arrayAddr (placement id) index ≠ arrayAddr (placement other) otherIndex
+  /-- A live node's actual link points into its earlier object prefix. -/
+  backward : ∀ {τ : CellTy} {id : Nat} {head : CellValue τ} {tail : NodeRef τ},
+    heap.node? τ id = some (head, some tail) → tail.object < id
 
 namespace HeapRep
 
 variable {w heapLimit : Nat} {placement : Nat → Word w}
 variable {heap finish : Complexity.Language.Heap} {target : Source.State w}
 
+/-- Typed array observation is a projection of complete object representation. -/
+theorem objects (represented : HeapRep placement heapLimit heap target)
+    {τ : CellTy} {object : Nat} {values : Array (CellValue τ)}
+    (found : heap.object? τ object = some values) :
+    Source.ArrayAt heapLimit (placement object) (objectWords w values).toList target :=
+  represented.stored (Complexity.Language.Heap.object?_eq_some_iff.mp found)
+
+/-- Every represented array cell retains the original exact scalar range interface. -/
+theorem ranges (represented : HeapRep placement heapLimit heap target)
+    {τ : CellTy} {object : Nat} {values : Array (CellValue τ)}
+    (found : heap.object? τ object = some values) :
+    ∀ (index : Nat) (bound : index < values.size), cellToNat values[index] < 2 ^ w :=
+  represented.fit (Complexity.Language.Heap.object?_eq_some_iff.mp found)
+
+/-- The original array separation interface follows from separation of all objects. -/
+theorem separated (represented : HeapRep placement heapLimit heap target)
+    {τ σ : CellTy} {object other : Nat}
+    {values : Array (CellValue τ)} {otherValues : Array (CellValue σ)}
+    (found : heap.object? τ object = some values)
+    (otherFound : heap.object? σ other = some otherValues) (different : object ≠ other)
+    (index : Nat) (bound : index < values.size)
+    (otherIndex : Nat) (otherBound : otherIndex < otherValues.size) :
+    arrayAddr (placement object) index ≠ arrayAddr (placement other) otherIndex :=
+  represented.disjoint (Complexity.Language.Heap.object?_eq_some_iff.mp found)
+    (Complexity.Language.Heap.object?_eq_some_iff.mp otherFound) different index
+    (by simpa only [heapObjectWords_buffer_size] using bound) otherIndex
+    (by simpa only [heapObjectWords_buffer_size] using otherBound)
+
+/-- A node lookup exposes all three real words, including its placed optional tail. -/
+theorem nodes (represented : HeapRep placement heapLimit heap target)
+    {τ : CellTy} {object : Nat} {head : CellValue τ} {tail : Option (NodeRef τ)}
+    (found : heap.node? τ object = some (head, tail)) :
+    Source.ArrayAt heapLimit (placement object)
+      (heapObjectWords placement (.node τ head tail)).toList target :=
+  represented.stored (Complexity.Language.Heap.node?_eq_some_iff.mp found)
+
+/-- A stored backward link always names an existing object, without requiring
+the numeric source identifier to fit a RAM word. -/
+theorem tail_lt_size (represented : HeapRep placement heapLimit heap target)
+    {τ : CellTy} {object : Nat} {head : CellValue τ} {tail : NodeRef τ}
+    (found : heap.node? τ object = some (head, some tail)) :
+    tail.object < heap.objects.size :=
+  Nat.lt_trans (represented.backward found) (Complexity.Language.Heap.node_lt_size found)
+
 /-- The empty source heap imposes no restriction on placement, capacity or RAM memory. -/
 theorem empty (placement : Nat → Word w) (heapLimit : Nat) (target : Source.State w) :
     HeapRep placement heapLimit ⟨#[]⟩ target := by
-  refine ⟨?_, ?_, ?_⟩
-  · intro τ object values found
-    exact (Nat.not_lt_zero object (Complexity.Language.Heap.object_lt_size found)).elim
-  · intro τ object values found
-    exact (Nat.not_lt_zero object (Complexity.Language.Heap.object_lt_size found)).elim
-  · intro τ σ object other values otherValues found
-    exact (Nat.not_lt_zero object (Complexity.Language.Heap.object_lt_size found)).elim
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · intro id object found
+    simp at found
+  · intro id object found
+    simp at found
+  · intro id other object otherObject found
+    simp at found
+  · intro τ object head tail found
+    exact (Nat.not_lt_zero object (Complexity.Language.Heap.node_lt_size found)).elim
 
 /-- Parameter binding retains the same complete shared-heap representation. -/
 theorem enter (represented : HeapRep placement heapLimit heap target)
     (args : List (Word w)) : HeapRep placement heapLimit heap (target.enter args) := by
-  refine ⟨?_, represented.ranges, represented.separated⟩
-  intro τ object contents found
-  exact (represented.objects found).enter args
+  refine ⟨?_, represented.fit, represented.disjoint, represented.backward⟩
+  intro id object found
+  exact (represented.stored found).enter args
 
 /-- Receiving actual return fields changes no represented heap cell. -/
 theorem setRegs (represented : HeapRep placement heapLimit heap target)
     (dsts : List Reg) (values : List (Word w)) :
     HeapRep placement heapLimit heap (target.setRegs dsts values) := by
-  refine ⟨?_, represented.ranges, represented.separated⟩
-  intro τ object contents found
-  simpa only [Source.ArrayAt, Source.State.setRegs_mem] using represented.objects found
+  refine ⟨?_, represented.fit, represented.disjoint, represented.backward⟩
+  intro id object found
+  simpa only [Source.ArrayAt, Source.State.setRegs_mem] using represented.stored found
 
 /-- Updating one local register changes no represented shared object. -/
 theorem setReg (represented : HeapRep placement heapLimit heap target)
@@ -116,9 +197,9 @@ theorem setReg (represented : HeapRep placement heapLimit heap target)
 /-- Caller restoration keeps the callee's final heap, not the caller's old heap. -/
 theorem restore (represented : HeapRep placement heapLimit heap target)
     (caller : Source.State w) : HeapRep placement heapLimit heap (caller.restore target) := by
-  refine ⟨?_, represented.ranges, represented.separated⟩
-  intro τ object contents found
-  simpa only [Source.ArrayAt, Source.State.restore_mem] using represented.objects found
+  refine ⟨?_, represented.fit, represented.disjoint, represented.backward⟩
+  intro id object found
+  simpa only [Source.ArrayAt, Source.State.restore_mem] using represented.stored found
 
 /-- A view's current native contents use the existing contiguous-array
 assertion. Even an empty view at the allocation endpoint is admitted. -/
@@ -186,41 +267,38 @@ theorem write (represented : HeapRep placement heapLimit heap target)
       (target.setMem (arrayAddr (bufferRef placement buffer).base index) (cellWord w value)) := by
   obtain ⟨values, found, extent, bound, rfl⟩ := Complexity.Language.Heap.write_eq_ok_iff.mp written
   have absoluteBound : buffer.offset + index < values.size := by omega
+  have rawFound := Complexity.Language.Heap.object?_eq_some_iff.mp found
   simp only [bufferRef, arrayAddr_add]
-  have updatedObjects : ∀ {σ : CellTy} {other : Nat} {otherValues : Array (CellValue σ)},
+  have updatedStored : ∀ {other : Nat} {object : HeapObject},
       (heap.replace buffer.object
-        (values.setIfInBounds (buffer.offset + index) value)).object? σ other = some otherValues →
-      ∃ originalValues : Array (CellValue σ),
-        heap.object? σ other = some originalValues ∧ otherValues.size = originalValues.size ∧
-        Source.ArrayAt heapLimit (placement other) (objectWords w otherValues).toList
+        (values.setIfInBounds (buffer.offset + index) value)).objects[other]? = some object →
+      ∃ original : HeapObject,
+        heap.objects[other]? = some original ∧
+        (heapObjectWords placement object).size = (heapObjectWords placement original).size ∧
+        Source.ArrayAt heapLimit (placement other) (heapObjectWords placement object).toList
           (target.setMem (arrayAddr (placement buffer.object) (buffer.offset + index))
             (cellWord w value)) ∧
-        ∀ (next : Nat) (nextBound : next < otherValues.size),
-          cellToNat otherValues[next] < 2 ^ w := by
-    intro σ other otherValues otherFound
+        heapObjectFits w object := by
+    intro other object otherFound
     by_cases sameObject : buffer.object = other
     · subst other
       have updatedFound :
           (heap.replace buffer.object
-            (values.setIfInBounds (buffer.offset + index) value)).object? τ buffer.object =
-            some (values.setIfInBounds (buffer.offset + index) value) :=
-        Complexity.Language.Heap.object?_replace_self
+            (values.setIfInBounds (buffer.offset + index) value)).objects[buffer.object]? =
+            some (.buffer τ (values.setIfInBounds (buffer.offset + index) value)) :=
+        Array.getElem?_setIfInBounds_self_of_lt
           (Complexity.Language.Heap.object_lt_size found)
-      have sameStored : (⟨σ, otherValues⟩ : HeapObject) =
-          ⟨τ, values.setIfInBounds (buffer.offset + index) value⟩ := by
-        apply Option.some.inj
-        exact (Complexity.Language.Heap.object?_eq_some_iff.mp otherFound).symm.trans
-          (Complexity.Language.Heap.object?_eq_some_iff.mp updatedFound)
-      have sameType : σ = τ := congrArg Sigma.fst sameStored
-      subst σ
-      have sameValues : otherValues = values.setIfInBounds (buffer.offset + index) value :=
+      have sameStored : object =
+          .buffer τ (values.setIfInBounds (buffer.offset + index) value) :=
         Option.some.inj (otherFound.symm.trans updatedFound)
-      subst otherValues
-      refine ⟨values, found, by simp only [Array.size_setIfInBounds], ?_, ?_⟩
+      subst object
+      refine ⟨.buffer τ values, rawFound, by
+        simp only [heapObjectWords_buffer_size, Array.size_setIfInBounds], ?_, ?_⟩
       · have stored := (represented.objects found).setMem_toArray
           (i := buffer.offset + index)
           (by simpa only [objectWords, Array.size_map] using absoluteBound) (cellWord w value)
-        simpa only [objectWords, Array.map_setIfInBounds, Array.map_set, Array.setIfInBounds_def,
+        simpa only [heapObjectWords_buffer, objectWords,
+          Array.map_setIfInBounds, Array.map_set, Array.setIfInBounds_def,
           Array.size_map, absoluteBound, ↓reduceDIte] using stored
       · intro next nextBound
         have originalBound : next < values.size := by
@@ -230,33 +308,38 @@ theorem write (represented : HeapRep placement heapLimit heap target)
           simpa only [Array.getElem_setIfInBounds_self] using valueFits
         · simpa only [Array.getElem_setIfInBounds_ne originalBound sameCell] using
             represented.ranges found next originalBound
-    · have originalFound : heap.object? σ other = some otherValues :=
-        (Complexity.Language.Heap.object?_replace_ne sameObject).symm.trans otherFound
-      have otherRep := represented.objects originalFound
-      have outside : ∀ next : Fin (objectWords w otherValues).toList.length,
+    · have originalFound : heap.objects[other]? = some object := by
+        simpa only [Complexity.Language.Heap.replace,
+          Array.getElem?_setIfInBounds_ne sameObject] using otherFound
+      have otherRep := represented.stored originalFound
+      have outside : ∀ next : Fin (heapObjectWords placement object).toList.length,
           arrayAddr (placement other) next.val ≠
             arrayAddr (placement buffer.object) (buffer.offset + index) := by
         intro next
-        exact represented.separated originalFound found (Ne.symm sameObject) next.val
-          (by simpa only [Array.length_toList, objectWords, Array.size_map] using next.isLt)
-          (buffer.offset + index) absoluteBound
+        exact represented.disjoint originalFound rawFound (Ne.symm sameObject) next.val
+          (by simpa only [Array.length_toList] using next.isLt)
+          (buffer.offset + index)
+          (by simpa only [heapObjectWords_buffer_size] using absoluteBound)
       have preserved := otherRep.indexed.setMem_outside
         (arrayAddr (placement buffer.object) (buffer.offset + index)) (cellWord w value) outside
-      refine ⟨otherValues, originalFound, rfl, ?_, represented.ranges originalFound⟩
+      refine ⟨object, originalFound, rfl, ?_, represented.fit originalFound⟩
       exact ⟨ArrayRep.iff_indexed.mpr ⟨otherRep.1.fits, preserved.1⟩, otherRep.2⟩
-  refine ⟨?_, ?_, ?_⟩
-  · intro σ other otherValues otherFound
-    obtain ⟨_, _, _, contents, _⟩ := updatedObjects otherFound
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · intro other object otherFound
+    obtain ⟨_, _, _, contents, _⟩ := updatedStored otherFound
     exact contents
-  · intro σ other otherValues otherFound
-    obtain ⟨_, _, _, _, ranges⟩ := updatedObjects otherFound
-    exact ranges
-  · intro σ ρ object other objectValues otherValues objectFound otherFound different
+  · intro other object otherFound
+    obtain ⟨_, _, _, _, fits⟩ := updatedStored otherFound
+    exact fits
+  · intro object other objectValues otherValues objectFound otherFound different
       objectIndex objectBound otherIndex otherBound
-    obtain ⟨oldObject, oldObjectFound, objectSize, _, _⟩ := updatedObjects objectFound
-    obtain ⟨oldOther, oldOtherFound, otherSize, _, _⟩ := updatedObjects otherFound
-    exact represented.separated oldObjectFound oldOtherFound different objectIndex
+    obtain ⟨oldObject, oldObjectFound, objectSize, _, _⟩ := updatedStored objectFound
+    obtain ⟨oldOther, oldOtherFound, otherSize, _, _⟩ := updatedStored otherFound
+    exact represented.disjoint oldObjectFound oldOtherFound different objectIndex
       (by omega) otherIndex (by omega)
+  · intro σ object head tail nodeFound
+    exact represented.backward
+      ((Complexity.Language.Heap.node?_write written).symm.trans nodeFound)
 
 end HeapRep
 

@@ -26,7 +26,7 @@ open Complexity.Language
 
 /-- The number of actual words used by a source value. -/
 @[simp] def fieldCount : Ty → Nat
-  | .nat | .bool => 1
+  | .nat | .bool | .node _ => 1
   | .unit => 0
   | .buffer _ => 2
   | .prod left right => fieldCount left + fieldCount right
@@ -39,9 +39,19 @@ Buffer validity in a source heap is a separate semantic condition. -/
   | .bool, value => (if value then 1 else 0) < 2 ^ w
   | .unit, _ => True
   | .buffer _, value => value.length < 2 ^ w
+  | .node _, _ => True
   | .prod _ _, value => ValueFits w value.1 ∧ ValueFits w value.2
   | .option _, none => True
   | .option _, some value => 1 < 2 ^ w ∧ ValueFits w value
+
+/-- An optional node reference contributes only its tag range. Physical pointer
+validity and placement remain separate representation conditions. -/
+theorem ValueFits.option_node {kind : CellTy} {w : Nat}
+    (positive : 0 < w) (root : Option (NodeRef kind)) :
+    ValueFits w (τ := .option (.node kind)) root := by
+  cases root with
+  | none => trivial
+  | some ref => exact ⟨Nat.one_lt_two_pow (Nat.ne_of_gt positive), trivial⟩
 
 /-- The mathematical value of an actual representation field. -/
 def valueField (placement : Nat → Word w) : {τ : Ty} → Value τ → Fin (fieldCount τ) → Nat
@@ -50,6 +60,7 @@ def valueField (placement : Nat → Word w) : {τ : Ty} → Value τ → Fin (fi
   | .unit, _, i => Fin.elim0 i
   | .buffer _, value, i =>
       if i.val = 0 then (arrayAddr (placement value.object) value.offset).toNat else value.length
+  | .node _, value, _ => (placement value.object).toNat
   | .prod _ _, value, i =>
       Fin.addCases (valueField placement value.1) (valueField placement value.2) i
   | .option _, none, _ => 0
@@ -91,6 +102,10 @@ def valueField (placement : Nat → Word w) : {τ : Ty} → Value τ → Fin (fi
     valueField placement (τ := .buffer kind) value ⟨1, by change 1 < 2; decide⟩ =
       value.length := rfl
 
+@[simp] theorem valueField_node (placement : Nat → Word w) (value : NodeRef kind)
+    (i : Fin (fieldCount (.node kind))) :
+    valueField placement (τ := .node kind) value i = (placement value.object).toNat := rfl
+
 /-- The source range condition is exactly the range of every encoded field.
 The address field is already a word, even at an unused wrapping endpoint. -/
 theorem valueFits_iff (placement : Nat → Word w) {τ : Ty} (value : Value τ) :
@@ -117,6 +132,12 @@ theorem valueFits_iff (placement : Nat → Word w) {τ : Ty} (value : Value τ) 
         · simpa only [valueField, if_neg zero] using fits
       · intro fields
         exact fields ⟨1, by change 1 < 2; decide⟩
+  | node kind =>
+      constructor
+      · intro _ _
+        exact (placement value.object).isLt
+      · intro _
+        trivial
   | prod left right ihLeft ihRight =>
       constructor
       · rintro ⟨leftFits, rightFits⟩ i
@@ -181,6 +202,10 @@ def valueWords (placement : Nat → Word w) {τ : Ty} (value : Value τ) : List 
 @[simp] theorem valueWords_buffer (placement : Nat → Word w) (value : Buffer kind) :
     valueWords placement (τ := .buffer kind) value =
       [arrayAddr (placement value.object) value.offset, BitVec.ofNat w value.length] := by
+  simp [valueWords, List.ofFn_succ, valueField]
+
+@[simp] theorem valueWords_node (placement : Nat → Word w) (value : NodeRef kind) :
+    valueWords placement (τ := .node kind) value = [placement value.object] := by
   simp [valueWords, List.ofFn_succ, valueField]
 
 /-- Product values concatenate the actual fields of their two components. -/

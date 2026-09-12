@@ -151,7 +151,8 @@ theorem whileTrue
   have avoidsTest : layout.Avoids next := by
     intro τ v i
     exact Nat.ne_of_lt (bounded v i)
-  have guardRooted : afterGuard.locals.Rooted afterGuard.heap := test.env_rooted rooted
+  have guardRooted : afterGuard.locals.Rooted afterGuard.heap :=
+    test.env_rooted rooted represented.heapRep.node_backward
   obtain ⟨bodyPlacement, bodyTarget, bodyRun, bodyMatches, bodyArena, bodyAgrees, _⟩ :=
     bodyCore controlReg hw guardPlacement layout (next + 2) resultSlot flag guardTarget
       regular bounded' guardMatches avoids (Nat.lt_of_lt_of_le fresh (Nat.le_add_right next 2))
@@ -163,7 +164,8 @@ theorem whileTrue
       (flag_not_mem_valueRegs result resultSlot next
         (Nat.le_trans resultFlag (Nat.le_of_lt fresh))) (Nat.ne_of_gt fresh)
     exact preserved.trans tested
-  have bodyRooted : afterBody.locals.Rooted afterBody.heap := iteration.env_rooted guardRooted
+  have bodyRooted : afterBody.locals.Rooted afterBody.heap :=
+    iteration.env_rooted guardRooted guardArena.heapRep.node_backward
   obtain ⟨finalPlacement, t, restRun, property, finalArena, restAgrees, finalMatches⟩ :=
     restCore controlReg hw bodyPlacement layout next resultSlot flag bodyTarget regular bounded
       bodyMatches.1 avoids fresh resultFlag copySafe bodyRooted bodyArena bodyMatches.2
@@ -222,7 +224,8 @@ theorem whileReturn
   have avoidsTest : layout.Avoids next := by
     intro τ v i
     exact Nat.ne_of_lt (bounded v i)
-  have guardRooted : afterGuard.locals.Rooted afterGuard.heap := test.env_rooted rooted
+  have guardRooted : afterGuard.locals.Rooted afterGuard.heap :=
+    test.env_rooted rooted represented.heapRep.node_backward
   obtain ⟨finalPlacement, bodyTarget, bodyRun, property, bodyArena, bodyAgrees, bodyLocals⟩ :=
     bodyCore controlReg hw guardPlacement layout (next + 2) resultSlot flag guardTarget
       regular bounded' guardMatches avoids (Nat.lt_of_lt_of_le fresh (Nat.le_add_right next 2))

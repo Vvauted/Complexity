@@ -7,6 +7,8 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Primitive
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Binding
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Buffer
+import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Node
+import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.ConsNode
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Composition
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Loop
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Call
@@ -51,6 +53,9 @@ theorem lowerCoreMeasured {signatures : List Signature}
   | @read Γ result kind depth next₀ next₁ buffer index continuation entry finish outcome value
       bufferFits indexFits loaded valueFits body ready steps tail ih =>
       exact ArenaCoreSimulates.read (loaded := loaded) ih bufferFits indexFits valueFits
+  | @readNode Γ result kind depth next₀ next₁ ref continuation entry finish outcome
+      head tail found valueFits body ready steps bodyCost ih =>
+      exact ArenaCoreSimulates.readNode (found := found) ih valueFits
   | @write Γ result kind depth next buffer index value entry heap
       bufferFits indexFits valueFits written =>
       exact ArenaCoreSimulates.write (written := written) bufferFits indexFits valueFits
@@ -61,6 +66,9 @@ theorem lowerCoreMeasured {signatures : List Signature}
   | @alloc Γ result kind depth next₀ next₁ length initial continuation entry finish outcome
       body initialFits capacity ready steps tail ih =>
       exact ArenaCoreSimulates.alloc initialFits capacity ih
+  | @consNode Γ result kind depth next₀ next₁ head tail continuation entry finish outcome
+      body headFits tailFits capacity ready steps bodyCost ih =>
+      exact ArenaCoreSimulates.consNode headFits tailFits capacity ih
   | @scope Γ result depth next₀ bodyCursor stmt entry finish outcome body safe ready steps cost ih =>
       exact ArenaCoreSimulates.scope safe ih
   | seqNormal firstCost secondCost ihFirst ihSecond =>

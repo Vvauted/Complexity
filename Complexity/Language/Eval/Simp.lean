@@ -5,12 +5,13 @@ Authors: vvauted
 -/
 import Complexity.Language.Eval.Basic
 import Complexity.Language.Eval.Attributes
+import Complexity.Language.Eval.Node.Basic
 
 /-!
 # Simplifying native source-action equations
 
 The dedicated `source_eval` simp set normalizes the existing exception, state
-and partial-value operations, and exposes the actual buffer accesses. An author
+and partial-value operations, and exposes the actual buffer and node accesses. An author
 can open one generated function equation and compose supplied access and callee
 equations with `simp [source_eval, read, written, recursive, ...]`.
 
@@ -26,5 +27,6 @@ attribute [source_eval] ExceptT.bind ExceptT.bindCont ExceptT.pure ExceptT.mk
   Bind.bind Pure.pure StateT.bind StateT.pure Part.bind_some
   MonadLift.monadLift ExceptT.lift Functor.map StateT.map
   Buffer.allocM Buffer.readM Buffer.writeM Buffer.sliceM
+  NodeRef.readM NodeRef.consM
 
 end Complexity.Language

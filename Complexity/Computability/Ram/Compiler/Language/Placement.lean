@@ -65,6 +65,23 @@ theorem bufferRef (agreed : Agrees heap left right) {τ : CellTy} {buffer : Buff
     LanguageCompiler.bufferRef left buffer = LanguageCompiler.bufferRef right buffer := by
   simp only [LanguageCompiler.bufferRef, agreed rooted]
 
+/-- Stored tail links use their actual retained placements. Backward links make
+all referenced identifiers part of the same existing object domain. -/
+theorem heapObjectWords {heapLimit : Nat} {target : Source.State w}
+    (agreed : Agrees heap left right) (represented : HeapRep left heapLimit heap target)
+    {object : Nat} {stored : HeapObject} (found : heap.objects[object]? = some stored) :
+    LanguageCompiler.heapObjectWords left stored =
+      LanguageCompiler.heapObjectWords right stored := by
+  cases stored with
+  | buffer kind values => rfl
+  | node kind head tail =>
+      cases tail with
+      | none => rfl
+      | some tail =>
+          have older := represented.backward (Heap.node?_eq_some_iff.mpr found)
+          have present := (Array.getElem?_eq_some_iff.mp found).choose
+          simp only [LanguageCompiler.heapObjectWords, agreed (older.trans present)]
+
 /-- Agreement preserves the mathematical observation of each actual field. -/
 theorem valueField (agreed : Agrees heap left right) {τ : Ty} {value : Value τ}
     (rooted : ValueRooted heap value) (i : Fin (fieldCount τ)) :
@@ -72,7 +89,7 @@ theorem valueField (agreed : Agrees heap left right) {τ : Ty} {value : Value τ
   induction τ with
   | nat | bool => rfl
   | unit => exact Fin.elim0 i
-  | buffer kind =>
+  | buffer kind | node kind =>
       simp only [LanguageCompiler.valueField, agreed rooted]
   | prod first second ihFirst ihSecond =>
       refine Fin.addCases ?_ ?_ i
@@ -135,14 +152,17 @@ unallocated identifiers. No memory contents, ranges or separation facts change. 
 theorem HeapRep.placement {heap : Complexity.Language.Heap} {left right : Nat → Word w}
     {target : Source.State w} (represented : HeapRep left heapLimit heap target)
     (agreed : Placement.Agrees heap left right) : HeapRep right heapLimit heap target := by
-  refine ⟨?_, represented.ranges, ?_⟩
-  · intro τ object values found
-    rw [← agreed (Complexity.Language.Heap.object_lt_size found)]
-    exact represented.objects found
-  · intro τ σ object other values otherValues found foundOther different
+  refine ⟨?_, represented.fit, ?_, represented.backward⟩
+  · intro object stored found
+    rw [← agreed (Array.getElem?_eq_some_iff.mp found).choose,
+      ← agreed.heapObjectWords represented found]
+    exact represented.stored found
+  · intro object other stored otherStored found foundOther different
       index bound otherIndex otherBound
-    rw [← agreed (Complexity.Language.Heap.object_lt_size found),
-      ← agreed (Complexity.Language.Heap.object_lt_size foundOther)]
-    exact represented.separated found foundOther different index bound otherIndex otherBound
+    rw [← agreed (Array.getElem?_eq_some_iff.mp found).choose,
+      ← agreed (Array.getElem?_eq_some_iff.mp foundOther).choose]
+    exact represented.disjoint found foundOther different index
+      (by simpa only [agreed.heapObjectWords represented found] using bound) otherIndex
+      (by simpa only [agreed.heapObjectWords represented foundOther] using otherBound)
 
 end Ram.LanguageCompiler

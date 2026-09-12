@@ -27,7 +27,7 @@ theorem objects_prefix_alloc (heap : Heap) {τ : CellTy} (length : Nat)
     (initial : CellValue τ) :
     List.IsPrefix heap.objects.toList (heap.alloc length initial).2.objects.toList := by
   simpa only [alloc_objects, Array.toList_push] using
-    (List.prefix_append heap.objects.toList [⟨τ, Array.replicate length initial⟩])
+    (List.prefix_append heap.objects.toList [.buffer τ (Array.replicate length initial)])
 
 /-- A native object-array prefix preserves the exact typed lookup at every
 old identifier, including a failed lookup caused by a different stored type. -/
@@ -42,6 +42,20 @@ theorem object?_eq_of_prefix {initial finish : Heap} {τ : CellTy} {object : Nat
   have same : finish.objects[object]? = initial.objects[object]? := by
     simpa only [Array.getElem?_toList] using lookup
   simp only [object?, same]
+
+/-- An exact object prefix also preserves node lookup, including an absent
+node or a stored object with a different kind. -/
+theorem node?_eq_of_prefix {initial finish : Heap} {τ : CellTy} {object : Nat}
+    (extension : List.IsPrefix initial.objects.toList finish.objects.toList)
+    (bound : object < initial.objects.size) :
+    finish.node? τ object = initial.node? τ object := by
+  obtain ⟨suffix, appended⟩ := extension
+  have lookup : finish.objects.toList[object]? = initial.objects.toList[object]? := by
+    rw [← appended, List.getElem?_append_left (l₁ := initial.objects.toList) (by
+      simpa only [Array.length_toList] using bound)]
+  have same : finish.objects[object]? = initial.objects[object]? := by
+    simpa only [Array.getElem?_toList] using lookup
+  simp only [node?, same]
 
 end Heap
 

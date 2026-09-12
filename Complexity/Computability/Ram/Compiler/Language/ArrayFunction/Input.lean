@@ -120,18 +120,16 @@ theorem inputArgs_fits {xs : Array Nat} {w : Nat}
 theorem inputArgs_rooted (xs : Array Nat) : (inputArgs xs).Rooted (inputHeap xs) := by
   simp [inputArgs, Env.Rooted.cons_iff, ValueRooted, Buffer.Rooted, inputBuffer, inputHeap]
 
-private theorem inputHeap_object_eq {xs : Array Nat} {kind : CellTy} {object : Nat}
-    {values : Array (CellValue kind)}
-    (found : (inputHeap xs).object? kind object = some values) :
-    object = 0 ∧ (⟨kind, values⟩ : HeapObject) = ⟨.nat, xs⟩ := by
-  have bound := Heap.object_lt_size found
-  have zero : object = 0 := by
-    change object < 1 at bound
+private theorem inputHeap_object_eq {xs : Array Nat} {id : Nat} {object : HeapObject}
+    (found : (inputHeap xs).objects[id]? = some object) :
+    id = 0 ∧ object = .buffer .nat xs := by
+  have bound := (Array.getElem?_eq_some_iff.mp found).choose
+  have zero : id = 0 := by
+    change id < 1 at bound
     omega
   refine ⟨zero, ?_⟩
-  subst object
-  have same := Heap.object?_eq_some_iff.mp found
-  simpa [inputHeap] using same.symm
+  subst id
+  simpa [inputHeap] using found.symm
 
 private theorem placement_toNat {xs : Array Nat} {w : Nat}
     (width : 1 + inputWordWidth xs ≤ w) (object : Nat) :
@@ -170,36 +168,31 @@ arena cursor. This establishes initialization without assuming candidate behavio
 theorem input_arenaRep {xs : Array Nat} {w : Nat}
     (width : 1 + inputWordWidth xs ≤ w) :
     ArenaRep (placement w) (cursor xs) (heapLimit w) (inputHeap xs) (entry w xs) := by
-  refine ⟨⟨?_, ?_, ?_⟩, by unfold cursor; omega,
+  refine ⟨⟨?_, ?_, ?_, ?_⟩, by unfold cursor; omega,
     cursor_le_heapLimit width, heapLimit_lt_word (width_pos width), ?_, ?_⟩
-  · intro kind object values found
-    obtain ⟨rfl, same⟩ := inputHeap_object_eq found
-    have kindEq : kind = .nat := congrArg Sigma.fst same
-    subst kind
-    have valuesEq : values = xs := by simpa only [Sigma.mk.inj_iff, heq_eq_eq, true_and] using same
-    subst values
+  · intro id object found
+    obtain ⟨rfl, rfl⟩ := inputHeap_object_eq found
     exact input_arrayAt width
-  · intro kind object values found index bound
-    obtain ⟨rfl, same⟩ := inputHeap_object_eq found
-    have kindEq : kind = .nat := congrArg Sigma.fst same
-    subst kind
-    have valuesEq : values = xs := by simpa only [Sigma.mk.inj_iff, heq_eq_eq, true_and] using same
-    subst values
+  · intro id object found
+    obtain ⟨rfl, rfl⟩ := inputHeap_object_eq found
+    intro index bound
     exact cell_lt_word width index bound
-  · intro kind otherKind object other values otherValues found otherFound different
+  · intro id other object otherObject found otherFound different
     exact (different ((inputHeap_object_eq found).1.trans
       (inputHeap_object_eq otherFound).1.symm)).elim
+  · intro kind id head tail found
+    have impossible := (inputHeap_object_eq (Heap.node?_eq_some_iff.mp found)).2
+    cases impossible
   · simp [entry]
-  · intro kind object values found index bound
-    obtain ⟨rfl, same⟩ := inputHeap_object_eq found
-    have kindEq : kind = .nat := congrArg Sigma.fst same
-    subst kind
-    have valuesEq : values = xs := by simpa only [Sigma.mk.inj_iff, heq_eq_eq, true_and] using same
-    subst values
-    have address := (input_arrayAt width).1.addr_toNat (by simpa [objectWords] using bound)
+  · intro id object found index bound
+    obtain ⟨rfl, rfl⟩ := inputHeap_object_eq found
+    have inBounds : index < xs.size := by
+      simpa only [heapObjectWords_buffer_size] using bound
+    have address := (input_arrayAt width).1.addr_toNat
+      (by simpa only [objectWords, Array.length_toList, Array.size_map] using inBounds)
     rw [placement_toNat width] at address
     rw [address]
     unfold cursor
-    omega
+    constructor <;> omega
 
 end Ram.LanguageCompiler.ArrayFunction

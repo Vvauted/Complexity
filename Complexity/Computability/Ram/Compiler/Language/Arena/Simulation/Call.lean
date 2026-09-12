@@ -119,7 +119,7 @@ theorem callReturn
     rooted.mono callee.heap_shapeExtends
   have continuationRooted : (Complexity.Language.State.cons value
       (entry.restore calleeFinish)).locals.Rooted calleeFinish.heap :=
-    callerRooted.cons value (callee.returned_rooted argumentsRooted)
+    callerRooted.cons value (callee.returned_rooted argumentsRooted arena.heapRep.node_backward)
   have receivedArena : ArenaRep calleePlacement calleeCursor heapLimit calleeFinish.heap
       (calleeTarget.setRegs (valueRegs signatures[fn].result next)
         (valueWords calleePlacement value)) :=

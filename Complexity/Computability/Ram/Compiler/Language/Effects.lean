@@ -35,9 +35,9 @@ the same property for the complete program's bodies when using a frame theorem. 
 def NoHeapWrites {signatures : List Signature} {Γ : List Ty} {result : Ty} :
     Complexity.Language.Stmt signatures Γ result → Prop
   | .skip | .assign .. | .ret _ => True
-  | .letPrim _ body | .read _ _ body | .slice _ _ _ body | .call _ _ body =>
+  | .letPrim _ body | .read _ _ body | .readNode _ body | .slice _ _ _ body | .call _ _ body =>
       NoHeapWrites body
-  | .write .. | .alloc .. | .scope _ => False
+  | .write .. | .consNode .. | .alloc .. | .scope _ => False
   | .seq first second => NoHeapWrites first ∧ NoHeapWrites second
   | .ite _ yes no => NoHeapWrites yes ∧ NoHeapWrites no
   | .matchOption _ noneBranch someBranch => NoHeapWrites noneBranch ∧ NoHeapWrites someBranch
@@ -84,6 +84,10 @@ theorem lowerStmtCore_noSharedWrites {signatures : List Signature} {Γ : List Ty
   | read buffer index body ih =>
     intro condition
     exact ⟨trivial, ih _ _ _ _ condition⟩
+  | readNode ref body ih =>
+    intro condition
+    exact ⟨⟨trivial, trivial, trivial⟩, ih _ _ _ _ condition⟩
+  | consNode head tail body ih => exact False.elim
   | write buffer index value => exact False.elim
   | slice buffer offset length body ih =>
     intro condition
@@ -166,6 +170,19 @@ theorem lowerRead_noIOWrites (layout : RegisterMap Γ) (dst : Reg)
     (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat) :
     (lowerRead layout dst buffer index).NoIOWrites := trivial
 
+/-- Node fields are read from the shared heap, not either input/output stream. -/
+theorem lowerReadNode_noIOWrites (layout : RegisterMap Γ) (dst : Reg)
+    (ref : Atom Γ (.node kind)) : (lowerReadNode layout dst ref).NoIOWrites :=
+  ⟨trivial, trivial, trivial⟩
+
+/-- Allocating a node updates shared memory but neither consumes input nor
+emits output. Its operand captures are ordinary local field copies. -/
+theorem lowerConsNode_noIOWrites (layout : RegisterMap Γ) (next : Reg)
+    (head : Atom Γ kind.toTy) (tail : Atom Γ (.option (.node kind))) :
+    (lowerConsNode layout next head tail).NoIOWrites := by
+  refine ⟨copyFields_noIOWrites _ _, ?_⟩
+  simp [Source.Arena.Node.Registers.allocate, Ram.Stmt.NoIOWrites]
+
 /-- Writing a buffer cell changes the heap, not either stream. -/
 theorem lowerWrite_noIOWrites (layout : RegisterMap Γ) (buffer : Atom Γ (.buffer kind))
     (index : Atom Γ .nat) (value : Atom Γ kind.toTy) :
@@ -187,6 +204,8 @@ theorem lowerStmtCore_noIOWrites {signatures : List Signature} {Γ : List Ty} {r
   | assign target value => exact lowerAssign_noIOWrites layout target value
   | letPrim value body ih => exact ⟨lowerPrim_noIOWrites _ _ _, ih _ _ _ _⟩
   | read buffer index body ih => exact ⟨lowerRead_noIOWrites _ _ _ _, ih _ _ _ _⟩
+  | readNode ref body ih => exact ⟨lowerReadNode_noIOWrites _ _ _, ih _ _ _ _⟩
+  | consNode head tail body ih => exact ⟨lowerConsNode_noIOWrites _ _ _ _, ih _ _ _ _⟩
   | write buffer index value => exact lowerWrite_noIOWrites _ _ _ _
   | slice buffer offset length body ih =>
       exact ⟨lowerSlice_noIOWrites _ _ _ _ _, ih _ _ _ _⟩
@@ -243,6 +262,38 @@ theorem copyFields_writtenRegs (dst : Reg) (fields : List Expr) :
           ext r
           simp [Ram.Stmt.writtenRegs, List.range'_succ]
 
+/-- Node construction writes exactly its returned base and three captured
+operand slots. Actual shared-memory allocation is not excluded by this fact. -/
+theorem lowerConsNode_mem_writtenRegs (layout : RegisterMap Γ) (next : Reg)
+    (head : Atom Γ kind.toTy) (tail : Atom Γ (.option (.node kind))) (slot : Reg) :
+    slot ∈ (lowerConsNode layout next head tail).writtenRegs ↔
+      next ≤ slot ∧ slot < next + 4 := by
+  simp only [Reg] at *
+  have fields : fieldCount kind.toTy + fieldCount (.option (.node kind)) = 3 := by
+    cases kind <;> rfl
+  simp only [lowerConsNode, Ram.Stmt.writtenRegs, copyFields_writtenRegs,
+    List.length_append, atomExprs_length, fields]
+  simp [Source.Arena.Node.Registers.allocate, Ram.Stmt.writtenRegs,
+    Source.Arena.Node.inlineRegisters, List.mem_range'_1]
+  simp only [fieldCount] at fields
+  omega
+
+/-- The four fresh node-construction slots protect every older local and every
+slot beyond that interval, independently of capacity and elapsed-time proofs. -/
+theorem lowerConsNode_regs_eq {program : Ram.Program} {heapLimit depth : Nat}
+    {layout : RegisterMap Γ} {next : Reg} {head : Atom Γ kind.toTy}
+    {tail : Atom Γ (.option (.node kind))} {entry finish : Source.State w}
+    (execution : Source.SafeExec program heapLimit depth
+      (lowerConsNode layout next head tail) entry finish)
+    {slot : Reg} (outside : slot < next ∨ next + 4 ≤ slot) :
+    finish.regs slot = entry.regs slot := by
+  apply execution.regs_eq_of_not_mem_writtenRegs
+  rw [lowerConsNode_mem_writtenRegs]
+  rintro ⟨lower, upper⟩
+  rcases outside with below | above
+  · exact Nat.not_lt_of_ge lower below
+  · exact Nat.not_lt_of_ge above upper
+
 /-- A primitive writes only its actual destination tuple, including the empty
 tuple for Unit. Register effects do not require a value-range premise. -/
 theorem lowerPrim_writtenRegs (layout : RegisterMap Γ) (dst : Reg) (prim : Prim Γ τ) :
@@ -290,6 +341,26 @@ theorem lowerStmtCore_not_mem_writtenRegs {signatures : List Signature} {Γ : Li
       exact ih _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
         (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
         outsideResult differentFlag
+  | readNode ref body ih =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨not_or.mpr ⟨Nat.ne_of_lt before, not_or.mpr ⟨
+        Nat.ne_of_lt (Nat.lt_of_lt_of_le before (Nat.le_add_right next 1)),
+        Nat.ne_of_lt (Nat.lt_of_lt_of_le before (Nat.le_add_right next 2))⟩⟩, ?_⟩
+      exact ih _ _ _ _ (regular.extend bounded) (RegisterMap.extend_bounded bounded)
+        (avoids.extend before) (Nat.lt_of_lt_of_le before (Nat.le_add_right _ _))
+        outsideResult differentFlag
+  | @consNode Γ result kind head tail body ih =>
+      intro regular bounded avoids before outsideResult differentFlag
+      refine not_or.mpr ⟨?_, ?_⟩
+      · rw [lowerConsNode_mem_writtenRegs]
+        exact fun written => Nat.not_lt_of_ge written.1 before
+      · have extended : RegisterMap.Bounded
+            (RegisterMap.extend layout (.node kind) next) (next + 4) := by
+          intro τ value index
+          have bound := RegisterMap.extend_bounded (τ := .node kind) bounded value index
+          exact Nat.lt_of_lt_of_le bound (by simp [fieldCount])
+        exact ih _ _ _ _ (regular.extend bounded) extended (avoids.extend before)
+          (Nat.lt_of_lt_of_le before (Nat.le_add_right next 4)) outsideResult differentFlag
   | write buffer index value =>
       intros
       simp [lowerStmtCore, lowerWrite, Ram.Stmt.writtenRegs]

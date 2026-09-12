@@ -9,8 +9,8 @@ import Complexity.Language.Heap
 /-!
 # A typed source language with shared borrowed buffers
 
-Source values are ordinary natural numbers, booleans, unit, borrowed buffers and
-nested products and options of these values. Variables refer
+Source values are ordinary natural numbers, booleans, unit, borrowed buffers,
+typed immutable-node references and nested products and options of these values. Variables refer
 to lexical bindings in a typed context, not to machine registers. Administrative
 normal form separates atoms from primitive operations: arithmetic and comparison
 results are explicitly bound before use. A primitive is a syntax constructor,
@@ -37,6 +37,7 @@ inductive Ty where
   | bool
   | unit
   | buffer (kind : CellTy)
+  | node (kind : CellTy)
   | prod (left right : Ty)
   | option (value : Ty)
   deriving DecidableEq, Repr
@@ -65,6 +66,7 @@ abbrev Value : Ty → Type
   | .bool => Bool
   | .unit => Unit
   | .buffer kind => Buffer kind
+  | .node kind => NodeRef kind
   | .prod left right => Value left × Value right
   | .option value => Option (Value value)
 
@@ -246,6 +248,13 @@ inductive Stmt (signatures : List Signature) : List Ty → Ty → Type where
   | read {Γ : List Ty} {result : Ty} {kind : CellTy}
       (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)
       (continuation : Stmt signatures (kind.toTy :: Γ) result) : Stmt signatures Γ result
+  | readNode {Γ : List Ty} {result : Ty} {kind : CellTy}
+      (ref : Atom Γ (.node kind))
+      (continuation : Stmt signatures
+        (.prod kind.toTy (.option (.node kind)) :: Γ) result) : Stmt signatures Γ result
+  | consNode {Γ : List Ty} {result : Ty} {kind : CellTy}
+      (head : Atom Γ kind.toTy) (tail : Atom Γ (.option (.node kind)))
+      (continuation : Stmt signatures (.node kind :: Γ) result) : Stmt signatures Γ result
   | write {Γ : List Ty} {result : Ty} {kind : CellTy}
       (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat) (value : Atom Γ kind.toTy) :
       Stmt signatures Γ result
@@ -283,6 +292,8 @@ conservatively rejects assignments even to a binding that will leave scope. -/
   | .assign _ _ => False
   | .letPrim _ continuation => continuation.NoLocalWrites
   | .read _ _ continuation => continuation.NoLocalWrites
+  | .readNode _ continuation => continuation.NoLocalWrites
+  | .consNode _ _ continuation => continuation.NoLocalWrites
   | .write _ _ _ => True
   | .slice _ _ _ continuation => continuation.NoLocalWrites
   | .alloc _ _ continuation => continuation.NoLocalWrites

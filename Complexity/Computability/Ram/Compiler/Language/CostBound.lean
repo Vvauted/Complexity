@@ -124,6 +124,50 @@ theorem read_uniform {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : 
     StmtCostBound program (.read buffer index continuation) entry (readCodeSize + bound) :=
   read_of_success (fun value _ => body value)
 
+/-- A node read charges its three actual field loads and continues with the
+head and shared tail returned by the current heap's typed lookup. -/
+theorem readNode {kind : CellTy} {ref : Atom Γ (.node kind)}
+    {continuation : Complexity.Language.Stmt signatures
+      (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+    {nextBound : CellValue kind → Option (NodeRef kind) → Nat}
+    (body : ∀ head tail,
+      entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) →
+      StmtCostBound program continuation
+        (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) entry) (nextBound head tail))
+    (combine : ∀ head tail,
+      entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) →
+      readNodeCodeSize + nextBound head tail ≤ bound) :
+    StmtCostBound program (.readNode ref continuation) entry bound := by
+  intro w depth finish control execution steps cost
+  cases cost with
+  | @readNode Γ result kind depth ref continuation entry finish control head tail
+      found valueFits bodyExec steps bodyCost =>
+      exact (Nat.add_le_add_left (body head tail found bodyExec bodyCost) _).trans
+        (combine head tail found)
+
+/-- A uniform node-read continuation bound may retain the actual lookup equation. -/
+theorem readNode_of_success {kind : CellTy} {ref : Atom Γ (.node kind)}
+    {continuation : Complexity.Language.Stmt signatures
+      (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+    (body : ∀ head tail,
+      entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail) →
+      StmtCostBound program continuation
+        (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) entry) bound) :
+    StmtCostBound program (.readNode ref continuation) entry (readNodeCodeSize + bound) :=
+  readNode (nextBound := fun _ _ => bound) body (fun _ _ _ => Nat.le_refl _)
+
+/-- A uniform node-read bound needs no extra contents or lifetime contract. -/
+theorem readNode_uniform {kind : CellTy} {ref : Atom Γ (.node kind)}
+    {continuation : Complexity.Language.Stmt signatures
+      (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+    (body : ∀ head tail, StmtCostBound program continuation
+      (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+        (kind.toValue head, tail) entry) bound) :
+    StmtCostBound program (.readNode ref continuation) entry (readNodeCodeSize + bound) :=
+  readNode_of_success (fun head tail _ => body head tail)
+
 /-- An actual successful store pays for its emitted address, value and store
 instructions. Its changed heap is already part of the observed execution. -/
 theorem write {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Atom Γ .nat)

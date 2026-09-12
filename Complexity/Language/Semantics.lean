@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.State
 import Complexity.Language.Heap.Allocation
+import Complexity.Language.Heap.Node
 import Complexity.Language.Rooted
 import Complexity.Language.Heap.Restriction
 
@@ -28,6 +29,9 @@ Unit must be returned explicitly and is not a default for a missing return.
 Reads and writes operate on the current shared heap. A failed operation leaves
 its entry state unchanged, without rolling back earlier effects. Slices check
 their relative extent and bind another view of the same object, not a snapshot.
+Node reads bind the stored head and identical optional tail from an actual
+typed lookup. They do not traverse or validate the tail; an absent or wrongly
+typed node faults without changing the heap.
 Assignment evaluates its right-hand side in the current locals once, then updates
 the selected local without changing the heap. Scope exit preserves assignments
 to outer locals; caller restoration is lexical, not heap rollback.
@@ -143,6 +147,32 @@ inductive Exec {signatures : List Signature} (program : Program signatures) :
       {entry : State Γ} {error : Heap.Error}
       (failed : entry.heap.read (buffer.eval entry.locals) (index.eval entry.locals) = .error error) :
       Exec program (.read buffer index continuation) entry entry (.fault (.heap error))
+  | readNode {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {ref : Atom Γ (.node kind)}
+      {continuation : Stmt signatures (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+      {entry : State Γ}
+      {finish : State (.prod kind.toTy (.option (.node kind)) :: Γ)}
+      {control : Control result} {head : CellValue kind} {tail : Option (NodeRef kind)}
+      (loaded : entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail))
+      (body : Exec program continuation (State.cons (kind.toValue head, tail) entry)
+        finish control) :
+      Exec program (.readNode ref continuation) entry finish.tail control
+  | readNodeFault {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {ref : Atom Γ (.node kind)}
+      {continuation : Stmt signatures (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+      {entry : State Γ}
+      (missing : entry.heap.node? kind (ref.eval entry.locals).object = none) :
+      Exec program (.readNode ref continuation) entry entry (.fault (.heap .invalidObject))
+  | consNode {Γ : List Ty} {result : Ty} {kind : CellTy}
+      {head : Atom Γ kind.toTy} {tail : Atom Γ (.option (.node kind))}
+      {continuation : Stmt signatures (.node kind :: Γ) result}
+      {entry : State Γ} {finish : State (.node kind :: Γ)} {control : Control result}
+      (body : Exec program continuation
+        (let allocated := entry.heap.cons (kind.ofValue (head.eval entry.locals))
+          (tail.eval entry.locals)
+         State.cons allocated.1 ⟨entry.locals, allocated.2⟩)
+        finish control) :
+      Exec program (.consNode head tail continuation) entry finish.tail control
   | write {Γ : List Ty} {result : Ty} {kind : CellTy}
       {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
       {entry : State Γ} {heap : Heap}
@@ -326,6 +356,15 @@ theorem locals_eq {signatures : List Signature} {program : Program signatures}
       simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
         congrArg Env.tail (ih unchanged)
   | readFault => intro _; rfl
+  | readNode loaded body ih =>
+      intro unchanged
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
+        congrArg Env.tail (ih unchanged)
+  | readNodeFault => intro _; rfl
+  | consNode body ih =>
+      intro unchanged
+      simpa only [State.locals_tail, State.locals_cons, Env.tail_cons] using
+        congrArg Env.tail (ih unchanged)
   | write => intro _; rfl
   | writeFault => intro _; rfl
   | slice sliced body ih =>
@@ -404,6 +443,17 @@ theorem deterministic {signatures : List Signature} {program : Program signature
       | readFault failed' =>
           cases Except.error.inj (failed.symm.trans failed')
           exact ⟨rfl, rfl⟩
+  | readNode loaded body ih =>
+      cases second with
+      | readNode loaded' body' =>
+          obtain ⟨rfl, rfl⟩ := Prod.mk.inj (Option.some.inj (loaded.symm.trans loaded'))
+          obtain ⟨rfl, rfl⟩ := ih body'
+          exact ⟨rfl, rfl⟩
+      | readNodeFault missing => cases loaded.symm.trans missing
+  | readNodeFault missing =>
+      cases second with
+      | readNode loaded body => cases missing.symm.trans loaded
+      | readNodeFault => exact ⟨rfl, rfl⟩
   | write written =>
       cases second with
       | write written' =>
@@ -432,6 +482,11 @@ theorem deterministic {signatures : List Signature} {program : Program signature
   | alloc body ih =>
       cases second with
       | alloc body' =>
+          obtain ⟨rfl, rfl⟩ := ih body'
+          exact ⟨rfl, rfl⟩
+  | consNode body ih =>
+      cases second with
+      | consNode body' =>
           obtain ⟨rfl, rfl⟩ := ih body'
           exact ⟨rfl, rfl⟩
   | scope body safe ih =>

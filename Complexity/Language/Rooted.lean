@@ -9,14 +9,33 @@ import Complexity.Language.Heap.Shape
 /-!
 # Existing object roots in source values and environments
 
-Rootedness only says that a buffer's object identifier denotes an existing
-slot. It imposes no type, extent, scalar-range or separation condition. In
-particular, rooted buffers may still fail a heap access. Scalars carry no
-roots. Products retain both fields' roots, and options retain roots only in an
-actual payload. These source predicates contain no machine addresses or runtime metadata.
+Rootedness only says that a buffer or node reference's object identifier denotes
+an existing slot. It imposes no stored type, extent, scalar-range or separation
+condition. A rooted node reference need not denote a correctly typed node or a
+valid list; preserving a reachable chain additionally needs its contents and
+the heap's link invariant. Rooted buffers may likewise fail a heap access.
+Scalars carry no roots. Products retain both fields' roots, and options retain
+roots only in an actual payload. These source predicates contain no machine
+addresses or runtime metadata.
 -/
 
 namespace Complexity.Language
+
+namespace NodeRef
+
+/-- A node reference names an existing object slot. This does not assert a
+successful typed node lookup, valid tail or finite linked-list contents. -/
+def Rooted {τ : CellTy} (ref : NodeRef τ) (heap : Heap) : Prop :=
+  ref.object < heap.objects.size
+
+/-- Heap shape growth preserves the referenced identity, even when its stored
+kind is invalid. No claim about its reachable tail follows from rootedness. -/
+theorem Rooted.mono {τ : CellTy} {ref : NodeRef τ} {initial finish : Heap}
+    (rooted : ref.Rooted initial) (growth : initial.ShapeExtends finish) :
+    ref.Rooted finish :=
+  Nat.lt_of_lt_of_le rooted growth.size_le
+
+end NodeRef
 
 /-- Every object identifier carried by a source value already exists. -/
 @[simp] def ValueRooted (heap : Heap) : {τ : Ty} → Value τ → Prop
@@ -24,6 +43,7 @@ namespace Complexity.Language
   | .bool, _ => True
   | .unit, _ => True
   | .buffer _, buffer => buffer.Rooted heap
+  | .node _, ref => ref.Rooted heap
   | .prod _ _, value => ValueRooted heap value.1 ∧ ValueRooted heap value.2
   | .option _, none => True
   | .option _, some value => ValueRooted heap value
@@ -35,6 +55,7 @@ theorem ValueRooted.mono {initial finish : Heap} {τ : Ty} {value : Value τ}
   induction τ with
   | nat | bool | unit => trivial
   | buffer kind => exact Buffer.Rooted.mono rooted growth
+  | node kind => exact NodeRef.Rooted.mono rooted growth
   | prod left right ihLeft ihRight =>
       exact ⟨ihLeft rooted.1, ihRight rooted.2⟩
   | option τ ih =>
@@ -44,7 +65,7 @@ theorem ValueRooted.mono {initial finish : Heap} {τ : Ty} {value : Value τ}
 
 namespace Env
 
-/-- All buffer-valued bindings refer to existing object slots. -/
+/-- All object references carried by bindings name existing object slots. -/
 def Rooted (env : Env Γ) (heap : Heap) : Prop :=
   ∀ {τ} (v : Var Γ τ), ValueRooted heap (env.get v)
 

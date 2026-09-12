@@ -41,7 +41,7 @@ theorem ArenaRep.of_observes {w cursor heapLimit locals : Nat}
     (observed : Source.State.Observes heapLimit locals source target) :
     ArenaRep placement cursor heapLimit heap (Source.State.ofRam target) := by
   refine ⟨arena.heapRep.of_observes observed, arena.cursor_pos, arena.cursor_le,
-    arena.limit_lt, ?_, arena.reserved⟩
+    arena.limit_lt, ?_, arena.storedReserved⟩
   have positive : 0 < heapLimit := lt_of_lt_of_le arena.cursor_pos arena.cursor_le
   exact (observed.heap (0 : Word w) (by simpa only [BitVec.toNat_zero] using positive)).symm.trans
     arena.cursor_eq

@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.Eval.Locals
 import Complexity.Language.Eval.Composition
+import Complexity.Language.Eval.Node.Verification
 import Mathlib.Logic.Equiv.Prod
 
 /-!
@@ -161,6 +162,38 @@ theorem observe_alloc {kind : CellTy} (length : Atom Γ .nat)
   rcases outcome with ⟨⟨scopedLocals, finalHeap⟩, control⟩
   rfl
 
+/-- Node construction exposes the existing native heap action in ordinary
+local coordinates. The scoped body receives the actual fresh reference; every
+exit keeps its final heap and drops only that reference's lexical binding. -/
+theorem observe_consNode {kind : CellTy} (head : Atom Γ kind.toTy)
+    (tail : Atom Γ (.option (.node kind)))
+    (continuation : Stmt signatures (.node kind :: Γ) result) (locals : Locals) :
+    observe view (.consNode head tail continuation) program locals = (do
+      let allocated ← (NodeRef.consM (kind.ofValue (head.eval (view.symm locals)))
+        (tail.eval (view.symm locals))).run
+      match allocated with
+      | .ok ref =>
+          let (control, scopedValues) ←
+            observe (Env.equivProd.trans (Equiv.prodCongr (Equiv.refl _) view)) continuation
+              program (ref, locals)
+          pure (control, scopedValues.2)
+      | .error error => pure (.fault error, locals)) := by
+  funext heap
+  simp only [observe, action, eval_consNode, Prod.swap, NodeRef.consM, ExceptT.run,
+    Bind.bind, Pure.pure, StateT.bind,
+    Equiv.trans_apply, Equiv.symm_trans_apply, Equiv.prodCongr_apply,
+    Equiv.prodCongr_symm,
+    State.cons, State.tail,
+    ← Part.bind_some_eq_map, Part.bind_assoc, Part.bind_some]
+  apply congrArg ((continuation.eval program
+    ⟨Env.cons (heap.cons (kind.ofValue (head.eval (view.symm locals)))
+      (tail.eval (view.symm locals))).1 (view.symm locals),
+      (heap.cons (kind.ofValue (head.eval (view.symm locals)))
+        (tail.eval (view.symm locals))).2⟩).bind)
+  funext outcome
+  rcases outcome with ⟨⟨scopedLocals, finalHeap⟩, control⟩
+  rfl
+
 /-- Allocation-scope exit retains all actual ordinary locals and applies the
 same root check to their complete source environment. The returned control is
 not caught: the surrounding observation still distinguishes return from normal
@@ -254,6 +287,41 @@ theorem observe_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : 
       rfl
   | error error =>
       simp only [Buffer.readM, ExceptT.run, loaded, Bind.bind, Pure.pure, StateT.bind,
+        StateT.pure, Part.bind_some, Part.map_some, Prod.swap, Equiv.apply_symm_apply]
+
+/-- One actual node read binds the stored head and shared tail in ordinary
+local coordinates. Failure keeps the current locals and heap and skips the
+body; successful scope exit removes only the pair's lexical binding. -/
+theorem observe_readNode {kind : CellTy} (ref : Atom Γ (.node kind))
+    (continuation : Stmt signatures (.prod kind.toTy (.option (.node kind)) :: Γ) result)
+    (locals : Locals) :
+    observe view (.readNode ref continuation) program locals = (do
+      let loaded ← ((ref.eval (view.symm locals)).readM).run
+      match loaded with
+      | .ok contents =>
+          let (control, scopedValues) ←
+            observe (Env.equivProd.trans (Equiv.prodCongr (Equiv.refl _) view)) continuation
+              program ((kind.toValue contents.1, contents.2), locals)
+          pure (control, scopedValues.2)
+      | .error error => pure (.fault error, locals)) := by
+  funext heap
+  simp only [observe, action, eval_readNode]
+  cases found : heap.node? kind (ref.eval (view.symm locals)).object with
+  | some contents =>
+      rcases contents with ⟨head, tail⟩
+      simp only [observe, action, Prod.swap, NodeRef.readM, ExceptT.run, found,
+        Bind.bind, Pure.pure, StateT.bind,
+        Equiv.trans_apply, Equiv.symm_trans_apply, Equiv.prodCongr_apply,
+        Equiv.prodCongr_symm,
+        State.cons, State.tail,
+        ← Part.bind_some_eq_map, Part.bind_assoc, Part.bind_some]
+      apply congrArg ((continuation.eval program
+        ⟨Env.cons (kind.toValue head, tail) (view.symm locals), heap⟩).bind)
+      funext outcome
+      rcases outcome with ⟨⟨scopedLocals, finalHeap⟩, control⟩
+      rfl
+  | none =>
+      simp only [NodeRef.readM, ExceptT.run, found, Bind.bind, Pure.pure, StateT.bind,
         StateT.pure, Part.bind_some, Part.map_some, Prod.swap, Equiv.apply_symm_apply]
 
 /-- A write observes the native action's actual updated heap. Both success and

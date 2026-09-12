@@ -6,7 +6,10 @@ Authors: vvauted
 import Examples.Language.Traversal
 import Complexity.Control.Part.StateT
 import Complexity.Computability.Ram.Compiler.Language.CostExecution
+import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
+import Complexity.Computability.Ram.Compiler.Language.RepresentedFunction
 import Complexity.Computability.Ram.Compiler.Language.CostBound.Locals
+import Complexity.Computability.Ram.Compiler.Language.LocalsTactic
 import Complexity.Computability.Ram.Compiler.Language.Realization.Loop
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
@@ -49,25 +52,42 @@ theorem increment_costBound :
       (fun _ _ => 10) := by
   ram_source_cost (x)
 
+/-- A uniform guard budget inferred by the existing compiler-derived rules.
+The witness is chosen before the source locals and heap are introduced. -/
+def guardCost : { bound : Nat //
+    ∀ (locals : Implementation.boundedMap_loop1.Locals) (heap : Heap),
+      StmtCostBound Implementation.program Implementation.boundedMap_loop1.Guard
+        ⟨Implementation.boundedMap_loop1.View.symm locals, heap⟩ bound } := ⟨_, by
+  intro locals heap
+  ram_source_cost_step⟩
+
 /-- Guard evaluation includes the current buffer length, comparison and its
-Boolean return. Its bound is uniform in the source locals and current heap. -/
+Boolean return, using the automatically inferred uniform budget. -/
 theorem guard_costBound (locals : Implementation.boundedMap_loop1.Locals) (heap : Heap) :
     StmtCostBound Implementation.program Implementation.boundedMap_loop1.Guard
-      ⟨Implementation.boundedMap_loop1.View.symm locals, heap⟩ 10 := by
-  apply StmtCostBound.mono
-  · ram_source_cost_step
-  · ram_source_cost_step
+      ⟨Implementation.boundedMap_loop1.View.symm locals, heap⟩ guardCost.val :=
+  guardCost.property locals heap
+
+/-- The actual body budget is inferred once from its bindings, read, supplied
+callee certificate, branches and store. No operation-price table is added. -/
+def bodyCost : { bound : Nat //
+    ∀ (locals : Implementation.boundedMap_loop1.Locals) (heap : Heap),
+      StmtCostBound Implementation.program Implementation.boundedMap_loop1.Body
+        ⟨Implementation.boundedMap_loop1.View.symm locals, heap⟩ bound } := ⟨_, by
+  intro locals heap
+  ram_source_cost_step using increment_costBound⟩
 
 /-- A body includes the real read, helper call, selected store and local index
 update. Its uniform bound needs no second contents or termination proof. -/
 theorem body_costBound (locals : Implementation.boundedMap_loop1.Locals) (heap : Heap) :
     StmtCostBound Implementation.program Implementation.boundedMap_loop1.Body
-      ⟨Implementation.boundedMap_loop1.View.symm locals, heap⟩
-      (callCost Implementation.program Implementation.incrementId 10 + 27) := by
-  apply StmtCostBound.mono
-  · ram_source_cost_step using increment_costBound
-  · ram_source_cost_step
-    omega
+      ⟨Implementation.boundedMap_loop1.View.symm locals, heap⟩ bodyCost.val :=
+  bodyCost.property locals heap
+
+/-- The shared linear-loop budget uses the inferred guard and body costs;
+the compiler rule supplies normal-continuation and final-exit charges. -/
+def loopBound (remaining : Nat) : Nat :=
+  StmtCostBound.whileLinearBound guardCost.val bodyCost.val remaining
 
 /-- The real loop has a linear potential: every round pays for its guard,
 body and loop control, and the remaining constant pays for the final false
@@ -77,38 +97,31 @@ theorem loop_costBound (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
     (i : Nat) (heap : Heap) (current : invariant xs limit contents i heap) :
     StmtCostBound Implementation.program Implementation.boundedMap_loop1.Code
       ⟨Implementation.boundedMap_loop1.View.symm (i, xs, limit, ()), heap⟩
-      ((callCost Implementation.program Implementation.incrementId 10 + 47) *
-        (contents.size - i) + 21) := by
-  apply StmtCostBound.while_contract_fixed Implementation.boundedMap_loop1.CaptureView
+      (loopBound (contents.size - i)) := by
+  apply StmtCostBound.while_contract_fixed_linear Implementation.boundedMap_loop1.CaptureView
     Implementation.boundedMap_loop1.guard_preservesCaptures
     Implementation.boundedMap_loop1.body_preservesCaptures (xs, limit, ())
     (guard_contract xs limit contents) (body_contract xs limit contents)
     (fun _ _ _ _ _ ready => ⟨ready.2.2.1, ready.2.2.2.mp rfl⟩)
+    guardCost.val bodyCost.val (fun locals _ => contents.size - locals.1)
     (mutable := (i, ())) (heap := heap)
     (invariant := fun mutable => invariant xs limit contents mutable.1)
-    (guardBound := fun _ _ => 10)
-    (bodyBound := fun _ _ _ _ => callCost Implementation.program Implementation.incrementId 10 + 27)
-    (potential := fun locals _ =>
-      (callCost Implementation.program Implementation.incrementId 10 + 47) *
-        (contents.size - locals.1) + 21)
   · intro mutable heap _
     exact guard_costBound (mutable.1, xs, limit, ()) heap
   · intro mutable heap afterGuard afterHeap _ _
     exact body_costBound (afterGuard.1, xs, limit, ()) afterHeap
   · intro _ _ _ _ _ _ _ _ completed
     exact completed.2.1
-  · intro mutable heap afterGuard afterHeap _ _
-    dsimp only
-    omega
   · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap ⟨l, ⟨⟩⟩ bodyHeap initial ready completed
     have next : l = j + 1 := completed.1.trans (congrArg (· + 1) ready.1)
     have nextBound : l ≤ contents.size := completed.2.1.1
-    have remaining : contents.size - j = contents.size - (j + 1) + 1 := by omega
-    dsimp (config := { failIfUnchanged := false }) only
-    rw [next, remaining, Nat.mul_add, Nat.mul_one]
+    dsimp only
     omega
-  · intro _ _ _ _ _ _ _ _ _ impossible
-    exact False.elim impossible
+  · rintro ⟨j, ⟨⟩⟩ entry ⟨k, ⟨⟩⟩ afterHeap initial ready
+    have inside : k < contents.size := ready.2.2.2.mp rfl
+    have same : k = j := ready.1
+    dsimp only
+    omega
   · exact current
 
 /-- Guard realization only needs the compared natural values and its Boolean
@@ -119,7 +132,7 @@ theorem guard_realizable {w : Nat} (hw : 0 < w) (xs : Buffer .nat) (limit i : Na
       (fun _ => False) (fun _ _ => True)
       ⟨Implementation.boundedMap_loop1.View.symm (i, xs, limit, ()), heap⟩ := by
   have booleanFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
-  rw [Implementation.boundedMap_loop1.view_symm_apply]
+  ram_source_locals Implementation.boundedMap_loop1
   ram_source_realize_step
   all_goals
     first
@@ -148,7 +161,7 @@ theorem body_realizable {w : Nat} (hw : 0 < w) (xs : Buffer .nat) (limit : Nat)
       simpa only [Array.size_mapIdx] using bound
     obtain ⟨finish, written, _⟩ := current.2.write_exists available value
     exact ⟨finish, written⟩
-  rw [Implementation.boundedMap_loop1.view_symm_apply]
+  ram_source_locals Implementation.boundedMap_loop1
   ram_source_realize_step using increment_realizable, increment_total
   all_goals
     simp only [loaded, Except.ok.injEq] at *
@@ -173,12 +186,11 @@ theorem loop_realizable {w : Nat} (hw : 0 < w) (xs : Buffer .nat) (limit : Nat)
   have total : TotalWP Implementation.program Implementation.boundedMap_loop1.Code
       (fun _ => True) (fun _ _ => False)
       ⟨Implementation.boundedMap_loop1.View.symm (i, xs, limit, ()), heap⟩ := by
-    apply (TotalWP.iff_triple_observe Implementation.boundedMap_loop1.CaptureView
-      (locals := ((i, ()), xs, limit, ()))).mpr
-    exact (Stmt.BlockSpec.mono (loop_contract xs limit contents heap)
-      (fun _ _ initial => initial) (fun _ _ _ _ _ _ => True.intro)
-      (fun _ _ _ _ _ _ impossible => impossible)).«at» (i, ()) heap
-        ⟨current, Buffer.PreservesOutside.refl xs heap⟩
+    exact TotalWP.of_blockSpec Implementation.boundedMap_loop1.CaptureView
+      (fun mutable => (mutable, xs, limit, ())) (loop_contract xs limit contents heap)
+      (input := (i, ())) (heap := heap)
+      ⟨current, Buffer.PreservesOutside.refl xs heap⟩
+      (fun _ _ _ => True.intro) (fun _ _ _ impossible => impossible)
   apply RealizationWP.while_contract_fixed_of_total Implementation.boundedMap_loop1.CaptureView
     Implementation.boundedMap_loop1.guard_preservesCaptures
     Implementation.boundedMap_loop1.body_preservesCaptures (xs, limit, ())
@@ -219,24 +231,72 @@ theorem boundedMap_realizable {w : Nat} (hw : 0 < w) (contents : Array Nat)
       · intro value finish impossible
         exact False.elim impossible
 
-/-- The complete body bound adds initialization and the actual final return to
-the loop potential. The supplied source contents are reused solely to identify
-the traversal's already proved state transitions. -/
+/-- Infer the enclosing function's initialization, sequencing and return
+charges around the already proved loop potential. The single numeric witness
+depends only on the input size, not on its contents, handles or calling heap. -/
+private abbrev boundedMapCost (size : Nat) : { bound : Nat //
+    ∀ contents : Array Nat, contents.size = size →
+      FunctionCostBound Implementation.program Implementation.boundedMapId
+        (fun args heap => args.head.Contents heap contents) (fun _ _ => bound) } := ⟨_, by
+  intro contents sameSize
+  ram_source_cost_intro (xs limit)
+  intro heap observed
+  ram_source_cost_step
+  have bound : StmtCostBound Implementation.program Implementation.boundedMap_loop1.Code
+      ⟨Implementation.boundedMap_loop1.View.symm (0, xs, limit, ()), heap⟩
+      (loopBound (contents.size - 0)) :=
+    @loop_costBound xs limit contents 0 heap (invariant_zero xs limit contents observed)
+  simp only [Nat.sub_zero, sameSize] at bound
+  ram_source_locals Implementation.boundedMap_loop1 at bound
+  exact @bound⟩
+
+/-- The inferred complete traversal-body budget, shared by direct and imported
+callers. It follows the actual compiler without duplicating its structural constants. -/
+def boundedMapBodyBound (size : Nat) : Nat := (boundedMapCost size).val
+
+/-- The complete inferred body bound reuses the source contents solely to
+identify the traversal's already proved state transitions. -/
 theorem boundedMap_costBound (contents : Array Nat) :
     FunctionCostBound Implementation.program Implementation.boundedMapId
       (fun args heap => args.head.Contents heap contents)
-      (fun _ _ =>
-        (callCost Implementation.program Implementation.incrementId 10 + 47) * contents.size + 29) := by
-  ram_source_cost (xs limit)
-  · have bound : StmtCostBound Implementation.program Implementation.boundedMap_loop1.Code
-        ⟨Implementation.boundedMap_loop1.View.symm (0, xs, limit, ()), _⟩
-        ((callCost Implementation.program Implementation.incrementId 10 + 47) *
-          (contents.size - 0) + 21) :=
-      @loop_costBound xs limit contents 0 _
-        (invariant_zero xs limit contents ‹xs.Contents _ contents›)
-    simp only [Implementation.boundedMap_loop1.view_symm_apply, Nat.sub_zero] at bound
-    exact @bound
-  · omega
+      (fun _ _ => boundedMapBodyBound contents.size) :=
+  (boundedMapCost contents.size).property contents rfl
+
+/-- The complete invocation budget includes the compiler's outer call and
+final halt exactly once. Its body budget is the inferred traversal certificate. -/
+def boundedMapInvocationBound (size : Nat) : Nat :=
+  Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
+    (lowerFunc Implementation.program Implementation.boundedMapId) (boundedMapBodyBound size) + 1
+
+/-- The compiled traversal returns its ordinary array-map result and preserves
+every disjoint borrowed view in the same actual final heap. The shared typed
+outcome retains source evaluation, halted execution, physical memory and return
+facts; its independent instruction bound describes that very invocation.
+The launch keeps the original word ranges, represented input and two-frame
+capacity, while actual intermediate increments must separately fit. -/
+theorem boundedMap_execute {w heapLimit : Nat} {placement : Nat → Ram.Word w}
+    (xs : Buffer .nat) (limit : Nat) (contents : Array Nat) {heap : Heap}
+    (observed : xs.Contents heap contents)
+    (incrementsFit : ∀ j (hj : j < contents.size), contents[j] + 1 < 2 ^ w)
+    {entry : Ram.Source.State w}
+    (launch : FunctionLaunch Implementation.program Implementation.boundedMapId 1 heapLimit placement
+      (Implementation.boundedMap_args xs limit) heap entry) :
+    ∃ outcome : FunctionExecution Implementation.program Implementation.boundedMapId heapLimit placement
+        (Implementation.boundedMap_args xs limit) heap entry,
+      xs.Contents outcome.heap (contents.map fun x => min (x + 1) limit) ∧
+      xs.PreservesOutside heap outcome.heap ∧
+      outcome.result.steps ≤ boundedMapInvocationBound contents.size := by
+  have arguments : EnvFits (Γ := [.buffer .nat, .nat]) w
+      (Implementation.boundedMap_args xs limit) := launch.arguments
+  have lengthFits : xs.length < 2 ^ w := arguments .here
+  have limitFits : limit < 2 ^ w := arguments (.there .here)
+  obtain ⟨outcome, property, bounded⟩ :=
+    (boundedMap_realizable launch.positive contents incrementsFit).execute_le
+      (boundedMap_total_frame contents) (boundedMap_costBound contents) launch
+      ⟨observed, lengthFits, limitFits⟩ observed observed
+  exact ⟨outcome,
+    outcome.refines boundedMap_refines (x := (contents, limit)) trivial ⟨observed, rfl⟩,
+    property.2, bounded⟩
 
 /-- The compiled traversal halts with its ordinary array-map result and preserves
 every initially observed disjoint view in the same represented final heap.
@@ -275,14 +335,12 @@ theorem boundedMap_runUntil_le_frame {w heapLimit : Nat} (hw : 0 < w)
           (lowerProgram Implementation.program) heapLimit
           (envWords placement (Env.cons (τ := .buffer .nat) xs
             (Env.cons (τ := .nat) limit Env.empty))) entry = Part.some bodySteps ∧
-      bodySteps ≤
-        (callCost Implementation.program Implementation.incrementId 10 + 47) * contents.size + 29 ∧
+      bodySteps ≤ boundedMapBodyBound contents.size ∧
       Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.boundedMapId) bodySteps + 1 ≤
         Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.boundedMapId)
-          ((callCost Implementation.program Implementation.incrementId 10 + 47) *
-            contents.size + 29) + 1 := by
+          (boundedMapBodyBound contents.size) + 1 := by
   let args : Env [.buffer .nat, .nat] :=
     Env.cons (τ := .buffer .nat) xs (Env.cons (τ := .nat) limit Env.empty)
   have arguments : EnvFits w args := by
@@ -334,14 +392,12 @@ theorem boundedMap_runUntil_le {w heapLimit : Nat} (hw : 0 < w)
           (lowerProgram Implementation.program) heapLimit
           (envWords placement (Env.cons (τ := .buffer .nat) xs
             (Env.cons (τ := .nat) limit Env.empty))) entry = Part.some bodySteps ∧
-      bodySteps ≤
-        (callCost Implementation.program Implementation.incrementId 10 + 47) * contents.size + 29 ∧
+      bodySteps ≤ boundedMapBodyBound contents.size ∧
       Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.boundedMapId) bodySteps + 1 ≤
         Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
           (lowerFunc Implementation.program Implementation.boundedMapId)
-          ((callCost Implementation.program Implementation.incrementId 10 + 47) *
-            contents.size + 29) + 1 := by
+          (boundedMapBodyBound contents.size) + 1 := by
   obtain ⟨finalHeap, targetFinish, bodySteps, target, executed, updated, _, rest⟩ :=
     boundedMap_runUntil_le_frame hw placement xs limit sourceHeap contents observed
       lengthFits limitFits incrementsFit entry represented codeCapacity stackCapacity

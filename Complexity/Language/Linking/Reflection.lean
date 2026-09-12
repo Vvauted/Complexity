@@ -70,6 +70,18 @@ private theorem of_renameCalls_aux {source target : List Signature}
       intro statement same
       cases statement <;> cases same
       exact .readFault failed
+  | readNode loaded _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .readNode loaded (ih _ rfl)
+  | readNodeFault missing =>
+      intro statement same
+      cases statement <;> cases same
+      exact .readNodeFault missing
+  | consNode _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .consNode (ih _ rfl)
   | write written =>
       intro statement same
       cases statement <;> cases same

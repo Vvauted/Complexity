@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Language.Arena.Frame
 import Complexity.Computability.Ram.Compiler.Language.Placement
 import Complexity.Computability.Ram.Compiler.Language.Control
+import Complexity.Computability.Ram.Compiler.Language.Heap.Node
 import Complexity.Language.Rooted.Execution
 
 /-!

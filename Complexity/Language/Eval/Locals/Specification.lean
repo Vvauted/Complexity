@@ -169,3 +169,38 @@ theorem map_iff {Mapped : Type} (reindex : Output → Mapped)
 end BlockSpec
 
 end Complexity.Language.Stmt
+
+namespace Complexity.Language
+
+open scoped Part.TotalCorrectness
+
+/-- Use an ordinary block contract as source total correctness at the same
+initial locals and heap. The input map may install fixed lexical captures;
+both postcondition consequences retain the complete actual output locals and
+heap. Faults and divergence remain excluded by the native source contract. -/
+theorem TotalWP.of_blockSpec {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    {Input Locals : Type} (view : Env Γ ≃ Locals) (inputLocals : Input → Locals)
+    {program : Program signatures} {stmt : Stmt signatures Γ result}
+    {pre : Input → Heap → Prop}
+    {normalRel : Input → Heap → Locals → Heap → Prop}
+    {returnedRel : Input → Heap → Value result → Locals → Heap → Prop}
+    {normal : State Γ → Prop} {returned : Value result → State Γ → Prop}
+    (specification : Stmt.BlockSpec
+      (fun input => Stmt.observe view stmt program (inputLocals input)) pre normalRel returnedRel)
+    {input : Input} {heap : Heap} (initial : pre input heap)
+    (normalPost : ∀ output finish, normalRel input heap output finish →
+      normal ⟨view.symm output, finish⟩)
+    (returnedPost : ∀ value output finish, returnedRel input heap value output finish →
+      returned value ⟨view.symm output, finish⟩) :
+    TotalWP program stmt normal returned ⟨view.symm (inputLocals input), heap⟩ := by
+  apply (TotalWP.iff_triple_observe view (locals := inputLocals input)).mpr
+  refine (specification.«at» input heap initial).mono (fun _ same => same) ?_
+  constructor
+  · rintro ⟨control, output⟩ finish property
+    cases control with
+    | normal => exact normalPost output finish property
+    | returned value => exact returnedPost value output finish property
+    | fault error => exact property
+  · trivial
+
+end Complexity.Language

@@ -25,6 +25,26 @@ open Complexity.Language
 
 variable {kind : CellTy}
 
+/-- One returned base and the three captured node fields fit four fresh slots.
+No tail traversal, hidden object table or additional function-local slot is used. -/
+theorem lowerConsNode_wellFormed (layout : RegisterMap Γ) (next : Reg)
+    (head : Atom Γ kind.toTy) (tail : Atom Γ (.option (.node kind)))
+    (bounded : layout.Bounded next) :
+    (lowerConsNode layout next head tail).WellFormed (next + 4) := by
+  refine ⟨copyFields_wellFormed _ _ _ ?_ ?_, ?_⟩
+  · simp only [List.length_append, atomExprs_length]
+    cases kind <;> simp [CellTy.toTy, fieldCount, Nat.add_assoc]
+  · intro expr member
+    rcases List.mem_append.mp member with fromHead | fromTail
+    · change expr ∈ List.ofFn (atomFieldExpr layout head) at fromHead
+      obtain ⟨index, rfl⟩ := List.mem_ofFn.mp fromHead
+      exact (atomFieldExpr_bounded layout head bounded index).mono (Nat.le_add_right next 4)
+    · change expr ∈ List.ofFn (atomFieldExpr layout tail) at fromTail
+      obtain ⟨index, rfl⟩ := List.mem_ofFn.mp fromTail
+      exact (atomFieldExpr_bounded layout tail bounded index).mono (Nat.le_add_right next 4)
+  · simp [Source.Arena.Node.inlineRegisters, Source.Arena.Node.Registers.allocate,
+      Ram.Stmt.WellFormed, Expr.Bounded]
+
 /-- Allocation introduces no call and therefore no extra function-table entry. -/
 theorem lowerAlloc_callsValid (program : Ram.Program) (layout : RegisterMap Γ)
     (next : Reg) (length : Atom Γ .nat) (initial : Atom Γ kind.toTy) :

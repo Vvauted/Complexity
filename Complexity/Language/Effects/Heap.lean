@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.Semantics
 import Complexity.Language.Heap.Prefix
+import Complexity.Language.Heap.Node
 
 /-!
 # Preserving existing objects through allocation-only heap effects
@@ -34,9 +35,11 @@ only their continuation; execution framing additionally checks all callee bodies
   | .skip | .assign .. | .ret _ => True
   | .letPrim _ continuation => continuation.NoCellWrites
   | .read _ _ continuation => continuation.NoCellWrites
+  | .readNode _ continuation => continuation.NoCellWrites
   | .write .. => False
   | .slice _ _ _ continuation => continuation.NoCellWrites
   | .alloc _ _ continuation => continuation.NoCellWrites
+  | .consNode _ _ continuation => continuation.NoCellWrites
   | .scope body => body.NoCellWrites
   | .call _ _ continuation => continuation.NoCellWrites
   | .seq first second => first.NoCellWrites ∧ second.NoCellWrites
@@ -65,6 +68,8 @@ theorem heap_prefix {signatures : List Signature} {program : Program signatures}
   | letPrim body ih => intro unchanged; exact ih unchanged
   | read loaded body ih => intro unchanged; exact ih unchanged
   | readFault => intro _; exact List.prefix_refl _
+  | readNode loaded body ih => intro unchanged; exact ih unchanged
+  | readNodeFault => intro _; exact List.prefix_refl _
   | write => intro impossible; exact False.elim impossible
   | writeFault => intro impossible; exact False.elim impossible
   | slice sliced body ih => intro unchanged; exact ih unchanged
@@ -73,6 +78,10 @@ theorem heap_prefix {signatures : List Signature} {program : Program signatures}
       intro unchanged
       exact (entry.heap.objects_prefix_alloc (length.eval entry.locals)
         (kind.ofValue (initial.eval entry.locals))).trans (ih unchanged)
+  | @consNode Γ result kind head tail continuation entry finish control body ih =>
+      intro unchanged
+      exact (entry.heap.objects_prefix_cons (kind.ofValue (head.eval entry.locals))
+        (tail.eval entry.locals)).trans (ih unchanged)
   | @scope Γ result stmt entry finish control body safe ih =>
       intro unchanged
       change List.IsPrefix entry.heap.objects.toList

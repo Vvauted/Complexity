@@ -40,7 +40,10 @@ noncomputable def SignatureMap.eval {source target : List Signature}
     (fun signature => Env signature.params → ExceptT Fault (StateT Heap Part) (Value signature.result))
     (map.signature_eq fn)) (program.eval (map.toFun fn))) args
 
-private theorem eval_cast_eq {signatures : List Signature}
+/-- Observe the actual selected body at a propositionally equal complete
+signature. This is transport of the existing evaluation, including its final
+heap and control, not a second evaluator or a heap-independent decoding. -/
+theorem Program.eval_cast_eq {signatures : List Signature}
     (program : Program signatures) (fn : Fin signatures.length) {signature : Signature}
     (same : signatures[fn] = signature) (args : Env signature.params) (heap : Heap) :
     (cast (congrArg
@@ -63,7 +66,7 @@ theorem Program.Embeds.eval_eq {source target : List Signature}
     map.eval targetProgram fn args = sourceProgram.eval fn args := by
   funext heap
   unfold SignatureMap.eval
-  rw [eval_cast_eq targetProgram (map.toFun fn) (map.signature_eq fn)]
+  rw [Program.eval_cast_eq targetProgram (map.toFun fn) (map.signature_eq fn)]
   change ((map.body targetProgram fn).eval targetProgram ⟨args, heap⟩).map _ = _
   rw [embedded fn, Stmt.eval_renameCalls embedded]
   rfl

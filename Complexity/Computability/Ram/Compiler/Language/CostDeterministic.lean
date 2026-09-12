@@ -65,6 +65,15 @@ theorem deterministic {signatures : List Signature}
           have same : value = value' := Except.ok.inj (loaded.symm.trans loaded')
           subst value'
           rw [ih tail']
+  | @readNode Γ result kind depth ref continuation entry finish control head tail
+      found valueFits body steps bodyCost ih =>
+      intro w' depth' finish' control' execution' steps' second
+      cases second with
+      | @readNode _ _ _ _ _ _ _ _ _ head' tail' found' _ _ _ bodyCost' =>
+          have same : (head, tail) = (head', tail') :=
+            Option.some.inj (found.symm.trans found')
+          obtain ⟨rfl, rfl⟩ := Prod.mk.inj same
+          rw [ih bodyCost']
   | write =>
       intro w' depth' finish' control' execution' steps' second
       cases second

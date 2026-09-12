@@ -173,38 +173,58 @@ private def normalizeTypeIndicesGoal : TacticM Unit := do
       normalizeTypeIndices (← withReducible (whnf (← goal.getType)))
     return [← goal.replaceTargetDefEq target]
 
+/-- Shared source-coordinate reductions. These do not unfold range predicates,
+source contracts, compiled code or native equivalence records. -/
+def sourceCoordinateRules : Array Name := #[
+  ``Complexity.Language.Prim.eval, ``Complexity.Language.Atom.eval,
+  ``Complexity.Language.Args.eval,
+  ``Complexity.Language.Env.cons_here, ``Complexity.Language.Env.cons_there,
+  ``Complexity.Language.Env.head_cons, ``Complexity.Language.Env.tail_cons,
+  ``Complexity.Language.Env.get_tail, ``Complexity.Language.Env.set_here,
+  ``Complexity.Language.Env.set_there,
+  ``Complexity.Language.State.locals_enter, ``Complexity.Language.State.heap_enter,
+  ``Complexity.Language.State.locals_restore, ``Complexity.Language.State.heap_restore,
+  ``Complexity.Language.State.locals_cons, ``Complexity.Language.State.heap_cons,
+  ``Complexity.Language.State.locals_tail, ``Complexity.Language.State.heap_tail,
+  ``Complexity.Language.State.locals_set, ``Complexity.Language.State.heap_set,
+  ``Complexity.Language.State.tail_cons,
+  ``Complexity.Language.Value, ``Complexity.Language.CellValue,
+  ``Complexity.Language.CellTy.toValue, ``Complexity.Language.CellTy.ofValue,
+  ``Complexity.Language.CellTy.toTy]
+
+private def coordinateSimpArgs (rules : Array Name) :
+    TacticM (Array (TSyntax ``Lean.Parser.Tactic.simpLemma)) :=
+  rules.mapM fun rule => `(Lean.Parser.Tactic.simpLemma| $(mkCIdent rule):ident)
+
+/-- Normalize only source coordinates at the requested ordinary Lean location.
+Additional rules must be checked coordinate declarations selected by the caller.
+No local context traversal or assumption/range solver is performed. -/
+def normalizeSourceCoordinates (additional : Array Name := #[])
+    (location : Option (TSyntax ``Lean.Parser.Tactic.location) := none) : TacticM Unit := do
+  let rules ← coordinateSimpArgs (sourceCoordinateRules ++ additional)
+  evalTactic (← `(tactic|
+    simp (config := { failIfUnchanged := false }) only [$rules,*] $[$location]?))
+
 /-- Normalize source values and representation predicates, without unfolding
 source correctness contracts or machine execution. -/
 def normalizeValues : TacticM Unit := do
   normalizeTypeIndicesGoal
+  let rules ← coordinateSimpArgs (#[``Ram.LanguageCompiler.PrimFits] ++
+    sourceCoordinateRules ++ #[``Ram.LanguageCompiler.ValueFits,
+      ``Ram.LanguageCompiler.EnvFits.cons_nat_iff,
+      ``Ram.LanguageCompiler.EnvFits.cons_bool_iff,
+      ``Ram.LanguageCompiler.EnvFits.cons_unit_iff,
+      ``Ram.LanguageCompiler.EnvFits.cons_buffer_iff,
+      ``Ram.LanguageCompiler.EnvFits.cons_prod_iff,
+      ``Ram.LanguageCompiler.EnvFits.cons_none_iff,
+      ``Ram.LanguageCompiler.EnvFits.cons_some_iff,
+      ``Ram.LanguageCompiler.EnvFits.cons_iff,
+      ``Ram.LanguageCompiler.EnvFits.empty,
+      ``decide_eq_true_eq, ``and_true, ``true_and])
   evalTactic (← `(tactic|
     (dsimp (config := { failIfUnchanged := false }) only
        [Complexity.Language.Value, Complexity.Language.CellValue] at * <;>
-     simp (config := { failIfUnchanged := false }) only
-      [Ram.LanguageCompiler.PrimFits, Complexity.Language.Prim.eval,
-        Complexity.Language.Atom.eval, Complexity.Language.Args.eval,
-        Complexity.Language.Env.cons_here, Complexity.Language.Env.cons_there,
-        Complexity.Language.Env.head_cons, Complexity.Language.Env.tail_cons,
-        Complexity.Language.Env.get_tail, Complexity.Language.Env.set_here,
-        Complexity.Language.Env.set_there,
-        Complexity.Language.State.locals_enter, Complexity.Language.State.heap_enter,
-        Complexity.Language.State.locals_restore, Complexity.Language.State.heap_restore,
-        Complexity.Language.State.locals_cons, Complexity.Language.State.heap_cons,
-        Complexity.Language.State.locals_tail, Complexity.Language.State.heap_tail,
-        Complexity.Language.State.locals_set, Complexity.Language.State.heap_set,
-        Complexity.Language.State.tail_cons,
-        Complexity.Language.Value, Complexity.Language.CellValue, Ram.LanguageCompiler.ValueFits,
-        Complexity.Language.CellTy.toValue, Complexity.Language.CellTy.ofValue,
-        Complexity.Language.CellTy.toTy,
-        Ram.LanguageCompiler.EnvFits.cons_nat_iff,
-        Ram.LanguageCompiler.EnvFits.cons_bool_iff,
-        Ram.LanguageCompiler.EnvFits.cons_unit_iff,
-        Ram.LanguageCompiler.EnvFits.cons_buffer_iff,
-        Ram.LanguageCompiler.EnvFits.cons_prod_iff,
-        Ram.LanguageCompiler.EnvFits.cons_none_iff,
-        Ram.LanguageCompiler.EnvFits.cons_some_iff,
-        Ram.LanguageCompiler.EnvFits.empty,
-        decide_eq_true_eq, and_true, true_and] at * <;> try assumption)))
+     simp (config := { failIfUnchanged := false }) only [$rules,*] at * <;> try assumption)))
 
 private partial def realize
     (callee : Option (TSyntax `term × TSyntax `term)) : TacticM Unit := do
@@ -228,6 +248,8 @@ private partial def realize
             (rw [Ram.LanguageCompiler.RealizationWP.letPrim_iff]; constructor)))
         else if statement.isAppOf ``Complexity.Language.Stmt.read then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.RealizationWP.read_of_success))
+        else if statement.isAppOf ``Complexity.Language.Stmt.readNode then
+          evalTactic (← `(tactic| apply Ram.LanguageCompiler.RealizationWP.readNode_of_success))
         else if statement.isAppOf ``Complexity.Language.Stmt.write then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.RealizationWP.write_of_success))
         else if statement.isAppOf ``Complexity.Language.Stmt.slice then
@@ -372,6 +394,8 @@ private partial def cost (callees : List (TSyntax `term)) : TacticM Unit := do
           applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.letPrim))
         else if statement.isAppOf ``Complexity.Language.Stmt.read then
           applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.read_of_success))
+        else if statement.isAppOf ``Complexity.Language.Stmt.readNode then
+          applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.readNode_of_success))
         else if statement.isAppOf ``Complexity.Language.Stmt.write then
           applyCostRule (← `(Ram.LanguageCompiler.StmtCostBound.write))
         else if statement.isAppOf ``Complexity.Language.Stmt.slice then
@@ -401,6 +425,7 @@ private partial def cost (callees : List (TSyntax `term)) : TacticM Unit := do
           all_goals
             try norm_num only [Ram.LanguageCompiler.primCodeSize,
               Ram.LanguageCompiler.readCodeSize, Ram.LanguageCompiler.writeCodeSize,
+              Ram.LanguageCompiler.readNodeCodeSize,
               Ram.LanguageCompiler.sliceCodeSize,
               Ram.LanguageCompiler.fieldCount]))
 

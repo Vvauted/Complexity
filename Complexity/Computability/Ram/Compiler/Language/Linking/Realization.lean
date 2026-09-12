@@ -66,6 +66,7 @@ theorem renameCalls {source target : List Signature}
   | letPrim fits _ ih => exact .letPrim fits ih
   | read bufferFits indexFits loaded valueFits _ ih =>
       exact .read bufferFits indexFits loaded valueFits ih
+  | readNode found valueFits _ ih => exact .readNode found valueFits ih
   | write bufferFits indexFits valueFits written =>
       exact .write bufferFits indexFits valueFits written
   | slice bufferFits offsetFits lengthFits sliced viewFits _ ih =>
@@ -128,6 +129,10 @@ private theorem of_renameCalls_aux {source target : List Signature}
       intro statement same
       cases statement <;> cases same
       exact .read bufferFits indexFits loaded valueFits (ih _ rfl)
+  | readNode found valueFits _ ih =>
+      intro statement same
+      cases statement <;> cases same
+      exact .readNode found valueFits (ih _ rfl)
   | write bufferFits indexFits valueFits written =>
       intro statement same
       cases statement <;> cases same

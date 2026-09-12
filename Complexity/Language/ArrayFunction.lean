@@ -48,7 +48,7 @@ def ofProgram {signatures : List Signature} (program : Program signatures)
 def inputBuffer (xs : Array Nat) : Buffer .nat := ⟨0, 0, xs.size⟩
 
 /-- The fixed source input representation, independent of the candidate and answer. -/
-def inputHeap (xs : Array Nat) : Heap := ⟨#[⟨.nat, xs⟩]⟩
+def inputHeap (xs : Array Nat) : Heap := ⟨#[.buffer .nat xs]⟩
 
 /-- The fixed source argument contains only the input view. -/
 def inputArgs (xs : Array Nat) : Env [.buffer .nat] :=

@@ -5,15 +5,21 @@ Authors: vvauted
 -/
 import Complexity.Language.Syntax
 import Complexity.Language.Eval.Verification
-import Mathlib.Data.Nat.Factorial.Basic
+import Complexity.Language.Eval.Locals.Range
+import Mathlib.Data.Nat.Factorial.BigOperators
 
 /-!
-# Ordinary induction for a recursive source factorial
+# Ordinary proofs for recursive and iterative source factorials
 
 The source function makes a real self-call and multiplies its returned value.
 Its native Lean definition and ordinary natural-number induction prove the
 mathematical factorial result. Generated correspondence transfers that result
 to the same source program, retaining every initial shared heap.
+
+The iterative declaration uses a finite source `for` and a mutable accumulator.
+Its native proof reduces the same iteration to an ordinary list fold, then
+reuses mathlib's factorial product formula. Generated correspondence supplies
+source correctness without an author-written loop invariant or heap adapter.
 
 This is the high-level counterpart of the factorial use case in
 `Examples.Ram.FactorialFunction`. It proves independent source behavior, not
@@ -49,5 +55,28 @@ theorem factorial_total :
     Implementation.factorial_contract (fun _ _ => True)
       (fun n heap value finish => value = Nat.factorial n ∧ finish = heap) := by
   simpa only [factorial_eq] using Implementation.factorial_total
+
+source_program (pure) Iterative where
+  def factorial (n : Nat) : Nat := do
+    let mut acc := 1
+    for i in [:n] do
+      acc := acc * (i + 1)
+    return acc
+
+/-- The finite source iteration computes mathlib's factorial. Its proof uses
+ordinary fold and product identities, without source execution bookkeeping. -/
+theorem iterative_factorial_eq (n : Nat) : Iterative.factorial n = Nat.factorial n := by
+  source_pure_simp [Iterative.factorial]
+  rw [← List.range_eq_range',
+    ← List.foldl_map (f := fun index : Nat => index + 1) (g := (· * ·)),
+    ← List.prod_eq_foldl]
+  exact Finset.prod_range_add_one_eq_factorial n
+
+/-- The generated pure correspondence transfers the iterative result to the
+same source body, with no second termination proof or assumed machine budget. -/
+theorem iterative_factorial_total :
+    Iterative.factorial_contract (fun _ _ => True)
+      (fun n heap value finish => value = Nat.factorial n ∧ finish = heap) := by
+  simpa only [iterative_factorial_eq] using Iterative.factorial_total
 
 end Complexity.Language.Examples.Factorial

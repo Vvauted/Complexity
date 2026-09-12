@@ -74,6 +74,41 @@ mathlib's factorial equation. Generated correspondence transfers that result to
 the source program without a second implementation or recursion proof.
 No time budget or word width appears in this mathematical theorem.
 
+Finite-range loops can also generate an ordinary total function:
+
+```lean
+source_program (pure) Iterative where
+  def factorial (n : Nat) : Nat := do
+    let mut acc := 1
+    for i in [:n] do
+      acc := acc * (i + 1)
+    return acc
+```
+
+The same example proves `Iterative.factorial n = Nat.factorial n` with ordinary
+fold and product identities. Generated correspondence supplies the total source
+contract without a second loop-termination proof.
+
+Ordinary structures can also be registered with `source_type`. The
+[scalar example](##Examples.Language.Scalar) registers a `BoundedInput` with
+`value : Nat` and `limit : Nat`, then constructs, passes, returns and projects it
+in one `source_program (pure)` declaration. Its correctness theorem is the
+ordinary equation `Structured.run n limit = min (n + 1) limit`.
+The generated `Structured.run_refines.of_math` transfers that mathematical proof
+to the same source implementation; the
+[compiled client](##Examples.Language.ScalarCompiled) proves its actual RAM
+result and independent instruction bound using shared range and cost rules.
+This structure path currently supports closed structures with direct scalar or
+scalar-product fields, not arbitrary Lean datatypes or dependent fields.
+The same scalar file also keeps such a structure as a finite-range accumulator,
+calling a structure-valued helper in each round with a dynamic positive stride.
+`StructuredRange.sum` has an ordinary fold/sum proof and generated total source
+contract. Its complete function-body instruction bound reuses generated native
+guard/body equations and the shared range cost rule, without hand-written
+capture indices or a second round-count proof. Finite-word realization and a
+halted RAM invocation for this loop remain open; general loops and recursive
+calls over registered structures remain unsupported.
+
 Products and options are ordinary values too. The
 [structured client](##Examples.Language.OptionalBuffer) imports a helper returning
 `Option (Nat × Nat)`, then returns a length and optional borrowed buffer to its
@@ -85,8 +120,9 @@ of outside views, not register identities. Effectful programs use mathematical
 contracts rather than pretending that borrowed mutation is a pure operation.
 
 The [high-level proof guide](##ComplexityDocs.Verification) explains both modes.
-The pure subset supports scalars and their products/options, self-recursion and
-acyclic calls; pure `for`/`while`, mutually recursive pure families and buffers remain unsupported.
+The pure subset supports scalars and their products/options, finite-range `for`,
+self-recursion and acyclic calls. General pure `while`, mutually recursive pure
+families and buffers remain unsupported.
 General effectful declarations support `while`, bounded `for`, borrowed buffers, allocation and
 scoped scratch reclamation. This is a checked executable subset, not a compiler
 for arbitrary Lean definitions.
@@ -121,6 +157,23 @@ compiler's operation and call costs. The
 the mathematical postcondition and step bound; authors do not reconstruct a
 register-level simulation or a large runner tuple.
 
+Uniform structural budgets can be inferred from the existing compiler cost
+rules. The compiled traversal derives its guard, body and wrapper bounds once;
+direct, composed and imported clients reuse those names. This removes copied
+numeric charges, not the mathematical loop invariant, range conditions or
+potential argument. The iterative native factorial above does not acquire a RAM
+cost bound merely from its equality proof.
+
+For a pure finite range, the shared
+[range cost rule](##Complexity.Computability.Ram.Compiler.Language.CostBound.Range)
+uses the same native guard/body equations as the correctness bridge. It combines
+proved component budgets with `Std.Legacy.Range.size`, including positive
+dynamic steps and early returns. The structure-valued range consumer above
+uses this rule; it does not duplicate a loop evaluator, block-contract adapter
+or division-count descent argument. `structuredRangeSumBodyBound_eq` exposes
+the inferred bound as a constant times the ordinary range length plus a fixed
+overhead, so subsequent numerical reasoning need not unfold the compiler.
+
 Allocating programs use the corresponding
 [arena result](##Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution),
 which retains actual final memory, the allocation cursor and known call depth.
@@ -128,6 +181,21 @@ The [scratch client](##Examples.Language.ScopeCompiled) adds its mathematical
 array contents and a physical workspace bound independent of repetition count.
 These invocation guarantees assume preloaded inputs; host loading and conversion
 are not silently included in the instruction count.
+
+The [shared allocating map](##Complexity.Language.Buffer.Map.Program) can reuse
+an existing scalar source function, including its internal calls. Its
+[RAM connection](##Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Execution)
+retains `Array.map` output in fresh storage and all old contents observations.
+The bound counts output initialization, every real callback and the outer
+invocation. A uniform callback bound gives `linearInvocationBound`, a bound
+depending only on input length with compiler-derived overhead. The shared
+[asymptotic theorem](##Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Asymptotics)
+gives mathlib `IsBigO` for this same budget without unfolding those coefficients;
+the execution still requires the stated input ranges and available storage. Existing scalar
+range and cost proofs are reusable through the
+[callback bridge](##Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Scalar).
+This is currently a typed-core library operation, not native `xs.map f` syntax
+or support for arbitrary Lean callbacks.
 
 ## State a correctness-and-complexity task
 

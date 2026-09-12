@@ -61,10 +61,10 @@ private theorem object?_eq_none_of_type_ne {heap : Heap} {τ σ : CellTy}
   cases otherFound : heap.object? σ object with
   | none => rfl
   | some otherValues =>
-      have sameStored : (⟨τ, values⟩ : HeapObject) = ⟨σ, otherValues⟩ :=
+      have sameStored : HeapObject.buffer τ values = .buffer σ otherValues :=
         Option.some.inj ((object?_eq_some_iff.mp found).symm.trans
           (object?_eq_some_iff.mp otherFound))
-      exact (different (congrArg Sigma.fst sameStored)).elim
+      exact (different (congrArg HeapObject.kind sameStored)).elim
 
 /-- A write cannot change reads at a different scalar type, even if the object
 identifiers coincide: the latter reads retain their invalid-object error. -/

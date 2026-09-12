@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Arena.Frame
 import Complexity.Language.Heap.Shape
+import Complexity.Computability.Ram.Compiler.Language.Heap.Shape
 
 /-!
 # Importing heap-mutating functions into an arena session
@@ -44,9 +45,10 @@ theorem of_heapRep (arena : ArenaRep placement next heapLimit initialHeap entry)
     ArenaRep placement next heapLimit finalHeap finish := by
   refine ⟨represented, arena.cursor_pos, arena.cursor_le, arena.limit_lt,
     metadata.trans arena.cursor_eq, ?_⟩
-  intro τ object values found index bound
-  obtain ⟨oldValues, oldFound, sameSize⟩ := shape.objects found
-  exact arena.reserved oldFound index (by simpa only [sameSize] using bound)
+  intro object stored found index bound
+  obtain ⟨previous, oldFound, sameSize⟩ :=
+    heapObjectWords_size_of_shapeExtends shape placement found
+  exact arena.storedReserved oldFound index (by simpa only [sameSize] using bound)
 
 /-- Import a nonallocating body's final heap and metadata frame through the
 actual invocation. Caller-local restoration retains the callee's changed

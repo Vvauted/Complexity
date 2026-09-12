@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Layout
 import Complexity.Computability.Ram.Memory.Arena.Registers
+import Complexity.Computability.Ram.Memory.Arena.Node
 import Complexity.Computability.Ram.Memory.Arena.Scope
 import Complexity.Computability.Ram.Source.Bounds
 
@@ -72,14 +73,40 @@ def copyFields (dst : Reg) : List Expr → Ram.Stmt
   | expr :: next :: rest =>
       .seq (.assign dst expr) (copyFields (dst + 1) (next :: rest))
 
+/-- Ordered copies fit when their actual destination interval and source
+expressions fit the same local frame. -/
+theorem copyFields_wellFormed (dst : Reg) (fields : List Expr) (bound : Nat)
+    (destinations : dst + fields.length ≤ bound)
+    (operands : ∀ expr ∈ fields, expr.Bounded bound) :
+    (copyFields dst fields).WellFormed bound := by
+  induction fields generalizing dst with
+  | nil => trivial
+  | cons expr fields ih =>
+      cases fields with
+      | nil =>
+          exact ⟨by simpa only [List.length_singleton] using destinations,
+            operands expr (by simp)⟩
+      | cons next fields =>
+          refine ⟨⟨?_, operands expr (by simp)⟩, ?_⟩
+          · exact Nat.lt_of_lt_of_le (Nat.lt_succ_self dst)
+              (Nat.le_trans
+                (Nat.add_le_add_left (Nat.succ_le_succ (Nat.zero_le (next :: fields).length))
+                  dst) destinations)
+          · apply ih (dst + 1)
+            · simpa only [List.length_cons, Nat.add_assoc, Nat.add_comm, Nat.add_left_comm]
+                using destinations
+            · intro field member
+              exact operands field (List.mem_cons_of_mem _ member)
+
 /-- Materialize the primitive's actual fields, without a dummy Unit register.
 Structured values copy their fields in order; buffer fields remain borrowed
-descriptors rather than copies of the underlying storage. -/
+descriptors and node references remain placed addresses, without copying storage. -/
 def lowerPrim (layout : RegisterMap Γ) (dst : Reg) : {τ : Ty} → Prim Γ τ → Ram.Stmt
   | .nat, prim => .assign dst (primExpr layout prim .nat)
   | .bool, prim => .assign dst (primExpr layout prim .bool)
   | .unit, _ => .skip
   | .buffer _, prim => copyFields dst (primExprs layout prim)
+  | .node _, prim => copyFields dst (primExprs layout prim)
   | .prod _ _, prim => copyFields dst (primExprs layout prim)
   | .option _, prim => copyFields dst (primExprs layout prim)
 
@@ -105,6 +132,25 @@ def lowerRead (layout : RegisterMap Γ) (dst : Reg) (buffer : Atom Γ (.buffer k
     (index : Atom Γ .nat) : Ram.Stmt :=
   .assign dst (Expr.index (atomFieldExpr layout buffer ⟨0, by change 0 < 2; decide⟩)
     (atomExpr layout index .nat))
+
+/-- Load the head, optional-tail tag and actual tail address in their field
+order. A node atom is an existing variable, so the bounded source layout keeps
+its base intact while the three fresh result slots are assigned. -/
+def lowerReadNode (layout : RegisterMap Γ) (dst : Reg)
+    (ref : Atom Γ (.node kind)) : Ram.Stmt :=
+  .seq (.assign dst (.load (atomFieldExpr layout ref ⟨0, Nat.zero_lt_one⟩)))
+    (.seq (.assign (dst + 1)
+      (.load (.bin .add (atomFieldExpr layout ref ⟨0, Nat.zero_lt_one⟩) (.const 1))))
+      (.assign (dst + 2)
+        (.load (.bin .add (atomFieldExpr layout ref ⟨0, Nat.zero_lt_one⟩) (.const 2)))))
+
+/-- Capture the scalar head and both optional-tail fields before allocating
+one immutable node. Its actual returned base and three operand slots are fresh;
+the existing tail is neither traversed nor copied. -/
+def lowerConsNode (layout : RegisterMap Γ) (next : Reg)
+    (head : Atom Γ kind.toTy) (tail : Atom Γ (.option (.node kind))) : Ram.Stmt :=
+  .seq (copyFields (next + 1) (atomExprs layout head ++ atomExprs layout tail))
+    (Source.Arena.Node.inlineRegisters next).allocate
 
 /-- Write one actual cell; the source and realization premises justify the
 address and cell representation instead of adding an uncounted bounds check. -/
@@ -146,6 +192,14 @@ def lowerStmtCore {signatures : List Signature} {Γ : List Ty} {result : Ty}
       .seq (lowerRead layout next buffer index)
         (lowerStmtCore (RegisterMap.extend layout kind.toTy next)
           (next + fieldCount kind.toTy) resultSlot flag body)
+  | .readNode (kind := kind) ref body =>
+      .seq (lowerReadNode layout next ref)
+        (lowerStmtCore (RegisterMap.extend layout (.prod kind.toTy (.option (.node kind))) next)
+          (next + fieldCount (.prod kind.toTy (.option (.node kind)))) resultSlot flag body)
+  | .consNode (kind := kind) head tail body =>
+      .seq (lowerConsNode layout next head tail)
+        (lowerStmtCore (RegisterMap.extend layout (.node kind) next)
+          (next + 4) resultSlot flag body)
   | .write buffer index value => lowerWrite layout buffer index value
   | .slice (kind := kind) buffer offset length body =>
       .seq (lowerSlice layout next buffer offset length)

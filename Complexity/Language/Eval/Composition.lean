@@ -85,6 +85,29 @@ theorem eval_alloc {kind : CellTy} (length : Atom Γ .nat) (initial : Atom Γ ki
     cases same
     exact mem_eval_iff.mpr (.alloc (mem_eval_iff.mp body))
 
+/-- Node construction binds its actual fresh reference and extended heap.
+Only the lexical binding is removed on exit; the body's final heap and control
+outcome are preserved, including effects before a finite fault. -/
+theorem eval_consNode {kind : CellTy} (head : Atom Γ kind.toTy)
+    (tail : Atom Γ (.option (.node kind)))
+    (continuation : Stmt signatures (.node kind :: Γ) result) (entry : State Γ) :
+    (Stmt.consNode head tail continuation).eval program entry =
+      let allocated := entry.heap.cons (kind.ofValue (head.eval entry.locals))
+        (tail.eval entry.locals)
+      (continuation.eval program (State.cons allocated.1 ⟨entry.locals, allocated.2⟩)).map
+        (fun outcome => (outcome.1.tail, outcome.2)) := by
+  apply Part.ext
+  rintro ⟨finish, control⟩
+  constructor
+  · intro member
+    cases mem_eval_iff.mp member with
+    | consNode body =>
+        exact Part.mem_map_iff _ |>.mpr ⟨(_, _), mem_eval_iff.mpr body, rfl⟩
+  · intro member
+    obtain ⟨⟨scopedFinish, scopedControl⟩, body, same⟩ := Part.mem_map_iff _ |>.mp member
+    cases same
+    exact mem_eval_iff.mpr (.consNode (mem_eval_iff.mp body))
+
 /-- A scope converts the body's actual finite outcome. Safe exits retain the
 current old-object prefix; unsafe exits retain the full heap and fault. Returns
 and earlier faults are not mistaken for normal continuation. -/
@@ -151,6 +174,41 @@ theorem eval_read {kind : CellTy} (buffer : Atom Γ (.buffer kind)) (index : Ato
         rw [loaded] at member
         cases Part.mem_some_iff.mp member
         exact mem_eval_iff.mpr (.readFault loaded)
+
+/-- A node read binds the actual stored head and optional tail. A missing or
+wrongly typed object faults at this entry state and skips its continuation. -/
+theorem eval_readNode {kind : CellTy} (ref : Atom Γ (.node kind))
+    (continuation : Stmt signatures (.prod kind.toTy (.option (.node kind)) :: Γ) result)
+    (entry : State Γ) :
+    (Stmt.readNode ref continuation).eval program entry =
+      match entry.heap.node? kind (ref.eval entry.locals).object with
+      | some (head, tail) =>
+          (continuation.eval program (State.cons (kind.toValue head, tail) entry)).map
+            (fun outcome => (outcome.1.tail, outcome.2))
+      | none => Part.some (entry, .fault (.heap .invalidObject)) := by
+  apply Part.ext
+  rintro ⟨finish, control⟩
+  constructor
+  · intro member
+    cases mem_eval_iff.mp member with
+    | readNode found body =>
+        rw [found]
+        exact Part.mem_map_iff _ |>.mpr ⟨(_, _), mem_eval_iff.mpr body, rfl⟩
+    | readNodeFault missing =>
+        rw [missing]
+        exact Part.mem_some_iff.mpr rfl
+  · intro member
+    cases found : entry.heap.node? kind (ref.eval entry.locals).object with
+    | some contents =>
+        rcases contents with ⟨head, tail⟩
+        rw [found] at member
+        obtain ⟨⟨scopedFinish, scopedControl⟩, body, same⟩ := Part.mem_map_iff _ |>.mp member
+        cases same
+        exact mem_eval_iff.mpr (.readNode found (mem_eval_iff.mp body))
+    | none =>
+        rw [found] at member
+        cases Part.mem_some_iff.mp member
+        exact mem_eval_iff.mpr (.readNodeFault found)
 
 /-- A write continues normally at the actual updated heap. Its failure is
 finite and preserves the entry state of this operation, not an older snapshot. -/

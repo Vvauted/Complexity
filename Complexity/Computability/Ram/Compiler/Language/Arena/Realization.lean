@@ -70,6 +70,21 @@ inductive ArenaReady {signatures : List Signature}
       (valueFits : ValueFits w (kind.toValue value))
       (ready : ArenaReady body w heapLimit depth next₀ next₁) :
       ArenaReady (.read loaded body) w heapLimit depth next₀ next₁
+  | readNode {Γ : List Ty} {result : Ty} {kind : CellTy} {w heapLimit depth next₀ next₁ : Nat}
+      {ref : Atom Γ (.node kind)}
+      {continuation : Complexity.Language.Stmt signatures
+        (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (.prod kind.toTy (.option (.node kind)) :: Γ)}
+      {control : Control result} {head : CellValue kind} {tail : Option (NodeRef kind)}
+      {found : entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail)}
+      {body : Complexity.Language.Exec program continuation
+        (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) entry) finish control}
+      (valueFits : ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
+        (kind.toValue head, tail))
+      (ready : ArenaReady body w heapLimit depth next₀ next₁) :
+      ArenaReady (.readNode found body) w heapLimit depth next₀ next₁
   | write {Γ : List Ty} {result : Ty} {kind : CellTy} {w heapLimit depth next : Nat}
       {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
       {entry : Complexity.Language.State Γ} {heap : Heap}
@@ -109,6 +124,21 @@ inductive ArenaReady {signatures : List Signature}
       (capacity : next₀ + length.eval entry.locals ≤ heapLimit)
       (ready : ArenaReady body w heapLimit depth (next₀ + length.eval entry.locals) next₁) :
       ArenaReady (.alloc body) w heapLimit depth next₀ next₁
+  | consNode {Γ : List Ty} {result : Ty} {kind : CellTy} {w heapLimit depth next₀ next₁ : Nat}
+      {head : Atom Γ kind.toTy} {tail : Atom Γ (.option (.node kind))}
+      {continuation : Complexity.Language.Stmt signatures (.node kind :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (.node kind :: Γ)} {control : Control result}
+      {body : Complexity.Language.Exec program continuation
+        (let allocated := entry.heap.cons (kind.ofValue (head.eval entry.locals))
+          (tail.eval entry.locals)
+         Complexity.Language.State.cons allocated.1 ⟨entry.locals, allocated.2⟩)
+        finish control}
+      (headFits : ValueFits w (head.eval entry.locals))
+      (tailFits : ValueFits w (tail.eval entry.locals))
+      (capacity : next₀ + 3 ≤ heapLimit)
+      (ready : ArenaReady body w heapLimit depth (next₀ + 3) next₁) :
+      ArenaReady (.consNode body) w heapLimit depth next₀ next₁
   | scope {Γ : List Ty} {result : Ty} {w heapLimit depth next₀ bodyCursor : Nat}
       {stmt : Complexity.Language.Stmt signatures Γ result}
       {entry finish : Complexity.Language.State Γ} {control : Control result}
@@ -253,9 +283,11 @@ theorem outcome_fits (ready : ArenaReady execution w heapLimit depth next₀ nex
   | assign => trivial
   | letPrim fits ready ih => exact ih
   | read bufferFits indexFits valueFits ready ih => exact ih
+  | readNode valueFits ready ih => exact ih
   | write => trivial
   | slice bufferFits offsetFits lengthFits viewFits ready ih => exact ih
   | alloc initialFits capacity ready ih => exact ih
+  | consNode headFits tailFits capacity ready ih => exact ih
   | scope ready ih => exact ih
   | seqNormal headReady tailReady ihHead ihTail => exact ihTail
   | seqReturn ready ih => exact ih
@@ -279,9 +311,11 @@ theorem cursor_mono (ready : ArenaReady execution w heapLimit depth next₀ next
   | assign => exact Nat.le_refl _
   | letPrim fits ready ih => exact ih
   | read bufferFits indexFits valueFits ready ih => exact ih
+  | readNode valueFits ready ih => exact ih
   | write => exact Nat.le_refl _
   | slice bufferFits offsetFits lengthFits viewFits ready ih => exact ih
   | alloc initialFits capacity ready ih => exact (Nat.le_add_right _ _).trans ih
+  | consNode headFits tailFits capacity ready ih => exact (Nat.le_add_right _ _).trans ih
   | scope => exact Nat.le_refl _
   | seqNormal headReady tailReady ihHead ihTail => exact ihHead.trans ihTail
   | seqReturn ready ih => exact ih
@@ -314,6 +348,7 @@ theorem arenaReady {signatures : List Signature}
   | letPrim fits body ih => exact .letPrim fits ih
   | read bufferFits indexFits loaded valueFits body ih =>
       exact .read (loaded := loaded) bufferFits indexFits valueFits ih
+  | readNode found valueFits body ih => exact .readNode (found := found) valueFits ih
   | write bufferFits indexFits valueFits written =>
       exact .write (written := written) bufferFits indexFits valueFits
   | slice bufferFits offsetFits lengthFits sliced viewFits body ih =>

@@ -90,6 +90,21 @@ inductive ExecutionCost {signatures : List Signature}
         (Complexity.Language.State.cons (kind.toValue value) entry) finish control}
       {steps : Nat} (tail : ExecutionCost body steps) :
       ExecutionCost (.read bufferFits indexFits loaded valueFits body) (readCodeSize + steps)
+  | readNode {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
+      {ref : Atom Γ (.node kind)}
+      {continuation : Complexity.Language.Stmt signatures
+        (.prod kind.toTy (.option (.node kind)) :: Γ) result}
+      {entry : Complexity.Language.State Γ}
+      {finish : Complexity.Language.State (.prod kind.toTy (.option (.node kind)) :: Γ)}
+      {control : Control result} {head : CellValue kind} {tail : Option (NodeRef kind)}
+      {found : entry.heap.node? kind (ref.eval entry.locals).object = some (head, tail)}
+      {valueFits : ValueFits w (τ := .prod kind.toTy (.option (.node kind)))
+        (kind.toValue head, tail)}
+      {body : RealizedExec program w depth continuation
+        (Complexity.Language.State.cons (τ := .prod kind.toTy (.option (.node kind)))
+          (kind.toValue head, tail) entry) finish control}
+      {steps : Nat} (bodyCost : ExecutionCost body steps) :
+      ExecutionCost (.readNode found valueFits body) (readNodeCodeSize + steps)
   | write {Γ : List Ty} {result : Ty} {kind : CellTy} {depth : Nat}
       {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat} {value : Atom Γ kind.toTy}
       {entry : Complexity.Language.State Γ} {heap : Heap}
@@ -235,6 +250,9 @@ theorem RealizedExec.exists_cost {signatures : List Signature}
       obtain ⟨steps, cost⟩ := ih
       exact ⟨_, .read (bufferFits := bufferFits) (indexFits := indexFits)
         (loaded := loaded) (valueFits := valueFits) cost⟩
+  | readNode found valueFits body ih =>
+      obtain ⟨steps, cost⟩ := ih
+      exact ⟨_, .readNode (found := found) (valueFits := valueFits) cost⟩
   | write bufferFits indexFits valueFits written =>
       exact ⟨_, .write (bufferFits := bufferFits) (indexFits := indexFits)
         (valueFits := valueFits) (written := written)⟩
@@ -294,8 +312,14 @@ def FunctionCostBound {signatures : List Signature}
 namespace FunctionCostBound
 
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
-variable {fn : Fin signatures.length} {pre : Env signatures[fn].params → Heap → Prop}
+variable {fn : Fin signatures.length} {pre pre' : Env signatures[fn].params → Heap → Prop}
 variable {bound bound' : Env signatures[fn].params → Heap → Nat}
+
+/-- Strengthening admissibility reuses the same function and numerical bound. -/
+theorem consequence (h : FunctionCostBound program fn pre bound)
+    (input : ∀ args heap, pre' args heap → pre args heap) :
+    FunctionCostBound program fn pre' bound :=
+  fun args heap hpre => h args heap (input args heap hpre)
 
 /-- Weaken a mathematical bound without changing the observed computation. -/
 theorem mono_bound (h : FunctionCostBound program fn pre bound)

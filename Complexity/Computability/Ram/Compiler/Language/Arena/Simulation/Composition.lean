@@ -50,7 +50,7 @@ theorem seqNormal {first second : Complexity.Language.Stmt signatures Γ result}
   obtain ⟨finalPlacement, t, secondRun, property, finalArena, secondAgrees, finalMatches⟩ :=
     secondSimulation controlReg hw middlePlacement layout next resultSlot flag middleTarget
       regular bounded middleMatches.1 avoids fresh resultFlag copySafe
-      (head.env_rooted rooted) middleArena middleMatches.2
+      (head.env_rooted rooted arena.heapRep.node_backward) middleArena middleMatches.2
   refine ⟨finalPlacement, t, ?_, property, finalArena,
     firstAgrees.trans_of_shape secondAgrees head.heap_shapeExtends, finalMatches⟩
   convert Source.LocalMeasuredExec.seq firstRun

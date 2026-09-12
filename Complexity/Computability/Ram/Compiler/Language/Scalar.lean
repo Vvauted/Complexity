@@ -38,6 +38,7 @@ def toNat : {τ : Ty} → Scalar τ → Value τ → Nat
   | .bool, _, value => if value then 1 else 0
   | .unit, impossible, _ => nomatch impossible
   | .buffer _, impossible, _ => nomatch impossible
+  | .node _, impossible, _ => nomatch impossible
   | .prod _ _, impossible, _ => nomatch impossible
   | .option _, impossible, _ => nomatch impossible
 

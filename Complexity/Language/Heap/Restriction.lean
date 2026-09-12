@@ -57,6 +57,20 @@ theorem object?_take_eq_some {heap : Heap} {count object : Nat} {τ : CellTy}
     (heap.take count).object? τ object = some values :=
   (heap.object?_take_of_lt count bound).trans found
 
+/-- Restriction retains an old node's exact current payload and tail lookup.
+Preservation of objects reached through that tail is a separate lifecycle fact. -/
+theorem node?_take_of_lt (heap : Heap) (count : Nat) {τ : CellTy} {object : Nat}
+    (bound : object < count) :
+    (heap.take count).node? τ object = heap.node? τ object := by
+  simp only [node?, getElem?_take_of_lt heap count bound]
+
+/-- A present immutable node survives whenever its identifier is retained. -/
+theorem node?_take_eq_some {heap : Heap} {count object : Nat} {τ : CellTy}
+    {head : CellValue τ} {tail : Option (NodeRef τ)}
+    (found : heap.node? τ object = some (head, tail)) (bound : object < count) :
+    (heap.take count).node? τ object = some (head, tail) :=
+  (heap.node?_take_of_lt count bound).trans found
+
 /-- Restricting an exact object-prefix extension removes precisely its appended
 objects. Unlike shape extension alone, this premise excludes changes to old values. -/
 theorem take_eq_of_prefix {initial finish : Heap}
@@ -85,30 +99,70 @@ theorem ShapeExtends.objects_of_lt {initial finish : Heap} {τ : CellTy} {object
     (bound : object < initial.objects.size)
     (found : finish.object? τ object = some values) :
     ∃ oldValues, initial.object? τ object = some oldValues ∧ values.size = oldValues.size := by
-  rcases stored : initial.objects[object] with ⟨kind, oldValues⟩
-  have oldFound : initial.object? kind object = some oldValues := by
-    apply object?_eq_some_iff.mpr
-    simp only [Array.getElem?_eq_getElem bound, stored]
-  obtain ⟨currentValues, currentFound, sameSize⟩ := growth.objects oldFound
-  have sameStored : (⟨kind, currentValues⟩ : HeapObject) = ⟨τ, values⟩ := by
-    apply Option.some.inj
-    exact (object?_eq_some_iff.mp currentFound).symm.trans (object?_eq_some_iff.mp found)
-  have sameType : kind = τ := congrArg Sigma.fst sameStored
-  subst kind
-  have sameValues : currentValues = values := Option.some.inj (currentFound.symm.trans found)
-  subst currentValues
-  exact ⟨oldValues, oldFound, sameSize⟩
+  cases stored : initial.objects[object] with
+  | buffer kind oldValues =>
+      have oldFound : initial.object? kind object = some oldValues := by
+        apply object?_eq_some_iff.mpr
+        simp only [Array.getElem?_eq_getElem bound, stored]
+      obtain ⟨currentValues, currentFound, sameSize⟩ := growth.objects oldFound
+      have sameStored : HeapObject.buffer kind currentValues = .buffer τ values := by
+        apply Option.some.inj
+        exact (object?_eq_some_iff.mp currentFound).symm.trans (object?_eq_some_iff.mp found)
+      have sameType : kind = τ := congrArg HeapObject.kind sameStored
+      subst kind
+      have sameValues : currentValues = values := Option.some.inj (currentFound.symm.trans found)
+      subst currentValues
+      exact ⟨oldValues, oldFound, sameSize⟩
+  | node kind head tail =>
+      have oldFound : initial.node? kind object = some (head, tail) := by
+        apply node?_eq_some_iff.mpr
+        simp only [Array.getElem?_eq_getElem bound, stored]
+      have impossible := object?_eq_none_of_node (σ := τ) (growth.nodes oldFound)
+      rw [found] at impossible
+      cases impossible
+
+/-- A node observed at an old identifier is the exact original immutable node.
+An existing scalar array cannot become a node during shape extension. -/
+theorem ShapeExtends.nodes_of_lt {initial finish : Heap} {τ : CellTy} {object : Nat}
+    {head : CellValue τ} {tail : Option (NodeRef τ)}
+    (growth : initial.ShapeExtends finish) (bound : object < initial.objects.size)
+    (found : finish.node? τ object = some (head, tail)) :
+    initial.node? τ object = some (head, tail) := by
+  cases stored : initial.objects[object] with
+  | buffer kind oldValues =>
+      have oldFound : initial.object? kind object = some oldValues := by
+        apply object?_eq_some_iff.mpr
+        simp only [Array.getElem?_eq_getElem bound, stored]
+      obtain ⟨currentValues, currentFound, _⟩ := growth.objects oldFound
+      have impossible := node?_eq_none_of_object (σ := τ) currentFound
+      rw [found] at impossible
+      cases impossible
+  | node kind oldHead oldTail =>
+      have oldFound : initial.node? kind object = some (oldHead, oldTail) := by
+        apply node?_eq_some_iff.mpr
+        simp only [Array.getElem?_eq_getElem bound, stored]
+      have currentFound := growth.nodes oldFound
+      have sameStored : HeapObject.node kind oldHead oldTail = .node τ head tail := by
+        apply Option.some.inj
+        exact (node?_eq_some_iff.mp currentFound).symm.trans (node?_eq_some_iff.mp found)
+      have sameType : kind = τ := congrArg HeapObject.kind sameStored
+      subst kind
+      have sameValues : (oldHead, oldTail) = (head, tail) :=
+        Option.some.inj (currentFound.symm.trans found)
+      exact oldFound.trans (congrArg some sameValues)
 
 /-- Discarding a shape extension's fresh suffix retains the original shape.
 The surviving arrays are taken from `finish`, so their intervening writes remain. -/
 theorem ShapeExtends.take {initial finish : Heap} (growth : initial.ShapeExtends finish) :
     initial.ShapeExtends (finish.take initial.objects.size) := by
-  refine ⟨?_, ?_⟩
+  refine ⟨?_, ?_, ?_⟩
   · simpa only [take_size, Nat.min_eq_left growth.size_le] using
       Nat.le_refl initial.objects.size
   · intro τ object values found
     obtain ⟨currentValues, currentFound, sameSize⟩ := growth.objects found
     exact ⟨currentValues, object?_take_eq_some currentFound (object_lt_size found), sameSize⟩
+  · intro τ object head tail found
+    exact node?_take_eq_some (growth.nodes found) (node_lt_size found)
 
 end Heap
 

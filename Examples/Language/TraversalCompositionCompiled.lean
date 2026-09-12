@@ -61,14 +61,34 @@ theorem boundedMapPair_realizable {w : Nat} (hw : 0 < w)
     | exact ⟨rightAfter, rightLengthFits, limitFits⟩
     | trivial
 
-/-- Each call uses its existing traversal-body bound and the actual generated
-call overhead. The remaining instructions are the two normal sequence guards,
-Unit return and enclosing function-body initialization. -/
+/-- Infer both calls and the complete function wrapper from their actual
+contracts. Its numeric witness depends only on the two input sizes; the first
+call's real heap frame still justifies the second call's current contents. -/
+private abbrev boundedMapPairCost (leftSize rightSize : Nat) : { bound : Nat //
+    ∀ leftContents rightContents : Array Nat,
+      leftContents.size = leftSize → rightContents.size = rightSize →
+      FunctionCostBound Implementation.program Implementation.boundedMapPairId
+        (fun args heap => args.head.Contents heap leftContents ∧
+          args.tail.head.Contents heap rightContents ∧ args.head.Disjoint args.tail.head)
+        (fun _ _ => bound) } := ⟨_, by
+  intro leftContents rightContents leftSizeEq rightSizeEq
+  have leftCost := boundedMap_costBound leftContents
+  have rightCost := boundedMap_costBound rightContents
+  simp only [leftSizeEq] at leftCost
+  simp only [rightSizeEq] at rightCost
+  ram_source_cost_intro (xs ys limit)
+  intro heap input
+  rcases input with ⟨observedLeft, observedRight, separated⟩
+  ram_source_cost_step
+  ram_source_call using leftCost, (boundedMap_total_frame leftContents)
+  obtain ⟨_, frameLeft⟩ := ‹xs.Contents _ _ ∧ xs.PreservesOutside heap _›
+  have rightAfter := frameLeft ys rightContents separated observedRight
+  ram_source_call using rightCost, (boundedMap_total_frame rightContents)⟩
+
+/-- The inferred complete pair budget is shared by direct and imported callers,
+without reproducing either callee's body or manually adding call overhead. -/
 def boundedMapPairBodyBound (leftSize rightSize : Nat) : Nat :=
-  callCost Implementation.program Implementation.boundedMapId
-      ((callCost Implementation.program Implementation.incrementId 10 + 47) * leftSize + 29) +
-    callCost Implementation.program Implementation.boundedMapId
-      ((callCost Implementation.program Implementation.incrementId 10 + 47) * rightSize + 29) + 8
+  (boundedMapPairCost leftSize rightSize).val
 
 /-- The source frame is reused only to justify the second callee's input at the
 actual intermediate heap. Existing traversal bounds count both effectful calls;
@@ -77,17 +97,49 @@ theorem boundedMapPair_costBound (leftContents rightContents : Array Nat) :
     FunctionCostBound Implementation.program Implementation.boundedMapPairId
       (fun args heap => args.head.Contents heap leftContents ∧
         args.tail.head.Contents heap rightContents ∧ args.head.Disjoint args.tail.head)
-      (fun _ _ => boundedMapPairBodyBound leftContents.size rightContents.size) := by
-  ram_source_cost (xs ys limit)
-  · rename_i heap input
-    rcases input with ⟨observedLeft, observedRight, separated⟩
-    ram_source_call using (boundedMap_costBound leftContents), (boundedMap_total_frame leftContents)
-    obtain ⟨_, frameLeft⟩ := ‹xs.Contents _ _ ∧ xs.PreservesOutside heap _›
-    have rightAfter := frameLeft ys rightContents separated observedRight
-    ram_source_call using (boundedMap_costBound rightContents), (boundedMap_total_frame rightContents)
-  · ram_source_cost_step
-    simp only [boundedMapPairBodyBound]
-    omega
+      (fun _ _ => boundedMapPairBodyBound leftContents.size rightContents.size) :=
+  (boundedMapPairCost leftContents.size rightContents.size).property
+    leftContents rightContents rfl rfl
+
+/-- The inferred pair budget with its actual outer-call and final-halt charges. -/
+def boundedMapPairInvocationBound (leftSize rightSize : Nat) : Nat :=
+  Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
+    (lowerFunc Implementation.program Implementation.boundedMapPairId)
+    (boundedMapPairBodyBound leftSize rightSize) + 1
+
+/-- Both mapped arrays and the outside-both frame describe one typed actual RAM
+result. The launch retains the original three-frame capacity and argument ranges;
+the separate instruction bound includes both calls and the final halt. -/
+theorem boundedMapPair_execute {w heapLimit : Nat} {placement : Nat → Ram.Word w}
+    (xs ys : Buffer .nat) (limit : Nat) (leftContents rightContents : Array Nat) {heap : Heap}
+    (observedLeft : xs.Contents heap leftContents)
+    (observedRight : ys.Contents heap rightContents) (separated : xs.Disjoint ys)
+    (leftIncrementsFit : ∀ j (hj : j < leftContents.size), leftContents[j] + 1 < 2 ^ w)
+    (rightIncrementsFit : ∀ j (hj : j < rightContents.size), rightContents[j] + 1 < 2 ^ w)
+    {entry : Ram.Source.State w}
+    (launch : FunctionLaunch Implementation.program Implementation.boundedMapPairId 2 heapLimit
+      placement (Implementation.boundedMapPair_args xs ys limit) heap entry) :
+    ∃ outcome : FunctionExecution Implementation.program Implementation.boundedMapPairId heapLimit
+        placement (Implementation.boundedMapPair_args xs ys limit) heap entry,
+      xs.Contents outcome.heap (leftContents.map fun x => min (x + 1) limit) ∧
+      ys.Contents outcome.heap (rightContents.map fun x => min (x + 1) limit) ∧
+      (∀ {kind : CellTy} (other : Buffer kind) (contents : Array (CellValue kind)),
+        xs.Disjoint other → ys.Disjoint other →
+          other.Contents heap contents → other.Contents outcome.heap contents) ∧
+      outcome.result.steps ≤ boundedMapPairInvocationBound leftContents.size rightContents.size := by
+  have arguments : EnvFits (Γ := [.buffer .nat, .buffer .nat, .nat]) w
+      (Implementation.boundedMapPair_args xs ys limit) := launch.arguments
+  have leftLengthFits : xs.length < 2 ^ w := arguments .here
+  have rightLengthFits : ys.length < 2 ^ w := arguments (.there .here)
+  have limitFits : limit < 2 ^ w := arguments (.there (.there .here))
+  obtain ⟨outcome, property, bounded⟩ :=
+    (boundedMapPair_realizable launch.positive leftContents rightContents
+      leftIncrementsFit rightIncrementsFit).execute_le
+      (boundedMapPair_total leftContents rightContents)
+      (boundedMapPair_costBound leftContents rightContents) launch
+      ⟨observedLeft, observedRight, separated, leftLengthFits, rightLengthFits, limitFits⟩
+      ⟨observedLeft, observedRight, separated⟩ ⟨observedLeft, observedRight, separated⟩
+  exact ⟨outcome, property.1, property.2.1, property.2.2, bounded⟩
 
 /-- The actual compiled pair invocation returns both mapped arrays and the
 outside-both frame in one represented final heap. Its independent instruction

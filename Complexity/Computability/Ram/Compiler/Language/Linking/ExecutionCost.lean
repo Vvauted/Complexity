@@ -78,6 +78,9 @@ theorem renameCalls {source target : List Signature}
       bufferFits indexFits loaded valueFits body steps _ ih =>
       exact .read (bufferFits := bufferFits) (indexFits := indexFits)
         (loaded := loaded) (valueFits := valueFits) ih
+  | @readNode Γ result kind depth ref continuation entry finish control head tail
+      found valueFits body steps _ ih =>
+      exact .readNode (found := found) (valueFits := valueFits) ih
   | @write Γ result kind depth buffer index value entry heap
       bufferFits indexFits valueFits written =>
       exact .write (bufferFits := bufferFits) (indexFits := indexFits)

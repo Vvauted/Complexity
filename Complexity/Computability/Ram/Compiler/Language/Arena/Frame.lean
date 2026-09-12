@@ -95,30 +95,26 @@ theorem write (arena : ArenaRep placement next heapLimit heap entry)
     simpa only [bufferRef, arrayAddr_add] using arena.address_ne_zero found absoluteBound
   refine ⟨represented, arena.cursor_pos, arena.cursor_le, arena.limit_lt, ?_, ?_⟩
   · exact (Source.State.setMem_ne entry _ 0 _ (Ne.symm addressNonzero)).trans arena.cursor_eq
-  · intro σ other otherValues otherFound cell cellBound
+  · intro other stored otherFound cell cellBound
     by_cases sameObject : buffer.object = other
     · subst other
       have updatedFound :
           (heap.replace buffer.object
-            (values.setIfInBounds (buffer.offset + index) value)).object? τ buffer.object =
-            some (values.setIfInBounds (buffer.offset + index) value) :=
-        Complexity.Language.Heap.object?_replace_self
-          (Complexity.Language.Heap.object_lt_size found)
-      have sameStored : (⟨σ, otherValues⟩ : HeapObject) =
-          ⟨τ, values.setIfInBounds (buffer.offset + index) value⟩ := by
-        apply Option.some.inj
-        exact (Complexity.Language.Heap.object?_eq_some_iff.mp otherFound).symm.trans
-          (Complexity.Language.Heap.object?_eq_some_iff.mp updatedFound)
-      have sameType : σ = τ := congrArg Sigma.fst sameStored
-      subst σ
-      have sameValues : otherValues = values.setIfInBounds (buffer.offset + index) value :=
+            (values.setIfInBounds (buffer.offset + index) value)).objects[buffer.object]? =
+            some (.buffer τ (values.setIfInBounds (buffer.offset + index) value)) :=
+        Complexity.Language.Heap.object?_eq_some_iff.mp
+          (Complexity.Language.Heap.object?_replace_self
+            (Complexity.Language.Heap.object_lt_size found))
+      have sameStored : stored =
+          .buffer τ (values.setIfInBounds (buffer.offset + index) value) :=
         Option.some.inj (otherFound.symm.trans updatedFound)
-      subst otherValues
+      subst stored
       exact arena.reserved found cell (by
-        simpa only [Array.size_setIfInBounds] using cellBound)
-    · exact arena.reserved
-        ((Complexity.Language.Heap.object?_replace_ne sameObject).symm.trans otherFound)
-        cell cellBound
+        simpa only [heapObjectWords_buffer_size, Array.size_setIfInBounds] using cellBound)
+    · have oldFound : heap.objects[other]? = some stored := by
+        simpa only [Complexity.Language.Heap.replace,
+          Array.getElem?_setIfInBounds_ne sameObject] using otherFound
+      exact arena.storedReserved oldFound cell cellBound
 
 /-- Bootstrap establishes an arena around supplied objects using a real counted
 store. Their initial representation and positive reserved placement remain inputs;
@@ -126,17 +122,18 @@ this theorem does not assign a zero cost to loading their contents. -/
 theorem bootstrap {control depth : Nat} {program : Program}
     (represented : HeapRep placement heapLimit heap entry)
     (positive : 0 < next) (capacity : next ≤ heapLimit) (fits : heapLimit < 2 ^ w)
-    (reserved : ∀ {τ : CellTy} {object : Nat} {values : Array (CellValue τ)},
-      heap.object? τ object = some values → ∀ index, index < values.size →
-        0 < (arrayAddr (placement object) index).toNat ∧
-          (arrayAddr (placement object) index).toNat < next) :
+    (reserved : ∀ {object : Nat} {stored : HeapObject},
+      heap.objects[object]? = some stored →
+        ∀ index, index < (heapObjectWords placement stored).size →
+          0 < (arrayAddr (placement object) index).toNat ∧
+            (arrayAddr (placement object) index).toNat < next) :
     Source.LocalMeasuredExec control program heapLimit depth (Source.Arena.bootstrap next)
         3 entry (entry.setMem 0 (BitVec.ofNat w next)) ∧
       ArenaRep placement next heapLimit heap (entry.setMem 0 (BitVec.ofNat w next)) := by
   refine ⟨Source.Arena.bootstrap_measured entry next (lt_of_lt_of_le positive capacity),
     ?_, positive, capacity, fits, Source.State.setMem_same _ _ _, reserved⟩
   apply represented.of_mem_eq_on
-  intro τ object values found index bound
+  intro object stored found index bound
   apply Source.State.setMem_ne
   intro same
   have cellPositive := (reserved found index bound).1

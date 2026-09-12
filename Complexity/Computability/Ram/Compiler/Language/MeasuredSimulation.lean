@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.ExecutionCost
 import Complexity.Computability.Ram.Compiler.Language.MeasuredValues
+import Complexity.Computability.Ram.Compiler.Language.MeasuredNode
 import Complexity.Computability.Ram.Compiler.Language.Control
 import Complexity.Computability.Ram.Compiler.Language.Effects
 
@@ -344,6 +345,34 @@ theorem lowerCoreMeasuredWithLocals (cost : ExecutionCost execution steps) (cont
       obtain ⟨t, rest, property, finalHeap, finalMatches⟩ := ih (RegisterMap.extend layout kind.toTy next)
         (next + fieldCount kind.toTy) resultSlot flag _
         (regular.extend bounded) (RegisterMap.extend_bounded bounded) matching (RegisterMap.Avoids.extend avoids fresh)
+        (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag
+        (copySafe_extend copySafe (Nat.le_trans resultFlag (Nat.le_of_lt fresh)))
+        preservedHeap flagPreserved
+      refine ⟨t, .seq first rest, ControlMatches.tail property, finalHeap, ?_⟩
+      intro separate
+      exact RegisterMap.Matches.tail (finalMatches (separate.extend
+        (Nat.le_trans resultFlag (Nat.le_of_lt fresh))))
+  | @readNode Γ result kind depth ref body entry finish outcome head tail found valueFits
+      execution steps cost ih =>
+      intro layout next resultSlot flag s regular bounded matched avoids fresh resultFlag copySafe
+        represented flagZero
+      obtain ⟨first, preservedHeap, actualFits⟩ := lowerReadNode_measured (control := controlReg)
+        (program := lowerProgram program) (heapLimit := heapLimit) (depth := depth)
+        layout next ref entry.locals s matched represented bounded found
+      rw [lowerReadNode_stmtSize] at first
+      let pair := Ty.prod kind.toTy (.option (.node kind))
+      have matching : RegisterMap.Matches (RegisterMap.extend layout pair next) placement
+          (Env.cons (τ := pair) (kind.toValue head, tail) entry.locals)
+          (s.setRegs (valueRegs pair next)
+            (valueWords placement (τ := pair) (kind.toValue head, tail))).regs :=
+        matched.setRegs (τ := pair) bounded (kind.toValue head, tail) actualFits
+      have flagPreserved := (valueRegs_setRegs_other s pair next flag
+        (valueWords placement (τ := pair) (kind.toValue head, tail))
+        (flag_not_mem_valueRegs_of_lt pair next flag fresh)).trans flagZero
+      obtain ⟨t, rest, property, finalHeap, finalMatches⟩ := ih
+        (RegisterMap.extend layout pair next) (next + fieldCount pair) resultSlot flag _
+        (regular.extend bounded) (RegisterMap.extend_bounded bounded) matching
+        (RegisterMap.Avoids.extend avoids fresh)
         (Nat.lt_of_lt_of_le fresh (Nat.le_add_right _ _)) resultFlag
         (copySafe_extend copySafe (Nat.le_trans resultFlag (Nat.le_of_lt fresh)))
         preservedHeap flagPreserved

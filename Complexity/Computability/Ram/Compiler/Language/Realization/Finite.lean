@@ -26,22 +26,24 @@ In particular, this predicate does not establish index validity or termination.
 
 `RealizedExec.exists_of_exec` lifts an independently successful finite source
 execution without proving its algorithm again or choosing a runtime budget.
-Its existential depth is sufficient call nesting, not elapsed time. Heap value
-ranges are exactly those already required by the compiler's `HeapRep`.
+Its existential depth is sufficient call nesting, not elapsed time. Buffer-cell
+ranges follow from the compiler's `HeapRep`; this restricted fragment does not
+read node payloads, and its heap invariant does not assert their ranges.
 -/
 
 namespace Ram.LanguageCompiler
 
 open Complexity.Language
 
-/-- Every cell in the current source heap has an exact word-sized scalar value.
-This is the range field of `HeapRep`, without a target memory or placement. -/
+/-- Every buffer cell in the current source heap has an exact word-sized scalar
+value. This is the buffer-range consequence of `HeapRep`, without target memory
+or placement; it places no condition on immutable node payloads or links. -/
 def HeapFits (w : Nat) (heap : Heap) : Prop :=
   ∀ {τ : CellTy} {object : Nat} {values : Array (CellValue τ)},
     heap.object? τ object = some values →
       ∀ (index : Nat) (bound : index < values.size), cellToNat values[index] < 2 ^ w
 
-/-- The existing RAM representation already supplies all source heap ranges. -/
+/-- The full RAM representation supplies the buffer-cell ranges used here. -/
 theorem HeapRep.heapFits {w heapLimit : Nat} {placement : Nat → Word w}
     {heap : Heap} {target : Source.State w}
     (represented : HeapRep placement heapLimit heap target) : HeapFits w heap :=
@@ -57,7 +59,7 @@ theorem read {w : Nat} {heap : Heap} (fits : HeapFits w heap)
   have cellFits := fits found (buffer.offset + index) (by omega)
   simpa only [same] using cellFits
 
-/-- Writing a fitting scalar preserves all current cell ranges, including
+/-- Writing a fitting scalar preserves all current buffer-cell ranges, including
 overlapping views. No old heap snapshot or disjoint-buffer premise is used. -/
 theorem write {w : Nat} {heap finish : Heap} (fits : HeapFits w heap)
     {τ : CellTy} {buffer : Buffer τ} {index : Nat} {value : CellValue τ}
@@ -72,12 +74,12 @@ theorem write {w : Nat} {heap finish : Heap} (fits : HeapFits w heap)
           (values.setIfInBounds (buffer.offset + index) value)).object? τ buffer.object =
             some (values.setIfInBounds (buffer.offset + index) value) :=
       Heap.object?_replace_self (Heap.object_lt_size found)
-    have sameStored : (⟨σ, otherValues⟩ : HeapObject) =
-        ⟨τ, values.setIfInBounds (buffer.offset + index) value⟩ := by
+    have sameStored : HeapObject.buffer σ otherValues =
+        .buffer τ (values.setIfInBounds (buffer.offset + index) value) := by
       apply Option.some.inj
       exact (Heap.object?_eq_some_iff.mp otherFound).symm.trans
         (Heap.object?_eq_some_iff.mp updatedFound)
-    have sameType : σ = τ := congrArg Sigma.fst sameStored
+    have sameType : σ = τ := congrArg HeapObject.kind sameStored
     subst σ
     have sameValues : otherValues = values.setIfInBounds (buffer.offset + index) value :=
       Option.some.inj (otherFound.symm.trans updatedFound)
@@ -138,7 +140,8 @@ def RangePreserving (w : Nat) {signatures : List Signature} :
       AtomBounded w value ∧ RangePreserving w noneBranch ∧ RangePreserving w someBranch
   | _, _, .ret value => AtomBounded w value
   | _, _, .call _ args body => ArgsBounded w args ∧ RangePreserving w body
-  | _, _, .slice _ _ _ _ | _, _, .alloc _ _ _ | _, _, .scope _ | _, _, .while _ _ => False
+  | _, _, .readNode _ _ | _, _, .consNode _ _ _ | _, _, .slice _ _ _ _ | _, _, .alloc _ _ _
+    | _, _, .scope _ | _, _, .while _ _ => False
 
 /-- A bounded atom observes a fitting value in any fitting local environment. -/
 theorem AtomBounded.fits {w : Nat} {Γ : List Ty} {τ : Ty} {atom : Atom Γ τ}
@@ -196,7 +199,7 @@ theorem ArgsBounded.fits {w : Nat} {Γ params : List Ty} {args : Args Γ params}
 namespace RealizedExec
 
 /-- A successful finite source execution of the restricted fragment admits
-some finite call capacity and preserves all scalar ranges. The source proof
+some finite call capacity and preserves local-value and buffer-cell ranges. The source proof
 supplies every successful access and recursive termination; no time or stack
 budget is assumed, and no functional property of the program is reproved. -/
 theorem exists_of_exec {signatures : List Signature}

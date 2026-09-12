@@ -33,6 +33,37 @@ private theorem observe_eq_some_of_exec {signatures : List Signature} {Γ : List
 
 namespace StmtCostBound
 
+/-- A linear potential using the existing loop rule's normal-round and
+false-exit charges. An early return still has its separate cost obligation. -/
+def whileLinearBound (guard body remaining : Nat) : Nat :=
+  (guard + body + 10) * remaining + guard + 11
+
+/-- The linear potential always pays for the final false guard. -/
+theorem whileLinearBound_exit (guard body remaining : Nat) :
+    guard + 11 ≤ whileLinearBound guard body remaining := by
+  unfold whileLinearBound
+  omega
+
+/-- Decreasing the remaining-round count by at least one pays for a normal
+guard/body round and leaves the same potential for the next iteration. -/
+theorem whileLinearBound_step (guard body : Nat) {next remaining : Nat}
+    (decreases : next + 1 ≤ remaining) :
+    guard + body + whileLinearBound guard body next + 10 ≤
+      whileLinearBound guard body remaining := by
+  have scaled := Nat.mul_le_mul_left (guard + body + 10) decreases
+  simp only [Nat.mul_add, Nat.mul_one] at scaled
+  unfold whileLinearBound
+  omega
+
+/-- One available round also pays for a direct function return from the body.
+No increment or subsequent guard is charged as an executed operation here. -/
+theorem whileLinearBound_return (guard body : Nat) {remaining : Nat}
+    (positive : 0 < remaining) :
+    guard + body + 17 ≤ whileLinearBound guard body remaining := by
+  have paid := whileLinearBound_step guard body (next := 0) positive
+  unfold whileLinearBound at paid ⊢
+  omega
+
 /-- Prove a potential bound using the actual named guard/body observations.
 The equations retain changed locals and heaps. Only completed source paths are
 used, so the cost proof need not re-establish termination or operation validity. -/
@@ -334,6 +365,74 @@ theorem while_contract_fixed {signatures : List Signature} {Γ : List Ty} {resul
     have ready := guardSpec.post_of_eq current tested
     exact returnExit _ _ _ _ _ _ value current ready
       (bodySpec.post_of_eq (enterBody _ _ _ _ current ready) iterated)
+  · exact initial
+
+/-- Uniform component bounds and a decreasing round count give a linear loop
+budget. The source contracts supply the actual transition facts; the shared
+cost rule pays for normal continuation, false exit and an early function return.
+Neither the round count nor the budget is used to define source correctness. -/
+theorem while_contract_fixed_linear
+    {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    {Mutable Captured : Type} (view : Env Γ ≃ Mutable × Captured)
+    {program : Complexity.Language.Program signatures}
+    {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    (guardFrame : ∀ {entry finish : Complexity.Language.State Γ} {control : Control .bool},
+      Complexity.Language.Exec program guard entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (bodyFrame : ∀ {entry finish : Complexity.Language.State Γ} {control : Control result},
+      Complexity.Language.Exec program body entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (captures : Captured)
+    {invariant bodyPre : Mutable → Heap → Prop}
+    {guardPost : Mutable → Heap → Bool → Mutable × Captured → Heap → Prop}
+    {bodyNormal : Mutable → Heap → Mutable × Captured → Heap → Prop}
+    {bodyReturned : Mutable → Heap → Value result → Mutable × Captured → Heap → Prop}
+    (guardSpec : Complexity.Language.Stmt.BlockSpec
+      (fun mutable => Complexity.Language.Stmt.observe view guard program (mutable, captures))
+      invariant (fun _ _ _ _ => False) guardPost)
+    (bodySpec : Complexity.Language.Stmt.BlockSpec
+      (fun mutable => Complexity.Language.Stmt.observe view body program (mutable, captures))
+      bodyPre bodyNormal bodyReturned)
+    (enterBody : ∀ mutable heap afterGuard afterGuardHeap, invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      bodyPre afterGuard afterGuardHeap)
+    (guardBound bodyBound : Nat) (remaining : Mutable → Heap → Nat)
+    (guardCost : ∀ mutable heap, invariant mutable heap →
+      StmtCostBound program guard ⟨view.symm (mutable, captures), heap⟩ guardBound)
+    (bodyCost : ∀ mutable heap afterGuard afterGuardHeap, invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      StmtCostBound program body ⟨view.symm (afterGuard, captures), afterGuardHeap⟩ bodyBound)
+    (preserve : ∀ mutable heap afterGuard afterGuardHeap afterBody afterBodyHeap,
+      invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      bodyNormal afterGuard afterGuardHeap (afterBody, captures) afterBodyHeap →
+      invariant afterBody afterBodyHeap)
+    (decreases : ∀ mutable heap afterGuard afterGuardHeap afterBody afterBodyHeap,
+      invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      bodyNormal afterGuard afterGuardHeap (afterBody, captures) afterBodyHeap →
+      remaining afterBody afterBodyHeap + 1 ≤ remaining mutable heap)
+    (positive : ∀ mutable heap afterGuard afterGuardHeap, invariant mutable heap →
+      guardPost mutable heap true (afterGuard, captures) afterGuardHeap →
+      0 < remaining mutable heap)
+    {mutable : Mutable} {heap : Heap} (initial : invariant mutable heap) :
+    StmtCostBound program (.while guard body) ⟨view.symm (mutable, captures), heap⟩
+      (whileLinearBound guardBound bodyBound (remaining mutable heap)) := by
+  apply while_contract_fixed view guardFrame bodyFrame captures guardSpec bodySpec enterBody
+    (guardBound := fun _ _ => guardBound) (bodyBound := fun _ _ _ _ => bodyBound)
+    (potential := fun mutable heap => whileLinearBound guardBound bodyBound (remaining mutable heap))
+  · exact guardCost
+  · exact bodyCost
+  · exact preserve
+  · intro mutable heap afterGuard afterGuardHeap current tested
+    exact whileLinearBound_exit guardBound bodyBound (remaining mutable heap)
+  · intro mutable heap afterGuard afterGuardHeap afterBody afterBodyHeap current tested iterated
+    exact whileLinearBound_step guardBound bodyBound
+      (decreases mutable heap afterGuard afterGuardHeap afterBody afterBodyHeap current tested iterated)
+  · intro mutable heap afterGuard afterGuardHeap finalMutable finalHeap value current tested returned
+    exact whileLinearBound_return guardBound bodyBound
+      (positive mutable heap afterGuard afterGuardHeap current tested)
   · exact initial
 
 end StmtCostBound

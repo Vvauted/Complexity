@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Basic
+import Complexity.Language.Syntax.Native
 import Lean.Elab.Command
 import Lean.EnvExtension
 
@@ -37,6 +38,9 @@ structure FunctionInfo where
   /-- The public value function has a checked pure source correspondence.
   Its actual source observation has the explicit `_action` suffix. -/
   pure : Bool := false
+  /-- The independently checked native header, when a represented pure family
+  uses registered structures rather than the core's native value types. -/
+  nativeHeader : Option NativeHeader := none
 
 private initialize programInfoExt :
     SimplePersistentEnvExtension (Name × Array FunctionInfo) (NameMap (Array FunctionInfo)) ←

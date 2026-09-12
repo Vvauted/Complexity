@@ -13,6 +13,46 @@ A useful complexity proof has two parts: show what work the program performs, th
 that work mathematically. The compiler and operation contracts supply the first connection;
 ordinary Lean functions and mathlib supply the sums, recurrences and asymptotics.
 
+## Infer structural costs of a high-level program
+
+For `source_program`, the [compiler-derived cost rules](##Complexity.Computability.Ram.Compiler.Language.CostBound)
+describe the same source execution and its actual lowering. They do not require
+a second implementation or a proposed time budget in the correctness proof.
+`ram_source_cost_step` composes these rules; `ram_source_cost_intro` additionally
+opens a function body at its ordinary parameters and includes its wrapper.
+
+The [compiled traversal](##Examples.Language.TraversalCompiled) lets these rules
+infer uniform guard, body and enclosing-function budgets. A natural-number
+witness and its proof are constructed together, with the witness fixed outside
+the arbitrary locals and heap. Callers reuse `boundedMapBodyBound`; the
+[two-call client](##Examples.Language.TraversalCompositionCompiled) infers its
+own structural overhead from the two supplied callee contracts. It still uses
+the first call's actual heap frame to justify the second call's input.
+
+For a uniform-cost loop, `StmtCostBound.whileLinearBound` supplies the structural
+loop charges. Its step lemma asks for a decrease in the mathematical remaining
+iteration count, not a recalculation of dispatch instructions. General loops
+retain the existing potential rule, including a separate early-return case.
+Structural inference does not discover an invariant, a recurrence or an
+amortized potential. Those remain ordinary mathematical arguments.
+
+The source contract can also supply termination to the separate finite-word
+realization proof. `TotalWP.of_blockSpec` applies an existing ordinary-local
+block contract at its actual input and heap. Its two consequences handle normal
+completion and early return; the shared bridge handles the native triple and
+control conversion. Numerical ranges and actual call nesting remain additional
+backend obligations, not another proof of the algorithm's result.
+
+For the final claim, use `FunctionRealizable.execute_le` with the independently
+proved source contract, cost bound and `FunctionLaunch`. It returns one
+`FunctionExecution`: mathematical output and heap, actual halted RAM state and
+counted instructions belong to the same invocation. State the postcondition
+against `outcome.value` and `outcome.heap`, and the time bound against
+`outcome.result.steps`. `outcome.nextEntry` retains the complete actual memory
+for a later call. Register encodings and the runner's internal witness tuple
+are projections of the shared result, not arguments of the mathematical claim.
+The lower-level runner interfaces remain available to compiler clients.
+
 ## Amortized analysis of a mutable source program
 
 The [splay example](##Examples.Language.Splay.Sequence) connects one in-place
