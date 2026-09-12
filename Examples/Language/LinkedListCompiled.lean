@@ -39,24 +39,32 @@ theorem add_costBound :
 
 /-- The ordinary callback range proof supplies the linked fold's zero-growth
 resource contract, with actual inputs related to mathematical accumulator values. -/
-theorem add_fold_resources (w heapLimit : Nat) :
+theorem add_fold_resources_at_depth (w heapLimit depth : Nat) :
     Ram.LanguageCompiler.List.Fold.CalleeResources (kind := .nat) Reducer.program Reducer.addId rfl
       Representation.nat (fun accumulator head => accumulator + head < 2 ^ w)
-      w heapLimit 0 (fun _ _ => 0) := by
-  apply Ram.LanguageCompiler.List.Fold.CalleeResources.of_functionRealizable add_realizable
+      w heapLimit depth (fun _ _ => 0) := by
+  apply Ram.LanguageCompiler.List.Fold.CalleeResources.of_functionRealizable
+    (add_realizable.mono_depth (Nat.zero_le depth))
   intro accumulator actual head heap allowed related
   change accumulator = actual at related
   subst actual
   exact allowed
 
+/-- The standalone fold uses the callback's zero-depth specialization. -/
+theorem add_fold_resources (w heapLimit : Nat) :
+    Ram.LanguageCompiler.List.Fold.CalleeResources (kind := .nat) Reducer.program Reducer.addId rfl
+      Representation.nat (fun accumulator head => accumulator + head < 2 ^ w)
+      w heapLimit 0 (fun _ _ => 0) :=
+  add_fold_resources_at_depth w heapLimit 0
+
 /-- The same original callback bound transfers without repricing the callback
 or proving its source behavior again. Outer calls are charged by the fold. -/
-theorem add_fold_costBound (w heapLimit : Nat) :
+theorem add_fold_costBound_at_depth (w heapLimit depth : Nat) :
     Ram.LanguageCompiler.List.Fold.CalleeCostBound (kind := .nat) Reducer.program Reducer.addId rfl
       Representation.nat (fun accumulator head => accumulator + head < 2 ^ w)
-      w heapLimit 0 (fun _ _ => 10) := by
+      w heapLimit depth (fun _ _ => 10) := by
   apply Ram.LanguageCompiler.List.Fold.CalleeCostBound.of_functionCostBound
-    add_realizable add_costBound
+    (add_realizable.mono_depth (Nat.zero_le depth)) add_costBound
   · intro accumulator actual head heap allowed related
     change accumulator = actual at related
     subst actual
@@ -66,7 +74,15 @@ theorem add_fold_costBound (w heapLimit : Nat) :
   · intros
     exact Nat.le_refl _
 
-private theorem add_fold_contract (w : Nat) :
+/-- The standalone fold's callback bound is unchanged by its depth specialization. -/
+theorem add_fold_costBound (w heapLimit : Nat) :
+    Ram.LanguageCompiler.List.Fold.CalleeCostBound (kind := .nat) Reducer.program Reducer.addId rfl
+      Representation.nat (fun accumulator head => accumulator + head < 2 ^ w)
+      w heapLimit 0 (fun _ _ => 10) :=
+  add_fold_costBound_at_depth w heapLimit 0
+
+/-- The same source addition contract is reused by folds with a finite-word domain. -/
+theorem add_fold_contract (w : Nat) :
     List.Fold.Contract (kind := .nat) (accTy := .nat)
       Reducer.program Reducer.addId rfl Representation.nat
       Nat.add (fun accumulator head => accumulator + head < 2 ^ w) :=
@@ -91,7 +107,8 @@ theorem sum_admissible {w : Nat} (initial : Nat) (values : List Nat)
     simp only [partition, List.sum_append, List.sum_cons]
   omega
 
-private theorem sum_ranges {w : Nat} (initial : Nat) (values : List Nat)
+/-- A final natural-sum bound also bounds the initial accumulator and each head. -/
+theorem sum_ranges {w : Nat} (initial : Nat) (values : List Nat)
     (fits : initial + values.sum < 2 ^ w) :
     initial < 2 ^ w ∧ ∀ head ∈ values, head < 2 ^ w := by
   refine ⟨Nat.lt_of_le_of_lt (Nat.le_add_right initial values.sum) fits, ?_⟩

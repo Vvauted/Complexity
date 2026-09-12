@@ -574,7 +574,12 @@ The [indexed arena call rules](../Complexity/Computability/Ram/Compiler/Language
 select an existing callee bound at a mathematical input index, checking its actual
 arguments and entry-heap precondition. The structural cost pass accepts
 `certificate at index via embedding`; it does not infer a List from its root or
-guess an input-dependent price. The shared
+guess an input-dependent price. Adding `using specification` reuses an existing
+`FunctionTotal` postcondition at the actual returned value and heap. This lets a
+later call use the represented result as its mathematical cost index, rather than
+bound impossible outcomes. The general `_le` rules additionally accept a
+result-dependent continuation budget and a proved combining inequality; that
+mathematical inequality is not inferred by the structural pass. The shared
 [allocating-loop rule](../Complexity/Computability/Ram/Compiler/Language/Arena/CostBound/Loop.lean)
 uses an author-supplied ghost index, invariant and potential over the actual states.
 It includes false exits and early returns, retaining the actual changing heaps
@@ -590,8 +595,25 @@ it no longer constructs a comparison traversal at cursor zero.
 `pushCost` and length-indexed `reverseAppendCost` now infer the callback and native
 wrapper costs from their actual bodies and existing callee certificates. The
 ordinary reverse/append equation, affine invocation bound and three-word-per-head
-allocation allowance are unchanged. General potential discovery, readiness
-inference and result-dependent continuation budgets are not automated.
+allocation allowance are unchanged. Both folds' constant-callback envelopes
+reuse `linearFunctionBound` and `functionBound_const`; traversal coefficients
+belong to the shared library. General potential discovery, readiness inference
+and arbitrary result-dependent budget comparisons remain mathematical work.
+
+The [allocation-then-traversal consumer](../Examples/Language/LinkedListComposition.lean)
+connects the existing `NativeLists.reverseSum` to a complete RAM invocation.
+Its first call allocates the real reversed List; the second traverses the actual
+returned root, using the first call's generated refinement in its cost proof.
+`reverseSumCost` infers the wrapper's bound from supplied callee certificates.
+Its full invocation envelope is proved affine in length and `O(length)` using
+mathlib's `IsBigO`, without restating compiler coefficients in the consumer.
+The halted outcome returns `values.sum`, retains the original List in its actual
+final heap, and has cursor at most the initial cursor plus `3 * values.length`.
+The second fold allocates nothing. A final-sum range supplies every addition
+range; code, stack and arena conditions remain explicit. The sufficient internal
+depth is five, independent of list length. Both traversals and the outer
+initialization/call/return/halt are charged; input loading and reclamation are not
+claimed. No callback or source traversal is implemented or proved a second time.
 
 The [typed-join RAM consumer](../Examples/Language/LinkedListViewsCompiled.lean)
 uses the same inferred bounds and publication rule. `headOr_execute_le` returns
@@ -618,8 +640,8 @@ repeats that generic environment/arena transport. This is not automatic resource
 inference for arbitrary native declarations. The additional `sumPair`, `sumTwice`
 and `sumWithPrepended` consumers have checked correspondence, but not yet their
 own published RAM bounds. The allocating `reverseAppend` wrapper is covered
-above; its `reverseWithHead` and `reverseSum` clients do not yet have their own
-complete invocation bounds.
+above, and `reverseSum` has the complete invocation bound just described;
+`reverseWithHead` does not yet have its own published RAM theorem.
 
 The allocation bridge now has `cons_of_rooted` and `cons_measured_of_rooted`:
 the raw node operation only needs an existing tail root, while its List
@@ -1175,8 +1197,11 @@ environment encodings or repeating source facts in a second resource proof.
    now compose supplied mathematical-input bounds, and the shared ghost-indexed
    arena loop rule is used by the actual-only fold cost proof. `push` and
    `reverseAppend` use inferred wrapper costs, preserving their published bounds.
+   Source postconditions now also flow into later input-dependent call budgets;
+   the allocating `reverseSum` path uses this to traverse its actual new List.
    Continue removing remaining resource-result bookkeeping and composing supplied
-   loop contracts; arbitrary potentials and readiness are not thereby inferred. The fixed-heap
+   loop contracts; arbitrary potentials, budget comparisons and readiness are not
+   thereby inferred. The fixed-heap
    `StmtCostBound` cannot silently stand in for a bound on allocating execution;
    retain the existing arena cost relation and function contracts. The `prependPair`
    and `reverseAppend` migrations include their leaf wrappers: removing argument environments from

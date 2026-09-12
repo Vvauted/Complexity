@@ -16,6 +16,9 @@ for a dependent bound and leaves its argument equality and precondition as proof
 obligations. Without an index the certificate is uniform. An optional embedding
 identifies an imported source program. Calls retain their real target entry and
 frame overhead; mathematical indices are not guessed from runtime handles.
+`certificate at index using specification` also supplies an existing
+`FunctionTotal` proof. Its postcondition describes the actual returned value and
+heap in the continuation; correctness and cost preconditions remain separate.
 
 The tactic also introduces a bound in a goal of the form
 `{ bound : Nat // ∀ entry, StmtArenaCostBound program w heapLimit depth body entry bound }`.
@@ -32,6 +35,7 @@ open Lean Meta Elab Tactic
 private structure Certificate where
   proof : TSyntax `term
   index : Option (TSyntax `term) := none
+  specification : Option (TSyntax `term) := none
   embedding : Option (TSyntax `term) := none
 
 /-- Introduce only the requested bound witness. Its value is determined by
@@ -87,8 +91,13 @@ private partial def applyCallee (statement : Lean.Expr)
                 applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_uniform
                   (fn := $fn) $bounded))
             | some index =>
-                applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at
-                  (fn := $fn) $bounded $index))
+                match certificate.specification with
+                | none =>
+                    applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at
+                      (fn := $fn) $bounded $index))
+                | some specification =>
+                    applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at_of_spec
+                      (fn := $fn) $bounded $specification $index))
         | some embedding =>
             match certificate.index with
             | none =>
@@ -99,12 +108,21 @@ private partial def applyCallee (statement : Lean.Expr)
                       applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_uniform_imported
                         $embedding (fn := $fn) $bounded))
             | some index =>
-                Tactic.tryCatchRestore
-                  (applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at_imported
-                    $embedding $bounded $index))) fun _ => do
-                      let fn ← certificateFunction bounded
-                      applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at_imported
-                        $embedding (fn := $fn) $bounded $index))) fun error => do
+                match certificate.specification with
+                | none =>
+                    Tactic.tryCatchRestore
+                      (applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at_imported
+                        $embedding $bounded $index))) fun _ => do
+                          let fn ← certificateFunction bounded
+                          applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at_imported
+                            $embedding (fn := $fn) $bounded $index))
+                | some specification =>
+                    Tactic.tryCatchRestore
+                      (applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at_of_spec_imported
+                        $embedding $bounded $specification $index))) fun _ => do
+                          let fn ← certificateFunction bounded
+                          applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.call_at_of_spec_imported
+                            $embedding (fn := $fn) $bounded $specification $index))) fun error => do
           if remaining.isEmpty then throw error
           applyCallee statement remaining
 
@@ -151,16 +169,23 @@ private def start (certificates : List Certificate) : TacticM Unit := focus do
   cost certificates
 
 declare_syntax_cat arenaCostCertificate
-syntax term:max (&"at" term:max)? (&"via" term:max)? : arenaCostCertificate
+syntax term:max (&"at" term:max (&"using" term:max)?)? (&"via" term:max)? : arenaCostCertificate
 
 /-- Infer a structural bound using existing arena function certificates.
-An optional `at` selects an input-dependent bound; `via` supplies the actual
-program embedding for an imported call. -/
+An optional `at` selects an input-dependent bound; `using` supplies an existing
+source specification whose postcondition is available in the continuation.
+`via` supplies the actual program embedding for an imported call. -/
 syntax "ram_source_arena_cost" ("[" arenaCostCertificate,* "]")? : tactic
 
 private def parseCertificate (stx : TSyntax `arenaCostCertificate) :
     TacticM Certificate := do
   match stx with
+  | `(arenaCostCertificate| $proof:term at $index:term using $specification:term
+      via $embedding:term) =>
+      return {
+        proof, index := some index, specification := some specification, embedding := some embedding }
+  | `(arenaCostCertificate| $proof:term at $index:term using $specification:term) =>
+      return { proof, index := some index, specification := some specification }
   | `(arenaCostCertificate| $proof:term at $index:term via $embedding:term) =>
       return { proof, index := some index, embedding := some embedding }
   | `(arenaCostCertificate| $proof:term at $index:term) =>

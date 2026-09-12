@@ -489,8 +489,14 @@ explicit. For input-dependent calls, the pass also accepts a supplied mathematic
 index with `certificate at index via embedding`. The
 [indexed call rules](##Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Call)
 check that index's actual arguments and precondition; they do not decode a List
-from its raw root or guess a callee price. The continuation's bound must still be
-uniform over that invocation's possible returned values and heaps.
+from its raw root or guess a callee price. With
+`certificate at index using specification via embedding`, an existing
+`FunctionTotal` postcondition is available at the actual returned value and heap.
+Later calls may use that relation to select their mathematical input index. The
+structural pass still infers a fixed envelope for the current invocation; the
+[general rule](##Ram.LanguageCompiler.StmtArenaCostBound.call_at_of_spec_le) also
+accepts a result-dependent continuation budget and its mathematical combining
+inequality, without asking the author to bound impossible callee outcomes.
 
 The [arena loop cost rule](##Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Loop)
 accepts a ghost index, invariant and potential over actual source states. It
@@ -535,6 +541,21 @@ and List contents, but not a second ready execution, a resource contract, word
 ranges or spare capacity. The old callable bound delegates to this proof with its
 stronger precondition. Constructing the actual ready execution still requires the
 original range and capacity proofs; the cost-only rule does not remove them.
+
+The [allocation-then-traversal consumer](##Examples.Language.LinkedListComposition)
+connects the existing `NativeLists.reverseSum` to RAM. It allocates the actual
+reversed List, then traverses that returned root with the original addition
+callback. The cost proof supplies the first call's generated refinement with
+`using`; the second call receives the new List observation at its actual heap.
+The shared `linearFunctionBound` specializes both constant-callback folds, and
+`reverseSumCost` infers their enclosing wrapper cost. The complete invocation
+envelope is proved affine and `O(length)` in mathlib's `IsBigO`. The RAM result
+returns `values.sum`, preserves the original List observation and bounds cursor
+growth by `3 * values.length`; the second fold needs no new storage. A final-sum
+bound supplies all finite-word addition ranges. Call depth five suffices,
+independently of length. Both traversals, calls, initialization, returns and halt
+are included; input loading and reclamation are not. Source correctness remains
+the existing ordinary mathematical equation, with no time-budget premise.
 
 The correctness proof needs only the mathematical List equation. The
 [structural arena tactics](##Complexity.Computability.Ram.Compiler.Language.Arena.Tactic) now generate

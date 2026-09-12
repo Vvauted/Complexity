@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.List.Fold
+import Complexity.Computability.Ram.Compiler.Language.List.Fold.Function
 import Complexity.Data.List.Fold
 import Mathlib.Analysis.Asymptotics.Lemmas
 
@@ -70,6 +70,31 @@ theorem accumulated_le_const (step : α → CellValue kind → α)
       calc
         _ ≤ perElement + tail.length * perElement := Nat.add_le_add headBound (ih _ tailBound)
         _ = _ := by rw [Nat.add_mul, Nat.one_mul, Nat.add_comm]
+
+/-- A size-only affine envelope for the callable fold body with a uniform
+callback budget. It includes body initialization, leaving the enclosing call
+and halt to the caller. Its coefficients belong to the actual linked program. -/
+def linearFunctionBound (sourceProgram : Complexity.Language.Program signatures)
+    (fn : Fin signatures.length)
+    (same : signatures[fn] = Complexity.Language.List.Fold.stepSignature accTy kind)
+    (perElement length : Nat) : Nat :=
+  let folded := Complexity.Language.List.Fold.program sourceProgram fn same
+  length * (perElement + callCost folded
+    (Complexity.Language.List.Fold.calleeEntry accTy kind fn) 0 + 2 * fieldCount accTy + 45) +
+      (2 * fieldCount accTy + 23)
+
+/-- A constant callback budget specializes the existing callable-body envelope
+without another traversal proof or a new instruction-cost model. -/
+theorem functionBound_const (sourceProgram : Complexity.Language.Program signatures)
+    (fn : Fin signatures.length)
+    (same : signatures[fn] = Complexity.Language.List.Fold.stepSignature accTy kind)
+    (step : α → CellValue kind → α) (perElement : Nat) (initial : α)
+    (values : _root_.List (CellValue kind)) :
+    functionBound sourceProgram fn same step (fun _ _ => perElement) initial values =
+      linearFunctionBound sourceProgram fn same perElement values.length := by
+  simp only [functionBound, remainingCost_eq_sum, accumulated_const,
+    linearFunctionBound, Nat.mul_add]
+  omega
 
 /-- The complete invocation budget is an ordinary sum of accumulator-dependent
 callback bounds, linear traversal work and fixed outer call/return/halt work. -/

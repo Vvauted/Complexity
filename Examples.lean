@@ -15,6 +15,7 @@ import Examples.Language.Linking
 import Examples.Language.LinkedList
 import Examples.Language.LinkedListAllocation
 import Examples.Language.LinkedListCompiled
+import Examples.Language.LinkedListComposition
 import Examples.Language.LinkedListFoldAllocation
 import Examples.Language.LinkedListViewsCompiled
 import Examples.Language.OptionalBuffer
