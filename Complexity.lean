@@ -469,6 +469,7 @@ import Complexity.Language.Rooted.Execution
 import Complexity.Language.Semantics
 import Complexity.Language.State
 import Complexity.Language.Syntax
+import Complexity.Language.Syntax.Core
 import Complexity.Language.Syntax.Declaration
 import Complexity.Language.Syntax.Imports
 import Complexity.Language.Syntax.Pure
