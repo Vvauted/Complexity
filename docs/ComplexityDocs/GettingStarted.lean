@@ -129,6 +129,9 @@ Ordinary structures can also be registered with `source_type`. The
 `value : Nat` and `limit : Nat`, then constructs, passes, returns and projects it
 in one default `source_program` declaration. Its correctness theorem
 is the ordinary equation `Structured.run_model n limit = min (n + 1) limit`.
+Its caller groups construction, the helper call and projection in an ordinary
+`let result : Nat ← do ...` block, then returns that result. The same local-return
+boundary handles this form and conditional/Option value branches.
 The generated `Structured.run_refines.of_math` transfers that mathematical proof
 to the same source implementation; the
 [compiled client](##Examples.Language.ScalarCompiled) proves its actual RAM

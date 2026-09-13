@@ -15,10 +15,11 @@ actual local updates, heap and execution costs; neither catches a function
 return or defines another evaluator. Loop guards and increments can use the
 corresponding fragments in `RangeControl`.
 
-The root lemmas compare a pending local result with the same value carried by
-`Control.returned`. A fault is compared only with an empty pending slot: a fault
-does not carry a return root. A pending value left over after a failed scratch
-exit cannot simply be ignored when checking an enclosing scratch scope.
+The root lemmas retain the pending slot's roots separately from the actual
+control, or compare a pending local result with the same returned value. A fault
+does not itself carry a return root. A pending value left over after a failed
+scratch exit cannot simply be ignored when checking an enclosing scratch scope;
+an optional Unit result is root-free even in this case.
 
 Consequently, each scratch scope needs its own temporary result and flag,
 lexically inside its parent scope but outside its own body. The body writes
@@ -72,6 +73,26 @@ theorem observe_resume_false (view : Env Γ ≃ Locals) (program : Program signa
     observe view (resume live next) program locals = pure (.normal, locals) := by
   rw [resume, observe_ite, stopped]
   simp only [Bool.false_eq_true, if_false, observe_skip]
+
+/-- Separate the roots of a pending local result from the unchanged actual
+control. In particular, a fault does not erase a nonempty slot's roots. -/
+theorem scopeSafe_pending (initial : Heap) (finish : State Γ) (live : Bool)
+    (pending : Option (Value τ)) (control : Control result) :
+    ScopeSafe initial
+      (State.cons (τ := .bool) live (State.cons (τ := .option τ) pending finish))
+      control ↔
+    ValueRooted initial (τ := .option τ) pending ∧ ScopeSafe initial finish control := by
+  simp [ScopeSafe, State.cons, and_assoc]
+
+/-- A Boolean and an optional Unit result add no roots, for every actual
+control, including faults with a nonempty pending slot. -/
+theorem scopeSafe_unit (initial : Heap) (finish : State Γ) (live : Bool)
+    (pending : Option Unit) (control : Control result) :
+    ScopeSafe initial
+      (State.cons (τ := .bool) live (State.cons (τ := .option .unit) pending finish))
+      control ↔ ScopeSafe initial finish control := by
+  rw [scopeSafe_pending (τ := .unit)]
+  cases pending <;> simp
 
 /-- A Boolean and an empty result slot add no retained roots on a normal exit.
 The statement result types on the two sides need not coincide. -/

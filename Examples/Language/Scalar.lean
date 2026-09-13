@@ -107,9 +107,11 @@ source_program Structured importing Implementation where
     return BoundedInput.mk value input.limit
 
   def run (n : Nat) (limit : Nat) : Nat := do
-    let input := BoundedInput.mk n limit
-    let result ← update input
-    return result.value
+    let result : Nat ← do
+      let input := BoundedInput.mk n limit
+      let updated ← update input
+      return updated.value
+    return result
 
 /-- The native structure view reuses the unchanged scalar helper's mathematics. -/
 theorem structured_update_eq (input : BoundedInput) :

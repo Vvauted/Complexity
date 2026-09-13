@@ -94,8 +94,10 @@ The current integration work has these concrete obligations:
   includes the result/flag assignments and final payload match. Existing ordinary
   scope/traversal code and bounds are unchanged. Loop/scratch combinations inside
   value blocks still need a real consumer; the supporting root lemmas alone are
-  not a complete lowering theorem. Plain standalone `let x ← do ...` blocks also
-  remain to be connected to this same boundary.
+  not a complete lowering theorem. Plain `let x : T ← do ...` blocks now reuse
+  that same boundary and proof trace. The original structured scalar caller uses
+  this form with its unchanged mathematical proof and RAM realization/invocation
+  proof; shared Bool/Option normalization handles the private control values.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. The general-while consumer still supplies its record/heap
   state relation and guard/body transport explicitly. This checks composability,
@@ -106,6 +108,11 @@ The current integration work has these concrete obligations:
   construct raw tuples or unfold `Part`. Fixed captured handles do not by
   themselves preserve captured contents, and no total model of the complete
   while is required.
+  Local-return blocks also need an author-facing completion/local-state view:
+  compiler-private result/flag slots must not enlarge user invariants or scratch
+  tuples. Keep complete source coordinates for execution and run scope cleanup
+  before projection. The original Unit-valued scratch worker is the next concrete
+  consumer; ancestor private slots can reuse fixed-capture transport.
 - [ ] Compose mathematical functions and state contracts through the same
   heap-indexed representation. A pure encoding is a special case; mutable
   array contents are not preserved by arbitrary heap extension.

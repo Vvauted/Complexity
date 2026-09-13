@@ -220,11 +220,13 @@ def normalizeValues : TacticM Unit := do
       ``Ram.LanguageCompiler.EnvFits.cons_some_iff,
       ``Ram.LanguageCompiler.EnvFits.cons_iff,
       ``Ram.LanguageCompiler.EnvFits.empty,
-      ``decide_eq_true_eq, ``and_true, ``true_and])
+      ``decide_eq_true_eq, ``Bool.false_eq_true, ``Bool.true_eq_false,
+      ``Option.some.injEq, ``and_true, ``true_and])
   evalTactic (← `(tactic|
     (dsimp (config := { failIfUnchanged := false }) only
        [Complexity.Language.Value, Complexity.Language.CellValue] at * <;>
-     simp (config := { failIfUnchanged := false }) only [$rules,*] at * <;> try assumption)))
+     simp (config := { failIfUnchanged := false }) only
+       [$rules,*, ↓reduceIte, reduceCtorEq] at * <;> try assumption)))
 
 private partial def realize
     (callee : Option (TSyntax `term × TSyntax `term)) : TacticM Unit := do

@@ -1047,6 +1047,12 @@ private partial def conditionalParts? (expression : TSyntax `term) :
   | `(if $condition:term then $yes:term else $no:term) => some (condition, yes, no)
   | _ => none
 
+private partial def doParts? (expression : TSyntax `term) : Option (TSyntax ``doSeq) :=
+  match expression with
+  | `(($inner:term)) => doParts? inner
+  | `(do $body:doSeq) => some body
+  | _ => none
+
 /-- Extract one actual call from transparent value constructors. Branches and
 callbacks are deliberately not traversed: hoisting must not execute unselected code. -/
 private partial def hoistValueCall? (imports : ImportedPrograms) (scope : List Binding)
@@ -1709,6 +1715,10 @@ private partial def sequence (names : DeclarationNames)
     -- An unparenthesized `if` after `←` is a `doIf`, not a term.
     -- Normalize that parser shape before the shared typed conditional path.
     if let `(doElem| let $name:ident $[: $annotation:term]? ← $rhs:doElem) := element then
+      if let `(doElem| do $body:doSeq) := rhs then
+        let expression ← `(do $body:doSeq)
+        let normalized ← `(doElem| let $name:ident $[: $annotation:term]? ← ($expression:term))
+        return ← sequence names imports resultType scope (normalized :: rest) bindingKind allowFallthrough localReturn
       if let `(doElem| if $test:term then $yes:doSeq else $no:doSeq) := rhs then
         let yesTerm ← branchTerm yes
         let noTerm ← branchTerm no
@@ -1732,6 +1742,46 @@ private partial def sequence (names : DeclarationNames)
           some (name, annotation, expression)
       | _ => none
     if let some (name, annotation, expression) := binding? then
+      if let some body := doParts? expression then
+        let some annotation := annotation
+          | throwErrorAt name "a source value block requires an explicit result type"
+        let selectedType ← resolveType annotation
+        let firstAssignment := (← get).assignedSlots.size
+        let prepared ← sequence names imports selectedType scope (getDoElems body).toList
+          .immutable false true
+        if prepared.normalScope?.isSome then
+          throwErrorAt expression "a value-producing block cannot finish without returning a value"
+        let modelInputs := do
+          let native ← prepared.native?
+          let _ ← prepared.calls?
+          let returned ← prepared.returned?
+          let model ← returned.model?
+          pure (native, model)
+        let after ← valueBlockScope scope firstAssignment modelInputs.isSome
+        let nativeName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_native"))
+        let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
+        let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
+        let binding : Binding := {
+          name, nativeName, type := selectedType, rawName, relationName
+          -- The proof trace already supplies this value and its observation.
+          -- A new source join name is not a new mathematical call result.
+          model? := modelInputs.map (fun (_, model) => model.toBindingModel)
+          slot := ← bindingSlot name
+          mutable := bindingMutable }
+        let continued ← sequence names imports resultType (binding :: after) rest
+          .immutable allowFallthrough localReturn
+        let nativeType ← termOfExpr selectedType.nativeType
+        let nativeBinding ← modelInputs.mapM fun (native, _) => do
+          let body ← doTerm native
+          `(doElem| let $nativeName:ident : $nativeType := Id.run $body:term)
+        let slot := mkIdent (← mkFreshUserName (name.getId.appendAfter "_join"))
+        let joinSlot ← makeJoinSlot slot selectedType.coreTy
+        let boundary ← joinSlot.branch prepared.raw
+        let rawPrefix := (← joinSlot.initialization) ++ getDoElems boundary
+        return { continued with
+          raw := rawPrefix ++ (← joinSlot.continuation name continued.raw bindingKind)
+          native? := (fun binding rest => #[binding] ++ rest) <$> nativeBinding <*> continued.native?
+          calls? := (· ++ ·) <$> prepared.calls? <*> continued.calls? }
       if let some (matched, first, firstBody, second, secondBody) := matchParts? expression then
         let some annotation := annotation
           | throwErrorAt name "a native match binding requires an explicit result type"
