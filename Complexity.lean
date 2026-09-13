@@ -420,6 +420,7 @@ import Complexity.Language.Eval.Locals.Captures
 import Complexity.Language.Eval.Locals.Composition
 import Complexity.Language.Eval.Locals.Continuation
 import Complexity.Language.Eval.Locals.Effects
+import Complexity.Language.Eval.Locals.LocalReturn
 import Complexity.Language.Eval.Locals.Range
 import Complexity.Language.Eval.Locals.Range.Represented
 import Complexity.Language.Eval.Locals.While.Represented

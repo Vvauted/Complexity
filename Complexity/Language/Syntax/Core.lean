@@ -12,6 +12,8 @@ import Complexity.Language.Eval.Locals.Effects
 import Complexity.Language.Eval.Locals.Verification
 import Complexity.Language.Eval.Locals.Captures
 import Complexity.Language.Eval.Locals.Range
+import Complexity.Language.Eval.Locals.LocalReturn
+import Complexity.Language.Eval.Locals.RangeControl
 import Complexity.Language.Linking.Eval
 import Complexity.Language.Linking.Extension
 import Complexity.Language.Syntax.Imports
@@ -218,6 +220,9 @@ structure ActualRangeSite where
   /-- The actual iteration, including index binding and cursor advancement. -/
   bodyProofBody : Array (TSyntax `doElem)
   bodyFallsThrough : Bool
+  /-- The guard and increment are controlled by an enclosing local-return flag,
+  so this site does not have the ordinary always-active range correspondence. -/
+  localReturn : Bool := false
 
 private initialize loopCoordinatesExt :
     SimplePersistentEnvExtension (Name × LoopCoordinates) (NameMap LoopCoordinates) ←
@@ -280,6 +285,11 @@ syntax (name := sourceFiniteRange)
 -- This marker introduces no source statement, local, function or loop number.
 syntax (name := sourceRangeSite)
   "source_range_site% " ident " (" term "," term ")" " do " doSeq : doElem
+
+/-- Internal local-return boundary using already declared mutable result and
+activity slots. It lowers through ordinary source assignments and branches. -/
+syntax (name := sourceLocalReturn)
+  "source_local_return% " "(" ident "," ident ")" " do " doSeq : doElem
 
 -- Internal emission point: infer an equation from its checked proof instead of
 -- inventing an unresolved right-hand side in a theorem header.
@@ -404,6 +414,12 @@ private structure Binding where
 
 private abbrev Scope := List Binding
 
+private structure LocalReturnTarget where
+  type : Ty
+  /-- Resolved lexical identities, not source spellings that can be shadowed. -/
+  pending : Name
+  live : Name
+
 private structure Atomic where
   type : Ty
   term : TSyntax `term
@@ -421,6 +437,9 @@ private structure FiniteRange where
   stride : TSyntax `term
   body : Array (TSyntax `doElem)
   fallsThrough : Bool
+  /-- Guard and increment obey a local-return flag rather than ordinary range
+  control. Keep the original range coordinates without claiming its model. -/
+  localReturn : Bool := false
 
 private structure RangeRequest where
   tag : Name
@@ -436,6 +455,17 @@ private structure BlockSite where
   finiteRange : Option FiniteRange
   nativeResult : Option NativeCoordinate := none
   rangeRequest : Option RangeRequest := none
+
+private def BlockSite.hasStandardRange (site : BlockSite) : Bool :=
+  site.finiteRange.any (! ·.localReturn)
+
+private def standardRange (site : BlockSite) : MacroM FiniteRange := do
+  let some range := site.finiteRange
+    | Macro.throwErrorAt site.name "expected a finite source range"
+  if range.localReturn then
+    Macro.throwErrorAt site.name
+      "a locally returning range requires its exit-aware contract, not the standard range model"
+  return range
 
 private structure LoweredBlock where
   term : TSyntax `term
@@ -1130,6 +1160,83 @@ private def LoweredBlock.proofSequence (block : LoweredBlock) (normal : TSyntax 
     TSyntax ``doSeq :=
   doSequence (if block.fallsThrough then block.proofBody.push normal else block.proofBody)
 
+private def lookupProofBinding (scope : Scope) (name : Name) : MacroM (Binding × Nat) := do
+  for (binding, index) in scope.zipIdx do
+    if binding.proofName.getId == name then return (binding, index)
+  Macro.throwError "a local-return slot is outside its lexical source scope"
+
+private def localReturnTarget (scope : Scope) (pending live : TSyntax `ident) :
+    MacroM LocalReturnTarget := do
+  let (pendingBinding, _) ← lookupBinding scope pending
+  let (liveBinding, _) ← lookupBinding scope live
+  let .option type := pendingBinding.type
+    | Macro.throwErrorAt pending "a local-return result slot must have an Option type"
+  expectType live liveBinding.type .bool
+  unless pendingBinding.isMutable && liveBinding.isMutable do
+    Macro.throwErrorAt pending "local-return result and activity slots must be mutable"
+  return ⟨type, pendingBinding.proofName.getId, liveBinding.proofName.getId⟩
+
+private def localReturnCode (scope : Scope) (target : LocalReturnTarget)
+    (value : TSyntax `term) : MacroM LoweredBlock := do
+  let (pending, pendingIndex) ← lookupProofBinding scope target.pending
+  let (live, liveIndex) ← lookupProofBinding scope target.live
+  let pendingVar ← variableTerm pendingIndex
+  let liveVar ← variableTerm liveIndex
+  let parsed ← parsePrimitive scope value (some target.type)
+  expectType value parsed.type target.type
+  let term ← match parsed.atom with
+    | some atom =>
+        `(Complexity.Language.Stmt.LocalReturn.store $pendingVar $liveVar $atom)
+    | none =>
+        `(Complexity.Language.Stmt.letPrim $(parsed.term)
+          (Complexity.Language.Stmt.LocalReturn.store
+            (Complexity.Language.Var.there $pendingVar)
+            (Complexity.Language.Var.there $liveVar)
+            (Complexity.Language.Atom.var Complexity.Language.Var.here)))
+  return ⟨term, #[
+    ← `(doElem| $(pending.proofName):ident := some $(parsed.value)),
+    ← `(doElem| $(live.proofName):ident := false)], true, #[]⟩
+
+private def resumeLocalCode (scope : Scope) (target : LocalReturnTarget)
+    (next : LoweredBlock) : MacroM LoweredBlock := do
+  let (live, index) ← lookupProofBinding scope target.live
+  let atom ← `(Complexity.Language.Atom.var $(← variableTerm index))
+  let body := next.proofSequence (← `(doElem| pure ()))
+  return { next with
+    term := ← `(Complexity.Language.Stmt.LocalReturn.resume $atom $(next.term))
+    proofBody := #[← `(doElem| if $(live.proofName):ident then $body:doSeq)]
+    fallsThrough := true }
+
+private def localGuard (scope : Scope) (target : Option LocalReturnTarget)
+    (guard : TSyntax `term) : MacroM (TSyntax `term) := do
+  let some target := target | return guard
+  let (_, index) ← lookupProofBinding scope target.live
+  `(Complexity.Language.Stmt.RangeControl.guard
+    (Complexity.Language.Atom.var $(← variableTerm index)) $guard)
+
+/-- Commit only after the child scope has returned normally. A failing scope
+skips this fragment, and the enclosing lexical lets drop its private slots. -/
+private def commitLocalReturnCode (scope : Scope) (target : LocalReturnTarget)
+    (childPending : Binding) : MacroM LoweredBlock := do
+  let (pending, pendingIndex) ← lookupProofBinding scope target.pending
+  let (live, liveIndex) ← lookupProofBinding scope target.live
+  let (_, childIndex) ← lookupProofBinding scope childPending.proofName.getId
+  let value ← freshProofName childPending.proofName `localResult
+  let pendingVar ← variableTerm pendingIndex
+  let liveVar ← variableTerm liveIndex
+  let term ← `(Complexity.Language.Stmt.matchOption
+    (Complexity.Language.Atom.var $(← variableTerm childIndex))
+    Complexity.Language.Stmt.skip
+    (Complexity.Language.Stmt.LocalReturn.store
+      (Complexity.Language.Var.there $pendingVar)
+      (Complexity.Language.Var.there $liveVar)
+      (Complexity.Language.Atom.var Complexity.Language.Var.here)))
+  return ⟨term, #[← `(doElem| match $(childPending.proofName):ident with
+    | none => pure ()
+    | some $value:ident =>
+        $(pending.proofName):ident := some $value:ident
+        $(live.proofName):ident := false)], true, #[]⟩
+
 private def loopProofBody (site : BlockSite) : MacroM (Array (TSyntax `doElem)) := do
   let control ← freshProofName site.name `loopControl
   let locals ← freshProofName site.name `loopLocals
@@ -1564,12 +1671,17 @@ private partial def stableRangeBound (scope : Scope) (value : TSyntax `term)
 
 private def statementCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident)
-    (recurse : Scope → Ty → List (TSyntax `doElem) → Nat → MacroM LoweredBlock)
-    (scope : Scope) (result : Ty) (element : TSyntax `doElem) (nextIndex : Nat) :
+    (recurse : Scope → Ty → List (TSyntax `doElem) → Nat → Option LocalReturnTarget →
+      MacroM LoweredBlock)
+    (scope : Scope) (result : Ty) (element : TSyntax `doElem) (nextIndex : Nat)
+    (localReturn : Option LocalReturnTarget) :
     MacroM LoweredBlock := withRef element do
+  if let `(doElem| source_local_return% ($pending:ident, $live:ident) do $body:doSeq) := element then
+    let target ← localReturnTarget scope pending live
+    return ← recurse scope result (getDoElems body).toList nextIndex (some target)
   if let `(doElem| source_range_site% $tag:ident ($pattern:term, $collection:term) do $body:doSeq) := element then
     let source ← `(doElem| for $pattern:term in $collection:term do $body:doSeq)
-    let lowered ← recurse scope result [source] nextIndex
+    let lowered ← recurse scope result [source] nextIndex localReturn
     -- Ordinary for lowering appends its own loop after its nested sites.
     -- Reuse that returned site, without predicting its generated name/index.
     let some site := lowered.sites.back?
@@ -1597,9 +1709,9 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       | .name name => pure (name.getId, #[])
       | _ => do
           pure (payloadName.getId, ← patternBindings pattern payloadType ⟨payloadName.raw⟩)
-    let noneCode ← recurse scope result (getDoElems noneBody).toList nextIndex
+    let noneCode ← recurse scope result (getDoElems noneBody).toList nextIndex localReturn
     let someCode ← recurse (⟨some sourceName, payloadName, payloadType, false, none⟩ :: scope)
-      result (bindings.toList ++ (getDoElems someBody).toList) (nextIndex + noneCode.sites.size)
+      result (bindings.toList ++ (getDoElems someBody).toList) (nextIndex + noneCode.sites.size) localReturn
     let normal ← `(doElem| pure ())
     let noneBody := noneCode.proofSequence normal
     let someBody := someCode.proofSequence normal
@@ -1612,16 +1724,22 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
   match element with
   | `(doElem| $name:ident := $value:term) => assignCode scope name value
   | `(doElem| $name:ident ← $action:term) => assignBindingCode functions scope name action
-  | `(doElem| return $value:term) => returnCode scope result value
-  | `(doElem| return) => returnCode scope result (← `(()))
+  | `(doElem| return $value:term) =>
+      match localReturn with
+      | some target => localReturnCode scope target value
+      | none => returnCode scope result value
+  | `(doElem| return) =>
+      match localReturn with
+      | some target => localReturnCode scope target (← `(()))
+      | none => returnCode scope result (← `(()))
   | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) =>
       let parsed ← parsePrimitive scope condition
       expectType condition parsed.type .bool
       let saved ← freshProofName condition `condition
       let inner := if parsed.atom.isSome then scope
         else ⟨none, saved, Ty.bool, false, none⟩ :: scope
-      let yesCode ← recurse inner result (getDoElems yes).toList nextIndex
-      let noCode ← recurse inner result (getDoElems no).toList (nextIndex + yesCode.sites.size)
+      let yesCode ← recurse inner result (getDoElems yes).toList nextIndex localReturn
+      let noCode ← recurse inner result (getDoElems no).toList (nextIndex + yesCode.sites.size) localReturn
       let term ← match parsed.atom with
         | some atom =>
             `(Complexity.Language.Stmt.ite $atom $(yesCode.term) $(noCode.term))
@@ -1642,11 +1760,11 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
         yesCode.sites ++ noCode.sites⟩
   | `(doElem| while $condition do $body) =>
       let name := generatedName family owner s!"_loop{nextIndex}"
-      let guardCode ← recurse scope .bool (← guardElements condition) (nextIndex + 1)
+      let guardCode ← recurse scope .bool (← guardElements condition) (nextIndex + 1) none
       let bodyCode ← recurse scope result (getDoElems body).toList
-        (nextIndex + 1 + guardCode.sites.size)
+        (nextIndex + 1 + guardCode.sites.size) localReturn
       let site : BlockSite := {
-        name, scope, result, guard := some guardCode.term, body := bodyCode.term,
+        name, scope, result, guard := some (← localGuard scope localReturn guardCode.term), body := bodyCode.term,
         finiteRange := none }
       let code := loopMember site "Code"
       return ⟨⟨code.raw⟩, ← loopProofBody site, true,
@@ -1654,17 +1772,17 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
   | `(doElem| source_range% ($cursor:ident, $stop:term, $stride:term) do $body:doSeq) =>
       let name := generatedName family owner s!"_loop{nextIndex}"
       let condition ← `($cursor:ident < $stop)
-      let guardCode ← recurse scope .bool (← guardElements condition) (nextIndex + 1)
+      let guardCode ← recurse scope .bool (← guardElements condition) (nextIndex + 1) none
       let bodyCode ← recurse scope result (getDoElems body).toList
-        (nextIndex + 1 + guardCode.sites.size)
+        (nextIndex + 1 + guardCode.sites.size) localReturn
       let (cursorBinding, _) ← lookupBinding scope cursor
       let stopValue ← parsePrimitive scope stop (some .nat)
       let strideValue ← parsePrimitive scope stride (some .nat)
       let metadata : FiniteRange :=
         ⟨cursorBinding.proofName, stopValue.value, strideValue.value,
-          bodyCode.proofBody, bodyCode.fallsThrough⟩
+          bodyCode.proofBody, bodyCode.fallsThrough, localReturn.isSome⟩
       let site : BlockSite := {
-        name, scope, result, guard := some guardCode.term, body := bodyCode.term,
+        name, scope, result, guard := some (← localGuard scope localReturn guardCode.term), body := bodyCode.term,
         finiteRange := some metadata }
       let code := loopMember site "Code"
       let positive ← freshProofName element `positiveStep
@@ -1724,17 +1842,45 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       let advance ← `(doElem| $cursor:ident := $cursor:ident + $stride)
       let iteration := doSequence (#[elementBinding] ++ getDoElems body ++ #[advance])
       let loop ← `(doElem| source_range% ($cursor:ident, $stop, $stride) do $iteration:doSeq)
-      recurse scope result (initial.toList ++ [loop]) nextIndex
+      recurse scope result (initial.toList ++ [loop]) nextIndex localReturn
   | `(doElem| with_scratch do $body:doSeq) =>
       let name := generatedName family owner s!"_scope{nextIndex}"
-      let bodyCode ← recurse scope result (getDoElems body).toList (nextIndex + 1)
-      let site : BlockSite := {
-        name, scope, result, guard := none, body := bodyCode.term, finiteRange := none }
-      let code := loopMember site "Code"
-      -- The observation exposes Control rather than a syntactically terminal
-      -- return. Retain its normal continuation just as for a named loop.
-      return ⟨⟨code.raw⟩, ← loopProofBody site, true,
-        bodyCode.sites.push site⟩
+      match localReturn with
+      | none =>
+          let bodyCode ← recurse scope result (getDoElems body).toList (nextIndex + 1) none
+          let site : BlockSite := {
+            name, scope, result, guard := none, body := bodyCode.term, finiteRange := none }
+          let code := loopMember site "Code"
+          -- The observation exposes Control rather than a syntactically terminal
+          -- return. Retain its normal continuation just as for a named loop.
+          return ⟨⟨code.raw⟩, ← loopProofBody site, true,
+            bodyCode.sites.push site⟩
+      | some parent =>
+          -- These slots belong to the parent lexical scope, but lie outside
+          -- this scratch body. A failing cleanup cannot commit an escaping root.
+          let pendingName ← freshProofName element `scratchPending
+          let liveName ← freshProofName element `scratchLive
+          let pending : Binding :=
+            ⟨some pendingName.getId, pendingName, .option parent.type, true, none⟩
+          let live : Binding := ⟨some liveName.getId, liveName, .bool, true, none⟩
+          let inner := live :: pending :: scope
+          let target : LocalReturnTarget := ⟨parent.type, pendingName.getId, liveName.getId⟩
+          let bodyCode ← recurse inner result (getDoElems body).toList (nextIndex + 1) (some target)
+          let site : BlockSite := {
+            name, scope := inner, result, guard := none, body := bodyCode.term, finiteRange := none }
+          let code := loopMember site "Code"
+          let commit ← commitLocalReturnCode inner parent pending
+          let pendingType ← valueTypeTerm (.option parent.type)
+          let term ← `(Complexity.Language.Stmt.letPrim
+            (Complexity.Language.Prim.none $(← typeTerm parent.type))
+            (Complexity.Language.Stmt.letPrim
+              (Complexity.Language.Prim.atom (Complexity.Language.Atom.bool true))
+              (Complexity.Language.Stmt.seq $code:ident $(commit.term))))
+          let declarations := #[
+            ← `(doElem| let mut $pendingName:ident : $pendingType := none),
+            ← `(doElem| let mut $liveName:ident : Bool := true)]
+          return ⟨term, declarations ++ (← loopProofBody site) ++ commit.proofBody,
+            true, bodyCode.sites.push site⟩
   | `(doElem| $action:term) => actionCode functions scope action
   | _ =>
       Macro.throwErrorAt element
@@ -1742,14 +1888,16 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
 
 private partial def blockCode (family : TSyntax `ident) (functions : Array Callee)
     (owner : TSyntax `ident) (scope : Scope) (result : Ty)
-    (elements : List (TSyntax `doElem)) (nextIndex : Nat) : MacroM LoweredBlock := do
+    (elements : List (TSyntax `doElem)) (nextIndex : Nat)
+    (localReturn : Option LocalReturnTarget := none) : MacroM LoweredBlock := do
   match elements with
   | [] => return ⟨← `(Complexity.Language.Stmt.skip), #[], true, #[]⟩
   | element :: rest => withRef element do
-      let (bindings, element) ← normalizeElement functions scope result element
+      let returnType := localReturn.map (·.type) |>.getD result
+      let (bindings, element) ← normalizeElement functions scope returnType element
       if !bindings.isEmpty then
         return ← blockCode family functions owner scope result
-          (bindings.toList ++ element :: rest) nextIndex
+          (bindings.toList ++ element :: rest) nextIndex localReturn
       match element with
       | `(doElem| let mut $name:ident $[: $annotation:term]? := $value:term) =>
           let parsed ← parsePrimitive scope value (← annotation.mapM parseType)
@@ -1758,7 +1906,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let type ← bindingValueType parsed.type annotation (some parsed.value)
           let body ← blockCode family functions owner
             (⟨some name.getId, proofName, parsed.type, true, bindingNativeCoordinate type⟩ :: scope)
-            result rest nextIndex
+            result rest nextIndex localReturn
           let binding ← `(doElem| let mut $proofName:ident : $type := $(parsed.value))
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
@@ -1769,7 +1917,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let type ← bindingValueType parsed.type annotation (some parsed.value)
           let body ← blockCode family functions owner
             (⟨some name.getId, proofName, parsed.type, false, bindingNativeCoordinate type⟩ :: scope)
-            result rest nextIndex
+            result rest nextIndex localReturn
           let binding ← `(doElem| let $proofName:ident : $type := $(parsed.value))
           return ⟨← `(Complexity.Language.Stmt.letPrim $(parsed.term) $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
@@ -1780,7 +1928,7 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let type ← bindingValueType bindingType annotation
           let body ← blockCode family functions owner
             (⟨some name.getId, proofName, bindingType, true, bindingNativeCoordinate type⟩ :: scope)
-            result rest nextIndex
+            result rest nextIndex localReturn
           let binding ← `(doElem| let mut $proofName:ident : $type ← $invocation:term)
           return ⟨← `($statement $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
@@ -1791,18 +1939,23 @@ private partial def blockCode (family : TSyntax `ident) (functions : Array Calle
           let type ← bindingValueType bindingType annotation
           let body ← blockCode family functions owner
             (⟨some name.getId, proofName, bindingType, false, bindingNativeCoordinate type⟩ :: scope)
-            result rest nextIndex
+            result rest nextIndex localReturn
           let binding ← `(doElem| let $proofName:ident : $type ← $invocation:term)
           return ⟨← `($statement $(body.term)),
             #[binding] ++ body.proofBody, body.fallsThrough, body.sites⟩
       | _ =>
-          let statement ← statementCode family functions owner (blockCode family functions owner)
-            scope result element nextIndex
+          let statement ← statementCode family functions owner
+            (fun scope result elements nextIndex target =>
+              blockCode family functions owner scope result elements nextIndex target)
+            scope result element nextIndex localReturn
           if rest.isEmpty then
             return statement
           else
             let continuation ← blockCode family functions owner scope result rest
-              (nextIndex + statement.sites.size)
+              (nextIndex + statement.sites.size) localReturn
+            let continuation ← match localReturn with
+              | some target => resumeLocalCode scope target continuation
+              | none => pure continuation
             return ⟨← `(Complexity.Language.Stmt.seq $(statement.term) $(continuation.term)),
               if statement.fallsThrough then statement.proofBody ++ continuation.proofBody
                 else statement.proofBody,
@@ -2027,7 +2180,9 @@ private def loopCaptureFrameDeclarations (program : TSyntax `ident) (site : Bloc
     #[loopMember other "Code", loopMember other "Body"] ++
       if other.guard.isSome then #[loopMember other "Guard"] else #[])
   let preservedArgs := preservedArgs ++ (← constantSimpArgs
-    #[``Complexity.Language.Stmt.PreservesLocal, ``Complexity.Language.Var.index])
+    #[``Complexity.Language.Stmt.PreservesLocal, ``Complexity.Language.Var.index,
+      ``Complexity.Language.Stmt.LocalReturn.store, ``Complexity.Language.Stmt.LocalReturn.resume,
+      ``Complexity.Language.Stmt.RangeControl.guard])
   let entry ← freshProofName site.name `entry
   let finish ← freshProofName site.name `finish
   let control ← freshProofName site.name `control
@@ -2756,6 +2911,8 @@ private def loopEquationDeclarations (site : BlockSite) (sites : Array BlockSite
     #[loopMember other "view_apply", loopMember other "view_symm_apply"])
   let calleeFolds ← namedSimpArgs calleeFolds
   let compositionArgs ← constantSimpArgs #[``Complexity.Language.Stmt.observe_skip,
+    ``Complexity.Language.Stmt.LocalReturn.store, ``Complexity.Language.Stmt.LocalReturn.resume,
+    ``Complexity.Language.Stmt.RangeControl.guard,
     ``Complexity.Language.Stmt.observe_assign, ``Complexity.Language.Stmt.observe_ret,
     ``Complexity.Language.Stmt.observe_seq, ``Complexity.Language.Stmt.observe_ite,
     ``Complexity.Language.Stmt.observe_matchOption,
@@ -2863,7 +3020,8 @@ private def loopContinuationDeclaration (program : TSyntax `ident) (site : Block
   let normalArgs := viewArgs ++ captureNames
   let preservedArgs := codeNames ++
     (← constantSimpArgs #[``Complexity.Language.Stmt.PreservesLocal,
-      ``Complexity.Language.Var.index])
+      ``Complexity.Language.Var.index, ``Complexity.Language.Stmt.LocalReturn.store,
+      ``Complexity.Language.Stmt.LocalReturn.resume, ``Complexity.Language.Stmt.RangeControl.guard])
   let captureArgs := (← constantSimpArgs #[``Equiv.symm_apply_apply]) ++ viewArgs ++
     (← constantSimpArgs #[``Complexity.Language.Env.cons_here, ``Complexity.Language.Env.cons_there])
   let mut normalProof ← `(by
@@ -2997,6 +3155,8 @@ private def equationDeclaration (family programName : TSyntax `ident)
   let loopViews ← namedSimpArgs (lowered.sites.flatMap fun site =>
     #[loopMember site "view_apply", loopMember site "view_symm_apply"])
   let compositionArgs ← constantSimpArgs #[``Complexity.Language.Stmt.evalWith_skip,
+    ``Complexity.Language.Stmt.LocalReturn.store, ``Complexity.Language.Stmt.LocalReturn.resume,
+    ``Complexity.Language.Stmt.RangeControl.guard,
     ``Complexity.Language.Stmt.evalWith_ret, ``Complexity.Language.Stmt.evalWith_assign,
     ``Complexity.Language.Stmt.evalWith_letPrim, ``Complexity.Language.Stmt.evalWith_seq,
     ``Complexity.Language.Stmt.evalWith_ite, ``Complexity.Language.Stmt.evalWith_matchOption,
@@ -3274,8 +3434,7 @@ mutual
 
 private partial def nativeRangeStep (callees : Array Callee) (sites : Array BlockSite)
     (site : BlockSite) : MacroM (TSyntax `term) := do
-  let some range := site.finiteRange
-    | Macro.throwErrorAt site.name "expected a finite source range"
+  let range ← standardRange site
   let mutableScope := rangeMutableScope site
   let mutableType ← scopeNativeTypes mutableScope
   let result ← match site.nativeResult with
@@ -3300,8 +3459,7 @@ private partial def nativeRangeStep (callees : Array Callee) (sites : Array Bloc
 private partial def nativeRangeIteration (callees : Array Callee) (sites : Array BlockSite)
     (site : BlockSite) (positive : Option (TSyntax `term) := none) :
     MacroM (TSyntax `term) := do
-  let some range := site.finiteRange
-    | Macro.throwErrorAt site.name "expected a finite source range"
+  let range ← standardRange site
   let mutableScope := rangeMutableScope site
   let mutableType ← scopeNativeTypes mutableScope
   let result ← match site.nativeResult with
@@ -3425,8 +3583,7 @@ private def nativeRangeCorrespondenceDeclarations (program : TSyntax `ident)
     (callees : Array Callee) (sites : Array BlockSite) (site : BlockSite)
     (nativeResult : NativeCoordinate) (nativeSimplifications : Array (TSyntax `ident)) :
     MacroM (Array Syntax) := do
-  let some range := site.finiteRange
-    | Macro.throwErrorAt site.name "expected a finite source range"
+  let range ← standardRange site
   let name := loopMember site "eq_pure"
   let nativeName := loopMember site "eq_pure_native"
   let view := loopMember site "View"
@@ -3585,7 +3742,7 @@ private def nativeRangeCorrespondenceDeclarations (program : TSyntax `ident)
       | Macro.throwErrorAt callee.name "a pure source callee must have a correspondence theorem"
     return equation
   let equations := equations ++ nativeSimplifications
-  let loopRules := priorSites.map fun other => loopMember other "eq_pure"
+  let loopRules := (priorSites.filter (·.hasStandardRange)).map fun other => loopMember other "eq_pure"
   let bodyRules := sites.map fun other => loopMember other "body_eq"
   let nativeBodyEquationProof ← curryNativeScope capturedScope (← `(by
     apply $bodyTransportApplication
@@ -3684,11 +3841,10 @@ private def nativeRangeCorrespondenceDeclarations (program : TSyntax `ident)
 private def rangeCorrespondenceDeclarations (program : TSyntax `ident)
     (callees : Array Callee) (sites : Array BlockSite) (site : BlockSite)
     (nativeSimplifications : Array (TSyntax `ident)) : MacroM Syntax := do
+  let range ← standardRange site
   if let some native := site.nativeResult then
     return mkNullNode
       (← nativeRangeCorrespondenceDeclarations program callees sites site native nativeSimplifications)
-  let some range := site.finiteRange
-    | Macro.throwErrorAt site.name "expected a finite source range"
   let name := loopMember site "eq_pure"
   let view := loopMember site "View"
   let captureView := loopMember site "CaptureView"
@@ -3793,7 +3949,7 @@ private def pureCorrespondenceDeclaration (family : TSyntax `ident) (fn : Functi
     let some equation := callee.pureEquation
       | Macro.throwErrorAt callee.name "a pure source callee must have a correspondence theorem"
     return equation
-  let loopRules := body.sites.map fun site => loopMember site "eq_pure"
+  let loopRules := (body.sites.filter (·.hasStandardRange)).map fun site => loopMember site "eq_pure"
   let bodyRules := body.sites.map fun site => loopMember site "body_eq"
   let mut type ← `($actual = (pure $encodedValue : ExceptT Complexity.Language.Fault
     (StateT Complexity.Language.Heap Part) $result))
@@ -4090,9 +4246,9 @@ private def programDeclarations (family : TSyntax `ident)
       if body.sites.any (fun site => site.guard.isNone) then
         Macro.throwErrorAt fn.name
           "scratch allocation scopes are effectful and are not supported by 'source_program (pure)'"
-      if body.sites.any (fun site => site.finiteRange.isNone) then
+      if body.sites.any (fun site => !site.hasStandardRange) then
         Macro.throwErrorAt fn.name
-          "pure source loops must be finite ranges; unbounded while is not supported"
+          "pure source loops require standard finite ranges; unbounded while and local-return ranges use source contracts"
       if body.fallsThrough then
         Macro.throwErrorAt fn.name "every pure source function path must return a value"
     loweredBodies := loweredBodies.push body
@@ -4160,7 +4316,7 @@ private def programDeclarations (family : TSyntax `ident)
     for (fn, body) in order do
       declarations := declarations.push
         (← nativeDeclaration family fn callees body)
-      for site in body.sites do
+      for site in body.sites.filter (·.hasStandardRange) do
         declarations := declarations.push
           (← rangeCorrespondenceDeclarations programName callees body.sites site
             (fn.nativeView.map (·.simplifications) |>.getD #[]))
@@ -4192,7 +4348,8 @@ private def programDeclarations (family : TSyntax `ident)
         result := site.result, cursorSlot, stop := range.stop, stride := range.stride
         proofBody := request.proofBody
         loopProofBody := ← loopProofBody site
-        bodyProofBody := range.body, bodyFallsThrough := range.fallsThrough }
+        bodyProofBody := range.body, bodyFallsThrough := range.fallsThrough
+        localReturn := range.localReturn }
     if site.guard.isSome then
       let mut rules := #["view_apply", "view_symm_apply", "captureView_apply",
         "captureView_symm_apply", "regroup_apply", "regroup_symm_apply"].map
@@ -4210,7 +4367,7 @@ private def programDeclarations (family : TSyntax `ident)
           guardFrame := loopMember site "native_guard_preservesCaptures"
           bodyFrame := loopMember site "native_body_preservesCaptures"
         }
-      if pureMode && site.nativeResult.isSome && site.finiteRange.isSome then
+      if pureMode && site.nativeResult.isSome && site.hasStandardRange then
         rules := rules ++ #[loopMember site "nativeRangeStop", loopMember site "nativeRangeStep"]
       let nativeTypes := site.scope.toArray.filterMap (fun binding => binding.native.map (·.type))
       coordinates := coordinates.push {
