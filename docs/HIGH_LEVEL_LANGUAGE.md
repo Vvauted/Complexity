@@ -41,13 +41,16 @@ bindings, allocating List ranges and array records. Their correspondence must
 retain the same actual source calls and intermediate heaps through integration.
 Conditional and Option value branches now use a real local-return boundary:
 returning stores the result and stops that block's remaining control flow. The
-existing record/List mathematical proofs check through this boundary, and the
+optional result slot also records completion, so a separate activity flag and
+its consistency proof are unnecessary. An optional returned value is stored as
+`some value`, distinct from the initially empty slot even when `value = none`.
+The existing record/List mathematical proofs check through this boundary, and the
 List's exact RAM count includes its actual control instructions. The source
 preparer no longer rejects loops or scratch scopes just because they occur in a
 value branch; those combinations still need consumer evidence. Ordinary
 `let x : T ← do ...` blocks use the same boundary. The existing structured scalar
 caller uses this form and retains its mathematical and actual RAM proofs;
-private Bool/Option control is simplified by the shared backend proof rules.
+private Option control is simplified by the shared backend proof rules.
 General represented `while` now retains actual assignments, effectful guards
 and early function returns through the same source loop. The array-record
 consumer supplies a mathematical-state contract, not a total pure function.

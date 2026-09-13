@@ -83,7 +83,7 @@ The current integration work has these concrete obligations:
   Option/product result uses the checked encoding and existing map identities.
 - [ ] Add a real local-return boundary for value-producing blocks containing
   loops or scratch scopes. Core now has an internal boundary using ordinary
-  result/flag locals, gated continuations and the existing loop and scope
+  an optional result local, gated continuations and the existing loop and scope
   semantics. Each scratch scope stages its own result and commits only after
   successful cleanup; fault exits really drop those temporary roots before
   checking the parent scope. The represented conditional/Option value-block
@@ -91,13 +91,16 @@ The current integration work has these concrete obligations:
   assignments. Actual return-control checking is separate from optional models;
   assignments invalidate the affected enclosing mathematical locals.
   The existing record/List branch proofs check, and the List's exact RAM count
-  includes the result/flag assignments and final payload match. Existing ordinary
+  includes the result assignment and final payload match. Existing ordinary
   scope/traversal code and bounds are unchanged. Loop/scratch combinations inside
   value blocks still need a real consumer; the supporting root lemmas alone are
   not a complete lowering theorem. Plain `let x : T ← do ...` blocks now reuse
   that same boundary and proof trace. The original structured scalar caller uses
   this form with its unchanged mathematical proof and RAM realization/invocation
-  proof; shared Bool/Option normalization handles the private control values.
+  proof; shared Option normalization handles the private control values.
+  The result's outer Option itself distinguishes a continuing block from a
+  completed one, including `some none` when the returned value is optional.
+  No separate activity flag or flag/result consistency proof is needed.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. The general-while consumer still supplies its record/heap
   state relation and guard/body transport explicitly. This checks composability,
@@ -109,7 +112,7 @@ The current integration work has these concrete obligations:
   themselves preserve captured contents, and no total model of the complete
   while is required.
   Local-return blocks also need an author-facing completion/local-state view:
-  compiler-private result/flag slots must not enlarge user invariants or scratch
+  compiler-private result slots must not enlarge user invariants or scratch
   tuples. Keep complete source coordinates for execution and run scope cleanup
   before projection. The original Unit-valued scratch worker is the next concrete
   consumer; ancestor private slots can reuse fixed-capture transport.

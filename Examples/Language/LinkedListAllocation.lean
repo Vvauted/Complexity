@@ -215,14 +215,13 @@ def choosePrependReserve (flag : Bool) : Nat :=
   (if flag then 3 else 0) + 3 + 3
 
 /-- The actual branch and common continuation's core count. Initialize the
-optional result slot and live flag, then store the selected value and clear the
-flag. The common option match copies its payload once before the final call.
+optional result slot, then assign the selected value to it once.
+The common option match copies its payload once before the final call.
 Assignments, branches and sequencing use the existing compiler costs. -/
 def choosePrependBodySteps (flag : Bool) : Nat :=
   let copy := 2 * fieldCount (.option (.node .nat))
   let pendingCopy := 2 * fieldCount (.option (.option (.node .nat)))
-  let liveCopy := 2 * fieldCount .bool
-  let storeSteps := pendingCopy + 2 + liveCopy
+  let storeSteps := pendingCopy
   let prependCall := callCost NativeBranches.Source.program
     (NativeBranches.Source.imports.NativeConstruction.map.toFun
       NativeConstruction.Source.prependId) (prependBodySteps + 2)
@@ -230,8 +229,8 @@ def choosePrependBodySteps (flag : Bool) : Nat :=
     (NativeBranches.Source.imports.NativeBranches.Operations.consNat.map.toFun
       NativeBranches.Operations.consNat.consId)
     (Ram.LanguageCompiler.List.Cons.bodySteps .nat + 2)
-  pendingCopy + (liveCopy + ((if flag then consCall + (prependCall + storeSteps) + 3
-    else prependCall + storeSteps + 2) + 2 + (copy + (prependCall + (copy + 2)) + 3)))
+  pendingCopy + ((if flag then consCall + (prependCall + storeSteps) + 3
+    else prependCall + storeSteps + 2) + 2 + (copy + (prependCall + (copy + 2)) + 3))
 
 /-- The selected branch's complete invocation, including the wrapper's own
 initialization, outer call and halt. Untaken branch calls are not charged. -/

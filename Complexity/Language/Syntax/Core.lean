@@ -13,7 +13,6 @@ import Complexity.Language.Eval.Locals.Verification
 import Complexity.Language.Eval.Locals.Captures
 import Complexity.Language.Eval.Locals.Range
 import Complexity.Language.Eval.Locals.LocalReturn
-import Complexity.Language.Eval.Locals.RangeControl
 import Complexity.Language.Linking.Eval
 import Complexity.Language.Linking.Extension
 import Complexity.Language.Syntax.Imports
@@ -220,7 +219,7 @@ structure ActualRangeSite where
   /-- The actual iteration, including index binding and cursor advancement. -/
   bodyProofBody : Array (TSyntax `doElem)
   bodyFallsThrough : Bool
-  /-- The guard and increment are controlled by an enclosing local-return flag,
+  /-- The guard and increment are controlled by an enclosing pending local result,
   so this site does not have the ordinary always-active range correspondence. -/
   localReturn : Bool := false
 
@@ -286,10 +285,10 @@ syntax (name := sourceFiniteRange)
 syntax (name := sourceRangeSite)
   "source_range_site% " ident " (" term "," term ")" " do " doSeq : doElem
 
-/-- Internal local-return boundary using already declared mutable result and
-activity slots. It lowers through ordinary source assignments and branches. -/
+/-- Internal local-return boundary using an already declared mutable optional
+result. It lowers through ordinary source assignments and option branches. -/
 syntax (name := sourceLocalReturn)
-  "source_local_return% " "(" ident "," ident ")" " do " doSeq : doElem
+  "source_local_return% " "(" ident ")" " do " doSeq : doElem
 
 -- Internal emission point: infer an equation from its checked proof instead of
 -- inventing an unresolved right-hand side in a theorem header.
@@ -416,9 +415,8 @@ private abbrev Scope := List Binding
 
 private structure LocalReturnTarget where
   type : Ty
-  /-- Resolved lexical identities, not source spellings that can be shadowed. -/
+  /-- A resolved lexical identity, not a source spelling that can be shadowed. -/
   pending : Name
-  live : Name
 
 private structure Atomic where
   type : Ty
@@ -437,7 +435,7 @@ private structure FiniteRange where
   stride : TSyntax `term
   body : Array (TSyntax `doElem)
   fallsThrough : Bool
-  /-- Guard and increment obey a local-return flag rather than ordinary range
+  /-- Guard and increment inspect a pending local result rather than ordinary range
   control. Keep the original range coordinates without claiming its model. -/
   localReturn : Bool := false
 
@@ -1165,53 +1163,49 @@ private def lookupProofBinding (scope : Scope) (name : Name) : MacroM (Binding �
     if binding.proofName.getId == name then return (binding, index)
   Macro.throwError "a local-return slot is outside its lexical source scope"
 
-private def localReturnTarget (scope : Scope) (pending live : TSyntax `ident) :
+private def localReturnTarget (scope : Scope) (pending : TSyntax `ident) :
     MacroM LocalReturnTarget := do
   let (pendingBinding, _) ← lookupBinding scope pending
-  let (liveBinding, _) ← lookupBinding scope live
   let .option type := pendingBinding.type
     | Macro.throwErrorAt pending "a local-return result slot must have an Option type"
-  expectType live liveBinding.type .bool
-  unless pendingBinding.isMutable && liveBinding.isMutable do
-    Macro.throwErrorAt pending "local-return result and activity slots must be mutable"
-  return ⟨type, pendingBinding.proofName.getId, liveBinding.proofName.getId⟩
+  unless pendingBinding.isMutable do
+    Macro.throwErrorAt pending "a local-return result slot must be mutable"
+  return ⟨type, pendingBinding.proofName.getId⟩
 
 private def localReturnCode (scope : Scope) (target : LocalReturnTarget)
     (value : TSyntax `term) : MacroM LoweredBlock := do
   let (pending, pendingIndex) ← lookupProofBinding scope target.pending
-  let (live, liveIndex) ← lookupProofBinding scope target.live
   let pendingVar ← variableTerm pendingIndex
-  let liveVar ← variableTerm liveIndex
   let parsed ← parsePrimitive scope value (some target.type)
   expectType value parsed.type target.type
   let term ← match parsed.atom with
     | some atom =>
-        `(Complexity.Language.Stmt.LocalReturn.store $pendingVar $liveVar $atom)
+        `(Complexity.Language.Stmt.LocalReturn.store $pendingVar $atom)
     | none =>
         `(Complexity.Language.Stmt.letPrim $(parsed.term)
           (Complexity.Language.Stmt.LocalReturn.store
             (Complexity.Language.Var.there $pendingVar)
-            (Complexity.Language.Var.there $liveVar)
             (Complexity.Language.Atom.var Complexity.Language.Var.here)))
   return ⟨term, #[
-    ← `(doElem| $(pending.proofName):ident := some $(parsed.value)),
-    ← `(doElem| $(live.proofName):ident := false)], true, #[]⟩
+    ← `(doElem| $(pending.proofName):ident := some $(parsed.value))], true, #[]⟩
 
 private def resumeLocalCode (scope : Scope) (target : LocalReturnTarget)
     (next : LoweredBlock) : MacroM LoweredBlock := do
-  let (live, index) ← lookupProofBinding scope target.live
+  let (pending, index) ← lookupProofBinding scope target.pending
   let atom ← `(Complexity.Language.Atom.var $(← variableTerm index))
   let body := next.proofSequence (← `(doElem| pure ()))
   return { next with
     term := ← `(Complexity.Language.Stmt.LocalReturn.resume $atom $(next.term))
-    proofBody := #[← `(doElem| if $(live.proofName):ident then $body:doSeq)]
+    proofBody := #[← `(doElem| match $(pending.proofName):ident with
+      | none => $body:doSeq
+      | some _ => pure ())]
     fallsThrough := true }
 
 private def localGuard (scope : Scope) (target : Option LocalReturnTarget)
     (guard : TSyntax `term) : MacroM (TSyntax `term) := do
   let some target := target | return guard
-  let (_, index) ← lookupProofBinding scope target.live
-  `(Complexity.Language.Stmt.RangeControl.guard
+  let (_, index) ← lookupProofBinding scope target.pending
+  `(Complexity.Language.Stmt.LocalReturn.guard
     (Complexity.Language.Atom.var $(← variableTerm index)) $guard)
 
 /-- Commit only after the child scope has returned normally. A failing scope
@@ -1219,23 +1213,19 @@ skips this fragment, and the enclosing lexical lets drop its private slots. -/
 private def commitLocalReturnCode (scope : Scope) (target : LocalReturnTarget)
     (childPending : Binding) : MacroM LoweredBlock := do
   let (pending, pendingIndex) ← lookupProofBinding scope target.pending
-  let (live, liveIndex) ← lookupProofBinding scope target.live
   let (_, childIndex) ← lookupProofBinding scope childPending.proofName.getId
   let value ← freshProofName childPending.proofName `localResult
   let pendingVar ← variableTerm pendingIndex
-  let liveVar ← variableTerm liveIndex
   let term ← `(Complexity.Language.Stmt.matchOption
     (Complexity.Language.Atom.var $(← variableTerm childIndex))
     Complexity.Language.Stmt.skip
     (Complexity.Language.Stmt.LocalReturn.store
       (Complexity.Language.Var.there $pendingVar)
-      (Complexity.Language.Var.there $liveVar)
       (Complexity.Language.Atom.var Complexity.Language.Var.here)))
   return ⟨term, #[← `(doElem| match $(childPending.proofName):ident with
     | none => pure ()
     | some $value:ident =>
-        $(pending.proofName):ident := some $value:ident
-        $(live.proofName):ident := false)], true, #[]⟩
+        $(pending.proofName):ident := some $value:ident)], true, #[]⟩
 
 private def loopProofBody (site : BlockSite) : MacroM (Array (TSyntax `doElem)) := do
   let control ← freshProofName site.name `loopControl
@@ -1676,8 +1666,8 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
     (scope : Scope) (result : Ty) (element : TSyntax `doElem) (nextIndex : Nat)
     (localReturn : Option LocalReturnTarget) :
     MacroM LoweredBlock := withRef element do
-  if let `(doElem| source_local_return% ($pending:ident, $live:ident) do $body:doSeq) := element then
-    let target ← localReturnTarget scope pending live
+  if let `(doElem| source_local_return% ($pending:ident) do $body:doSeq) := element then
+    let target ← localReturnTarget scope pending
     return ← recurse scope result (getDoElems body).toList nextIndex (some target)
   if let `(doElem| source_range_site% $tag:ident ($pattern:term, $collection:term) do $body:doSeq) := element then
     let source ← `(doElem| for $pattern:term in $collection:term do $body:doSeq)
@@ -1856,15 +1846,13 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
           return ⟨⟨code.raw⟩, ← loopProofBody site, true,
             bodyCode.sites.push site⟩
       | some parent =>
-          -- These slots belong to the parent lexical scope, but lie outside
+          -- This slot belongs to the parent lexical scope, but lies outside
           -- this scratch body. A failing cleanup cannot commit an escaping root.
           let pendingName ← freshProofName element `scratchPending
-          let liveName ← freshProofName element `scratchLive
           let pending : Binding :=
             ⟨some pendingName.getId, pendingName, .option parent.type, true, none⟩
-          let live : Binding := ⟨some liveName.getId, liveName, .bool, true, none⟩
-          let inner := live :: pending :: scope
-          let target : LocalReturnTarget := ⟨parent.type, pendingName.getId, liveName.getId⟩
+          let inner := pending :: scope
+          let target : LocalReturnTarget := ⟨parent.type, pendingName.getId⟩
           let bodyCode ← recurse inner result (getDoElems body).toList (nextIndex + 1) (some target)
           let site : BlockSite := {
             name, scope := inner, result, guard := none, body := bodyCode.term, finiteRange := none }
@@ -1873,12 +1861,9 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
           let pendingType ← valueTypeTerm (.option parent.type)
           let term ← `(Complexity.Language.Stmt.letPrim
             (Complexity.Language.Prim.none $(← typeTerm parent.type))
-            (Complexity.Language.Stmt.letPrim
-              (Complexity.Language.Prim.atom (Complexity.Language.Atom.bool true))
-              (Complexity.Language.Stmt.seq $code:ident $(commit.term))))
+            (Complexity.Language.Stmt.seq $code:ident $(commit.term)))
           let declarations := #[
-            ← `(doElem| let mut $pendingName:ident : $pendingType := none),
-            ← `(doElem| let mut $liveName:ident : Bool := true)]
+            ← `(doElem| let mut $pendingName:ident : $pendingType := none)]
           return ⟨term, declarations ++ (← loopProofBody site) ++ commit.proofBody,
             true, bodyCode.sites.push site⟩
   | `(doElem| $action:term) => actionCode functions scope action
@@ -2182,7 +2167,7 @@ private def loopCaptureFrameDeclarations (program : TSyntax `ident) (site : Bloc
   let preservedArgs := preservedArgs ++ (← constantSimpArgs
     #[``Complexity.Language.Stmt.PreservesLocal, ``Complexity.Language.Var.index,
       ``Complexity.Language.Stmt.LocalReturn.store, ``Complexity.Language.Stmt.LocalReturn.resume,
-      ``Complexity.Language.Stmt.RangeControl.guard])
+      ``Complexity.Language.Stmt.LocalReturn.guard])
   let entry ← freshProofName site.name `entry
   let finish ← freshProofName site.name `finish
   let control ← freshProofName site.name `control
@@ -2912,7 +2897,7 @@ private def loopEquationDeclarations (site : BlockSite) (sites : Array BlockSite
   let calleeFolds ← namedSimpArgs calleeFolds
   let compositionArgs ← constantSimpArgs #[``Complexity.Language.Stmt.observe_skip,
     ``Complexity.Language.Stmt.LocalReturn.store, ``Complexity.Language.Stmt.LocalReturn.resume,
-    ``Complexity.Language.Stmt.RangeControl.guard,
+    ``Complexity.Language.Stmt.LocalReturn.guard,
     ``Complexity.Language.Stmt.observe_assign, ``Complexity.Language.Stmt.observe_ret,
     ``Complexity.Language.Stmt.observe_seq, ``Complexity.Language.Stmt.observe_ite,
     ``Complexity.Language.Stmt.observe_matchOption,
@@ -3021,7 +3006,7 @@ private def loopContinuationDeclaration (program : TSyntax `ident) (site : Block
   let preservedArgs := codeNames ++
     (← constantSimpArgs #[``Complexity.Language.Stmt.PreservesLocal,
       ``Complexity.Language.Var.index, ``Complexity.Language.Stmt.LocalReturn.store,
-      ``Complexity.Language.Stmt.LocalReturn.resume, ``Complexity.Language.Stmt.RangeControl.guard])
+      ``Complexity.Language.Stmt.LocalReturn.resume, ``Complexity.Language.Stmt.LocalReturn.guard])
   let captureArgs := (← constantSimpArgs #[``Equiv.symm_apply_apply]) ++ viewArgs ++
     (← constantSimpArgs #[``Complexity.Language.Env.cons_here, ``Complexity.Language.Env.cons_there])
   let mut normalProof ← `(by
@@ -3156,7 +3141,7 @@ private def equationDeclaration (family programName : TSyntax `ident)
     #[loopMember site "view_apply", loopMember site "view_symm_apply"])
   let compositionArgs ← constantSimpArgs #[``Complexity.Language.Stmt.evalWith_skip,
     ``Complexity.Language.Stmt.LocalReturn.store, ``Complexity.Language.Stmt.LocalReturn.resume,
-    ``Complexity.Language.Stmt.RangeControl.guard,
+    ``Complexity.Language.Stmt.LocalReturn.guard,
     ``Complexity.Language.Stmt.evalWith_ret, ``Complexity.Language.Stmt.evalWith_assign,
     ``Complexity.Language.Stmt.evalWith_letPrim, ``Complexity.Language.Stmt.evalWith_seq,
     ``Complexity.Language.Stmt.evalWith_ite, ``Complexity.Language.Stmt.evalWith_matchOption,

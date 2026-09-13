@@ -1138,13 +1138,11 @@ private def consNames? (pattern : TSyntax `term) :
   | `($head:ident :: $tail:ident) => some (head, tail)
   | _ => none
 
-/-- A result slot never invents a heap handle. An optional slot is initialized
-empty and receives only the value computed by the selected branch. The live
-flag belongs to the shared source local-return boundary, not a syntax rewrite. -/
+/-- A result slot never invents a heap handle. Its outer Option records whether
+the block has returned, including when the returned value is itself `none`. -/
 private structure JoinSlot where
   name : TSyntax `ident
   type : TSyntax `term
-  live : TSyntax `ident
 
 private inductive BindingKind where
   | immutable
@@ -1166,19 +1164,16 @@ private def rawBinding (kind : BindingKind) (name : TSyntax `ident)
 
 private def makeJoinSlot (name : TSyntax `ident) (type : Ty) : TermElabM JoinSlot := do
   let rawType ← rawTypeTerm type
-  let live := mkIdent (← mkFreshUserName (name.getId.appendAfter "_live"))
-  return { name, type := ← `(Option $rawType), live }
+  return { name, type := ← `(Option $rawType) }
 
 private def JoinSlot.initialization (slot : JoinSlot) :
     TermElabM (Array (TSyntax `doElem)) := do
-  return #[
-    ← `(doElem| let mut $(slot.name):ident : $(slot.type) := none),
-    ← `(doElem| let mut $(slot.live):ident : Bool := true)]
+  return #[← `(doElem| let mut $(slot.name):ident : $(slot.type) := none)]
 
 private def JoinSlot.branch (slot : JoinSlot) (elements : Array (TSyntax `doElem)) :
     TermElabM (TSyntax ``doSeq) := do
   let body : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (elements.map (·.raw))⟩
-  let boundary ← `(doElem| source_local_return% ($(slot.name):ident, $(slot.live):ident)
+  let boundary ← `(doElem| source_local_return% ($(slot.name):ident)
     do $body:doSeq)
   return ⟨Lean.Elab.Term.Do.mkDoSeq #[boundary.raw]⟩
 
