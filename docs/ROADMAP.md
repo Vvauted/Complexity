@@ -121,13 +121,26 @@ The current integration work has these concrete obligations:
   `program_correct` also accepts an explicit represented total contract when
   the selected header has no model. The same packing bridge carries that
   contract to the fixed interface; no pure model or private ABI proof is needed.
+  Matching raw layouts now select the original entry whether or not a model
+  exists. Mathematical type/observation compatibility is checked when that
+  model is used for correctness, not as a condition for selecting code.
+  Direct represented models can use their registered refinement; this branch
+  still needs a migrated common-entry consumer, beyond the existing pure,
+  contract-only and genuinely packed record consumers.
 - [ ] Migrate existing consumers to the common entry and verify their ordinary
   correctness statements and same-program RAM bounds on 0v0. Update the manual
   and remove obsolete capability claims when those consumers actually pass.
 
 The next control-flow step is to give finite ranges one actual lowering
 independent of model availability.
-The current helper-extracting represented range changes the original loop owner;
+The shared emitter now exposes the actual named range, complete lexical slots,
+entry bindings and body observations to the proof preparer. Range tags create
+no instructions or helper functions. Explicit imports retain their source
+tables, order and written names; resolved calls can select the same imported
+entry by its actual identity. The frontend's own buffer operations use the
+internal emitter, avoiding an import cycle when the public default is unified.
+Replacing the helper-extracting represented range is still in progress: it
+changes the original loop owner;
 Traversal's `Implementation.boundedMap_loop1`, Scope's
 `Implementation.work_scope1/work_scope2` and LinkedList's exact `unconsBody`
 theorem are concrete consumers of the real code, not names that can be restored

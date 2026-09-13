@@ -190,6 +190,35 @@ structure LoopCoordinates where
   /-- Raw coordinates first, followed by native coordinates when generated. -/
   captures : Array LoopCaptureCoordinates
 
+/-- One actual lexical coordinate of a generated source block. The order retains
+shadowed bindings and anonymous compiler locals; names alone do not identify slots. -/
+structure SourceLocal where
+  name : Option Name
+  proofName : TSyntax `ident
+  type : Ty
+  isMutable : Bool
+
+/-- The actual named loop selected by a proof-side range tag. These coordinates
+describe already emitted source declarations; the tag neither changes execution
+nor provides a correctness premise. Entry bindings use `entryScope`; the loop
+bounds and body use `scope`, including the actual cursor and saved endpoints. -/
+structure ActualRangeSite where
+  tag : Name
+  name : Name
+  entryScope : Array SourceLocal
+  scope : Array SourceLocal
+  result : Ty
+  cursorSlot : Nat
+  stop : TSyntax `term
+  stride : TSyntax `term
+  /-- The complete range observation, including its actual entry bindings. -/
+  proofBody : Array (TSyntax `doElem)
+  /-- The named loop observation after its entry bindings have been established. -/
+  loopProofBody : Array (TSyntax `doElem)
+  /-- The actual iteration, including index binding and cursor advancement. -/
+  bodyProofBody : Array (TSyntax `doElem)
+  bodyFallsThrough : Bool
+
 private initialize loopCoordinatesExt :
     SimplePersistentEnvExtension (Name × LoopCoordinates) (NameMap LoopCoordinates) ←
   registerSimplePersistentEnvExtension {
@@ -221,6 +250,16 @@ syntax (name := sourceProgram) "source_program " ident " where" ppLine
 syntax (name := importingSourceProgram) "source_program " ident " importing " ident,+ " where" ppLine
   many1Indent(sourceFunction) : command
 
+-- Internal declarations for the operations used to implement the public
+-- frontend itself. They use the same typed emitter without importing their
+-- own higher-level operation adapters.
+syntax (name := coreSourceProgram) "source_program% " ident " where" ppLine
+  many1Indent(sourceFunction) : command
+
+syntax (name := importingCoreSourceProgram)
+  "source_program% " ident " importing " ident,+ " where" ppLine
+  many1Indent(sourceFunction) : command
+
 /-- Generate a native total value function and a proved corresponding scalar source program. -/
 syntax (name := pureSourceProgram) "source_program " "(" &"pure" ") " ident " where" ppLine
   many1Indent(sourceFunction) : command
@@ -236,6 +275,11 @@ syntax (name := sourceScratch) "with_scratch " "do " doSeq : doElem
 -- Preserve finite-range origin until both source and native views are emitted.
 syntax (name := sourceFiniteRange)
   "source_range% " "(" ident "," term "," term ")" " do " doSeq : doElem
+
+-- Associate a proof view with the loop produced by the ordinary for lowering.
+-- This marker introduces no source statement, local, function or loop number.
+syntax (name := sourceRangeSite)
+  "source_range_site% " ident " (" term "," term ")" " do " doSeq : doElem
 
 -- Internal emission point: infer an equation from its checked proof instead of
 -- inventing an unresolved right-hand side in a theorem header.
@@ -326,6 +370,10 @@ private structure Callee where
   fold : TSyntax `ident
   native : Option (TSyntax `ident) := none
   pureEquation : Option (TSyntax `ident) := none
+  sourceName : Option Name := none
+
+private def Callee.hasName (callee : Callee) (name : Name) : Bool :=
+  callee.name.getId == name || callee.sourceName == some name
 
 private structure ImportedProgram where
   name : TSyntax `ident
@@ -374,6 +422,11 @@ private structure FiniteRange where
   body : Array (TSyntax `doElem)
   fallsThrough : Bool
 
+private structure RangeRequest where
+  tag : Name
+  entryScope : Scope
+  proofBody : Array (TSyntax `doElem)
+
 private structure BlockSite where
   name : TSyntax `ident
   scope : Scope
@@ -382,6 +435,7 @@ private structure BlockSite where
   body : TSyntax `term
   finiteRange : Option FiniteRange
   nativeResult : Option NativeCoordinate := none
+  rangeRequest : Option RangeRequest := none
 
 private structure LoweredBlock where
   term : TSyntax `term
@@ -901,7 +955,7 @@ private def bindingNativeCoordinate (annotation : TSyntax `term) : Option Native
   | _ => none
 
 private def lookupFunction (functions : Array Callee) (name : TSyntax `ident) : MacroM Callee := do
-  let some fn := functions.find? (fun fn => fn.name.getId == name.getId)
+  let some fn := functions.find? (fun fn => fn.hasName name.getId)
     | Macro.throwErrorAt name s!"unknown source function '{name.getId}'; name a local function or a qualified imported function"
   return fn
 
@@ -912,7 +966,7 @@ private def parseBinding (functions : Array Callee)
     | `($head:term $operands:term*) => (head, operands)
     | _ => (stx, #[])
   if head.raw.getId == `NodeRef.cons &&
-      !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+      !functions.any (fun fn => fn.hasName head.raw.getId) then
     unless operands.size == 2 do
       Macro.throwErrorAt stx "node construction expects a scalar head and an optional tail"
     let value ← parseAtom scope operands[0]!
@@ -929,7 +983,7 @@ private def parseBinding (functions : Array Callee)
       ← `(Complexity.Language.Stmt.consNode (kind := $kindTerm) $(value.term) $(tail.term)),
       ← `(Complexity.Language.NodeRef.consM (kind := $kindTerm) $(value.value) $(tail.value)))
   if let some (receiver, field) := fieldAccess? head then
-    if field == `read && !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+    if field == `read && !functions.any (fun fn => fn.hasName head.raw.getId) then
       unless operands.isEmpty do
         Macro.throwErrorAt stx "a node read takes no arguments"
       let (kind, ref) ← parseNodeRef scope receiver
@@ -938,7 +992,7 @@ private def parseBinding (functions : Array Callee)
         ← `(Complexity.Language.NodeRef.readM $(ref.value)))
   if let `($head:term $operands:term*) := stx then
     if head.raw.getId == `Buffer.alloc &&
-        !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+        !functions.any (fun fn => fn.hasName head.raw.getId) then
       unless operands.size == 2 do
         Macro.throwErrorAt stx "buffer allocation expects a length and an initial scalar"
       let length ← parseAtom scope operands[0]!
@@ -958,7 +1012,7 @@ private def parseBinding (functions : Array Callee)
           $(length.value) $(initial.value)))
     if let some (receiver, field) := fieldAccess? head then
       if (field == `get || field == `slice) &&
-          !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+          !functions.any (fun fn => fn.hasName head.raw.getId) then
         let (kind, buffer) ← parseBuffer scope receiver
         if field == `get then
           unless operands.size == 1 do
@@ -1020,7 +1074,7 @@ private def actionCode (functions : Array Callee)
     (scope : Scope) (action : TSyntax `term) : MacroM LoweredBlock := do
   if let `($head:term $_operands:term*) := action then
     if let some (_, field) := fieldAccess? head then
-      if field == `set && !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+      if field == `set && !functions.any (fun fn => fn.hasName head.raw.getId) then
         return ← writeCode scope action
   let (resultType, statement, invocation) ← parseBinding functions scope action
   unless resultType == .unit do
@@ -1235,7 +1289,7 @@ private def normalizeCall (functions : Array Callee) (scope : Scope) (stx : TSyn
     MacroM (Array (TSyntax `doElem) × TSyntax `term) := withRef stx do
   if let `($head:term $operands:term*) := stx then
     if head.raw.getId == `NodeRef.cons &&
-        !functions.any (fun fn => fn.name.getId == head.raw.getId) then
+        !functions.any (fun fn => fn.hasName head.raw.getId) then
       unless operands.size == 2 do
         Macro.throwErrorAt stx "node construction expects a scalar head and an optional tail"
       let value ← normalizeValue operands[0]! true
@@ -1254,7 +1308,7 @@ private def normalizeCall (functions : Array Callee) (scope : Scope) (stx : TSyn
   | `($head:term $operands:term*) =>
       let mut bindings := #[]
       let mut arguments := #[]
-      let callee := functions.find? (fun fn => fn.name.getId == head.raw.getId)
+      let callee := functions.find? (fun fn => fn.hasName head.raw.getId)
       let mut head := head
       if callee.isNone then
         if let some (receiver, field) := fieldAccess? head then
@@ -1270,7 +1324,7 @@ private def normalizeCall (functions : Array Callee) (scope : Scope) (stx : TSyn
       return (bindings, Lean.Syntax.mkApp head arguments)
   | _ =>
       if let some (receiver, field) := fieldAccess? stx then
-        if field == `read && !functions.any (fun fn => fn.name.getId == stx.raw.getId) then
+        if field == `read && !functions.any (fun fn => fn.hasName stx.raw.getId) then
           let normalized ← normalizeValue receiver true
           return (normalized.bindings,
             ← `($(normalized.value).$(mkIdent field):ident))
@@ -1507,6 +1561,16 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
     (recurse : Scope → Ty → List (TSyntax `doElem) → Nat → MacroM LoweredBlock)
     (scope : Scope) (result : Ty) (element : TSyntax `doElem) (nextIndex : Nat) :
     MacroM LoweredBlock := withRef element do
+  if let `(doElem| source_range_site% $tag:ident ($pattern:term, $collection:term) do $body:doSeq) := element then
+    let source ← `(doElem| for $pattern:term in $collection:term do $body:doSeq)
+    let lowered ← recurse scope result [source] nextIndex
+    -- Ordinary for lowering appends its own loop after its nested sites.
+    -- Reuse that returned site, without predicting its generated name/index.
+    let some site := lowered.sites.back?
+      | Macro.throwErrorAt tag "the tagged range did not emit its source loop"
+    return { lowered with
+      sites := lowered.sites.pop.push { site with rangeRequest := some {
+        tag := tag.getId, entryScope := scope, proofBody := lowered.proofBody } } }
   if let some (value, first, firstBody, second, secondBody) := optionMatch? element then
     let (noneBody, payload, someBody) ←
       if nonePattern first then
@@ -1575,7 +1639,9 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       let guardCode ← recurse scope .bool (← guardElements condition) (nextIndex + 1)
       let bodyCode ← recurse scope result (getDoElems body).toList
         (nextIndex + 1 + guardCode.sites.size)
-      let site : BlockSite := ⟨name, scope, result, some guardCode.term, bodyCode.term, none, none⟩
+      let site : BlockSite := {
+        name, scope, result, guard := some guardCode.term, body := bodyCode.term,
+        finiteRange := none }
       let code := loopMember site "Code"
       return ⟨⟨code.raw⟩, ← loopProofBody site, true,
         guardCode.sites ++ bodyCode.sites |>.push site⟩
@@ -1591,8 +1657,9 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
       let metadata : FiniteRange :=
         ⟨cursorBinding.proofName, stopValue.value, strideValue.value,
           bodyCode.proofBody, bodyCode.fallsThrough⟩
-      let site : BlockSite :=
-        ⟨name, scope, result, some guardCode.term, bodyCode.term, some metadata, none⟩
+      let site : BlockSite := {
+        name, scope, result, guard := some guardCode.term, body := bodyCode.term,
+        finiteRange := some metadata }
       let code := loopMember site "Code"
       let positive ← freshProofName element `positiveStep
       let checked ← `(doElem| have $positive:ident : 0 < $(strideValue.value) := by
@@ -1655,7 +1722,8 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
   | `(doElem| with_scratch do $body:doSeq) =>
       let name := generatedName family owner s!"_scope{nextIndex}"
       let bodyCode ← recurse scope result (getDoElems body).toList (nextIndex + 1)
-      let site : BlockSite := ⟨name, scope, result, none, bodyCode.term, none, none⟩
+      let site : BlockSite := {
+        name, scope, result, guard := none, body := bodyCode.term, finiteRange := none }
       let code := loopMember site "Code"
       -- The observation exposes Control rather than a syntactically terminal
       -- return. Retain its normal continuation just as for a named loop.
@@ -3898,7 +3966,8 @@ private def nativeRefinementDeclarations (family program : TSyntax `ident)
 private def programDeclarations (family : TSyntax `ident)
     (sources : Array (TSyntax `sourceFunction)) (imports : Array ImportedProgram)
     (pureMode : Bool) (nativeViews : Array NativeView := #[]) :
-    MacroM (Syntax × Array FunctionInfo × Array LoopCoordinateRegistration) := do
+    MacroM (Syntax × Array FunctionInfo × Array LoopCoordinateRegistration ×
+      Array ActualRangeSite) := do
   let mut functions : Array Function := #[]
   for source in sources do
     let fn ← parseFunction source
@@ -3940,11 +4009,13 @@ private def programDeclarations (family : TSyntax `ident)
       abbrev $id:ident : Fin ($signaturesName:ident).length := ⟨$number:num, by decide⟩)
     declarations := declarations.push declaration.raw
   let mut callees : Array Callee := functions.map fun fn =>
-    ⟨fn.name, fn.params, fn.result, generatedName family fn.name "Id",
-      actionName family fn.name pureMode, generatedName family fn.name "_observe",
-      if pureMode then some (generatedName family fn.name "") else none,
-      if pureMode then some (generatedName family fn.name
-        (if fn.nativeView.isSome then "_action_eq_pure_raw" else "_action_eq_pure")) else none⟩
+    { name := fn.name, params := fn.params, result := fn.result
+      id := generatedName family fn.name "Id"
+      observation := actionName family fn.name pureMode
+      fold := generatedName family fn.name "_observe"
+      native := if pureMode then some (generatedName family fn.name "") else none
+      pureEquation := if pureMode then some (generatedName family fn.name
+        (if fn.nativeView.isSome then "_action_eq_pure_raw" else "_action_eq_pure")) else none }
   let mut importedProofs : Array Syntax := #[]
   let mut importedObservations : Array Syntax := #[]
   let mut importFolds : Array (TSyntax `ident) := #[]
@@ -3980,14 +4051,16 @@ private def programDeclarations (family : TSyntax `ident)
           /-- The actual target index of an imported function. -/
           abbrev $id:ident : Fin ($signaturesName:ident).length :=
             Complexity.Language.SignatureMap.toFun $map:ident $originalId:ident)).raw
-        let callee : Callee := ⟨name,
-          fn.params.map (fun param => ⟨mkIdentFrom entry.source.name param.1, param.2⟩),
-          fn.result, id,
-          mkCIdent ((entry.source.family ++ fn.name).appendAfter
-            (if fn.pure then "_action" else "")), fold,
-          if fn.pure then some (mkCIdent (entry.source.family ++ fn.name)) else none,
-          if fn.pure then some (mkCIdent ((entry.source.family ++ fn.name).appendAfter
-            (if fn.nativeHeader.isSome then "_action_eq_pure_raw" else "_action_eq_pure"))) else none⟩
+        let callee : Callee := {
+          name
+          params := fn.params.map (fun param => ⟨mkIdentFrom entry.source.name param.1, param.2⟩)
+          result := fn.result, id, fold
+          observation := mkCIdent ((fn.source?.map (·.action)).getD
+            ((entry.source.family ++ fn.name).appendAfter (if fn.pure then "_action" else "")))
+          native := if fn.pure then some (mkCIdent (entry.source.family ++ fn.name)) else none
+          pureEquation := if fn.pure then some (mkCIdent ((entry.source.family ++ fn.name).appendAfter
+            (if fn.nativeHeader.isSome then "_action_eq_pure_raw" else "_action_eq_pure"))) else none
+          sourceName := some (entry.source.family ++ fn.name) }
         callees := callees.push callee
         importFolds := importFolds.push fold
         importedObservations := importedObservations.push (← importedObservationDeclaration
@@ -4094,7 +4167,26 @@ private def programDeclarations (family : TSyntax `ident)
           declarations := declarations.push (← pureTotalDeclaration family programName fn)
           declarations := declarations ++ (← nativeRefinementDeclarations family programName fn view)
   let mut coordinates : Array LoopCoordinateRegistration := #[]
+  let mut ranges : Array ActualRangeSite := #[]
   for site in loopSites do
+    if let some request := site.rangeRequest then
+      let some range := site.finiteRange
+        | Macro.throwErrorAt site.name "a source range tag must identify a finite range"
+      let some cursorSlot := site.scope.findIdx? fun binding =>
+          binding.proofName.getId == range.cursor.getId
+        | Macro.throwErrorAt site.name "the finite range cursor has no source coordinate"
+      ranges := ranges.push {
+        tag := request.tag, name := site.name.getId
+        entryScope := request.entryScope.toArray.map fun binding => {
+          name := binding.name, proofName := binding.proofName,
+          type := binding.type, isMutable := binding.isMutable }
+        scope := site.scope.toArray.map fun binding => {
+          name := binding.name, proofName := binding.proofName,
+          type := binding.type, isMutable := binding.isMutable }
+        result := site.result, cursorSlot, stop := range.stop, stride := range.stride
+        proofBody := request.proofBody
+        loopProofBody := ← loopProofBody site
+        bodyProofBody := range.body, bodyFallsThrough := range.fallsThrough }
     if site.guard.isSome then
       let mut rules := #["view_apply", "view_symm_apply", "captureView_apply",
         "captureView_symm_apply", "regroup_apply", "regroup_symm_apply"].map
@@ -4126,7 +4218,7 @@ private def programDeclarations (family : TSyntax `ident)
     params := fn.params.map (fun param => (param.name.getId, param.type))
     result := fn.result
     pure := pureMode
-    nativeHeader := fn.nativeView.map (·.header) } : FunctionInfo)), coordinates)
+    nativeHeader := fn.nativeView.map (·.header) } : FunctionInfo)), coordinates, ranges)
 
 private def nativeExprSyntax (value : Lean.Expr) : Lean.Elab.Term.TermElabM (TSyntax `term) :=
   Lean.withOptions (fun options => options.setBool `pp.fullNames true) do
@@ -4263,20 +4355,25 @@ private def prepareNativeSources (family : TSyntax `ident)
     views := views.push (← nativeView header)
   return (lowered, views)
 
-/-- Elaborate a family through the shared typed-source lowering and declaration
-generator. Higher-level proof views call this entry directly: they do not
-re-enter the public command elaborator or install another source semantics.
-The optional pure view is checked against the same emitted source program. -/
-def elaborateSourceProgram (family : TSyntax `ident)
+/-- Elaborate the shared typed source and return the actual sites requested by
+proof-side range tags. Explicit imports retain their order and written names;
+additional operation families are linked only when not already imported.
+Names are resolved only after their source declarations have checked; no range
+tag affects the emitted program or its instruction costs. -/
+def elaborateSourceProgramWithSites (family : TSyntax `ident)
     (functions : Array (TSyntax `sourceFunction)) (libraries : Array (TSyntax `ident))
-    (pureMode : Bool := false) :
-    Lean.Elab.Command.CommandElabM Unit := do
+    (pureMode : Bool := false) (additionalLibraries : Array (TSyntax `ident) := #[]) :
+    Lean.Elab.Command.CommandElabM (Array ActualRangeSite) := do
   let mut imports : Array ImportedProgram := #[]
   for library in libraries do
     let (name, functions) ← getProgramInfo library
     if imports.any (fun imported => imported.family == name) then
       Lean.throwErrorAt library "duplicate source program import"
     imports := imports.push ⟨library, name, functions⟩
+  for library in additionalLibraries do
+    let (name, functions) ← getProgramInfo library
+    unless imports.any (fun imported => imported.family == name) do
+      imports := imports.push ⟨library, name, functions⟩
   let (functions, nativeViews) ← if pureMode then
       Lean.Elab.Command.liftTermElabM (prepareNativeSources family functions imports)
     else pure (functions, #[])
@@ -4288,13 +4385,30 @@ def elaborateSourceProgram (family : TSyntax `ident)
         Lean.throwErrorAt fn.termination "pure source functions must terminate; partial fixed points are not supported"
     else if hints.isNotNone then
       Lean.throwErrorAt fn.termination "termination hints are checked by 'source_program (pure)'"
-  let (declarations, information, coordinates) ←
+  let (declarations, information, coordinates, ranges) ←
     Lean.Elab.liftMacroM (programDeclarations family functions imports pureMode nativeViews)
   Lean.Elab.Command.elabCommand declarations
   registerProgramInfo family information
   registerLoopCoordinates coordinates
+  ranges.mapM fun site => do
+    let name ← Lean.resolveGlobalConstNoOverload (mkIdentFrom family site.name)
+    return { site with name }
+
+/-- Elaborate a family through the shared typed-source lowering and declaration
+generator. Higher-level proof views call this entry directly: they do not
+re-enter the public command elaborator or install another source semantics.
+The optional pure view is checked against the same emitted source program. -/
+def elaborateSourceProgram (family : TSyntax `ident)
+    (functions : Array (TSyntax `sourceFunction)) (libraries : Array (TSyntax `ident))
+    (pureMode : Bool := false) : Lean.Elab.Command.CommandElabM Unit := do
+  discard <| elaborateSourceProgramWithSites family functions libraries pureMode
 
 elab_rules : command
+  | `(command| source_program% $family:ident where $functions:sourceFunction*) => do
+      elaborateSourceProgram family functions #[]
+  | `(command| source_program% $family:ident importing $libraries:ident,* where
+      $functions:sourceFunction*) => do
+      elaborateSourceProgram family functions libraries.getElems
   | `(command| source_program $family:ident where $functions:sourceFunction*) => do
       elaborateSourceProgram family functions #[]
   | `(command| source_program $family:ident importing $libraries:ident,* where

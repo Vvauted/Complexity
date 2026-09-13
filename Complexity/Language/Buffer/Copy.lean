@@ -28,7 +28,7 @@ namespace Complexity.Language.Buffer
 
 open scoped Std.Do Part.TotalCorrectness
 
-source_program Copy where
+source_program% Copy where
   def copyInto (source : Buffer Nat) (target : Buffer Nat) (offset : Nat) : Unit := do
     for i in [:source.length] do
       let value ← source.get i

@@ -14,15 +14,16 @@ import Lean.Elab.Tactic.Basic
 a registered source function at that fixed mathematical interface. Selection
 does not require correctness or a total mathematical model. A declaration whose
 original parameters match the fixed input is selected directly, using the original
-function index and complete program table. Without a mathematical model, the
-fixed input and output instances supply the observations of that raw entry,
-even when its header also records mathematical types. The supplied source
-contract must establish those fixed observations when correctness is proved.
+function index and complete program table. The fixed input and output instances
+supply the observations of that raw entry, independently of its optional
+mathematical types and model. A model is used for correctness only when its
+observations match; an explicit source contract can instead establish the fixed
+observations directly.
 
-A represented native function with one structured argument retains the existing
-packing path: separate fixed input parameters are assembled by actual
-`Packing.pair` primitives before a real source call. No input instance is required
-when the native declaration itself is registered.
+A represented native function whose single structured argument does not match
+the fixed layout uses the packing path: separate fixed input parameters are
+assembled by actual `Packing.pair` primitives before a real source call. No input
+instance is required when the native declaration itself is registered.
 
 The elaborator checks the mathematical input observation after packing and the
 fixed output representation, not merely their core types. Shared mathematical
@@ -282,16 +283,6 @@ private def prepareDirect (name : TSyntax `ident) (expected : Expr)
   let outputType ← mkAppOptM ``Output.type #[some β, some output]
   unless ← isDefEq outputType (Language.Syntax.coreTypeExpr information.result) do
     throwError "the original source result does not match the fixed Program.Output layout"
-  if information.model?.isSome then
-    if let some mathematical := information.mathematical? then
-      let mathematicalInput ← mathematicalInputType (mathematical.params.map (·.2.nativeType)).toList
-      unless ← isDefEq α mathematicalInput do
-        throwError "the registered mathematical input {mathematicalInput} does not match {α}"
-      unless ← isDefEq β mathematical.result.nativeType do
-        throwError "the registered mathematical result {mathematical.result.nativeType} does not match {β}"
-      let outputRepresentation ← mkAppOptM ``Output.representation #[some β, some output]
-      unless ← isDefEq outputRepresentation mathematical.result.representation do
-        throwError "the registered result observation does not match the fixed Program.Output"
   let some sourceInformation := information.source?
     | throwError "the selected function has no registered source identity"
   let source := Lean.mkConst (sourceInformation.family ++ `program)
@@ -378,9 +369,8 @@ private def prepareProgram (name : TSyntax `ident) (expected : Expr) :
     if let some function := functions.find? (fun function =>
         family ++ function.name == resolved || function.model?.any (·.name == resolved) ||
           function.source?.any (·.action == resolved)) then
-      if function.model?.isNone then
-        if ← directLayoutMatches expected function then
-          return ← prepareDirect name expected function
+      if ← directLayoutMatches expected function then
+        return ← prepareDirect name expected function
       if !function.pure then
         if let some mathematical := function.mathematical? then
           if mathematical.params.size == 1 then
@@ -487,20 +477,50 @@ elab_rules : tactic
                 (← `(tactic| exact fun input _ => ($inputProof:term) input))
               pure 1
           | .direct information => do
-              unless information.information.pure do
-                throwError "program_correct has no automatic mathematical proof view for this \
-                  direct source entry; use Program.Correct.of_functionTotal with its actual source contract"
-              let information ← preparePureCorrect name prepared.program information.information
-              let selected ← exprToSyntax prepared.program
-              let function ← exprToSyntax information.function
-              let returns ← exprToSyntax information.returns
-              Lean.Elab.Tactic.evalTactic (← `(tactic|
-                apply (fun (mathematics : ∀ input,
-                    $valid input → $post input (($function:term) input)) =>
-                  (show Complexity.Program.Correct $selected $valid $post from
-                    fun input legal =>
-                      ⟨($function:term) input, ($returns:term) input, mathematics input legal⟩))))
-              pure information.argumentCount
+              let some mathematical := information.information.mathematical?
+                | throwError "the checked model has no registered mathematical signature"
+              let arguments := (← whnf (← inferType prepared.program)).getAppArgs
+              let α := arguments[0]!
+              let β := arguments[1]!
+              let mathematicalInput ← mathematicalInputType
+                (mathematical.params.map (·.2.nativeType)).toList
+              unless ← isDefEq α mathematicalInput do
+                throwError "the registered mathematical input {mathematicalInput} does not match {α}"
+              unless ← isDefEq β mathematical.result.nativeType do
+                throwError "the registered mathematical result {mathematical.result.nativeType} does not match {β}"
+              let outputRepresentation ← mkAppOptM ``Output.representation
+                #[some β, some arguments[3]!]
+              unless ← isDefEq outputRepresentation mathematical.result.representation do
+                throwError "the registered result observation does not match the fixed Program.Output"
+              if information.information.pure then
+                let information ← preparePureCorrect name prepared.program information.information
+                let selected ← exprToSyntax prepared.program
+                let function ← exprToSyntax information.function
+                let returns ← exprToSyntax information.returns
+                Lean.Elab.Tactic.evalTactic (← `(tactic|
+                  apply (fun (mathematics : ∀ input,
+                      $valid input → $post input (($function:term) input)) =>
+                    (show Complexity.Program.Correct $selected $valid $post from
+                      fun input legal =>
+                        ⟨($function:term) input, ($returns:term) input, mathematics input legal⟩))))
+                pure information.argumentCount
+              else
+                let some model := information.information.model?
+                  | throwError "program_correct requires a checked mathematical model"
+                let some refinementName := model.refinement
+                  | throwError "program_correct requires an existing represented refinement"
+                let function ← withLocalDeclD `input α fun input => do
+                  let fields ← mathematicalInputFields mathematical.params.size input
+                  mkLambdaFVars #[input] (mkAppN (Lean.mkConst model.name) fields)
+                let selected ← exprToSyntax prepared.program
+                let function ← exprToSyntax function
+                let refinement := mkCIdent refinementName
+                Lean.Elab.Tactic.evalTactic (← `(tactic|
+                  apply Complexity.Program.Correct.of_refines
+                    (p := $selected) (valid := $valid) (post := $post) (function := $function)))
+                Lean.Elab.Tactic.evalTactic
+                  (← `(tactic| exact fun input _ => $refinement input True.intro))
+                pure mathematical.params.size
         let saved ← Lean.Elab.Tactic.saveState
         try
           withoutErrToSorry <| Lean.Elab.Tactic.withoutRecover <|

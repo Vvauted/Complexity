@@ -64,7 +64,7 @@ theorem copied_replicate_extend {α : Type} (input : Array α) (length : Nat)
     rw [dif_neg inactive, Array.getElem_append_right (by omega : input.size ≤ index)]
     simp only [Array.getElem_replicate]
 
-source_program Resize importing Copy where
+source_program% Resize importing Copy where
   def resize (source : Buffer Nat) (length : Nat) : Buffer Nat := do
     let target ← Buffer.alloc length 0
     if source.length ≤ length then
