@@ -49,9 +49,18 @@ without a RAM dependency. Examples are separate and build with `lake build Examp
 
 ## Write a high-level function
 
-The [typed frontend](##Complexity.Language.Syntax) supports ordinary parameters,
-local variables, calls and recursion. `(pure)` also generates an executable
-native Lean function from the same body:
+The [typed frontend](##Complexity.Language.Syntax) has one recommended entry,
+`source_program P where`, for ordinary parameters, local variables, calls and
+recursion. `P.f` names the actual source action; when a checked total mathematical
+view can be generated, it is named `P.f_model`. A missing total model does not
+by itself reject the source program. The default entry is connected; complete
+control-flow integration remains in progress.
+
+The existing examples below retain their compatibility APIs. `(pure)` exports
+the mathematical function under `P.f` through the older scalar interface;
+`(native)` retains its older naming layout for represented values. New programs
+should start with the default entry, not choose a mode for each language feature.
+For example, the existing recursive factorial uses the `(pure)` compatibility API:
 
 ```lean
 import Complexity.Language.Syntax
@@ -74,7 +83,8 @@ mathlib's factorial equation. Generated correspondence transfers that result to
 the source program without a second implementation or recursion proof.
 No time budget or word width appears in this mathematical theorem.
 
-Finite-range loops can also generate an ordinary total function:
+Finite-range loops can also generate an ordinary total function. This existing
+example retains the same compatibility API:
 
 ```lean
 source_program (pure) Iterative where
@@ -92,13 +102,13 @@ contract without a second loop-termination proof.
 Ordinary structures can also be registered with `source_type`. The
 [scalar example](##Examples.Language.Scalar) registers a `BoundedInput` with
 `value : Nat` and `limit : Nat`, then constructs, passes, returns and projects it
-in one `source_program (pure)` declaration. Its correctness theorem is the
-ordinary equation `Structured.run n limit = min (n + 1) limit`.
+in one compatibility `source_program (pure)` declaration. Its correctness theorem
+is the ordinary equation `Structured.run n limit = min (n + 1) limit`.
 The generated `Structured.run_refines.of_math` transfers that mathematical proof
 to the same source implementation; the
 [compiled client](##Examples.Language.ScalarCompiled) proves its actual RAM
 result and independent instruction bound using shared range and cost rules.
-This structure path currently supports closed structures with direct scalar or
+This legacy scalar structure path supports closed structures with direct scalar or
 scalar-product fields, not arbitrary Lean datatypes or dependent fields.
 The same scalar file also keeps such a structure as a finite-range accumulator,
 calling a structure-valued helper in each round with a dynamic positive stride.
@@ -119,13 +129,15 @@ present. Its specification uses an ordinary `Array.modify` result and preservati
 of outside views, not register identities. Effectful programs use mathematical
 contracts rather than pretending that borrowed mutation is a pure operation.
 
-The [high-level proof guide](##ComplexityDocs.Verification) explains both modes.
-The pure subset supports scalars and their products/options, finite-range `for`,
-self-recursion and acyclic calls. General pure `while`, mutually recursive pure
-families and buffers remain unsupported.
-General effectful declarations support `while`, bounded `for`, borrowed buffers, allocation and
-scoped scratch reclamation. This is a checked executable subset, not a compiler
-for arbitrary Lean definitions.
+The [high-level proof guide](##ComplexityDocs.Verification) explains the two proof
+views: ordinary function equations when a total model is available, and
+mathematical state contracts for the actual source execution. The source language
+includes `while`, bounded `for`, borrowed buffers, allocation and scoped scratch
+reclamation. Automatic total models cover supported combinations, not every
+loop or recursive family; general `while` uses explicit state contracts.
+The remaining control-flow integration does not make an optional model a
+precondition for accepting source code. This is a checked executable subset,
+not a compiler for arbitrary Lean definitions.
 
 The [mutable traversal](##Examples.Language.Traversal) writes its actual loop as:
 
@@ -253,8 +265,8 @@ structure AppendOutput where
 The [deriving handlers](##Complexity.Program.Deriving) generate a checked
 direct-field view and reuse the same tuple interfaces; the
 [RAM handler](##Complexity.Computability.Ram.Compiler.Language.Program.Deriving)
-uses exactly that input layout. The typed-program example writes the operation
-directly on those records:
+uses exactly that input layout. The existing typed-program example writes the
+operation directly on those records, retaining its `(native)` compatibility naming:
 
 ```lean
 source_program (native) NativeAppend where
@@ -270,8 +282,9 @@ theorem append_correct :
   program_correct NativeAppend.append using (fun input => rfl)
 ```
 
-The [program selector](##Complexity.Program.Syntax) uses the registered native
-function's actual source, not an independently selected implementation. Its
+The [program selector](##Complexity.Program.Syntax) uses the registered
+declaration's actual source and representation information, not an independently
+selected implementation. Its
 [packing entry](##Complexity.Program.Packing) assembles the fixed separate
 input parameters through real product primitives and calls that function.
 The source correspondence connects the native array expression to the existing
@@ -283,7 +296,7 @@ Registration is fixed by the task before choosing a candidate. It does not run
 arbitrary host preprocessing or compile arbitrary Lean record operations.
 Currently deriving requires nondependent direct fields, no type parameters or
 inheritance, and an existing interface for the resulting ordered field tuple.
-Native source supports field projection, construction and returned records with
+Prepared source supports field projection, construction and returned records with
 array fields; natural-array `++` uses an actual allocation and copying call.
 Branch results may also contain arrays: the selected branch supplies the actual
 record, and a common continuation executes once. Array `.size`, scalar/Boolean
@@ -291,7 +304,8 @@ conditions and direct calls to imported pure source functions use the same
 source correspondence. The typed-program example combines these operations;
 it does not supply a second record implementation or a private import bridge.
 
-Self-recursive native functions may carry heap-backed values. The
+Self-recursive functions with a checked mathematical model may carry heap-backed
+values. The
 [linked-list example](##Examples.Language.LinkedList) allocates one node, passes
 the resulting list to its recursive call and proves the ordinary equation
 `replicateAppend count head tail = List.replicate count head ++ tail`.
@@ -300,16 +314,16 @@ generated source correspondence. The latter relates values at the actual heap
 after allocation; it does not identify list handles with mathematical lists.
 
 This is not arbitrary Lean compilation or a complete persistent-array API.
-The same linked-list example now uses mutable locals and finite ranges to
-allocate list nodes and repeatedly append to an array-valued record. Generated
-correspondence supplies source totality and actual-heap observations; the
-mathematical fold contains only the mutable accumulator. The ordinary List and
-record proofs no longer mention capture tuples: `List.foldl_hom` connects those
-coordinates to the unchanged source state inside the generator. General represented
-`while`, nonlocal loop exits and recursion from within a range remain open.
-Native record selection currently accepts one mathematical input parameter;
-direct pure selection also accepts ordinary curried arguments through their
-fixed product input. Both check the fixed input and output representations.
+The same linked-list example repeatedly appends to an array-valued record with
+an actual `while` loop. Its `repeatAppend_correct` proof uses the named relational
+loop contract, a mathematical invariant and well-founded descent. Each append
+uses its real intermediate heap; the proof establishes successful termination
+and the complete output record without generating a total pure `while` model.
+This is checked contract composition, not yet an invariant-only proof interface:
+the author still supplies the relation to the represented state. Automatic
+mathematical views for nested ranges and further control-flow combinations remain
+integration work. Program selection checks the fixed input and output
+representations.
 Source correctness alone does not supply the independent whole-program time
 bound, including any added packing and call instructions.
 

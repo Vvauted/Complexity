@@ -35,6 +35,10 @@ The current integration work has these concrete obligations:
   proofs are distinct fields; the separate native-function registry is removed.
 - [ ] Share resolved types, operations and control-flow lowering, with existing
   entry modes retained only as compatibility or explicit proof-view choices.
+  The default `source_program` now uses represented preparation and the shared
+  source emitter; `(native)` retains its earlier naming convention through that
+  same entry. The specialized `(pure)` preparer remains a compatibility path,
+  not the recommended way to select language features.
 - [x] Separate mandatory source/type preparation from optional mathematical
   models in the represented preparation pass. Expressions and calls propagate
   the absence of a model explicitly; actual function IDs and representation
@@ -47,13 +51,21 @@ The current integration work has these concrete obligations:
   identity representation, not an inferred array/list contents observation.
   The existing array-record consumer uses a mathematical loop state and the
   shared named contract; its original represented correctness statement is
-  retained. A common default entry is still open.
+  retained. The default entry now accepts this same preparation path; its
+  existing borrowed-buffer traversal, recursive splay and imported-buffer
+  consumers retain their source contracts.
 - [x] Reuse Core's actual call/primitive typing and operand normalization for
   raw buffer allocation, reads, writes and slices, and node construction/reads.
   All local source signatures are prepared before bodies, so a forward call
   needs no already-proved mathematical model. The existing allocating `make`
   now passes through represented preparation with its original Array contract;
   its fixed `Program` interface does not require a pure model.
+- [ ] Complete optional mathematical models for acyclic forward calls using
+  resolved local-call dependencies. Source calls already resolve all headers;
+  mathematical models still depend on previously prepared callees. Keep source
+  function order, operation identities and import tables unchanged when
+  completing proofs in dependency order. Mutual recursion needs its own total
+  contract, not an inferred termination claim.
 - [x] Preserve actual statement branches, standalone calls, scratch scopes and lexical slots.
   Mathematical joins and hygienic local versions are proof-side only. The
   original linked-list `unconsBody` identity and compiled consumers still check;
@@ -66,6 +78,12 @@ The current integration work has these concrete obligations:
   emitted. The original optional-buffer import chain retains its mathematical
   update/frame statements and compiler-derived body bounds. Its imported pure
   Option/product result uses the checked encoding and existing map identities.
+- [ ] Add a real local-return boundary for value-producing blocks containing
+  loops or scratch scopes. Core currently catches returns at function calls and
+  Boolean loop guards, not at arbitrary assignment blocks. Replacing a local
+  return by an assignment does not skip later statements or iterations, and
+  must not rewrite a guard's own return. Reuse the existing loop and scope
+  semantics while accounting for any actual exit-control instructions.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. The general-while consumer still supplies its record/heap
   state relation and guard/body transport explicitly. This checks composability,
@@ -131,20 +149,23 @@ The current integration work has these concrete obligations:
   correctness statements and same-program RAM bounds on 0v0. Update the manual
   and remove obsolete capability claims when those consumers actually pass.
 
-The next control-flow step is to give finite ranges one actual lowering
-independent of model availability.
-The shared emitter now exposes the actual named range, complete lexical slots,
-entry bindings and body observations to the proof preparer. Range tags create
-no instructions or helper functions. Explicit imports retain their source
-tables, order and written names; resolved calls can select the same imported
-entry by its actual identity. The frontend's own buffer operations use the
-internal emitter, avoiding an import cycle when the public default is unified.
-Replacing the helper-extracting represented range is still in progress: it
-changes the original loop owner;
-Traversal's `Implementation.boundedMap_loop1`, Scope's
-`Implementation.work_scope1/work_scope2` and LinkedList's exact `unconsBody`
-theorem are concrete consumers of the real code, not names that can be restored
-with aliases.
+Finite ranges now use the original in-place source lowering independently of
+model availability. The emitter exposes the actual named loop, complete lexical
+slots, entry bindings and body observations. The allocating List range's
+mathematical fold is proved through that loop's actual `Control`/locals outcome;
+there are no generated range-body or range-fold source calls. Its original
+replicate equation and total correspondence check. The original traversal also
+retains `Implementation.boundedMap_loop1` and its RAM cost proof, including the
+same stable buffer-length bound without an extra temporary capture.
+
+The proof preparer now follows actual branch continuations when composing
+ranges, carrying their heap relations and frames. Nested-range and Option
+combinations still need consumer evidence; this does not close the complete
+integration gate. Explicit imports retain their source tables, order and written
+names, and resolved calls select those same entries. The frontend's buffer
+operations use the internal emitter to avoid an import cycle. Existing exact
+body identities and compiled consumers remain the compatibility requirements,
+not names that can be restored with aliases.
 
 This gate does not claim arbitrary Lean compilation, infer algorithmic invariants
 or turn every mutable computation into a pure total function. It requires that

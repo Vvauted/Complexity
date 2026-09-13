@@ -142,7 +142,7 @@ def inspectAndPrependCost : { bound : Nat // ∀ w heapLimit initial,
     (Ram.LanguageCompiler.List.Uncons.arenaCostBound .nat _ _ _)
       via NativeViews.Source.imports.NativeViews.Operations.unconsNat.embedding,
     (prepend_arenaCostBound _ _)
-      via NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding]
+      via NativeViews.Source.imports.NativeConstruction.embedding]
 
 /-- A caller can reuse the helper's uniform certificate, including initialization. -/
 theorem inspectAndPrepend_arenaCostBound (w heapLimit : Nat) :
@@ -177,7 +177,7 @@ theorem inspectAndPrepend_measured {w heapLimit cursor : Nat}
     prepend_ready_cost head root readFinish.heap positive headFits
       (cursor := readCursor) (by simpa only [readPost.2.1] using space)
   ram_source_arena_call exact using prependCost via
-    NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
+    NativeViews.Source.imports.NativeConstruction.embedding
   refine ⟨_, rfl, ?_⟩
   omega
 

@@ -220,7 +220,7 @@ alias. Branch and sequence overheads are the existing compiler costs. -/
 def choosePrependBodySteps (flag : Bool) : Nat :=
   let copy := 2 * fieldCount (.option (.node .nat))
   let prependCall := callCost NativeBranches.Source.program
-    (NativeBranches.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.map.toFun
+    (NativeBranches.Source.imports.NativeConstruction.map.toFun
       NativeConstruction.Source.prependId) (prependBodySteps + 2)
   let consCall := callCost NativeBranches.Source.program
     (NativeBranches.Source.imports.NativeBranches.Operations.consNat.map.toFun
@@ -283,10 +283,13 @@ theorem choosePrepend_execute {w heapLimit cursor : Nat} {placement : Nat → Ra
           prepend_ready_cost head (some selected.1) selected.2 positive headFits lastSpace
         ram_source_arena_step
         ram_source_arena_call exact using selectedCost via
-          NativeBranches.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
+          NativeBranches.Source.imports.NativeConstruction.embedding
         ram_source_arena_call exact using lastCost via
-          NativeBranches.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
-        exact ⟨_, rfl, rfl, rfl⟩
+          NativeBranches.Source.imports.NativeConstruction.embedding
+        refine ⟨_, rfl, rfl, ?_⟩
+        simp only [choosePrependBodySteps, Bool.false_eq_true, ↓reduceIte,
+          callCost_embeds NativeBranches.Source.imports.NativeConstruction.embedding
+            NativeConstruction.Source.prependId] <;> rfl
     | true =>
         change cursor + 9 ≤ heapLimit at space
         have firstSpace : cursor + 3 ≤ heapLimit := by omega
@@ -304,10 +307,15 @@ theorem choosePrepend_execute {w heapLimit cursor : Nat} {placement : Nat → Ra
         ram_source_arena_call exact using firstCost via
           NativeBranches.Source.imports.NativeBranches.Operations.consNat.embedding
         ram_source_arena_call exact using selectedCost via
-          NativeBranches.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
+          NativeBranches.Source.imports.NativeConstruction.embedding
         ram_source_arena_call exact using lastCost via
-          NativeBranches.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
-        exact ⟨_, rfl, rfl, rfl⟩
+          NativeBranches.Source.imports.NativeConstruction.embedding
+        refine ⟨_, rfl, rfl, ?_⟩
+        simp only [choosePrependBodySteps, ↓reduceIte,
+          callCost_embeds NativeBranches.Source.imports.NativeConstruction.embedding
+            NativeConstruction.Source.prependId,
+          callCost_embeds NativeBranches.Source.imports.NativeBranches.Operations.consNat.embedding
+            NativeBranches.Operations.consNat.consId] <;> rfl
   obtain ⟨finish, value, _, _, execution, ready, cost, rfl, rfl⟩ :=
     ArenaMeasured.exists_returned_iff.mp measured
   obtain ⟨outcome, _, heapEq, cursorEq, bodyEq⟩ :=
@@ -339,7 +347,7 @@ def replaceHeadCost : { bound : Nat // ∀ w heapLimit initial,
     (Ram.LanguageCompiler.List.Uncons.arenaCostBound .nat _ _ _)
       via NativeViews.Source.imports.NativeViews.Operations.unconsNat.embedding,
     (prepend_arenaCostBound _ _)
-      via NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding]
+      via NativeViews.Source.imports.NativeConstruction.embedding]
 
 /-- The inferred bound is independent of word width, heap limit and List length. -/
 def replaceHeadBodyBound : Nat := replaceHeadCost.val
@@ -394,7 +402,7 @@ theorem replaceHead_execute_le {w heapLimit cursor : Nat} {placement : Nat → R
     ram_source_arena_step
     all_goals
       ram_source_arena_call exact using prependCost via
-        NativeViews.Source.imports.Complexity.Language.Examples.LinkedList.NativeConstruction.Source.embedding
+        NativeViews.Source.imports.NativeConstruction.embedding
     all_goals exact ⟨_, rfl⟩
   obtain ⟨outcome, cursorEq, ⟨_, result, rfl⟩, shape, bodyBound, stepsBound⟩ :=
     measured.execute_le (P := fun _ _ finalCursor => finalCursor = cursor + 3)

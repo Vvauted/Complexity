@@ -1533,6 +1533,12 @@ private def normalizeElement (functions : Array Callee) (scope : Scope) (result 
       return (bindings, ← `(doElem| $action:term))
   | _ => return (#[], element)
 
+private partial def rangeReceiverName? (value : TSyntax `term) : Option (TSyntax `ident) :=
+  match value with
+  | `(($inner:term)) => rangeReceiverName? inner
+  | `($name:ident) => some name
+  | _ => none
+
 private partial def stableRangeBound (scope : Scope) (value : TSyntax `term)
     (allowLength : Bool := true) : MacroM Bool := do
   match value with
@@ -1545,7 +1551,7 @@ private partial def stableRangeBound (scope : Scope) (value : TSyntax `term)
   | _ =>
       if let some (receiver, field) := fieldAccess? value then
         if allowLength && field == `length then
-          if let `($name:ident) := receiver then
+          if let some name := rangeReceiverName? receiver then
             let (binding, _) ← lookupBinding scope name
             return !binding.isMutable && match binding.type with
               | .buffer _ => true
@@ -4407,11 +4413,6 @@ elab_rules : command
   | `(command| source_program% $family:ident where $functions:sourceFunction*) => do
       elaborateSourceProgram family functions #[]
   | `(command| source_program% $family:ident importing $libraries:ident,* where
-      $functions:sourceFunction*) => do
-      elaborateSourceProgram family functions libraries.getElems
-  | `(command| source_program $family:ident where $functions:sourceFunction*) => do
-      elaborateSourceProgram family functions #[]
-  | `(command| source_program $family:ident importing $libraries:ident,* where
       $functions:sourceFunction*) => do
       elaborateSourceProgram family functions libraries.getElems
   | `(command| source_program (pure) $family:ident where $functions:sourceFunction*) => do

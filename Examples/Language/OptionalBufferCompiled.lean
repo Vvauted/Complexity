@@ -54,10 +54,10 @@ theorem inspect_realizable {w : Nat} (hw : 0 < w) :
   ram_source_realize (xs)
   by_cases empty : xs.length = 0
   · ram_source_call using (classifyLength_realizable hw), classifyLength_total
-      via Library.Source.imports.Complexity.Language.Examples.OptionalBuffer.Metadata.embedding
+      via Library.Source.imports.Metadata.embedding
     all_goals simp_all [Prod.eq_iff_fst_eq_snd_eq] <;> omega
   · ram_source_call using (classifyLength_realizable hw), classifyLength_total
-      via Library.Source.imports.Complexity.Language.Examples.OptionalBuffer.Metadata.embedding
+      via Library.Source.imports.Metadata.embedding
     all_goals simp_all [Prod.eq_iff_fst_eq_snd_eq] <;> omega
 
 /-- The imported helper's real call overhead plus the inspector's field,
@@ -69,9 +69,9 @@ the actual descriptor construction, with no charge for a nonexistent array copy.
 theorem inspect_costBound :
     FunctionCostBound Library.Source.program Library.Source.inspectId (fun _ _ => True)
       (fun _ _ => inspectBodyBound) := by
-  ram_source_cost (xs) using classifyLength_costBound via Library.Source.imports.Complexity.Language.Examples.OptionalBuffer.Metadata.embedding
+  ram_source_cost (xs) using classifyLength_costBound via Library.Source.imports.Metadata.embedding
   all_goals
-    simp only [inspectBodyBound, callCost_embeds Library.Source.imports.Complexity.Language.Examples.OptionalBuffer.Metadata.embedding]
+    simp only [inspectBodyBound, callCost_embeds Library.Source.imports.Metadata.embedding]
     omega
 
 /-- The only extra arithmetic range concerns the cell that is actually
@@ -87,7 +87,7 @@ theorem bump_realizable {w : Nat} (hw : 0 < w) (contents : Array Nat)
   rcases input with ⟨observed, lengthFits⟩
   by_cases empty : xs.length = 0
   · ram_source_call using (inspect_realizable hw), inspect_total
-      via Implementation.Source.imports.Complexity.Language.Examples.OptionalBuffer.Library.Source.embedding
+      via Implementation.Source.imports.Library.embedding
     all_goals simp_all [inspectResult] <;> omega
   · have nonempty : 0 < contents.size := by
       have := observed.size_eq
@@ -98,7 +98,7 @@ theorem bump_realizable {w : Nat} (hw : 0 < w) (contents : Array Nat)
       obtain ⟨finish, written, _⟩ := observed.write_exists nonempty value
       exact ⟨finish, written⟩
     ram_source_call using (inspect_realizable hw), inspect_total
-      via Implementation.Source.imports.Complexity.Language.Examples.OptionalBuffer.Library.Source.embedding
+      via Implementation.Source.imports.Library.embedding
     all_goals
       simp_all [inspectResult, Except.ok.injEq] <;>
       first
@@ -114,9 +114,9 @@ assumes source termination nor reruns the mathematical array-correctness proof. 
 theorem bump_costBound :
     FunctionCostBound Implementation.Source.program Implementation.Source.bumpId (fun _ _ => True)
       (fun _ _ => bumpBodyBound) := by
-  ram_source_cost (xs) using inspect_costBound via Implementation.Source.imports.Complexity.Language.Examples.OptionalBuffer.Library.Source.embedding
+  ram_source_cost (xs) using inspect_costBound via Implementation.Source.imports.Library.embedding
   all_goals
-    simp only [bumpBodyBound, callCost_embeds Implementation.Source.imports.Complexity.Language.Examples.OptionalBuffer.Library.Source.embedding]
+    simp only [bumpBodyBound, callCost_embeds Implementation.Source.imports.Library.embedding]
     omega
 
 /-- The full invocation bound adds the real outer call, return and final halt. -/

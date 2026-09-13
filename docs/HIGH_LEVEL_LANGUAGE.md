@@ -7,38 +7,48 @@ ordinary Lean function equation or a mathematical state contract, depending on
 the program. These are proof views of the same implementation, not different
 languages or execution models.
 
-**Current status: integration is incomplete.** Existing `(pure)` and `(native)`
-entry forms still expose different subsets of the implementation. The shared
-typed source and RAM backend, mathematical representation metadata and optional
-model preparation are connected, but a common default entry and control-flow
-preparation are not finished. The [active integration gate](ROADMAP.md#active-integration-gate)
-lists the remaining work. The mechanisms described below are current evidence,
-not a recommendation to split an algorithm across three source modes.
+**Current status: the default entry is connected; control-flow integration is
+incomplete.** New programs should use `source_program P where`. `P.f` is the
+actual source action, and `P.f_model` is its mathematical view when a checked
+total model is available. The common entry has been exercised by the buffer,
+recursive splay, imported optional-buffer and original traversal consumers,
+including the traversal's RAM bound. The allocating List range now has its
+ordinary mathematical proof through the original named loop. General
+control-flow and nested-range mathematical-model coverage remain incomplete.
+The [active integration gate](ROADMAP.md#active-integration-gate) lists the
+remaining work.
+
+Existing `(native)` examples retain a compatibility naming layout for the same
+preparation pass. `(pure)` remains the older scalar compatibility API with its
+own preparer; it is not yet just a naming alias. These examples are evidence for
+particular interfaces, not a recommendation to split an algorithm across three
+source languages.
 
 Integration now also connects represented records/arrays to scalar expressions,
 direct pure-source imports and self-recursion, including actual allocation before
-the recursive call. The public `Syntax.elaborateSourceProgram` entry supplies the
+the recursive call. `Syntax.elaborateSourceProgramWithSites` supplies the
 existing typed-source emitter; proof views must not re-enter public command
-dispatch to select another frontend. Mutable local bindings and normal finite
-ranges now have checked allocating List and array-record consumers. Their source
-correspondence follows the actual callback calls and intermediate heaps.
+dispatch to select another frontend. Existing consumers exercise mutable local
+bindings, allocating List ranges and array records. Their correspondence must
+retain the same actual source calls and intermediate heaps through integration.
 General represented `while` now retains actual assignments, effectful guards
 and early function returns through the same source loop. The array-record
 consumer supplies a mathematical-state contract, not a total pure function.
-Finite-range exits, loops inside value-producing branches and calls to an
-enclosing recursive function from a range remain open. The mathematical range view folds
-only mutable locals and closes over fixed captures. The generator uses
-`List.foldl_hom` to prove that view corresponds to the unchanged full-state
-source loop; authors do not unfold captured-state tuples.
+Mathematical range-view coverage for exits, value-producing branches, nested
+ranges and calls to an enclosing recursive function remains part of the
+integration gate. A range view folds mutable locals and closes over fixed
+captures; its correspondence must refer to the same named source loop, without
+adding source helper calls or changing its charged execution.
 
 Statement branches, lexical shadowing, standalone Unit calls, nested product
 patterns and scratch scopes now pass through the same represented preparation.
 Their actual source control remains distinct from proof-only result joins and
 local versions. The original linked-list body identity, optional-buffer import
 chain and nested-scratch consumers retain their correctness and compiled
-resource statements. Scoped cleanup does not preserve observations of reclaimed
-storage. Finite ranges still need one common actual lowering before the public
-entry forms can be collapsed.
+resource statements as integration requirements. Scoped cleanup does not preserve
+observations of reclaimed storage. The default entry uses the common preparer;
+the allocating range and original traversal now retain their corresponding
+mathematical and RAM proofs. Further combinations remain in the integration gate.
 
 The [cross-prover research report](DESIGN_RESEARCH.md) supplies the rationale
 for a common mathematical contract layer with complementary function-equation
@@ -58,8 +68,9 @@ scalar `source_program` surface, independent `Part` observations, compositional
 evaluation equations and a scoped strict Std.Do interpretation are now present.
 Generated one-step function equations support ordinary mathematical correctness
 proofs; shared structural rules compose separate cost bounds. Default declarations
-expose noncomputable semantic actions; `(pure)` additionally generates executable
-native functions and proves correspondence to those same source actions.
+expose semantic actions as `P.f` and optional checked mathematical functions as
+`P.f_model`. Function equations and state contracts concern those same source
+actions; the legacy `(pure)` API retains its original mathematical naming.
 Generated contract equivalences hide argument-environment packing, and named
 specification rules apply supplied contracts in native `mvcgen` proofs;
 focused scalar tactics compose realization and uniform structural cost rules.
@@ -79,7 +90,8 @@ loop is proved equal to `Nat.factorial n` with ordinary fold/product identities.
 Its total source contract follows from generated correspondence, not a second
 termination or implementation proof. Factorial and the direct/composed/imported
 compiled traversal modules exercise the finite-range and inferred-budget
-interfaces; they pass on 0v0 together with the library, Examples and manual.
+interfaces. Their existing contracts and bounds remain integration requirements;
+the updated entry must also pass the complete library, Examples and manual build.
 A self-recursive factorial proof uses ordinary induction and mathlib's
 `Nat.factorial`; its compiled invocation now has a separate linear instruction
 bound, subject to word-range and code/stack-capacity conditions. The
@@ -249,9 +261,9 @@ pass normalizes that loop's local coordinates and registered structure encodings
 without a consumer-written list of view or projection lemmas. Ordinary-parameter
 resource rules should still remove the remaining contract/view setup.
 
-This structure pass does not yet support general loops, recursion, matching,
+This legacy scalar structure path does not support general loops, recursion, matching,
 type parameters, dependent fields or nested/Option-valued structure fields.
-The scalar frontend separately supports self-recursion. Raw-to-native
+Its scalar compatibility interface supports self-recursion. Raw-to-native
 reconstruction is available only for supported
 layouts whose encode/rebuild roundtrip is checked; it is proof-side transport,
 not a decoder for every representation or an uncharged runtime conversion.
@@ -337,8 +349,8 @@ an early return leaves the enclosing function. Explicit steps, `break` and
 `continue` are not yet supported. The checked mutable traversal uses
 the same generated loop-contract interface.
 
-For `(pure)` declarations, finite ranges generate a native total iteration over
-the same normalized body. A shared finite-iteration theorem connects it to the
+In the retained `(pure)` compatibility API, finite ranges generate a native total
+iteration over the same normalized body. A shared finite-iteration theorem connects it to the
 existing source while semantics; generated totality retains every initial heap.
 The iterative factorial consumer proves the result through ordinary Lean folds
 and mathlib multiplication facts, without another well-founded source proof.
@@ -422,8 +434,10 @@ mathematical separation argument.
 
 ### Current surface and intended traversal extension
 
-The [scalar frontend](../Complexity/Language/Syntax.lean) accepts ordinary typed
-headers and `do` bodies; `(pure)` selects the checked native scalar interface:
+The [typed frontend](../Complexity/Language/Syntax.lean) accepts ordinary typed
+headers and `do` bodies through the recommended default `source_program` entry.
+The existing scalar example below retains its `(pure)` compatibility API and
+the corresponding mathematical function names:
 
 ```lean
 source_program (pure) Implementation where
@@ -447,10 +461,12 @@ equation and ordinary Nat facts. The generated `_action` retains the independent
 source observation, `_action_eq_pure` proves equality to `pure` of that native
 result for every initial heap, and `_total` supplies its total source contract.
 No second implementation proof or manual heap conversion is required.
-Without `(pure)`, the existing `P.f`/`P.f_eq` interface continues to expose
-`ExceptT Fault (StateT Heap Part)` actions for mutable programs. Native execution
-and the compiled RAM runner have different runtimes; function equality neither
-sets an instruction price nor hides intermediate work.
+In the recommended default layout, `P.f`/`P.f_eq` expose the actual
+`ExceptT Fault (StateT Heap Part)` action and its one-step equation. An available
+checked total model is named `P.f_model`; otherwise correctness uses a contract
+of the same action. Native execution and the compiled RAM runner have different
+runtimes; function equality neither sets an instruction price nor hides
+intermediate work.
 All function signatures are collected before lowering the bodies, so named
 calls refer to the same source program rather than arbitrary host callbacks.
 A named function returning `Unit` can appear directly as a statement; other
@@ -648,12 +664,14 @@ value equations; for mutation, they yield result/state relations and frames.
 
 ### Reuse Lean's termination arguments
 
-For `source_program (pure)`, supply ordinary `termination_by` and, where needed,
-`decreasing_by` once. Lean checks the generated native definition; generated
-correspondence reuses its recursion principle to establish terminating source
+For supported self-recursive mathematical models, supply ordinary
+`termination_by` and, where needed, `decreasing_by` once. Lean checks the generated
+native definition; generated correspondence reuses its recursion principle to establish terminating source
 execution with the same result. The mathematical result theorem is then an
-ordinary Lean proof, as in the factorial example. This mechanism covers the
-supported pure fragment, not arbitrary effectful native recursion.
+ordinary Lean proof, as in the factorial example. Both the default optional-model
+path and the retained `(pure)` API reuse Lean's termination machinery within their
+supported fragments. A source-only declaration does not acquire a termination
+proof from an unchecked hint; the preparer reports that case explicitly.
 
 Effectful total correctness reuses the same mathematical foundation through
 source rules, without fuel or a time budget:
@@ -672,8 +690,8 @@ validity, bounds or contents proof. Raw allocation, reads/writes, slices and
 node operations reuse Core's own type checker and operand normalizer; forward
 source signatures are available before their bodies or proofs. The original
 allocation consumer now uses this preparation with its unchanged mathematical
-Array contract. Canonical statement/range lowering and the default public entry
-remain part of the integration gate.
+Array contract. The default public entry now uses this pass. Complete range
+correspondence and control-flow composition remain part of the integration gate.
 
 - `TotalWP.while_wellFounded` accepts an ordinary `WellFounded` relation.
   `Stmt.observe_while_fixed_spec` exposes it through native `Std.Do` triples
@@ -735,8 +753,8 @@ frames and successful termination. Pure and mutable calls must compose through
 these same rules. Mutable programs may use mathematical specifications and
 invariants directly, without first constructing another pure algorithm.
 
-The checked pure frontend generates a native total Lean definition and its
-typed-core implementation from one supported buffer-free body. It reuses Lean's
+The retained `(pure)` compatibility API generates a native total Lean definition
+and its typed-core implementation from one supported buffer-free body. It reuses Lean's
 recursion infrastructure and the author's one decreasing argument; generated
 correspondence proves finite source execution with the native result, not just
 equality conditional on successful execution. Scalar, Remainder and Factorial
@@ -748,18 +766,15 @@ a second author-written implementation induction. A domain-restricted
 total view needs explicit domain arguments or an implemented error result;
 neither backend range premises nor an invented default value replaces this.
 
-The next finite-loop extension must preserve its range origin during elaboration.
-The current effectful `for` immediately becomes a while block; removing the pure
-frontend's rejection alone would leave a noncomputable observer in the supposed
-native function. Retain the captured endpoints, private cursor and the same
-normalized body, emit a genuine native finite `for`, and prove its correspondence
-to the existing source while once in the library. The shared induction follows
-the number of remaining indices and propagates both outer-local updates and
-early function returns. The author should neither write a recursive replacement
-nor repeat a termination argument for an inherently finite range. Native body
-calls must use their existing checked correspondences, including supplied
-recursive hypotheses. This extension is planned, not implemented by the present
-effectful loop contracts.
+Finite-range integration must preserve its range origin, captured endpoints,
+private cursor and actual body during elaboration. Existing finite-iteration
+rules connect mathematical folds to source while execution; the remaining
+generator work must apply them to the same named loop, not introduce a separately
+called source implementation. General source control retains early returns.
+Automatic mathematical views for nested ranges, exits and recursive calls inside
+ranges are separate coverage obligations, not consequences of a finite index set.
+Authors should not repeat library iteration or lowering proofs, and body calls
+must reuse their checked correspondences at the actual intermediate heap.
 
 This does not accept arbitrary Lean definitions as runtime primitives. The
 frontend still controls the executable subset, supported operations and actual
@@ -992,9 +1007,10 @@ list sum over `take`/`foldl` prefixes. Uniform per-callback bounds give a size-o
 affine invocation bound and mathlib `IsBigO` in length, without another loop or
 compiler proof. The common envelope is needed only at visited prefixes.
 
-The opt-in `source_program (native)` frontend accepts ordinary mathematical List
-parameters and results. Statically selected pure or imported native callbacks
-use actual calls in `List.Fold.program`; `List.cons` and `head :: tail` select the
+The common preparation pass accepts ordinary mathematical List parameters and
+results through the default entry. Existing examples retain `(native)` only for
+their compatibility naming layout. Statically selected pure or imported native
+callbacks use actual calls in `List.Fold.program`; `List.cons` and `head :: tail` select the
 real allocating `List.Cons.program`. The same block generates an ordinary Lean function and
 `_refines`; List handles are related to contents in the actual heap, not encoded
 through an `Equiv`. A typed empty list needs no heap object.
