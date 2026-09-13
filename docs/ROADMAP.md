@@ -86,10 +86,16 @@ The current integration work has these concrete obligations:
   result/flag locals, gated continuations and the existing loop and scope
   semantics. Each scratch scope stages its own result and commits only after
   successful cleanup; fault exits really drop those temporary roots before
-  checking the parent scope. The represented value-block preparer still needs
-  to use this boundary instead of recursively replacing returns by assignments.
-  Preserve guard returns and account for the actual exit-control instructions;
-  the supporting root lemmas alone are not a complete lowering theorem.
+  checking the parent scope. The represented conditional/Option value-block
+  preparer now uses this boundary instead of recursively replacing returns by
+  assignments. Actual return-control checking is separate from optional models;
+  assignments invalidate the affected enclosing mathematical locals.
+  The existing record/List branch proofs check, and the List's exact RAM count
+  includes the result/flag assignments and final payload match. Existing ordinary
+  scope/traversal code and bounds are unchanged. Loop/scratch combinations inside
+  value blocks still need a real consumer; the supporting root lemmas alone are
+  not a complete lowering theorem. Plain standalone `let x ← do ...` blocks also
+  remain to be connected to this same boundary.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. The general-while consumer still supplies its record/heap
   state relation and guard/body transport explicitly. This checks composability,

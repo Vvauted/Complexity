@@ -26,9 +26,9 @@ registered operations and their checked heap relations. A finite range retains
 the shared source's original named loop and in-place body; its mathematical fold
 is proof-side only. General while and source calls without a total model retain
 their actual control and heap effects, exposing source contracts instead of a
-fabricated pure function. Finite-range exits retain source control without an
-automatic total-function view; general loops inside value-producing branches
-remain unsupported. Shared typed product
+fabricated pure function. Value-producing branches use the shared source's local
+return boundary, including loops and scratch scopes; exit-controlled ranges
+retain source control without an automatic total-function view. Shared typed product
 and Option patterns retain one evaluation and ordinary source projections.
 Scratch blocks retain their real cleanup and enclosing returns; their contracts
 observe the post-cleanup heap rather than a pre-cleanup mathematical view.
@@ -542,6 +542,8 @@ private structure Preparation where
   calledFamilies : Array (TSyntax `ident) := #[]
   current : Option Operation := none
   currentRecursive : Bool := false
+  /-- Actual assignment identities, used to invalidate enclosing value-block views. -/
+  assignedSlots : Array Name := #[]
 
 private abbrev PrepareM := StateT Preparation TermElabM
 
@@ -1130,18 +1132,13 @@ private def consNames? (pattern : TSyntax `term) :
   | `($head:ident :: $tail:ident) => some (head, tail)
   | _ => none
 
-private def needsGuardedJoin : Ty → Bool
-  | .buffer _ | .node _ => true
-  | .prod left right => needsGuardedJoin left || needsGuardedJoin right
-  | _ => false
-
 /-- A result slot never invents a heap handle. An optional slot is initialized
-empty and receives only the value computed by the selected branch. -/
+empty and receives only the value computed by the selected branch. The live
+flag belongs to the shared source local-return boundary, not a syntax rewrite. -/
 private structure JoinSlot where
   name : TSyntax `ident
   type : TSyntax `term
-  initial : TSyntax `term
-  guarded : Bool
+  live : TSyntax `ident
 
 private inductive BindingKind where
   | immutable
@@ -1163,41 +1160,42 @@ private def rawBinding (kind : BindingKind) (name : TSyntax `ident)
 
 private def makeJoinSlot (name : TSyntax `ident) (type : Ty) : TermElabM JoinSlot := do
   let rawType ← rawTypeTerm type
-  if needsGuardedJoin type then
-    return { name, type := ← `(Option $rawType), initial := ← `(none), guarded := true }
-  return { name, type := rawType, initial := ← rawDefaultTerm type, guarded := false }
+  let live := mkIdent (← mkFreshUserName (name.getId.appendAfter "_live"))
+  return { name, type := ← `(Option $rawType), live }
 
-private partial def JoinSlot.branch (slot : JoinSlot) (elements : Array (TSyntax `doElem)) :
+private def JoinSlot.initialization (slot : JoinSlot) :
+    TermElabM (Array (TSyntax `doElem)) := do
+  return #[
+    ← `(doElem| let mut $(slot.name):ident : $(slot.type) := none),
+    ← `(doElem| let mut $(slot.live):ident : Bool := true)]
+
+private def JoinSlot.branch (slot : JoinSlot) (elements : Array (TSyntax `doElem)) :
     TermElabM (TSyntax ``doSeq) := do
-  let rec replace (stx : Syntax) : TermElabM Syntax := do
-    if let `(doElem| return $value:term) := stx then
-      let value ← if slot.guarded then `(some $value) else pure value
-      return (← `(doElem| $(slot.name):ident := $value)).raw
-    if let .node info kind args := stx then
-      return .node info kind (← args.mapM replace)
-    return stx
-  return ⟨Lean.Elab.Term.Do.mkDoSeq (← elements.mapM fun element => replace element.raw)⟩
+  let body : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (elements.map (·.raw))⟩
+  let boundary ← `(doElem| source_local_return% ($(slot.name):ident, $(slot.live):ident)
+    do $body:doSeq)
+  return ⟨Lean.Elab.Term.Do.mkDoSeq #[boundary.raw]⟩
 
 private def JoinSlot.continuation (slot : JoinSlot) (name : TSyntax `ident)
     (elements : Array (TSyntax `doElem)) (kind : BindingKind := .immutable) :
     TermElabM (Array (TSyntax `doElem)) := do
-  if slot.guarded then
-    let absent : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq #[]⟩
-    let payload ← match kind with
-      | .immutable => pure name
-      | _ => pure (mkIdent (← mkFreshUserName `selectedValue))
-    let elements ← match kind with
-      | .immutable => pure elements
-      | _ => do
-          let `(Option $payloadType:term) := slot.type
-            | throwError "a guarded result slot must carry an optional source value"
-          let binding ← rawBinding kind name payloadType ⟨payload.raw⟩
-          pure (#[binding] ++ elements)
-    let present : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (elements.map (·.raw))⟩
-    return #[← `(doElem| match $(slot.name):ident with
-      | none => $absent:doSeq
-      | some $payload:ident => $present:doSeq)]
-  return #[← rawBinding kind name slot.type ⟨slot.name.raw⟩] ++ elements
+  -- Value-block typing excludes normal fallthrough, so a successful boundary
+  -- always supplies some payload. Faults never execute this continuation.
+  let absent : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq #[]⟩
+  let payload ← match kind with
+    | .immutable => pure name
+    | _ => pure (mkIdent (← mkFreshUserName `selectedValue))
+  let elements ← match kind with
+    | .immutable => pure elements
+    | _ => do
+        let `(Option $payloadType:term) := slot.type
+          | throwError "a result slot must carry an optional source value"
+        let binding ← rawBinding kind name payloadType ⟨payload.raw⟩
+        pure (#[binding] ++ elements)
+  let present : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (elements.map (·.raw))⟩
+  return #[← `(doElem| match $(slot.name):ident with
+    | none => $absent:doSeq
+    | some $payload:ident => $present:doSeq)]
 
 /-- Shadowed locals are not accessible; distinct visible aliases remain distinct
 state fields even when they happen to hold the same heap handle. -/
@@ -1286,6 +1284,17 @@ private def closeScope (entry exit : List Binding) : List Binding :=
   entry.map fun binding =>
     (exit.find? (fun candidate => candidate.slot == binding.slot)).getD binding
 
+/-- A value result does not also summarize assignments to its enclosing locals.
+Keep their actual slots, but discard precisely those outdated mathematical views.
+Unknown branch effects additionally invalidate heap-content observations. -/
+private def valueBlockScope (scope : List Binding) (firstAssignment : Nat)
+    (hasModel : Bool) : PrepareM (List Binding) := do
+  let assigned := (← get).assignedSlots
+  let assigned := assigned.extract firstAssignment assigned.size
+  let scope := if hasModel then scope else invalidateObservations scope true
+  return scope.map fun binding =>
+    if assigned.contains binding.slot then { binding with model? := none } else binding
+
 /-- A join of observations, not a new source local or instruction. -/
 private structure ChoiceModel where
   result : Binding
@@ -1338,9 +1347,12 @@ private partial def sequence (names : DeclarationNames)
     (localReturn : Bool := false) :
     PrepareM PreparedBlock := do
   let bindingMutable := match bindingKind with | .immutable => false | _ => true
-  let bindingSlot (name : TSyntax `ident) : TermElabM Name := do
+  let bindingSlot (name : TSyntax `ident) : PrepareM Name := do
     match bindingKind with
-    | .assignment => return (← lookup scope name).slot
+    | .assignment =>
+        let slot := (← lookup scope name).slot
+        modify fun state => { state with assignedSlots := state.assignedSlots.push slot }
+        return slot
     | _ => mkFreshUserName `sourceSlot
   let bindAndContinue (binding : Binding) (raw : TSyntax `doElem)
       (native : Option (TSyntax `doElem)) (calls : Option (Array Trace))
@@ -1416,9 +1428,6 @@ private partial def sequence (names : DeclarationNames)
         choice.map (fun choice => #[choice.trace]), returned, none⟩ : PreparedBlock)
     -- Mixed normal/return control is preserved without asserting one pure
     -- output summary. The enclosing continuation runs only on normal paths.
-    if localReturn then
-      throwError "early return inside a value-producing branch needs a local-return boundary; \
-        use a source function for that computation"
     let continued ← sequence names imports resultType (invalidateObservations scope true)
       rest .immutable allowFallthrough localReturn
     return { continued with raw := #[raw] ++ continued.raw, native? := none, calls? := none }
@@ -1457,38 +1466,32 @@ private partial def sequence (names : DeclarationNames)
       let normalized ← `(doElem| let $name:ident : $type ← $rhs:doElem)
       return ← sequence names imports resultType scope (normalized :: rest) .assignment allowFallthrough localReturn
     if let `(doElem| with_scratch do $body:doSeq) := element then
-      if localReturn then
-        throwErrorAt element "a scratch scope inside a value-producing branch needs a local-return boundary; \
-          use a source function for that computation"
-      let body ← sequence names imports resultType scope (getDoElems body).toList .immutable true
+      let body ← sequence names imports resultType scope (getDoElems body).toList .immutable true localReturn
       let bodySyntax : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (body.raw.map (·.raw))⟩
       let raw ← `(doElem| with_scratch do $bodySyntax:doSeq)
       if body.normalScope?.isNone && rest.isEmpty then
         return ⟨#[raw], none, none, none, none⟩
       let after := invalidateObservations
         (body.normalScope?.map (closeScope scope) |>.getD scope) true
-      let continued ← sequence names imports resultType after rest .immutable allowFallthrough localReturn
+      let continued ← sequence names imports resultType after rest .immutable
+        (allowFallthrough || body.normalScope?.isNone) localReturn
       return { continued with
         raw := #[raw] ++ continued.raw, native? := none, calls? := none
         returned? := if body.normalScope?.isSome then continued.returned? else none
         normalScope? := if body.normalScope?.isSome then continued.normalScope? else none }
     if let `(doElem| while $condition:term do $body:doSeq) := element then
-      if localReturn then
-        throwErrorAt element "general while inside a value-producing branch needs a local-return boundary; \
-          use a source function for that computation"
       let loopScope := invalidateObservations scope true
       let boolType ← resolveType (← `(Bool))
       let guardElements ← returnElements condition
       let ⟨guardRaw, _, _, _, _⟩ ← sequence names imports boolType loopScope guardElements.toList
       let ⟨bodyRaw, _, _, _, _⟩ ← sequence names imports resultType loopScope
-        (getDoElems body).toList .immutable true
-      let ⟨rawRest, _, _, returned, normal⟩ ← sequence names imports resultType loopScope rest .immutable true
+        (getDoElems body).toList .immutable true localReturn
+      let ⟨rawRest, _, _, returned, normal⟩ ← sequence names imports resultType loopScope
+        rest .immutable allowFallthrough localReturn
       let guard ← doTerm guardRaw
       let body : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (bodyRaw.map (·.raw))⟩
       return ⟨#[← `(doElem| while $guard:term do $body:doSeq)] ++ rawRest, none, none, returned, normal⟩
     if let `(doElem| for $pattern:term in $collection:term do $body:doSeq) := element then
-      if localReturn then
-        throwErrorAt element "a range inside a value-producing branch needs a local-return boundary"
       let index ← match pattern with
         | `($name:ident) => pure name
         | `(_) => pure (mkIdent (← mkFreshUserName `index))
@@ -1526,7 +1529,7 @@ private partial def sequence (names : DeclarationNames)
         | `($_:ident) => indexBinding :: bodyScope.toList
         | _ => bodyScope.toList
       let preparedBody ← sequence names imports resultType sourceBodyScope
-        (getDoElems body).toList .immutable true
+        (getDoElems body).toList .immutable true localReturn
       let rawBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (preparedBody.raw.map (·.raw))⟩
       let rawCollection ← `([ $(start.raw) : $(stop.raw) : $(stride.raw) ])
       let raw ← `(doElem| source_range_site% $tag:ident ($pattern:term, $rawCollection:term)
@@ -1535,6 +1538,9 @@ private partial def sequence (names : DeclarationNames)
         let continued ← sequence names imports resultType (invalidateObservations scope true)
           rest .immutable allowFallthrough localReturn
         return { continued with raw := #[raw] ++ continued.raw, native? := none, calls? := none }
+      -- The actual Core guard and increment are live-controlled in a local
+      -- return boundary. Its normal fold theorem describes a different loop.
+      if localReturn then return ← sourceOnly
       let some normalScope := preparedBody.normalScope? | return ← sourceOnly
       let some native := preparedBody.native? | return ← sourceOnly
       let some calls := preparedBody.calls? | return ← sourceOnly
@@ -1782,14 +1788,15 @@ private partial def sequence (names : DeclarationNames)
           model? := discriminant.model?.map fun _ => {
             model := ⟨payloadNative.raw⟩, rawModel := ⟨payloadRaw.raw⟩
             observation := if payloadType.isIdentity then .refl else .named payloadRelation.getId } }
-        let ⟨noneRaw, noneNative, noneCalls, noneResult, _⟩ ←
+        let firstAssignment := (← get).assignedSlots.size
+        let ⟨noneRaw, noneNative, noneCalls, noneResult, noneNormal⟩ ←
           sequence names imports selectedType scope noneElements.toList .immutable false true
-        let ⟨someRaw, someNative, someCalls, someResult, _⟩ ←
+        let ⟨someRaw, someNative, someCalls, someResult, someNormal⟩ ←
           sequence names imports selectedType (payload :: scope) someElements.toList .immutable false true
-        let some noneResult := noneResult
-          | throwErrorAt noneBody "a value-producing branch must return a value"
-        let some someResult := someResult
-          | throwErrorAt someBody "a value-producing branch must return a value"
+        if noneNormal.isSome then
+          throwErrorAt noneBody "a value-producing branch cannot finish without returning a value"
+        if someNormal.isSome then
+          throwErrorAt someBody "a value-producing branch cannot finish without returning a value"
         let nativeType ← termOfExpr selectedType.nativeType
         let slot := mkIdent (← mkFreshUserName (name.getId.appendAfter "_join"))
         let joinSlot ← makeJoinSlot slot selectedType.coreTy
@@ -1803,8 +1810,10 @@ private partial def sequence (names : DeclarationNames)
           let discriminant ← discriminant.model?
           let noneNative ← noneNative
           let someNative ← someNative
-          let noneResult ← noneResult.model?
-          let someResult ← someResult.model?
+          let noneValue ← noneResult
+          let someValue ← someResult
+          let noneResult ← noneValue.model?
+          let someResult ← someValue.model?
           pure (discriminant, noneNative, someNative, noneResult, someResult)
         let choice ← choiceInputs.mapM fun (discriminant, noneNative, someNative, noneResult, someResult) => do
           let noneNativeBody ← doTerm noneNative
@@ -1816,15 +1825,15 @@ private partial def sequence (names : DeclarationNames)
           pure (nativeChoice, ({
             model, rawModel := ⟨rawName.raw⟩
             observation := if selectedType.isIdentity then .refl else .named relationName.getId } : BindingModel))
+        let after ← valueBlockScope scope firstAssignment choice.isSome
         let binding : Binding := {
           name, nativeName, type := selectedType, rawName, relationName,
           model? := choice.map (·.2)
           slot := ← bindingSlot name
           mutable := bindingMutable }
         let ⟨rawRest, nativeRest, later, returned, normal⟩ ←
-          sequence names imports resultType (binding :: scope) rest .immutable allowFallthrough localReturn
-        let rawPrefix := #[
-          ← `(doElem| let mut $slot:ident : $(joinSlot.type) := $(joinSlot.initial)),
+          sequence names imports resultType (binding :: after) rest .immutable allowFallthrough localReturn
+        let rawPrefix := (← joinSlot.initialization) ++ #[
           ← `(doElem| match $(discriminant.raw):term with
             | none => $noneBlock:doSeq
             | some $payloadName:ident => $someBlock:doSeq)]
@@ -1834,6 +1843,8 @@ private partial def sequence (names : DeclarationNames)
           let _ ← choice
           let noneCalls ← noneCalls
           let someCalls ← someCalls
+          let noneResult ← noneResult
+          let someResult ← someResult
           let later ← later
           pure (#[.optionMatch discriminant payload noneCalls someCalls noneResult someResult binding] ++ later)
         return ⟨rawPrefix ++ (← joinSlot.continuation name rawRest bindingKind),
@@ -1846,14 +1857,15 @@ private partial def sequence (names : DeclarationNames)
         expect test (← resolveType (← `(Bool))) condition.type
         let yesElements ← returnElements yes
         let noElements ← returnElements no
-        let ⟨yesRaw, yesNative, yesCalls, yesResult, _⟩ ←
+        let firstAssignment := (← get).assignedSlots.size
+        let ⟨yesRaw, yesNative, yesCalls, yesResult, yesNormal⟩ ←
           sequence names imports selectedType scope yesElements.toList .immutable false true
-        let ⟨noRaw, noNative, noCalls, noResult, _⟩ ←
+        let ⟨noRaw, noNative, noCalls, noResult, noNormal⟩ ←
           sequence names imports selectedType scope noElements.toList .immutable false true
-        let some yesResult := yesResult
-          | throwErrorAt yes "a value-producing branch must return a value"
-        let some noResult := noResult
-          | throwErrorAt no "a value-producing branch must return a value"
+        if yesNormal.isSome then
+          throwErrorAt yes "a value-producing branch cannot finish without returning a value"
+        if noNormal.isSome then
+          throwErrorAt no "a value-producing branch cannot finish without returning a value"
         let nativeType ← termOfExpr selectedType.nativeType
         let slot := mkIdent (← mkFreshUserName (name.getId.appendAfter "_join"))
         let joinSlot ← makeJoinSlot slot selectedType.coreTy
@@ -1866,8 +1878,10 @@ private partial def sequence (names : DeclarationNames)
           let condition ← condition.model?
           let yesNative ← yesNative
           let noNative ← noNative
-          let yesResult ← yesResult.model?
-          let noResult ← noResult.model?
+          let yesValue ← yesResult
+          let noValue ← noResult
+          let yesResult ← yesValue.model?
+          let noResult ← noValue.model?
           pure (condition, yesNative, noNative, yesResult, noResult)
         let choice ← choiceInputs.mapM fun (condition, yesNative, noNative, yesResult, noResult) => do
           let yesNativeBody ← doTerm yesNative
@@ -1878,15 +1892,15 @@ private partial def sequence (names : DeclarationNames)
           pure (nativeChoice, ({
             model, rawModel := ⟨rawName.raw⟩
             observation := if selectedType.isIdentity then .refl else .named relationName.getId } : BindingModel))
+        let after ← valueBlockScope scope firstAssignment choice.isSome
         let binding : Binding := {
           name, nativeName, type := selectedType, rawName, relationName,
           model? := choice.map (·.2)
           slot := ← bindingSlot name
           mutable := bindingMutable }
         let ⟨rawRest, nativeRest, later, returned, normal⟩ ←
-          sequence names imports resultType (binding :: scope) rest .immutable allowFallthrough localReturn
-        let rawPrefix := #[
-          ← `(doElem| let mut $slot:ident : $(joinSlot.type) := $(joinSlot.initial)),
+          sequence names imports resultType (binding :: after) rest .immutable allowFallthrough localReturn
+        let rawPrefix := (← joinSlot.initialization) ++ #[
           ← `(doElem| if $(condition.raw) then $yesBlock:doSeq else $noBlock:doSeq)]
         let nativeBinding ← choice.mapM fun (nativeChoice, _) =>
           `(doElem| let $nativeName:ident : $nativeType := $nativeChoice)
@@ -1894,6 +1908,8 @@ private partial def sequence (names : DeclarationNames)
           let _ ← choice
           let yesCalls ← yesCalls
           let noCalls ← noCalls
+          let yesResult ← yesResult
+          let noResult ← noResult
           let later ← later
           pure (#[.conditional condition yesCalls noCalls yesResult noResult binding] ++ later)
         return ⟨rawPrefix ++ (← joinSlot.continuation name rawRest bindingKind),
@@ -2064,7 +2080,7 @@ private partial def sequence (names : DeclarationNames)
     | _ => throwError "source blocks support typed product/Option patterns, lets, let mut and assignment, \
         source calls and raw operations, conditional/match bindings, with_scratch, \
         finite Nat ranges, general while and return; \
-        break/continue and general loops inside value-producing branches are not supported here"
+        break and continue are not supported here"
 
 private def prepareFunction (names : DeclarationNames)
     (imports : ImportedPrograms) (declaration : ParsedDeclaration) : PrepareM Unit := do
@@ -2658,7 +2674,8 @@ private def normalizeAction : TermElabM (TSyntax `tactic) :=
   `(tactic| simp only [Id.run, Id.instMonad, Bind.bind, Pure.pure, Functor.map,
     MonadLift.monadLift, ExceptT.lift,
     ExceptT.bind, ExceptT.bindCont, ExceptT.pure, ExceptT.mk, ExceptT.run,
-    StateT.bind, StateT.pure, StateT.map, Part.bind_some, Part.map_some])
+    StateT.bind, StateT.pure, StateT.map, Part.bind_some, Part.map_some,
+    Bool.false_eq_true, reduceCtorEq, ↓reduceIte, Option.elim_none, Option.elim_some])
 
 /-- Restrict conditional distribution to the action's bind, rather than
 distributing arbitrary curried applications during canonicalization. -/
@@ -2827,7 +2844,10 @@ private def bindActualRangeArguments (action : Name) (names : Array Name) :
 
 private def RangeRegistration.site (range : RangeRegistration) : TermElabM ActualRangeSite :=
   match range.site? with
-  | some site => pure site
+  | some site => do
+      if site.localReturn then
+        throwError "a live-controlled source range cannot use a normal range-fold correspondence"
+      pure site
   | none => throwError "the prepared range has no checked actual source site"
 
 /-- Align source declarations by lexical occurrence, not by a name lookup.
@@ -3606,7 +3626,8 @@ private def compositionTactics (header : CorrespondenceHeader) (model : Function
       have $canonical:ident : $(header.rawAction) = $action := by
         rw [$(header.rawEquation):ident]
         simp only [Id.run, Id.instMonad, pure_bind, bind_pure, bind_assoc,
-          bind_conditional, bind_optionMatch]
+          bind_conditional, bind_optionMatch, Bool.false_eq_true, reduceCtorEq,
+          ↓reduceIte, Option.elim_none, Option.elim_some]
         all_goals repeat' first
           | rfl
           | (split <;> simp_all only [Option.some.injEq, reduceCtorEq,

@@ -39,6 +39,13 @@ existing typed-source emitter; proof views must not re-enter public command
 dispatch to select another frontend. Existing consumers exercise mutable local
 bindings, allocating List ranges and array records. Their correspondence must
 retain the same actual source calls and intermediate heaps through integration.
+Conditional and Option value branches now use a real local-return boundary:
+returning stores the result and stops that block's remaining control flow. The
+existing record/List mathematical proofs check through this boundary, and the
+List's exact RAM count includes its actual control instructions. The source
+preparer no longer rejects loops or scratch scopes just because they occur in a
+value branch; those combinations still need consumer evidence. A plain standalone
+`let x ← do ...` block remains a frontend integration item, not a new language mode.
 General represented `while` now retains actual assignments, effectful guards
 and early function returns through the same source loop. The array-record
 consumer supplies a mathematical-state contract, not a total pure function.

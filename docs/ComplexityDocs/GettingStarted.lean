@@ -327,7 +327,9 @@ inheritance, and an existing interface for the resulting ordered field tuple.
 Prepared source supports field projection, construction and returned records with
 array fields; natural-array `++` uses an actual allocation and copying call.
 Branch results may also contain arrays: the selected branch supplies the actual
-record, and a common continuation executes once. Array `.size`, scalar/Boolean
+record, and a common continuation executes once. A return in such a value branch
+finishes that block, not its caller; actual result/flag operations are included
+in the compiled cost. Array `.size`, scalar/Boolean
 conditions and direct calls to imported pure source functions use the same
 source correspondence. The typed-program example combines these operations;
 it does not supply a second record implementation or a private import bridge.
