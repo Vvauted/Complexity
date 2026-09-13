@@ -81,9 +81,6 @@ structure AppendOutput where
 /- The same library append selected through ordinary record fields. The native
 equation and the actual buffer call are generated from this single declaration. -/
 source_program (native) NativeAppend importing Scalar.Implementation where
-  def append (input : AppendInput) : AppendOutput :=
-    { values := input.left ++ input.right }
-
   def appendInOrder (input : Bool × AppendInput) : AppendOutput := do
     let arrays : AppendInput ← if input.1 then do
       return { left := input.2.right, right := input.2.left }
@@ -91,6 +88,9 @@ source_program (native) NativeAppend importing Scalar.Implementation where
       return input.2
     let result ← append arrays
     return result
+
+  def append (input : AppendInput) : AppendOutput :=
+    { values := input.left ++ input.right }
 
   def boundedLength (input : AppendInput) : Nat := do
     let limit ← Scalar.Implementation.boundedIncrement input.left.size input.right.size

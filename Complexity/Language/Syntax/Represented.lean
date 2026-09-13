@@ -14,6 +14,7 @@ import Complexity.Language.Representation.Preservation
 import Complexity.Language.List.Uncons.Native
 import Complexity.Language.List.IsEmpty.Native
 import Complexity.Language.Eval.Locals.Range.Represented
+import Lean.Util.SCC
 
 /-!
 # Native mathematical views of represented source operations
@@ -97,6 +98,9 @@ private structure Operation where
   inputs : Array NativeType
   result : NativeType
   model? : Option OperationModel := none
+  /-- A local mathematical candidate, resolved before any model declaration or
+  public registration. It promises neither an equation nor a heap frame. -/
+  modelDependency? : Option Name := none
   /-- Proof-side observation only; the source call still uses `sourceName`. -/
   actionName : Option Name := none
 
@@ -590,11 +594,17 @@ private def localOperation? (names : DeclarationNames) (called : TSyntax `ident)
     if recursive then modify fun state => { state with currentRecursive := true }
     return some operation
   if let some fn := (← get).functions.find? (fun fn => fn.name.getId == called.getId) then
-    return some (functionOperation names fn)
+    return some { (functionOperation names fn) with modelDependency? := some fn.name.getId }
   return (← get).localHeaders.find? (fun header => header.name.getId == called.getId) |>.map
     fun header => {
       family := names.sourceFamily, sourceName := header.name.getId
-      inputs := header.parameters.map (·.2), result := header.result }
+      inputs := header.parameters.map (·.2), result := header.result
+      modelDependency? := some header.name.getId
+      model? := some {
+        native := ⟨(names.modelName header.name).raw⟩
+        equation := none
+        relation := fieldName names.publicFamily header.name "_action_rel_native"
+        refinement := fieldName names.publicFamily header.name "_refines" } }
 
 private def rawHeaders (names : DeclarationNames) : PrepareM (Array RawCallHeader) := do
   return (← get).localHeaders.map fun header => {
@@ -2090,6 +2100,7 @@ private def prepareFunction (names : DeclarationNames)
     sourceName := name.getId
     inputs := parsed.map (·.type)
     result
+    modelDependency? := some name.getId
     model? := if hints.isNotNone && hints.partialFixpoint?.isNone then some {
       native := ⟨(names.modelName name).raw⟩
       equation := none
@@ -2117,6 +2128,128 @@ private def prepareFunction (names : DeclarationNames)
     functions := state.functions.push fn
     current := none
     currentRecursive := false }
+
+/-- Model dependencies follow the prepared trace, including the mathematical
+body attached to an actual range. Unreachable source statements are not model
+dependencies. -/
+private partial def modelDependencies (ranges : Array RangeRegistration)
+    (trace : Array Trace) : List Name :=
+  trace.toList.flatMap fun instruction => match instruction with
+    | .call invocation => invocation.operation.modelDependency?.toList
+    | .conditional _ yes no _ _ _ =>
+        modelDependencies ranges yes ++ modelDependencies ranges no
+    | .optionMatch _ _ absent present _ _ _ =>
+        modelDependencies ranges absent ++ modelDependencies ranges present
+    | .range tag _ _ _ =>
+        match ranges.find? (fun range => range.tag == tag) with
+        | some range => modelDependencies ranges range.body
+        | none => []
+
+/-- Replace pending local calls by their completed mathematical interfaces.
+This traverses proof data only: source bodies, operation families, and loop
+sites were already prepared once in their original declaration order. -/
+private partial def resolveModelTrace (names : DeclarationNames) (current : Name)
+    (completed : Array Function) (ranges : Array RangeRegistration) (trace : Array Trace) :
+    TermElabM (Option (Array Trace) × Array RangeRegistration) := do
+  let mut resolved : Array Trace := #[]
+  let mut ranges := ranges
+  for instruction in trace do
+    match instruction with
+    | .call invocation =>
+        let operation : Operation ← match invocation.operation.modelDependency? with
+          | none => pure invocation.operation
+          | some dependency =>
+              if dependency == current then
+                -- Only the existing explicitly requested recursive model can
+                -- reach this branch; SCC membership supplies no termination.
+                pure { invocation.operation with modelDependency? := none }
+              else do
+                let some callee := completed.find? (fun fn => fn.name.getId == dependency)
+                  | throwError "a local mathematical dependency was not completed before its caller"
+                pure (functionOperation names callee)
+        if operation.model?.isNone then return (none, ranges)
+        resolved := resolved.push (.call { invocation with operation })
+    | .conditional condition yes no yesResult noResult result =>
+        let (yes, updated) ← resolveModelTrace names current completed ranges yes
+        ranges := updated
+        let (no, updated) ← resolveModelTrace names current completed ranges no
+        ranges := updated
+        let some yes := yes | return (none, ranges)
+        let some no := no | return (none, ranges)
+        resolved := resolved.push (.conditional condition yes no yesResult noResult result)
+    | .optionMatch discriminant payload absent present noneResult someResult result =>
+        let (absent, updated) ← resolveModelTrace names current completed ranges absent
+        ranges := updated
+        let (present, updated) ← resolveModelTrace names current completed ranges present
+        ranges := updated
+        let some absent := absent | return (none, ranges)
+        let some present := present | return (none, ranges)
+        resolved := resolved.push
+          (.optionMatch discriminant payload absent present noneResult someResult result)
+    | .range tag arguments result _ =>
+        let some range := ranges.find? (fun range => range.tag == tag)
+          | throwError "a mathematical range dependency has no prepared source site"
+        let (body, updated) ← resolveModelTrace names current completed ranges range.body
+        ranges := updated
+        let some body := body | return (none, ranges)
+        ranges := ranges.map fun candidate =>
+          if candidate.tag == tag then { candidate with body } else candidate
+        resolved := resolved.push (.range tag arguments result (body.all Trace.preservesArrays))
+  return (some resolved, ranges)
+
+private partial def modelRangeTags (ranges : Array RangeRegistration)
+    (trace : Array Trace) : List Name :=
+  trace.toList.flatMap fun instruction => match instruction with
+    | .call _ => []
+    | .conditional _ yes no _ _ _ => modelRangeTags ranges yes ++ modelRangeTags ranges no
+    | .optionMatch _ _ absent present _ _ _ =>
+        modelRangeTags ranges absent ++ modelRangeTags ranges present
+    | .range tag _ _ _ =>
+        tag :: match ranges.find? (fun range => range.tag == tag) with
+          | some range => modelRangeTags ranges range.body
+          | none => []
+
+/-- Complete only mathematical candidates in callee-first order. The returned
+source preparation retains its original function and operation order. A missing
+callee model or a mutual cycle removes dependent candidates, not valid source.
+Actual correspondence failures still report ordinary elaboration errors. -/
+private def completeModels (names : DeclarationNames) (prepared : Preparation) :
+    TermElabM (Preparation × Array Name) := do
+  let vertices := prepared.functions.toList.map (·.name.getId)
+  let components := Lean.SCC.scc vertices fun name =>
+    match prepared.functions.find? (fun fn => fn.name.getId == name) with
+    | some fn =>
+        (fn.model?.map (fun model => modelDependencies prepared.ranges model.calls) |>.getD []).filter
+          (fun dependency => vertices.contains dependency)
+    | none => []
+  let mut completed : Array Function := #[]
+  let mut ranges := prepared.ranges
+  for component in components do
+    for name in component do
+      let some fn := prepared.functions.find? (fun fn => fn.name.getId == name)
+        | throwError "a mathematical dependency does not belong to the prepared source family"
+      let (model?, updated) ← match component, fn.model? with
+        | [_], some model => do
+            let (calls, updated) ← resolveModelTrace names name completed ranges model.calls
+            pure (calls.map (fun calls => { model with calls }), updated)
+        | _, _ => pure (none, ranges)
+      ranges := updated
+      if let some candidate := fn.model? then
+        if model?.isNone then
+          let hints ← Lean.Elab.elabTerminationHints candidate.termination
+          if hints.isNotNone then
+            logWarningAt fn.name "this source function has no generated total mathematical model; \
+              its termination hints were not checked, and source termination still requires a contract"
+      completed := completed.push { fn with model? }
+  let functions ← prepared.functions.mapM fun fn => do
+    let some resolved := completed.find? (fun resolved => resolved.name.getId == fn.name.getId)
+      | throwError "the source function is missing its mathematical dependency result"
+    pure resolved
+  let retained := functions.toList.flatMap fun fn =>
+    fn.model?.map (fun model => modelRangeTags ranges model.calls) |>.getD []
+  ranges := ranges.filter (fun range => retained.contains range.tag)
+  return ({ prepared with functions, ranges },
+    completed.filterMap fun fn => fn.model?.map (fun _ => fn.name.getId))
 
 private def kindTerm (kind : CellTy) : TermElabM (TSyntax `term) :=
   termOfExpr (match kind with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)
@@ -3196,6 +3329,7 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           let someProof ← relationTrace present someResult currentHeap someContext.relations
             someContext.known preserveArrays ranges
             (some (finishChoice someResult result rules rest)) (some someContext) true
+          let someProof := somePrefix ++ someProof
           return tactics ++ #[← `(tactic| focus
             have $observed:ident : ($representation : Complexity.Language.Representation $nativeType $coreType).Rel
                 $(discriminantModel.model) $raw $currentHeap := $observation
@@ -3220,7 +3354,6 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
                       simpa only [Complexity.Language.Representation.option, $rawCase:ident,
                         $nativeCase:ident] using $observed:ident
                     simp (config := { failIfUnchanged := false }) only [$rules,*]
-                    $somePrefix:tactic*
                     $someProof:tactic*)]
       | _ => pure ()
     let (result, relationProof) ← match instruction with
@@ -3728,7 +3861,7 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
     (functions : Array (TSyntax `sourceFunction)) : CommandElabM Unit := do
   let family := names.publicFamily
   let imports ← readImports libraries
-  let prepared ← liftTermElabM do
+  let (prepared, modelOrder) ← liftTermElabM do
     let declarations ← functions.mapM fun declaration => liftMacroM (parseDeclaration declaration)
     let mut initial : Preparation := {}
     for declaration in declarations do
@@ -3741,7 +3874,7 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
       initial := { initial with
         localHeaders := initial.localHeaders.push header }
     let (_, state) ← (declarations.forM (prepareFunction names imports)).run initial
-    return state
+    completeModels names state
   for registration in prepared.folds do
     emitDeclarations (← liftTermElabM (foldDeclarations registration))
     registerProgramInfo registration.operation.family #[{
@@ -3788,22 +3921,24 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
       (← `(command| def $program:ident : Complexity.Language.Program $signatures:ident := $rawProgram:ident)).raw]
   for fn in prepared.functions do
     if fn.exposed then emitDeclarations (← liftTermElabM (interfaceDeclarations names fn))
-    match fn.model? with
-    | none =>
-        if fn.exposed && family.getId != rawFamily.getId then
-          let name := fieldName family fn.name
-          let action := fieldName rawFamily fn.name
-          elabCommand (← `(command|
-            /-- The same source action, without an asserted total mathematical model. -/
-            noncomputable abbrev $name:ident := $action:ident))
-    | some model =>
-        elabCommand (← liftTermElabM (nativeDeclaration names fn model))
-        if fn.hasExactEquation then
-          elabCommand (← liftTermElabM (equationDeclaration names fn model))
-        if fn.preservesArrays then
-          elabCommand (← liftTermElabM (relationDeclaration names fn model true ranges))
-        elabCommand (← liftTermElabM (relationDeclaration names fn model false ranges))
-        if fn.exposed then elabCommand (← liftTermElabM (refinementDeclaration names fn))
+    if fn.model?.isNone && fn.exposed && family.getId != rawFamily.getId then
+      let name := fieldName family fn.name
+      let action := fieldName rawFamily fn.name
+      elabCommand (← `(command|
+        /-- The same source action, without an asserted total mathematical model. -/
+        noncomputable abbrev $name:ident := $action:ident))
+  for name in modelOrder do
+    let some fn := prepared.functions.find? (fun fn => fn.name.getId == name)
+      | throwError "the completed mathematical function has no actual source declaration"
+    let some model := fn.model?
+      | throwError "a source-only function entered mathematical declaration emission"
+    elabCommand (← liftTermElabM (nativeDeclaration names fn model))
+    if fn.hasExactEquation then
+      elabCommand (← liftTermElabM (equationDeclaration names fn model))
+    if fn.preservesArrays then
+      elabCommand (← liftTermElabM (relationDeclaration names fn model true ranges))
+    elabCommand (← liftTermElabM (relationDeclaration names fn model false ranges))
+    if fn.exposed then elabCommand (← liftTermElabM (refinementDeclaration names fn))
   registerNativeProgram names prepared.functions
 
 /-- Prepare one actual source program and optional mathematical functions.
