@@ -94,7 +94,9 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Basic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Call
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Call
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.CallSequence
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Loop
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Node
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostTactic
@@ -112,6 +114,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Node
 import Complexity.Computability.Ram.Compiler.Language.Arena.NodeExecution
 import Complexity.Computability.Ram.Compiler.Language.Arena.Loop
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Call
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.Arena.MeasuredAllocation
@@ -120,6 +123,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.MeasuredSimulation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Memory
 import Complexity.Computability.Ram.Compiler.Language.Arena.ProgramExecution
 import Complexity.Computability.Ram.Compiler.Language.Arena.Realization
+import Complexity.Computability.Ram.Compiler.Language.Arena.Realization.FixedHeap
 import Complexity.Computability.Ram.Compiler.Language.Arena.Realization.ReadOnly
 import Complexity.Computability.Ram.Compiler.Language.Arena.Restriction
 import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Basic
@@ -135,6 +139,10 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Simulation.Scope
 import Complexity.Computability.Ram.Compiler.Language.Arena.Tactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Verification
 import Complexity.Computability.Ram.Compiler.Language.Block
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendCost
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendReady
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.CostBound
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.Realization
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Execution
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Scalar
@@ -194,8 +202,13 @@ import Complexity.Computability.Ram.Compiler.Language.Placement
 import Complexity.Computability.Ram.Compiler.Language.Program
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayFunction
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInput
+import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInputResources
+import Complexity.Computability.Ram.Compiler.Language.Program.Capacity
 import Complexity.Computability.Ram.Compiler.Language.Program.Deriving
 import Complexity.Computability.Ram.Compiler.Language.Program.Input
+import Complexity.Computability.Ram.Compiler.Language.Program.Packing
+import Complexity.Computability.Ram.Compiler.Language.Program.Time
+import Complexity.Computability.Ram.Compiler.Language.Program.Uncurry
 import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Compiler.Language.Realization.Finite
 import Complexity.Computability.Ram.Compiler.Language.Realization.Loop
@@ -388,6 +401,7 @@ import Complexity.Data.Tree.Basic
 import Complexity.Language.ArrayFunction
 import Complexity.Language.Basic
 import Complexity.Language.Buffer.Copy
+import Complexity.Language.Buffer.Copy.Native
 import Complexity.Language.Buffer.Map
 import Complexity.Language.Buffer.Map.Program
 import Complexity.Language.Buffer.RepresentedCopy
@@ -452,6 +466,7 @@ import Complexity.Language.Syntax
 import Complexity.Language.Syntax.Imports
 import Complexity.Language.Syntax.Pure
 import Complexity.Language.Syntax.Represented
+import Complexity.Language.Syntax.Represented.Types
 import Complexity.Language.Syntax.Types
 import Complexity.Language.Verification
 import Complexity.Language.Verification.Heap
@@ -463,6 +478,8 @@ import Complexity.Program.ArrayInput
 import Complexity.Program.Basic
 import Complexity.Program.Deriving
 import Complexity.Program.Input
+import Complexity.Program.Packing
+import Complexity.Program.Syntax
 import Complexity.Tactic.Ram.Array
 import Complexity.Tactic.Ram.Basic
 import Complexity.Tactic.Ram.Budget

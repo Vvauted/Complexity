@@ -156,6 +156,17 @@ operations currently store Nat cells and return mutable borrowed handles.
 The contents theorem does not make their results permanently immutable or make
 copying free in the separately proved RAM cost.
 
+The [copy-loop cost](##Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.CostBound)
+reuses the same source invariant and named loop contracts. The
+[allocating append bound](##Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendCost)
+includes initialization and both copying calls at their actual intermediate heaps.
+Its independent [measured execution](##Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendReady)
+retains the fresh destination, old contents and exact cursor growth. The bound
+is affine in total input length; the complete
+[record-program consumer](##Examples.Language.ProgramCompiled) additionally
+includes field operations, packing and invocation overhead and proves uniform
+`Program.TimeO` without a capacity precondition on the input arrays.
+
 The [collection contracts](##Complexity.Language.Buffer.RepresentedCopy)
 reuse those same implementations for Array, List and length-indexed Vector
 views. For example, `append_list_length` combines `append_list_refines` with

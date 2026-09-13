@@ -132,12 +132,14 @@ theorem preservesContents_of_fresh {initial finish : Heap} {kind : CellTy}
   · exact Or.inl (by rw [fresh]; exact Nat.ne_of_gt observed.valid.rooted)
   · exact observed
 
-private def copyInvariant (source target : Buffer .nat) (offset : Nat)
+/-- The source is unchanged and the target contains exactly the copied prefix. -/
+def copyInvariant (source target : Buffer .nat) (offset : Nat)
     (input output : Array Nat) (index : Nat) (heap : Heap) : Prop :=
   index ≤ input.size ∧ source.Contents heap input ∧
     target.Contents heap (copied input output offset index)
 
-private theorem copyInvariant_done (source target : Buffer .nat) (offset : Nat)
+/-- At loop exit, the copied prefix covers the entire source. -/
+theorem copyInvariant_done (source target : Buffer .nat) (offset : Nat)
     (input output : Array Nat) {index : Nat} {heap : Heap}
     (current : copyInvariant source target offset input output index heap)
     (finished : input.size ≤ index) :
@@ -146,7 +148,8 @@ private theorem copyInvariant_done (source target : Buffer .nat) (offset : Nat)
   have complete : index = input.size := Nat.le_antisymm current.1 finished
   exact ⟨current.2.1, complete ▸ current.2.2⟩
 
-private theorem copy_guard (source target : Buffer .nat) (offset : Nat)
+/-- The actual guard preserves the invariant and tests the remaining source cells. -/
+theorem copy_guard (source target : Buffer .nat) (offset : Nat)
     (input output : Array Nat) :
     Copy.copyInto_loop1.guard_contract source target offset
       (copyInvariant source target offset input output) (fun _ _ _ _ => False)
@@ -161,7 +164,8 @@ private theorem copy_guard (source target : Buffer .nat) (offset : Nat)
   subst finish
   exact ⟨rfl, rfl, current, by simp only [decide_eq_true_eq, current.2.1.size_eq]⟩
 
-private theorem copy_body (source target : Buffer .nat) (offset : Nat)
+/-- One actual copy step advances the shared invariant and frames the target write. -/
+theorem copy_body (source target : Buffer .nat) (offset : Nat)
     (input output : Array Nat) (separated : target.Disjoint source)
     (extent : offset + input.size ≤ output.size) :
     Copy.copyInto_loop1.body_contract source target offset
@@ -189,7 +193,8 @@ private theorem copy_body (source target : Buffer .nat) (offset : Nat)
   simpa using And.intro advanced
     (fun {kind : CellTy} => Buffer.PreservesOutside.write written (σ := kind))
 
-private theorem copy_loop (source target : Buffer .nat) (offset : Nat)
+/-- The terminating copy loop retains source contents and its outside-target frame. -/
+theorem copy_loop (source target : Buffer .nat) (offset : Nat)
     (input output : Array Nat) (initial : Heap) (separated : target.Disjoint source)
     (extent : offset + input.size ≤ output.size) :
     Copy.copyInto_loop1.contract source target offset

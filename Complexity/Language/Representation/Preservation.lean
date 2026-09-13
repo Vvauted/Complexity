@@ -35,6 +35,14 @@ theorem ofEmbedding (encoding : α ↪ Value τ) (initial finish : Heap) :
   intro a value observed
   exact observed
 
+/-- A fixed mathematical presentation reuses preservation of its underlying
+representation at the same runtime value and actual heaps. -/
+theorem comap {representation : Representation α τ} (view : β ↪ α)
+    {initial finish : Heap} (preserved : representation.Preserves initial finish) :
+    (representation.comap view).Preserves initial finish := by
+  intro value source observed
+  exact preserved observed
+
 /-- Both fields retain their observations at the same final heap. Their
 underlying storage need not be disjoint. -/
 theorem prod {left : Representation α τ} {right : Representation β σ}

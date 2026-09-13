@@ -5,6 +5,8 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Program.Deriving
 import Complexity.Language.Buffer.Copy
+import Complexity.Language.Syntax.Represented
+import Complexity.Program.Syntax
 import Examples.Language.Scalar
 
 /-!
@@ -18,9 +20,10 @@ argument adapter or machine proof is supplied. Time and backend realization
 remain independent of this source correctness statement.
 
 The array-append consumer uses ordinary closed input and output records with
-derived fixed interfaces. It selects the existing allocating append source and
-reuses its contents theorem. These records describe the mathematical invocation
-boundary; they are not registered as native source-language record operations.
+derived fixed interfaces. Its native source reads record fields and returns a
+record containing the appended array. `program%` selects that same source through
+an executable packing entry, and `program_correct` transports the ordinary
+mathematical equation through its generated source correspondence.
 -/
 
 namespace Complexity.Examples.TypedProgram
@@ -54,21 +57,25 @@ structure AppendOutput where
   values : Array Nat
   deriving Complexity.Program.Output
 
-/-- Select the existing allocating append implementation without a wrapper body. -/
-def append : Complexity.Program AppendInput AppendOutput :=
-  Complexity.Program.ofProgram Language.Buffer.Copy.program Language.Buffer.Copy.appendId rfl
+/- The same library append selected through ordinary record fields. The native
+equation and the actual buffer call are generated from this single declaration. -/
+source_program (native) NativeAppend where
+  def append (input : AppendInput) : AppendOutput :=
+    { values := input.left ++ input.right }
 
-/-- The library's append contract supplies successful execution and the actual
-result contents; the record boundary needs no private heap or machine adapter. -/
+/-- Mathematical reasoning uses the ordinary generated record-valued function. -/
+theorem nativeAppend_eq (input : AppendInput) :
+    (NativeAppend.append input).values = input.left ++ input.right := rfl
+
+/-- Select the native record-valued function through the fixed input interface. -/
+def append : Complexity.Program AppendInput AppendOutput :=
+  program% NativeAppend.append
+
+/-- The ordinary mathematical equation and generated source correspondence
+establish the contract without a private heap or machine adapter. -/
 theorem append_correct :
     append.Correct (fun _ => True)
       (fun input output => output.values = input.left ++ input.right) := by
-  apply Complexity.Program.Correct.of_total
-  intro input _
-  apply (Language.Buffer.append_total input.left input.right).consequence
-  · intro args heap represented
-    exact represented
-  · intro args initial value finish _ property
-    exact ⟨⟨input.left ++ input.right⟩, property.1, rfl⟩
+  program_correct NativeAppend.append using nativeAppend_eq
 
 end Complexity.Examples.TypedProgram

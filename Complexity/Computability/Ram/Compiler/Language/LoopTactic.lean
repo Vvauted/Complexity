@@ -32,12 +32,17 @@ namespace Ram.LanguageCompiler.LoopTactic
 
 open Lean Meta Elab Tactic
 
+private def normalizedTarget : TacticM Lean.Expr := do
+  return (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
+
 private def coordinates (head : Name) (position : Nat) :
     TacticM Complexity.Language.Syntax.LoopCoordinates := withMainContext do
-  let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
+  let target ← normalizedTarget
   unless target.isAppOf head do
     throwError "expected a {head} goal for a named source loop"
-  let statement := target.getAppArgs[position]!.consumeMData
+  let some statement := target.getAppArgs[position]? |
+    throwError "expected a complete {head} goal for a named source loop"
+  let statement := statement.consumeMData
   let .const code _ := statement.getAppFn |
     throwError "the goal must retain a registered source loop's Code declaration"
   let some information := Complexity.Language.Syntax.getLoopCoordinates? (← getEnv) code |
@@ -76,7 +81,9 @@ private def entryCoordinates (view : TSyntax `ident) (entry : TSyntax `term) :
 private def cost (remaining guardSpec bodySpec guardCost bodyCost : TSyntax `term) :
     TacticM Unit := withMainContext do
   let information ← coordinates ``StmtCostBound 4
-  let entry ← Term.exprToSyntax (← getMainTarget).getAppArgs[5]!
+  let some entry := (← normalizedTarget).getAppArgs[5]? |
+    throwError "expected a complete StmtCostBound goal for a named source loop"
+  let entry ← Term.exprToSyntax entry
   let (invariant, _, guardPost) ← blockPredicates guardSpec
   let (bodyPre, bodyNormal, bodyReturned) ← blockPredicates bodySpec
   withCaptureView information fun captures => do
@@ -97,7 +104,9 @@ private def cost (remaining guardSpec bodySpec guardCost bodyCost : TSyntax `ter
 private def realize (guardSpec bodySpec specification : TSyntax `term) :
     TacticM Unit := withMainContext do
   let information ← coordinates ``RealizationWP 6
-  let entry ← Term.exprToSyntax (← getMainTarget).getAppArgs[9]!
+  let some entry := (← normalizedTarget).getAppArgs[9]? |
+    throwError "expected a complete RealizationWP goal for a named source loop"
+  let entry ← Term.exprToSyntax entry
   let (invariant, _, guardPost) ← blockPredicates guardSpec
   let (bodyPre, bodyNormal, bodyReturned) ← blockPredicates bodySpec
   withCaptureView information fun captures => do

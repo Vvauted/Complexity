@@ -1107,14 +1107,42 @@ the same generic `ArenaRep.push_buffer` theorem as actual runtime allocation.
 
 Standard `deriving Program.Input, Program.RamInput` and `deriving Program.Output`
 register closed records through one checked direct-field embedding. The append
-consumer has two array fields and an array-valued output record; its correctness
-proof reuses the existing allocating source implementation and `Array.append`
-contents contract. The supported ordered field tuple must already have a layout.
-Parameterized/dependent/inherited records and general heap-backed datatypes are
-not covered. Extending native source-record syntax to heap-backed fields remains
-separate work: currently the record is a mathematical invocation interface and
-the source function receives separate typed arguments. These wrappers do not
-compile arbitrary Lean functions or derive resource proofs from correctness.
+consumer now declares a native function directly on two array fields and returns
+an array-valued record: `{ values := input.left ++ input.right }`. Field reads,
+record construction and the real allocating append call are elaborated together
+with checked native/source correspondence. Preservation of old array observations
+comes from the copy implementation's contents frame, not merely heap shape.
+
+`program% NativeAppend.append` selects that actual generated source. Its shared
+`Packing` entry assembles the fixed separate input parameters using real product
+primitives before calling the native function's source body. `program_correct`
+combines its registered correspondence with an ordinary mathematical equation;
+the consumer needs no private heap or source-environment adapter. Output
+compatibility checks the complete representation, not just the core value type.
+
+The supported ordered field tuple must already have a layout. Native selection
+currently requires one mathematical parameter. Parameterized/dependent/inherited
+records, arbitrary source datatypes and a complete persistent array operation
+library are not covered. Natural-array append is connected; this does not claim
+all Lean array operations.
+
+**Native record append through complete RAM time — checked:** the
+[compiled consumer](../Examples/Language/ProgramCompiled.lean) proves linear
+`Program.TimeO` in the sum of its two input lengths for that same high-level
+program. The source-copy loop contracts supply the existing invariant and
+termination reasoning. Independent arena cost rules account for actual output
+initialization and both copies. Shared `Uncurry` and `Packing` rules add the
+generated field projections, entry assembly, calls and returns; the time
+publication rule adds the actual outer invocation and halt. The packing used
+in the proof is read from the generated program, not separately reconstructed.
+
+One input-independent width constant establishes code and fixed-depth stack
+capacity, while the input's extra bit provides room for the output and exact
+cell values. The theorem quantifies over all input arrays and every admitted
+width; capacity is not a mathematical input precondition. Its asymptotic relation
+is mathlib's `IsBigO`. Resource-certificate composition is still explicit in the
+compiled consumer; generating these structural combinations for general native
+programs remains an automation task, not a missing execution or cost connection.
 
 Keep three layers distinct: mathematical behavior; resource arguments over the
 same source implementation; and a concrete backend adequacy theorem. Ordinary
