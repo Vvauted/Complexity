@@ -491,17 +491,20 @@ private structure Function where
   model? : Option FunctionModel := none
   exposed : Bool := true
 
+private partial def Trace.hasExactEquation : Trace → Bool
+  | .call invocation => PureImport.hasEncoding invocation.result.type &&
+      invocation.operation.model?.any (·.equation.isSome)
+  | .conditional _ yes no _ _ result => PureImport.hasEncoding result.type &&
+      yes.all Trace.hasExactEquation && no.all Trace.hasExactEquation
+  | .optionMatch _ _ absent present _ _ result => PureImport.hasEncoding result.type &&
+      absent.all Trace.hasExactEquation && present.all Trace.hasExactEquation
+  | .range .. => false
+
 private def Function.hasExactEquation (fn : Function) : Bool :=
   match fn.model? with
   | none => false
-  | some model =>
-    let scalarArguments := fn.parameters.all fun parameter =>
-      match parameter.type with | .pure _ | .raw _ | .list _ => true | _ => false
-    match fn.result with
-    | .pure _ | .raw _ => !model.recursive && scalarArguments && model.calls.all fun
-        | .call invocation => invocation.operation.model?.any (·.equation.isSome)
-        | _ => false
-    | _ => false
+  | some model => !model.recursive && PureImport.hasEncoding fn.result &&
+      model.calls.all Trace.hasExactEquation
 
 private partial def Trace.preservesArrays : Trace → Bool
   | .call invocation => invocation.operation.model?.any (·.preservingRelation.isSome)
@@ -3586,39 +3589,301 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
     exact ⟨$result, $currentHeap, $executed, $observed, $heapPost⟩))
   return tactics
 
+private def encodedValue (type : NativeType) (value : TSyntax `term) :
+    TermElabM (TSyntax `term) := do
+  if type.isIdentity then return value
+  let encoding ← PureImport.encoding type
+  `($(← termOfExpr encoding.embedding) $value)
+
+/-- Normalize proof composition against the very same generated source action.
+The proof-only trace neither inserts a call nor changes its charged body. -/
+private def compositionTactics (header : CorrespondenceHeader) (model : FunctionModel) :
+    TermElabM (Array (TSyntax `tactic)) := do
+  if !model.calls.any Trace.containsRange && model.calls.any (fun | .call _ => false | _ => true) then
+    let action ← traceAction model.calls.toList model.returned
+    let canonical := mkIdent (← mkFreshUserName `sourceComposition)
+    return #[← `(tactic|
+      have $canonical:ident : $(header.rawAction) = $action := by
+        rw [$(header.rawEquation):ident]
+        simp only [Id.run, Id.instMonad, pure_bind, bind_pure, bind_assoc,
+          bind_conditional, bind_optionMatch]
+        all_goals repeat' first
+          | rfl
+          | (split <;> simp_all only [Option.some.injEq, reduceCtorEq,
+              Option.elim_none, Option.elim_some])
+          | (congr 1; funext value)
+        all_goals rfl),
+      ← `(tactic| rw [$canonical:ident])]
+  return #[← `(tactic| rw [$(header.rawEquation):ident])]
+
+/-- Compose only checked unchanged-heap equations. Branches select their actual
+callee, and mathematical records are returned through their checked encoding. -/
+private partial def exactTrace (trace : Array Trace) (returnedValue : Value)
+    (heap : TSyntax `term) (initialRelations : Array RetainedObservation)
+    (initialKnown : Array (Name × TSyntax `term) := #[]) :
+    TermElabM (Array (TSyntax `tactic)) := do
+  let mut relations := initialRelations
+  let mut known := initialKnown
+  let mut scalarEqualities : Array (TSyntax `term) := #[]
+  let mut tactics := #[← normalizeAction]
+  for instruction in trace do
+    let (result, equation) ← match instruction with
+      | .call invocation => do
+          let operation ← invocation.operation.requireModel
+          let models ← invocation.arguments.mapM Value.requireModel
+          let mut applied := models.map (·.model)
+          let mut hypotheses := #[]
+          for argument in invocation.arguments, model in models do
+            if argument.type.isIdentity then
+              let observed ← observationAt argument heap relations
+              let equality := mkIdent (← mkFreshUserName `argumentEqual)
+              let raw := resolveRaw model.rawModel known
+              tactics := tactics.push (← `(tactic|
+                have $equality:ident : $(model.model) = $raw := $observed))
+              tactics := tactics.push (← `(tactic|
+                dsimp (config := { failIfUnchanged := false }) only at $equality:ident))
+              scalarEqualities := scalarEqualities.push ⟨equality.raw⟩
+              tactics := tactics.push (← `(tactic|
+                simp (config := { failIfUnchanged := false }) only [← $equality:ident]))
+            else
+              applied := applied.push (resolveRaw model.rawModel known)
+              hypotheses := hypotheses.push (← observationAt argument heap relations)
+          applied := applied.push heap ++ hypotheses
+          let some equation := operation.equation
+            | throwError "an allocating operation has no unchanged-heap equation"
+          pure (invocation.result, Lean.Syntax.mkApp ⟨equation.raw⟩ applied)
+      | .conditional condition yes no yesResult noResult result => do
+          let observed ← observationAt condition heap relations
+          let condition ← condition.requireModel
+          let resultModel ← result.requireModel
+          let value ← encodedValue result.type resultModel.model
+          let rawCondition := resolveRaw condition.rawModel known
+          let equality := mkIdent (← mkFreshUserName `conditionEqual)
+          tactics := tactics.push (← `(tactic|
+            have $equality:ident : $(condition.model) = $rawCondition := $observed))
+          scalarEqualities := scalarEqualities.push ⟨equality.raw⟩
+          tactics := tactics.push (← `(tactic|
+            simp (config := { failIfUnchanged := false }) only [← $equality:ident]))
+          let yesAction ← traceAction yes.toList yesResult known
+          let noAction ← traceAction no.toList noResult known
+          let summary := mkIdent (← mkFreshUserName `branchExact)
+          let test := mkIdent (← mkFreshUserName `branchSelected)
+          let yesProof ← exactTrace yes yesResult heap relations known
+          let noProof ← exactTrace no noResult heap relations known
+          tactics := tactics.push (← `(tactic|
+            have $summary:ident :
+                (if $(condition.model) then $yesAction else $noAction) $heap =
+                  Part.some (.ok $value, $heap) := by
+              by_cases $test:ident : $(condition.model) = true
+              · simp only [if_pos $test:ident]
+                $yesProof:tactic*
+              · simp only [if_neg $test:ident]
+                $noProof:tactic*))
+          pure (result, (⟨summary.raw⟩ : TSyntax `term))
+      | .optionMatch discriminant payload absent present noneResult someResult result => do
+          let discriminantModel ← discriminant.requireModel
+          let payloadModel ← payload.requireModel
+          let resultModel ← result.requireModel
+          let value ← encodedValue result.type resultModel.model
+          let noneAction ← traceAction absent.toList noneResult known
+          let someAction ← traceAction present.toList someResult known
+          let raw := resolveRaw discriminantModel.rawModel known
+          let discriminantType ← termOfExpr discriminant.type.nativeType
+          let discriminantCore ← termOfExpr (coreTypeExpr discriminant.type.coreTy)
+          let discriminantRepresentation ← termOfExpr discriminant.type.representation
+          let payloadType ← termOfExpr payload.type.nativeType
+          let rawPayloadType ← actualTypeTerm payload.type.coreTy
+          let payloadCore ← termOfExpr (coreTypeExpr payload.type.coreTy)
+          let payloadRepresentation ← termOfExpr payload.type.representation
+          let summary := mkIdent (← mkFreshUserName `matchExact)
+          let observed := mkIdent (← mkFreshUserName `optionObserved)
+          let rawCase := mkIdent (← mkFreshUserName `sourceCase)
+          let nativeCase := mkIdent (← mkFreshUserName `nativeCase)
+          let impossible := mkIdent (← mkFreshUserName `impossiblePayload)
+          let payloadObserved := payload.relationName
+          let observation ← observationAt discriminant heap relations
+          let noneProof ← exactTrace absent noneResult heap relations known
+          let mut someRelations := relations
+          let mut someKnown := known
+          let mut somePrefix := #[]
+          if payload.type.isIdentity then
+            somePrefix := somePrefix.push (← `(tactic|
+              change $(payloadModel.model) = $(payload.rawName):ident at $payloadObserved:ident))
+            somePrefix := somePrefix.push (← `(tactic| subst $(payload.rawName):ident))
+            someKnown := someKnown.push (payload.rawName.getId, payloadModel.model)
+          else
+            someRelations := someRelations.push ⟨payloadObserved.getId, payload.type,
+              ⟨payloadObserved.raw⟩⟩
+          let someProof := somePrefix ++
+            (← exactTrace present someResult heap someRelations someKnown)
+          tactics := tactics.push (← `(tactic|
+            have $summary:ident :
+                (Option.elim $raw $noneAction:term
+                  (fun ($(payload.rawName):ident : $rawPayloadType) => $someAction:term)) $heap =
+                    Part.some (.ok $value, $heap) := by
+              have $observed:ident :
+                  ($discriminantRepresentation : Complexity.Language.Representation
+                    $discriminantType $discriminantCore).Rel $(discriminantModel.model) $raw $heap :=
+                $observation
+              cases $rawCase:ident : $raw:term with
+              | none =>
+                  cases $nativeCase:ident : $(discriminantModel.model):term with
+                  | none =>
+                      simp (config := { failIfUnchanged := false }) only [$rawCase:ident, $nativeCase:ident,
+                        Option.elim_none, Option.elim_some]
+                      $noneProof:tactic*
+                  | some $impossible:ident =>
+                      simp only [Complexity.Language.Representation.option, $rawCase:ident,
+                        $nativeCase:ident] at $observed:ident
+              | some $(payload.rawName):ident =>
+                  cases $nativeCase:ident : $(discriminantModel.model):term with
+                  | none =>
+                      simp only [Complexity.Language.Representation.option, $rawCase:ident,
+                        $nativeCase:ident] at $observed:ident
+                  | some $(payload.nativeName):ident =>
+                      have $payloadObserved:ident :
+                          ($payloadRepresentation : Complexity.Language.Representation
+                            $payloadType $payloadCore).Rel
+                            $(payload.nativeName):ident $(payload.rawName):ident $heap := by
+                        simpa only [Complexity.Language.Representation.option, $rawCase:ident,
+                          $nativeCase:ident] using $observed:ident
+                      simp (config := { failIfUnchanged := false }) only [$rawCase:ident, $nativeCase:ident,
+                        Option.elim_none, Option.elim_some]
+                      $someProof:tactic*))
+          pure (result, (⟨summary.raw⟩ : TSyntax `term))
+      | .range .. => throwError "range execution has no generated unchanged-heap equation"
+    let executed := mkIdent (← mkFreshUserName `callExecuted)
+    let scalarFacts ← scalarEqualities.mapM fun equality =>
+      `(Lean.Parser.Tactic.simpLemma| ← $equality:term)
+    tactics := tactics.push (← `(tactic| have $executed:ident := $equation))
+    tactics := tactics.push (← `(tactic|
+      simp (config := { failIfUnchanged := false }) only [Id.run, Id.instMonad, Bind.bind, Pure.pure,
+        Functor.map, MonadLift.monadLift, ExceptT.lift,
+        ExceptT.bind, ExceptT.bindCont, ExceptT.pure, ExceptT.mk, ExceptT.run,
+        StateT.bind, StateT.pure, StateT.map, Part.bind_some, Part.map_some,
+        $scalarFacts,*] at $executed:ident))
+    tactics := tactics.push (← `(tactic| rw [$executed:ident]))
+    tactics := tactics.push (← normalizeAction)
+    let model ← result.requireModel
+    let value ← encodedValue result.type model.model
+    known := known.push (result.rawName.getId, value)
+    unless result.type.isIdentity do
+      let encoding ← PureImport.encoding result.type
+      let exactEncoding ← encoding.relationSyntax
+      let proof ← `(($exactEncoding $(model.model) $value $heap).mpr rfl)
+      relations := relations.push ⟨result.relationName.getId, result.type, proof⟩
+  let model ← returnedValue.requireModel
+  let raw := resolveRaw model.rawModel known
+  let value ← encodedValue returnedValue.type model.model
+  let encoding ← PureImport.encoding returnedValue.type
+  let exactEncoding ← encoding.relationSyntax
+  let observed ← observationAt returnedValue heap relations
+  let equality ← `(($exactEncoding $(model.model) $raw $heap).mp $observed)
+  let type ← actualTypeTerm returnedValue.type.coreTy
+  let scalarFacts ← scalarEqualities.mapM fun equality =>
+    `(Lean.Parser.Tactic.simpLemma| ← $equality:term)
+  let proof ← `(congrArg (fun (value : $type) =>
+    Part.some ((Except.ok value : Except Complexity.Language.Fault $type), $heap))
+    (show $value = $raw from $equality).symm)
+  tactics := tactics.push (← `(tactic|
+    first
+    | rfl
+    | exact $proof
+    | simpa only [$scalarFacts,*] using $proof))
+  tactics.mapM fun tactic => `(tactic| all_goals $tactic:tactic)
+
 private def equationDeclaration (names : DeclarationNames) (fn : Function)
     (model : FunctionModel) : TermElabM Syntax := do
-  let family := names.publicFamily
   let header ← correspondenceHeader names fn
-  let ⟨nativeName, rawEquation, heap, parameters, roots, observations, nativeValue, rawAction,
+  let ⟨nativeName, _, heap, parameters, roots, observations, nativeValue, rawAction,
     inputRelations⟩ := header
-  let equationName := fieldName family fn.name "_action_eq_native"
-  let mut tactics := #[← `(tactic| rw [$rawEquation:ident]),
-    ← `(tactic| unfold $nativeName:ident), ← normalizeAction]
-  for instruction in model.calls do
-    let .call invocation := instruction
-      | throwError "a conditional block uses relational correspondence"
-    let operation ← invocation.operation.requireModel
-    let arguments := invocation.arguments
-    let models ← arguments.mapM Value.requireModel
-    let mut applied := models.map (·.model)
-    let mut relations := #[]
-    for argument in arguments, model in models do
-      unless argument.type.isIdentity do
-        applied := applied.push model.rawModel
-        relations := relations.push (← observationAt argument ⟨heap.raw⟩ inputRelations)
-    applied := applied.push ⟨heap.raw⟩ ++ relations
-    let some equation := operation.equation
-      | throwError "an allocating operation has no unchanged-heap equation"
-    let rule := Lean.Syntax.mkApp ⟨equation.raw⟩ applied
-    tactics := tactics.push (← `(tactic| rw [($rule)]))
-    tactics := tactics.push (← normalizeAction)
-  tactics := tactics.push (← `(tactic| all_goals rfl))
+  let equationName := fieldName names.publicFamily fn.name "_action_eq_native"
+  let value ← encodedValue fn.result nativeValue
+  let mut tactics ← compositionTactics header model
+  tactics := tactics.push (← `(tactic| unfold $nativeName:ident))
+  tactics := tactics ++ (← exactTrace model.calls model.returned ⟨heap.raw⟩ inputRelations)
+  tactics ← tactics.mapM fun tactic => `(tactic| all_goals $tactic:tactic)
   return (← `(command|
-    /-- Conditional correspondence on actual list representations in the supplied heap. -/
+    /-- The same source execution returns the encoded mathematical result without
+    changing its supplied heap, under the actual input representations. -/
     theorem $equationName:ident $parameters:bracketedBinder* $roots:bracketedBinder*
         ($heap:ident : Complexity.Language.Heap) $observations:bracketedBinder* :
-        $rawAction $heap:ident = Part.some (.ok $nativeValue, $heap:ident) := by
+        $rawAction $heap:ident = Part.some (.ok $value, $heap:ident) := by
+      $tactics:tactic*)).raw
+
+/-- The existing pure reconstruction covers scalar layouts and registered
+records with direct scalar fields. An absent reconstruction is not a restriction
+on source acceptance or its conditional representation theorem. -/
+private def parameterReconstruction? (type : NativeType) : TermElabM (Option Expr) := do
+  if type.isIdentity then
+    return some (← withLocalDeclD `value type.nativeType fun value =>
+      mkLambdaFVars #[value] value)
+  let .record name _ _ := type | return none
+  let some info := getStructureTypeInfo? (← getEnv) name | return none
+  let rec scalarLayout : Ty → Bool
+    | .nat | .bool | .unit => true
+    | .prod left right => scalarLayout left && scalarLayout right
+    | _ => false
+  for field in info.fields do
+    unless field.binderInfo == .default && scalarLayout field.type.coreTy do return none
+    unless ← isDefEq field.type.nativeType
+        (mkApp (mkConst ``Complexity.Language.Value) (coreTypeExpr field.type.coreTy)) do
+      return none
+  let rebuild ← nativeReconstruction (← resolvePureType type.nativeType)
+  let encoding ← PureImport.encoding type
+  let rawType := mkApp (mkConst ``Complexity.Language.Value) (coreTypeExpr type.coreTy)
+  withLocalDeclD `raw rawType fun raw => do
+    let value := mkApp rebuild raw
+    let encoded ← mkAppM ``Function.Embedding.toFun #[encoding.embedding, value]
+    unless ← isDefEq encoded raw do
+      throwError "the represented input encoding does not match its checked native reconstruction"
+  return some rebuild
+
+private def totalDeclaration? (names : DeclarationNames) (fn : Function) :
+    TermElabM (Option Syntax) := do
+  if !fn.hasExactEquation then return none
+  let mut rebuilt := #[]
+  for parameter in fn.parameters do
+    let some reconstruction ← parameterReconstruction? parameter.type | return none
+    rebuilt := rebuilt.push (Lean.Syntax.mkApp (← termOfExpr reconstruction) #[⟨parameter.rawName.raw⟩])
+  let name := fieldName names.publicFamily fn.name "_total"
+  let contract := fieldName names.sourceFamily fn.name "_contract"
+  let totalIff := fieldName names.sourceFamily fn.name "_total_iff"
+  let equation := fieldName names.publicFamily fn.name "_action_eq_native"
+  let native := names.modelName fn.name
+  let heap := mkIdent (← mkFreshUserName `initialHeap)
+  let finish := mkIdent (← mkFreshUserName `finalHeap)
+  let returned := mkIdent (← mkFreshUserName `returned)
+  let nativeValue := Lean.Syntax.mkApp ⟨native.raw⟩ rebuilt
+  let value ← encodedValue fn.result nativeValue
+  let mut pre ← `(fun ($heap:ident : Complexity.Language.Heap) => True)
+  let resultType ← actualTypeTerm fn.result.coreTy
+  let mut post ← `(fun ($heap:ident : Complexity.Language.Heap) ($returned:ident : $resultType)
+    ($finish:ident : Complexity.Language.Heap) => $returned:ident = $value ∧ $finish:ident = $heap:ident)
+  for parameter in fn.parameters.reverse do
+    let type ← actualTypeTerm parameter.type.coreTy
+    pre ← `(fun ($(parameter.rawName):ident : $type) => $pre)
+    post ← `(fun ($(parameter.rawName):ident : $type) => $post)
+  let mut applied := rebuilt
+  let mut observations := #[]
+  for parameter in fn.parameters, nativeValue in rebuilt do
+    unless parameter.type.isIdentity do
+      applied := applied.push ⟨parameter.rawName.raw⟩
+      let encoding ← PureImport.encoding parameter.type
+      let exactEncoding ← encoding.relationSyntax
+      observations := observations.push
+        (← `(($exactEncoding $nativeValue $(parameter.rawName):ident $heap:ident).mpr rfl))
+  applied := applied.push ⟨heap.raw⟩ ++ observations
+  let correct := Lean.Syntax.mkApp ⟨equation.raw⟩ applied
+  let mut tactics := #[← `(tactic| apply ($totalIff:ident _ _).mpr)]
+  for parameter in fn.parameters do
+    tactics := tactics.push (← `(tactic| intro $(parameter.rawName):ident))
+  tactics := tactics ++ #[← `(tactic| intro $heap:ident _),
+    ← `(tactic| exact ⟨$value, $heap:ident, $correct, rfl, rfl⟩)]
+  return some (← `(command|
+    /-- Exact total source contract derived from the checked encoded-result
+    equation and the existing raw-input reconstruction, with the same final heap. -/
+    theorem $name:ident : $contract:ident $pre $post := by
       $tactics:tactic*)).raw
 
 
@@ -3627,7 +3892,7 @@ private def relationDeclaration (names : DeclarationNames) (fn : Function)
     (ranges : Array RangeRegistration := #[]) : TermElabM Syntax := do
   let family := names.publicFamily
   let header ← correspondenceHeader names fn
-  let ⟨nativeName, rawEquation, heap, parameters, roots, observations, nativeValue, rawAction,
+  let ⟨nativeName, _, heap, parameters, roots, observations, nativeValue, rawAction,
     inputRelations⟩ := header
   let relationName := fieldName family fn.name
     (if preserveArrays then "_action_rel_native_preserving" else "_action_rel_native")
@@ -3663,12 +3928,16 @@ private def relationDeclaration (names : DeclarationNames) (fn : Function)
       unless parameter.type.isIdentity do applied := applied.push ⟨parameter.rawName.raw⟩
     applied := applied.push ⟨heap.raw⟩ ++ inputRelations.map (·.proof)
     let correct := Lean.Syntax.mkApp ⟨equation.raw⟩ applied
+    let value ← encodedValue fn.result nativeValue
+    let encoding ← PureImport.encoding fn.result
+    let exactEncoding ← encoding.relationSyntax
+    let related ← `(($exactEncoding $nativeValue $value $heap:ident).mpr rfl)
     let frame ← if preserveArrays then
         `(And.intro (Complexity.Language.Heap.ShapeExtends.refl $heap:ident)
           (by intro kind view values observed; exact observed))
       else `(Complexity.Language.Heap.ShapeExtends.refl $heap:ident)
     return ← declaration #[← `(tactic|
-      exact ⟨$nativeValue, $heap:ident, $correct, rfl, $frame⟩)]
+      exact ⟨$value, $heap:ident, $correct, $related, $frame⟩)]
   if fn.preservesArrays && !preserveArrays then
     let strong := fieldName family fn.name "_action_rel_native_preserving"
     let mut applied := fn.parameters.map (fun parameter => (⟨parameter.name.raw⟩ : TSyntax `term))
@@ -3679,24 +3948,7 @@ private def relationDeclaration (names : DeclarationNames) (fn : Function)
     return ← declaration #[
       ← `(tactic| obtain ⟨returned, finish, executed, related, shape, _⟩ := $correct),
       ← `(tactic| exact ⟨returned, finish, executed, related, shape⟩)]
-  let mut tactics := #[]
-  if !model.calls.any Trace.containsRange && model.calls.any (fun | .call _ => false | _ => true) then
-    let action ← traceAction model.calls.toList model.returned
-    let canonical := mkIdent (← mkFreshUserName `sourceComposition)
-    tactics := tactics.push (← `(tactic|
-      have $canonical:ident : $rawAction = $action := by
-        rw [$rawEquation:ident]
-        simp only [Id.run, Id.instMonad, pure_bind, bind_pure, bind_assoc,
-          bind_conditional, bind_optionMatch]
-        all_goals repeat' first
-          | rfl
-          | (split <;> simp_all only [Option.some.injEq, reduceCtorEq,
-              Option.elim_none, Option.elim_some])
-          | (congr 1; funext value)
-        all_goals rfl))
-    tactics := tactics.push (← `(tactic| rw [$canonical:ident]))
-  else
-    tactics := tactics.push (← `(tactic| rw [$rawEquation:ident]))
+  let mut tactics ← compositionTactics header model
   tactics := tactics.push (← `(tactic| unfold $nativeName:ident))
   tactics := tactics ++ (← relationTrace model.calls model.returned ⟨heap.raw⟩ inputRelations #[] preserveArrays ranges)
   declaration tactics
@@ -3819,7 +4071,8 @@ private def emitDeclarations (declarations : Array Syntax) : CommandElabM Unit :
 private def readImports (libraries : Array (TSyntax `ident)) : CommandElabM ImportedPrograms :=
   readRepresentedImports libraries
 
-private def registerNativeProgram (names : DeclarationNames) (functions : Array Function) :
+private def registerNativeProgram (names : DeclarationNames) (functions : Array Function)
+    (totals : Array Name) :
     CommandElabM Unit := do
   let family := names.publicFamily
   let rawFamily := names.sourceFamily
@@ -3841,9 +4094,12 @@ private def registerNativeProgram (names : DeclarationNames) (functions : Array 
               some <$> resolveGlobalConstNoOverload
                 (fieldName family fn.name "_action_rel_native_preserving")
             else pure none
+          let total ← if totals.contains fn.name.getId then
+              some <$> resolveGlobalConstNoOverload (fieldName family fn.name "_total")
+            else pure none
           pure (some {
             name, equation, relation := some relation
-            refinement := some refinement, preservingRelation })
+            refinement := some refinement, preservingRelation, total })
     pure ({
       name := fn.name.getId
       params := fn.parameters.map (fun parameter => (parameter.name.getId, parameter.type.coreTy))
@@ -3927,6 +4183,7 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
       elabCommand (← `(command|
         /-- The same source action, without an asserted total mathematical model. -/
         noncomputable abbrev $name:ident := $action:ident))
+  let mut totals := #[]
   for name in modelOrder do
     let some fn := prepared.functions.find? (fun fn => fn.name.getId == name)
       | throwError "the completed mathematical function has no actual source declaration"
@@ -3935,11 +4192,14 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
     elabCommand (← liftTermElabM (nativeDeclaration names fn model))
     if fn.hasExactEquation then
       elabCommand (← liftTermElabM (equationDeclaration names fn model))
+      if let some declaration ← liftTermElabM (totalDeclaration? names fn) then
+        elabCommand declaration
+        totals := totals.push fn.name.getId
     if fn.preservesArrays then
       elabCommand (← liftTermElabM (relationDeclaration names fn model true ranges))
     elabCommand (← liftTermElabM (relationDeclaration names fn model false ranges))
     if fn.exposed then elabCommand (← liftTermElabM (refinementDeclaration names fn))
-  registerNativeProgram names prepared.functions
+  registerNativeProgram names prepared.functions totals
 
 /-- Prepare one actual source program and optional mathematical functions.
 Normal finite ranges have a fold view; early exits and general while retain

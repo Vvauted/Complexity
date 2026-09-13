@@ -16,9 +16,9 @@ import Examples.Language.Scalar
 The existing bounded-increment implementation is presented as a
 `Complexity.Program (Nat × Nat) Nat`. Its fixed input convention passes two
 natural arguments, and its correctness theorem uses the existing generated
-source contract and ordinary mathematical minimum equation. `program%` directly
-selects that pure function's unchanged entry, and `program_correct` reuses its
-already proved total contract. No second algorithm, packing entry or additional
+source correspondence and ordinary mathematical minimum equation. `program%` directly
+selects that source function's unchanged entry, and `program_correct` reuses its
+generated represented mathematical model. No second algorithm, packing entry or additional
 correspondence declaration is supplied. Time and backend realization remain
 independent of this source correctness statement.
 

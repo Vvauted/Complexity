@@ -56,11 +56,36 @@ view can be generated, it is named `P.f_model`. A missing total model does not
 by itself reject the source program. The default entry is connected; complete
 control-flow integration remains in progress.
 
-The existing examples below retain their compatibility APIs. `(pure)` exports
-the mathematical function under `P.f` through the older scalar interface;
-`(native)` retains its older naming layout for represented values. New programs
-should start with the default entry, not choose a mode for each language feature.
-For example, the existing recursive factorial uses the `(pure)` compatibility API:
+For example, the [scalar program](##Examples.Language.Scalar) calls a helper
+and updates a local value:
+
+```lean
+import Complexity.Language.Syntax
+
+source_program Implementation where
+  def increment (n : Nat) : Nat := do
+    return n + 1
+
+  def boundedIncrement (n : Nat) (limit : Nat) : Nat := do
+    let mut result := limit
+    let next ← increment n
+    if limit ≥ next then
+      result := next
+    return result
+```
+
+Its mathematical correctness statement is
+`Implementation.boundedIncrement_model n limit = min (n + 1) limit`.
+The generated correspondence transfers this equation to the same source
+implementation. Its `boundedIncrement_total` contract additionally records that
+the actual heap is unchanged; the user does not prove the branch's heap plumbing.
+Correctness requires no proposed time budget or word width.
+
+Some existing examples retain compatibility names. `(pure)` exports the
+mathematical function under `P.f` through the older scalar interface;
+`(native)` retains its earlier naming layout for represented values. These are
+not modes to select for each new language feature. The existing recursive
+factorial uses the `(pure)` compatibility API:
 
 ```lean
 import Complexity.Language.Syntax
@@ -102,22 +127,25 @@ contract without a second loop-termination proof.
 Ordinary structures can also be registered with `source_type`. The
 [scalar example](##Examples.Language.Scalar) registers a `BoundedInput` with
 `value : Nat` and `limit : Nat`, then constructs, passes, returns and projects it
-in one compatibility `source_program (pure)` declaration. Its correctness theorem
-is the ordinary equation `Structured.run n limit = min (n + 1) limit`.
+in one default `source_program` declaration. Its correctness theorem
+is the ordinary equation `Structured.run_model n limit = min (n + 1) limit`.
 The generated `Structured.run_refines.of_math` transfers that mathematical proof
 to the same source implementation; the
 [compiled client](##Examples.Language.ScalarCompiled) proves its actual RAM
 result and independent instruction bound using shared range and cost rules.
-This legacy scalar structure path supports closed structures with direct scalar or
-scalar-product fields, not arbitrary Lean datatypes or dependent fields.
-The same scalar file also keeps such a structure as a finite-range accumulator,
+The checked raw-input reconstruction for its automatic total contract supports
+closed structures with direct scalar or scalar-product fields, not arbitrary
+Lean datatypes or dependent fields. This is a proof-generation boundary, not
+a restriction excluding array-valued source records.
+The same scalar file retains a compatibility example with such a structure as a finite-range accumulator,
 calling a structure-valued helper in each round with a dynamic positive stride.
 `StructuredRange.sum` has an ordinary fold/sum proof and generated total source
 contract. Its complete function-body instruction bound reuses generated native
 guard/body equations and the shared range cost rule, without hand-written
-capture indices or a second round-count proof. Finite-word realization and a
-halted RAM invocation for this loop remain open; general loops and recursive
-calls over registered structures remain unsupported.
+capture indices or a second round-count proof. The compiled client also proves
+finite-word realization and a halted RAM invocation, retaining explicit bounds
+on the computed sum, cursor, stride and launch capacity. General loops with
+represented records use the state-contract interface described below.
 
 Products and options are ordinary values too. The
 [structured client](##Examples.Language.OptionalBuffer) imports a helper returning

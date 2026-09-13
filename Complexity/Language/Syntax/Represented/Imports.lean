@@ -146,19 +146,31 @@ theorem comap_rel {α : Type u} {β : Type v} {τ : Ty}
   intro b value heap
   exact exactEncoding (view b) value heap
 
-private structure Encoding where
+/-- A heap-independent encoding, with its checked relation to the source value. -/
+structure Encoding where
   embedding : Expr
   relation : Expr
 
--- Keep the checked representation and embedding parameters when a composed
--- relation proof is inserted into a generated declaration.
-private def Encoding.relationSyntax (encoding : Encoding) : TermElabM (TSyntax `term) := do
+/-- Keep the checked representation and embedding parameters when a composed
+relation proof is inserted into a generated declaration. -/
+def Encoding.relationSyntax (encoding : Encoding) : TermElabM (TSyntax `term) := do
   let proof ← withOptions (fun options => options.setBool `pp.explicit true) do
     termOfExpr encoding.relation
   let type ← termOfExpr (← inferType encoding.relation)
   `(($proof : $type))
 
-private partial def encoding : NativeType → TermElabM Encoding
+/-- Whether a native representation has an encoding independent of the heap.
+References observed as arrays or lists deliberately do not have such an encoding. -/
+partial def hasEncoding : NativeType → Bool
+  | .pure _ | .raw _ => true
+  | .prod left right => hasEncoding left && hasEncoding right
+  | .option payload => hasEncoding payload
+  | .record _ layout _ => hasEncoding layout
+  | .array _ | .list _ => false
+
+/-- Compose the existing checked encodings of scalars, products, options and
+direct-field records, without decoding any heap-backed collection. -/
+partial def encoding : NativeType → TermElabM Encoding
   | .pure type => pure ⟨type.embedding, type.relationEq⟩
   | .raw type => do
       let nativeType := mkApp (mkConst ``Value) (coreTypeExpr type)
@@ -335,7 +347,7 @@ private def declarations (family : Name) (info : FunctionInfo) :
   let header : NativeFunctionInfo := {
     sourceFamily := family, sourceName := info.name, nativeName, actionName := some actionName
     parameters := parameters.map (fun parameter => (parameter.name.getId, parameter.type))
-    result, equation := if result.isPure then some equationName else none
+    result, equation := some equationName
     relation := relationName, refinement := refinementName, preservingRelation := some preservingName }
   if (← getEnv).contains refinementName then return (header, #[])
   let heap := mkIdent (← mkFreshUserName `heap)

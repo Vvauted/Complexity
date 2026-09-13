@@ -303,7 +303,7 @@ theorem structured_run_execute_le {w heapLimit : Nat} {placement : Nat → Ram.W
   have limitFits : limit < 2 ^ w := launch.arguments (.there .here)
   obtain ⟨outcome, ⟨value, represented, property⟩, bounded⟩ :=
     structured_run_realizable.execute_le (structured_run_total (n, limit) trivial)
-      structured_run_costBound launch ⟨sumFits, limitFits⟩ rfl trivial
+      structured_run_costBound launch ⟨sumFits, limitFits⟩ ⟨rfl, rfl⟩ trivial
   have observed : value = outcome.value := represented
   exact ⟨outcome, observed.symm.trans property, bounded⟩
 

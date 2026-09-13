@@ -22,37 +22,45 @@ postconditions; faults cannot satisfy it. `FunctionTotal` requires an actual
 returned value, with no proposed instruction bound. See the
 [source verification rules](##Complexity.Language.Verification).
 
-The [named frontend](##Complexity.Language.Syntax) accepts scalar programs such as:
+The [named frontend](##Complexity.Language.Syntax) has one recommended declaration:
+`source_program P where`. `P.f` is the actual source action; `P.f_model`, when
+available, is its checked mathematical function. Function equations and state
+contracts are proof views of that same program, not different source languages.
+Generating a total mathematical function is not a prerequisite for accepting
+a mutable or recursive source program.
+
+The [scalar example](##Examples.Language.Scalar) uses the default declaration:
 
 ```lean
-source_program (pure) Bounded where
+source_program Bounded where
   def increment (n : Nat) : Nat := do
     return n + 1
 
   def boundedIncrement (n : Nat) (limit : Nat) : Nat := do
     let mut result := limit
     let next ← increment n
-    if next ≤ limit then
+    if limit ≥ next then
       result := next
-    else
-      result := limit
     return result
 ```
 
 It generates typed source bodies and executable curried Lean functions from the
-same declaration. `Bounded.boundedIncrement n limit` has type `Nat`; its result
+same declaration. `Bounded.boundedIncrement_model n limit` has type `Nat`; its result
 statement is the ordinary equality
-`Bounded.boundedIncrement n limit = min (n + 1) limit`.
-The generated `f_action` retains the independent source observation, and
-`f_action_eq` exposes one source body in `ExceptT Fault (StateT Heap Part)` notation.
-`f_action_eq_pure` proves that action equals `pure` of the native result for every
-initial heap; `f_total` supplies the corresponding total source contract.
+`Bounded.boundedIncrement_model n limit = min (n + 1) limit`.
+The generated `f` retains the independent source observation, and
+`f_eq` exposes one source body in `ExceptT Fault (StateT Heap Part)` notation.
+For this program, `f_action_eq_native` proves successful evaluation with the
+mathematical result and exactly the initial heap; `f_total` supplies the
+corresponding curried total source contract.
 There is no second user-written implementation or manual heap conversion.
-The pure fragment supports Nat, Bool, Unit and their recursively nested products
-and options, finite-range `for`, self-recursion and acyclic calls,
-but not buffers, general `while` or mutually recursive pure families.
+Exact unchanged-heap equations compose checked calls, conditionals and Option
+branches when their result has a heap-independent encoding. A general mutable
+contract need not promise an unchanged heap, and a missing exact equation does
+not reject its source program.
 The [iterative factorial](##Examples.Language.Factorial) uses one range and a
-mutable accumulator. Its ordinary equality with `Nat.factorial` follows from
+mutable accumulator through the older `(pure)` compatibility naming. Its
+ordinary equality with `Nat.factorial` follows from
 fold/product identities; generated source correspondence supplies totality
 without a second loop-termination proof. Buffer-element iteration remains
 effectful because it reads the actual shared heap.
@@ -70,10 +78,11 @@ used fields are extracted by actual compiled projections. Source correctness, im
 contracts and the [compiled result](##Examples.Language.OptionalBufferCompiled)
 all concern that one declared implementation.
 
-Without `(pure)`, the existing `P.f` and `P.f_eq` interface still exposes
-effectful, possibly partial actions with actual heaps and finite faults.
-Those `Part` observations remain noncomputable, while the pure native functions
-can be evaluated by Lean. Native execution and certified RAM instruction costs
+In default declarations, `P.f` and `P.f_eq` expose the source action and its
+one-step equation, retaining actual heaps and finite faults. When a total model
+exists, it supplements this interface instead of replacing the source action.
+The `Part` observations remain noncomputable, while generated total mathematical
+functions can be evaluated by Lean. Native execution and certified RAM instruction costs
 are different runtimes; ordinary result equality assigns no execution cost.
 A terminating Lean definition returning `Part α` may return `Part.none`:
 constructing the action does not establish its `Part.Dom`. Nor does a defined

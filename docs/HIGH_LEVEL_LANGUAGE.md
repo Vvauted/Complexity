@@ -18,6 +18,14 @@ control-flow and nested-range mathematical-model coverage remain incomplete.
 The [active integration gate](ROADMAP.md#active-integration-gate) lists the
 remaining work.
 
+Ordinary local calls no longer need to be written after their helpers to obtain
+a mathematical model. Source bodies and imports retain their written order;
+only mathematical definitions and correspondence proofs are completed
+callee-first. The existing record-append caller is written before its helper
+and retains its original correctness and RAM time-bound proofs. An unavailable
+callee model removes dependent mathematical views, not the underlying source
+calls. This does not infer totality for mutually recursive families.
+
 Existing `(native)` examples retain a compatibility naming layout for the same
 preparation pass. `(pure)` remains the older scalar compatibility API with its
 own preparer; it is not yet just a naming alias. These examples are evidence for
@@ -232,8 +240,8 @@ source-to-target correspondence.
 ## 3. Programming model
 
 Ordinary closed structures with direct scalar/scalar-product fields now have a
-checked first native frontend path. `source_type` derives their encoding and
-constructor/projection equations; one pure source declaration can construct,
+checked path through the default declaration. `source_type` derives their encoding and
+constructor/projection equations; one source declaration can construct,
 pass, return and project them while calling an imported source helper. The
 [`Scalar`](../Examples/Language/Scalar.lean) consumer proves the ordinary native
 function equation and reuses generated `_refines` and `_total` contracts. Its
@@ -261,10 +269,10 @@ pass normalizes that loop's local coordinates and registered structure encodings
 without a consumer-written list of view or projection lemmas. Ordinary-parameter
 resource rules should still remove the remaining contract/view setup.
 
-This legacy scalar structure path does not support general loops, recursion, matching,
-type parameters, dependent fields or nested/Option-valued structure fields.
-Its scalar compatibility interface supports self-recursion. Raw-to-native
-reconstruction is available only for supported
+The range example above retains the `(pure)` compatibility preparer, whose
+structure support is narrower than the default represented declaration.
+Neither entry compiles arbitrary Lean datatypes or dependent fields. Raw-to-native
+reconstruction for automatic curried total contracts is available only for supported
 layouts whose encode/rebuild roundtrip is checked; it is proof-side transport,
 not a decoder for every representation or an uncharged runtime conversion.
 
@@ -436,11 +444,10 @@ mathematical separation argument.
 
 The [typed frontend](../Complexity/Language/Syntax.lean) accepts ordinary typed
 headers and `do` bodies through the recommended default `source_program` entry.
-The existing scalar example below retains its `(pure)` compatibility API and
-the corresponding mathematical function names:
+The existing scalar example uses that same entry:
 
 ```lean
-source_program (pure) Implementation where
+source_program Implementation where
   def increment (n : Nat) : Nat := do
     return n + 1
 
@@ -455,11 +462,11 @@ source_program (pure) Implementation where
 The [existing scalar consumer](../Examples/Language/Scalar.lean) uses this
 declaration and retains its mathematical minimum specification. The declaration
 exports signatures, function identifiers and bodies, the shared program, and
-native curried scalar functions. `Implementation.boundedIncrement n limit` has
+native curried scalar functions. `Implementation.boundedIncrement_model n limit` has
 type `Nat`; its minimum theorem uses the native definition, the increment
-equation and ordinary Nat facts. The generated `_action` retains the independent
-source observation, `_action_eq_pure` proves equality to `pure` of that native
-result for every initial heap, and `_total` supplies its total source contract.
+equation and ordinary Nat facts. The generated source action retains the independent
+source observation, `_action_eq_native` proves its encoded native result and
+exactly unchanged heap, and `_total` supplies its total source contract.
 No second implementation proof or manual heap conversion is required.
 In the recommended default layout, `P.f`/`P.f_eq` expose the actual
 `ExceptT Fault (StateT Heap Part)` action and its one-step equation. An available

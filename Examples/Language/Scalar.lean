@@ -24,7 +24,7 @@ theorems.
 
 namespace Complexity.Language.Examples.Scalar
 
-source_program (pure) Implementation where
+source_program Implementation where
   def increment (n : Nat) : Nat := do
     return n + 1
 
@@ -51,16 +51,16 @@ def boundedIncrement : Stmt signatures [.nat, .nat] .nat :=
 def program : Program signatures := Implementation.program
 
 /-- The actual named helper has the ordinary mathematical increment value. -/
-theorem increment_eq (n : Nat) : Implementation.increment n = n + 1 := rfl
+theorem increment_eq (n : Nat) : Implementation.increment_model n = n + 1 := rfl
 
 /-- The named source function has an ordinary curried mathematical result,
 obtained from the same source correctness proof. -/
 theorem boundedIncrement_eq (n limit : Nat) :
-    Implementation.boundedIncrement n limit = min (n + 1) limit := by
+    Implementation.boundedIncrement_model n limit = min (n + 1) limit := by
   by_cases small : n + 1 ≤ limit
-  · simp [Implementation.boundedIncrement, Id.run, Id.instMonad,
+  · simp [Implementation.boundedIncrement_model, Id.run, Id.instMonad,
       increment_eq, small]
-  · simp [Implementation.boundedIncrement, Id.run, Id.instMonad, increment_eq, small,
+  · simp [Implementation.boundedIncrement_model, Id.run, Id.instMonad, increment_eq, small,
       Nat.min_eq_right (Nat.le_of_lt (Nat.lt_of_not_ge small))]
 
 /-- Ordinary addition specifies the actual source helper. -/
@@ -101,7 +101,7 @@ structure BoundedInput where
 
 source_type BoundedInput
 
-source_program (pure) Structured importing Implementation where
+source_program Structured importing Implementation where
   def update (input : BoundedInput) : BoundedInput := do
     let value ← Implementation.boundedIncrement input.value input.limit
     return BoundedInput.mk value input.limit
@@ -113,15 +113,15 @@ source_program (pure) Structured importing Implementation where
 
 /-- The native structure view reuses the unchanged scalar helper's mathematics. -/
 theorem structured_update_eq (input : BoundedInput) :
-    Structured.update input =
+    Structured.update_model input =
       BoundedInput.mk (min (input.value + 1) input.limit) input.limit := by
-  simp [Structured.update, Id.run, Id.instMonad, boundedIncrement_eq]
+  simp [Structured.update_model, Id.run, Id.instMonad, boundedIncrement_eq]
 
 /-- Constructing, passing and projecting an ordinary structure needs no second
 algorithm or representation-specific mathematical proof. -/
 theorem structured_run_eq (n limit : Nat) :
-    Structured.run n limit = min (n + 1) limit := by
-  simp [Structured.run, Id.run, Id.instMonad, structured_update_eq]
+    Structured.run_model n limit = min (n + 1) limit := by
+  simp [Structured.run_model, Id.run, Id.instMonad, structured_update_eq]
 
 /-- The frontend's generated correspondence transfers the ordinary mathematical
 equation to this same represented source invocation. -/

@@ -192,8 +192,14 @@ retains the known call depth, actual complete RAM memory and final cursor;
 the public theorem does not repeat the runner's witness tuple. Shared access-set
 and prefix-frame rules derive the physical envelope for that same result.
 
-For buffer-free scalar/product/option code, `source_program (pure)` supplies native total functions and
-automatically proved source correspondence. The checked
+The default `source_program` declaration retains one source implementation and
+can additionally supply a checked total mathematical model. Mathematical
+equations and heap-aware state contracts describe that same implementation;
+authors do not choose a separate language to enable mutation or loops.
+
+Some existing scalar examples retain the older `source_program (pure)`
+compatibility interface, which supplies native total functions and automatically
+proved source correspondence. The checked
 [factorial](##Examples.Language.Factorial) theorem is ordinary
 `Implementation.factorial n = Nat.factorial n`, using induction and one native
 termination proof; Scalar and Remainder use the same interface. This pure subset
