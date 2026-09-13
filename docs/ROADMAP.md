@@ -40,7 +40,18 @@ The current integration work has these concrete obligations:
   the absence of a model explicitly; actual function IDs and representation
   interfaces do not depend on generating a pure function. A promised
   correspondence proof failing is still an error, not silent model removal.
-  This structural change does not itself implement general represented loops.
+  General loops use source contracts instead of inventing a total pure model.
+- [x] Lower general `while` with represented array/record locals through the
+  existing source loop. Assignments update actual mutable locals across rounds;
+  guards execute again at each actual heap. Raw buffer/node types keep their
+  identity representation, not an inferred array/list contents observation.
+  The existing array-record consumer uses a mathematical loop state and the
+  shared named contract; its original represented correctness statement is
+  retained. Raw primitive calls and a common default entry are still open.
+- [ ] Generate mathematical-local loop interfaces from the resolved field
+  representations. The general-while consumer still supplies its record/heap
+  state relation and guard/body transport explicitly. This checks composability,
+  but is not yet the intended invariant-only proof experience.
 - [ ] Compose mathematical functions and state contracts through the same
   heap-indexed representation. A pure encoding is a special case; mutable
   array contents are not preserved by arbitrary heap extension.
@@ -58,16 +69,16 @@ The current integration work has these concrete obligations:
   the linked-list consumer allocates before recursively calling itself.
   Ordinary mathematical equations give their total source correctness.
 - [x] Integrate normal finite ranges and mutable local bindings with represented
-  state. The linked-list consumer allocates nodes on each round; the array
-  consumer updates a record after each real append call. Both have generated
-  total source correspondence and ordinary mathematical proofs on 0v0.
-  This does not yet cover general represented `while`, loop exits, recursive
-  calls to the enclosing function from a range, or mutable-name shadowing.
+  state. The linked-list consumer allocates nodes on each round and has generated
+  total source correspondence. The array-record consumer now exercises general
+  `while` with an explicit mathematical-state contract after each real append.
+  Finite-range exits, recursive calls to the enclosing function from a range,
+  mutable-name shadowing and loops in value-producing branches remain open.
 - [x] Simplify the generated range's mathematical view to its mutable
   accumulator, closing over immutable captures. `List.foldl_hom` automatically
-  connects it to the unchanged full source state. The existing List and
-  array-record proofs now use only their ordinary accumulators; the compiled
-  linked-list consumer remains checked.
+  connects it to the unchanged full source state. The existing List proofs use
+  only their ordinary accumulators; the compiled linked-list consumer remains
+  checked.
 - [x] Publish `Program.TimeO` at input-dependent call depth. A supplied uniform
   polynomial depth envelope now gives code/stack capacity under the existing
   width policy; actual values, allocation and execution still require proofs.

@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Syntax.Types
+import Complexity.Language.Syntax.Core
 import Complexity.Language.Representation.List
 import Complexity.Program.Deriving
 import Lean.PrettyPrinter.Delaborator
@@ -21,6 +22,11 @@ Record products retain componentwise relations even when every component is
 scalar, matching the structural field representations rather than replacing
 their conjunction by a tuple-equality representation.
 
+Existing raw `Buffer` and `NodeRef` parameters retain an identity observation
+of the handle itself. This is distinct from an array or list contents relation;
+handle equality supplies no validity, rootedness or bounds proof. Raw handles
+are recognized before ordinary records and are never expanded into constructors.
+
 This module resolves types and exposes direct-field metadata. Constructors,
 projections, calls and their preservation proofs remain the responsibility of
 the represented frontend. In particular, recognizing an array type does not
@@ -37,6 +43,7 @@ open Lean.Parser.Term
 or a nominal record observed through its checked field embedding. -/
 inductive NativeType where
   | pure (type : PureType)
+  | raw (type : Ty)
   | list (kind : CellTy)
   | array (kind : CellTy)
   | prod (left right : NativeType)
@@ -46,6 +53,7 @@ inductive NativeType where
 /-- The existing source type implementing this native mathematical view. -/
 def NativeType.coreTy : NativeType → Ty
   | .pure type => type.coreTy
+  | .raw type => type
   | .list kind => .option (.node kind)
   | .array kind => .buffer kind
   | .prod left right => .prod left.coreTy right.coreTy
@@ -55,6 +63,7 @@ def NativeType.coreTy : NativeType → Ty
 /-- The ordinary Lean type, retaining each record's nominal identity. -/
 def NativeType.nativeType : NativeType → Expr
   | .pure type => type.nativeType
+  | .raw type => mkApp (mkConst ``Value) (coreTypeExpr type)
   | .list kind => mkApp (mkConst ``List [Level.zero])
       (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool)
   | .array kind => mkApp (mkConst ``Array [Level.zero])
@@ -69,6 +78,11 @@ composes existing relations; it neither reconstructs a record from an arbitrary
 handle nor changes the heap at which its contents are observed. -/
 def NativeType.representation : NativeType → Expr
   | .pure type => type.representation
+  | .raw type =>
+      let nativeType := mkApp (mkConst ``Value) (coreTypeExpr type)
+      let embedding := mkApp (mkConst ``Function.Embedding.refl [Level.zero]) nativeType
+      mkAppN (mkConst ``Representation.ofEmbedding [Level.zero])
+        #[nativeType, coreTypeExpr type, embedding]
   | .list kind => mkApp (mkConst ``Representation.list)
       (match kind with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)
   | .array kind => mkApp (mkConst ``Representation.array)
@@ -83,11 +97,16 @@ def NativeType.representation : NativeType → Expr
         #[layout.nativeType, mkConst name, coreTypeExpr layout.coreTy,
           layout.representation, embedding]
 
-/-- Only the existing pure identity layout can use a native value directly as
-its raw source value. Even a scalar-only record needs its field correspondence. -/
-def NativeType.isPure : NativeType → Bool
-  | .pure _ => true
+/-- Identity layouts use the mathematical value directly as the source value.
+For a raw handle this means handle equality, not heap-independent access to its
+contents or absence of effects in functions using it. -/
+def NativeType.isIdentity : NativeType → Bool
+  | .pure _ | .raw _ => true
   | _ => false
+
+/-- Compatibility name for the identity-representation test. This property is
+about value observation, not a function's effects or successful termination. -/
+abbrev NativeType.isPure := NativeType.isIdentity
 
 private partial def scalarProduct : Ty → Bool
   | .nat | .bool | .unit => true
@@ -101,6 +120,12 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if type.hasFVar || type.hasMVar then
     throwError "native source types must be closed and fully inferred"
   let reduced ← whnf type
+  if let .app (.const name _) kind := reduced then
+    if name == ``Buffer || name == ``NodeRef then
+      let cellKind ← if ← isDefEq kind (mkConst ``CellTy.nat) then pure CellTy.nat
+        else if ← isDefEq kind (mkConst ``CellTy.bool) then pure CellTy.bool
+        else throwError "raw source handles require a fixed Nat or Bool cell kind"
+      return .raw (if name == ``Buffer then .buffer cellKind else .node cellKind)
   if let .app (.const ``List _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .list .nat
     if ← isDefEq element (mkConst ``Bool) then return .list .bool
@@ -114,7 +139,10 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if let .app (.app (.const ``Prod _) left) right := reduced then
     let left ← resolveNativeTypeAux left records structuredProducts
     let right ← resolveNativeTypeAux right records structuredProducts
-    if structuredProducts || !(left.isPure && right.isPure) then return .prod left right
+    let pureFields := match left, right with
+      | .pure _, .pure _ => true
+      | _, _ => false
+    if structuredProducts || !pureFields then return .prod left right
   if let .const name _ := reduced then
     if (getStructureInfo? (← getEnv) name).isSome then
       if records.contains name then
@@ -127,7 +155,7 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   let pureType ← resolvePureType type
   unless scalarProduct pureType.coreTy do
     throwError "this native operation frontend requires scalars, arrays, lists, \
-      closed records and their products/options"
+      raw Buffer/NodeRef handles, closed records and their products/options"
   unless ← isDefEq pureType.nativeType (mkApp (mkConst ``Value) (coreTypeExpr pureType.coreTy)) do
     throwError "native pure values must retain their existing scalar/product identity layout"
   return .pure pureType
@@ -139,9 +167,11 @@ non-inherited restrictions of program-interface deriving. -/
 def resolveNativeType (type : Expr) : TermElabM NativeType :=
   resolveNativeTypeAux type [] false
 
-/-- Elaborate a native type annotation and retain its mathematical identity. -/
+/-- Normalize the existing raw-reference spellings, then elaborate the same
+annotation and retain its mathematical identity through the shared resolver. -/
 def resolveType (stx : TSyntax `term) : TermElabM NativeType := withRef stx do
-  resolveNativeType (← elabType stx)
+  let normalized ← liftMacroM (normalizeReferenceTypes stx)
+  resolveNativeType (← elabType normalized)
 
 /-- One direct field in constructor order, with its actual projection and
 resolved native layout. This metadata describes Lean declarations, not trusted

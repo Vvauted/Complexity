@@ -71,7 +71,9 @@ def registerNativeProgramInfo (family : TSyntax `ident) (headers : Array NativeF
       refinement := some header.refinement
       preservingRelation := header.preservingRelation } })
 
-private def resolveTypeInfo (type : FunctionTypeInfo) : TermElabM NativeType := do
+/-- Check a shared mathematical header against the same source type and value
+observation, independently of whether that function has a total native model. -/
+def resolveTypeInfo (type : FunctionTypeInfo) : TermElabM NativeType := do
   let resolved ← resolveNativeType type.nativeType
   unless resolved.coreTy == type.coreTy do
     throwError "a represented call view disagrees with its registered source layout"
@@ -150,6 +152,17 @@ private structure Encoding where
 
 private partial def encoding : NativeType → TermElabM Encoding
   | .pure type => pure ⟨type.embedding, type.relationEq⟩
+  | .raw type => do
+      let nativeType := mkApp (mkConst ``Value) (coreTypeExpr type)
+      let embedding ← mkAppM ``Function.Embedding.refl #[nativeType]
+      let relation ← withLocalDeclD `value nativeType fun value =>
+        withLocalDeclD `raw nativeType fun raw =>
+          withLocalDeclD `heap (mkConst ``Heap) fun heap => do
+            let proof ← mkAppOptM ``Representation.ofEmbedding_rel
+              #[some nativeType, some (coreTypeExpr type), some embedding,
+                some value, some raw, some heap]
+            mkLambdaFVars #[value, raw, heap] proof
+      return ⟨embedding, relation⟩
   | .prod left right => do
       let first ← encoding left
       let second ← encoding right

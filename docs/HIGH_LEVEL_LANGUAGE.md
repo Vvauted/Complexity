@@ -19,8 +19,11 @@ existing typed-source emitter; proof views must not re-enter public command
 dispatch to select another frontend. Mutable local bindings and normal finite
 ranges now have checked allocating List and array-record consumers. Their source
 correspondence follows the actual callback calls and intermediate heaps.
-General represented `while`, nonlocal loop exits and calls to an enclosing
-recursive function from a range remain open. The mathematical range view folds
+General represented `while` now retains actual assignments, effectful guards
+and early function returns through the same source loop. The array-record
+consumer supplies a mathematical-state contract, not a total pure function.
+Finite-range exits, loops inside value-producing branches and calls to an
+enclosing recursive function from a range remain open. The mathematical range view folds
 only mutable locals and closes over fixed captures. The generator uses
 `List.foldl_hom` to prove that view corresponds to the unchanged full-state
 source loop; authors do not unfold captured-state tuples.
@@ -647,8 +650,12 @@ and representation interfaces even without such a model, and does not register
 nonexistent correspondence declarations. For a selected header without a model,
 `program_correct ... using contract` accepts an explicit `RepresentedFunction.Total`
 for that same entry and postcondition. Its packing transport reuses the real
-source call. This separation is implemented; general represented control-flow
-lowering remains part of the integration gate.
+source call. General represented `while` and statement conditionals now use
+the existing source control flow. Its scope preparation drops obsolete contents
+observations after unspecified effects, and mutable-value observations after a
+loop. A raw `Buffer` or `NodeRef` retains only handle identity; it supplies no
+validity, bounds or contents proof. Unifying raw primitive preparation and the
+default public entry remains part of the integration gate.
 
 - `TotalWP.while_wellFounded` accepts an ordinary `WellFounded` relation.
   `Stmt.observe_while_fixed_spec` exposes it through native `Std.Do` triples

@@ -369,45 +369,110 @@ structure Payload where
 source_program (native) ArrayRangeNative where
   def repeatAppend (count : Nat) (chunk : Array Nat) (initial : Payload) : Payload := do
     let mut state := initial
-    for _ in [:count] do
+    let mut remaining := count
+    while 0 < remaining do
       let values := Array.append state.values chunk
       state := { values := values, copies := state.copies + 1 }
+      remaining := remaining - 1
     return state
 
-private theorem fold_append_copies (indices : List Nat) (current : Payload)
-    (chunk : Array Nat) :
-    (indices.foldl
-      (fun (state : Payload) _ =>
-        { values := Array.append state.values chunk, copies := state.copies + 1 })
-      current).copies = current.copies + indices.length := by
-  induction indices generalizing current with
-  | nil => exact (Nat.add_zero _).symm
-  | cons index rest ih =>
-      simp only [List.foldl_cons, List.length_cons]
-      rw [ih]
-      dsimp only
-      omega
+private def payloadRel (model : Payload) (state : Buffer .nat × Nat) (heap : Heap) : Prop :=
+  state.1.Contents heap model.values ∧ model.copies = state.2
 
-/-- A represented record is updated after each actual array-append call.
-The author's proof concerns only an ordinary mathematical record projection. -/
-theorem repeatAppend_copies (count : Nat) (chunk : Array Nat) (initial : Payload) :
-    (ArrayRangeNative.repeatAppend count chunk initial).copies = initial.copies + count := by
-  change ((List.range' 0 ((count - 0 + 1 - 1) / 1) 1).foldl
-    (fun (state : Payload) _ =>
-      { values := Array.append state.values chunk, copies := state.copies + 1 })
-    initial).copies = _
-  rw [fold_append_copies]
-  simp only [List.length_range', Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
+private def appendStateRel (chunk : Buffer .nat) (chunkValues : Array Nat)
+    (model : Nat × Payload) (remaining : Nat) (state : Buffer .nat × Nat) (heap : Heap) : Prop :=
+  remaining = model.1 ∧ payloadRel model.2 state heap ∧ chunk.Contents heap chunkValues
 
-/-- The generated correspondence observes the entire returned record, including
+private theorem repeatAppend_loop_contract (count : Nat) (chunk : Buffer .nat)
+    (initial : Buffer .nat × Nat) (chunkValues : Array Nat) (initialValue : Payload) :
+    ArrayRangeNative.Source.repeatAppend_loop1.contract count chunk initial
+      (appendStateRel chunk chunkValues (count, initialValue))
+      (fun _ _ _ _ state heap => ∃ output, payloadRel output state heap ∧
+        output.copies = initialValue.copies + count)
+      (fun _ _ _ _ _ _ _ => False) := by
+  refine ArrayRangeNative.Source.repeatAppend_loop1.rel_contract count chunk initial
+    (appendStateRel chunk chunkValues)
+    (fun model => model.2.copies + model.1 = initialValue.copies + count)
+    (measure fun model : Nat × Payload => model.1).wf
+    (fun model _ _ _ remaining state heap =>
+      appendStateRel chunk chunkValues model remaining state heap ∧ 0 < remaining)
+    (fun _ state heap => ∃ output, payloadRel output state heap ∧
+      output.copies = initialValue.copies + count)
+    (fun _ _ _ _ => False) ?_ ?_ (count, initialValue) rfl
+  · intro model valid
+    rw [ArrayRangeNative.Source.repeatAppend_loop1.guard_contract_iff]
+    intro remaining state heap represented
+    rw [ArrayRangeNative.Source.repeatAppend_loop1.guard_eq]
+    apply Std.Do.Triple.pure
+    intro finish same
+    subst finish
+    by_cases active : 0 < remaining
+    · simp only [active, decide_true, ↓reduceIte]
+      exact ⟨represented, True.intro⟩
+    · simp only [active, decide_false, Bool.false_eq_true, ↓reduceIte]
+      refine ⟨model.2, represented.2.1, ?_⟩
+      have empty : model.1 = 0 := by have := represented.1; omega
+      simpa only [empty, Nat.add_zero] using valid
+  · intro model _ _ _ valid _
+    rw [ArrayRangeNative.Source.repeatAppend_loop1.body_contract_iff]
+    rintro remaining state heap ⟨represented, active⟩
+    obtain ⟨appended, finish, evaluated, contents, _, preserved⟩ :=
+      Buffer.Copy.append_eval_exists_preserving model.2.values chunkValues
+        state.1 chunk heap represented.2.1.1 represented.2.2
+    refine Part.TotalCorrectness.stateT_triple_of_eq (finish := finish)
+      (value := (.normal, remaining - 1, (appended, state.2 + 1), count, chunk, initial, ())) ?_ ?_
+    · rw [ArrayRangeNative.Source.repeatAppend_loop1.body_eq]
+      simp only [Bind.bind, Pure.pure, StateT.bind, StateT.pure, ExceptT.run,
+        evaluated, Part.bind_some]
+    · refine ⟨(remaining - 1, Payload.mk (model.2.values ++ chunkValues) (state.2 + 1)),
+        ?_, ?_, ?_⟩
+      · dsimp only
+        have := represented.1
+        have := represented.2.1.2
+        omega
+      · exact ⟨rfl, ⟨contents, rfl⟩, preserved chunk chunkValues represented.2.2⟩
+      · change remaining - 1 < model.1
+        have := represented.1
+        omega
+
+/-- The general while has a budget-free source contract. Its mathematical
+state tracks the complete payload and the number of remaining copies, while
+the shared append contract retains the actual arrays at successive heaps. -/
+theorem repeatAppend_copies (count : Nat) (chunkValues : Array Nat) (initialValue : Payload) :
+    ArrayRangeNative.Source.repeatAppend_contract
+      (fun actualCount chunk initial heap => count = actualCount ∧
+        chunk.Contents heap chunkValues ∧ payloadRel initialValue initial heap)
+      (fun _ _ _ _ result finish => ∃ output, payloadRel output result finish ∧
+        output.copies = initialValue.copies + count) := by
+  apply (ArrayRangeNative.Source.repeatAppend_total_iff _ _).mpr
+  rintro actualCount chunk initial heap ⟨sameCount, chunkObserved, initialObserved⟩
+  subst actualCount
+  have specification :
+      ⦃fun current => ⌜appendStateRel chunk chunkValues (count, initialValue)
+        count initial current⌝⦄ ArrayRangeNative.Source.repeatAppend count chunk initial
+      ⦃⇓ result finish => ⌜∃ output, payloadRel output result finish ∧
+        output.copies = initialValue.copies + count⌝⦄ := by
+    have loopSpec := ArrayRangeNative.Source.repeatAppend_loop1.spec count chunk initial
+      (repeatAppend_loop_contract count chunk initial chunkValues initialValue)
+    rw [ArrayRangeNative.Source.repeatAppend_eq]
+    mvcgen [loopSpec]
+    all_goals simp_all
+  exact (triple_iff_eval _ _ _).mp specification heap
+    ⟨rfl, initialObserved, chunkObserved⟩
+
+/-- The source contract observes the entire returned record, including
 its actual final array. The supplied mathematical postcondition tracks its count;
 termination and correspondence require no machine resource premise. -/
 theorem repeatAppend_correct :
     RepresentedFunction.Total ArrayRangeNative.program ArrayRangeNative.repeatAppendId
       ArrayRangeNative.repeatAppend_representation (fun _ => True)
-      (fun input result => result.copies = input.2.2.copies + input.1) :=
-  ArrayRangeNative.repeatAppend_refines.of_math
-    (fun input _ => repeatAppend_copies input.1 input.2.1 input.2.2)
+      (fun input result => result.copies = input.2.2.copies + input.1) := by
+  rintro ⟨count, chunkValues, initialValue⟩ _
+  apply (repeatAppend_copies count chunkValues initialValue).consequence
+  · intro args heap represented
+    exact represented
+  · intro args initial result finish _ observed
+    exact observed
 
 end NativeRange
 

@@ -14,8 +14,10 @@ import Lean.Elab.Tactic.Basic
 a registered source function at that fixed mathematical interface. Selection
 does not require correctness or a total mathematical model. A declaration whose
 original parameters match the fixed input is selected directly, using the original
-function index and complete program table. With no mathematical header, the
-fixed input and output instances supply the observations of that raw entry.
+function index and complete program table. Without a mathematical model, the
+fixed input and output instances supply the observations of that raw entry,
+even when its header also records mathematical types. The supplied source
+contract must establish those fixed observations when correctness is proved.
 
 A represented native function with one structured argument retains the existing
 packing path: separate fixed input parameters are assembled by actual
@@ -247,6 +249,19 @@ private def mathematicalInputFields (count : Nat) (input : Expr) : MetaM (Array 
       rest ← mkAppM ``Prod.snd #[rest]
   return fields
 
+private def directLayoutMatches (expected : Expr)
+    (information : Language.Syntax.FunctionInfo) : TermElabM Bool := do
+  let expected ← whnf expected
+  unless expected.isAppOfArity ``Complexity.Program 4 do
+    throwError "program% requires an expected type Complexity.Program α β"
+  let arguments := expected.getAppArgs
+  let inputParameters ← mkAppOptM ``Input.params #[some arguments[0]!, some arguments[2]!]
+  let sourceParameters ← mkListLit (Lean.mkConst ``Language.Ty)
+    (information.params.map (fun (_, type) => Language.Syntax.coreTypeExpr type)).toList
+  unless ← isDefEq inputParameters sourceParameters do return false
+  let outputType ← mkAppOptM ``Output.type #[some arguments[1]!, some arguments[3]!]
+  isDefEq outputType (Language.Syntax.coreTypeExpr information.result)
+
 private def prepareDirect (name : TSyntax `ident) (expected : Expr)
     (information : Language.Syntax.FunctionInfo) :
     TermElabM PreparedProgram := withRef name do
@@ -267,15 +282,16 @@ private def prepareDirect (name : TSyntax `ident) (expected : Expr)
   let outputType ← mkAppOptM ``Output.type #[some β, some output]
   unless ← isDefEq outputType (Language.Syntax.coreTypeExpr information.result) do
     throwError "the original source result does not match the fixed Program.Output layout"
-  if let some mathematical := information.mathematical? then
-    let mathematicalInput ← mathematicalInputType (mathematical.params.map (·.2.nativeType)).toList
-    unless ← isDefEq α mathematicalInput do
-      throwError "the registered mathematical input {mathematicalInput} does not match {α}"
-    unless ← isDefEq β mathematical.result.nativeType do
-      throwError "the registered mathematical result {mathematical.result.nativeType} does not match {β}"
-    let outputRepresentation ← mkAppOptM ``Output.representation #[some β, some output]
-    unless ← isDefEq outputRepresentation mathematical.result.representation do
-      throwError "the registered result observation does not match the fixed Program.Output"
+  if information.model?.isSome then
+    if let some mathematical := information.mathematical? then
+      let mathematicalInput ← mathematicalInputType (mathematical.params.map (·.2.nativeType)).toList
+      unless ← isDefEq α mathematicalInput do
+        throwError "the registered mathematical input {mathematicalInput} does not match {α}"
+      unless ← isDefEq β mathematical.result.nativeType do
+        throwError "the registered mathematical result {mathematical.result.nativeType} does not match {β}"
+      let outputRepresentation ← mkAppOptM ``Output.representation #[some β, some output]
+      unless ← isDefEq outputRepresentation mathematical.result.representation do
+        throwError "the registered result observation does not match the fixed Program.Output"
   let some sourceInformation := information.source?
     | throwError "the selected function has no registered source identity"
   let source := Lean.mkConst (sourceInformation.family ++ `program)
@@ -362,6 +378,9 @@ private def prepareProgram (name : TSyntax `ident) (expected : Expr) :
     if let some function := functions.find? (fun function =>
         family ++ function.name == resolved || function.model?.any (·.name == resolved) ||
           function.source?.any (·.action == resolved)) then
+      if function.model?.isNone then
+        if ← directLayoutMatches expected function then
+          return ← prepareDirect name expected function
       if !function.pure then
         if let some mathematical := function.mathematical? then
           if mathematical.params.size == 1 then

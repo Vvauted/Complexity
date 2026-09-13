@@ -425,7 +425,20 @@ private def typeName : Ty → String
   | .prod left right => s!"({typeName left} × {typeName right})"
   | .option value => s!"Option ({typeName value})"
 
+private def referenceType? (stx : TSyntax `term) : Option Ty :=
+  match stx with
+  | `(Buffer Nat) => some (.buffer .nat)
+  | `(Buffer Bool) => some (.buffer .bool)
+  | `(Complexity.Language.Buffer Complexity.Language.CellTy.nat) => some (.buffer .nat)
+  | `(Complexity.Language.Buffer Complexity.Language.CellTy.bool) => some (.buffer .bool)
+  | `(NodeRef Nat) => some (.node .nat)
+  | `(NodeRef Bool) => some (.node .bool)
+  | `(Complexity.Language.NodeRef Complexity.Language.CellTy.nat) => some (.node .nat)
+  | `(Complexity.Language.NodeRef Complexity.Language.CellTy.bool) => some (.node .bool)
+  | _ => none
+
 private partial def parseType (stx : TSyntax `term) : MacroM Ty := do
+  if let some reference := referenceType? stx then return reference
   match stx with
   | `(source_native_type% ($raw) ($_native) via ($_equiv)) => parseType raw
   | `(source_native_type% ($raw) ($_native)) => parseType raw
@@ -433,14 +446,6 @@ private partial def parseType (stx : TSyntax `term) : MacroM Ty := do
   | `(Nat) => return .nat
   | `(Bool) => return .bool
   | `(Unit) => return .unit
-  | `(Buffer Nat) => return .buffer .nat
-  | `(Buffer Bool) => return .buffer .bool
-  | `(Complexity.Language.Buffer Complexity.Language.CellTy.nat) => return .buffer .nat
-  | `(Complexity.Language.Buffer Complexity.Language.CellTy.bool) => return .buffer .bool
-  | `(NodeRef Nat) => return .node .nat
-  | `(NodeRef Bool) => return .node .bool
-  | `(Complexity.Language.NodeRef Complexity.Language.CellTy.nat) => return .node .nat
-  | `(Complexity.Language.NodeRef Complexity.Language.CellTy.bool) => return .node .bool
   | `($left × $right) | `(Prod $left $right) =>
       return .prod (← parseType left) (← parseType right)
   | `(Option $value) => return .option (← parseType value)
@@ -473,6 +478,15 @@ private def valueTypeTerm : Ty → MacroM (TSyntax `term)
       `($(← valueTypeTerm left) × $(← valueTypeTerm right))
   | .option value => do
       `(Option $(← valueTypeTerm value))
+
+/-- Normalize the source's existing reference-type spellings before Lean type
+elaboration, also inside products and options. This only changes annotations:
+a raw handle is not converted to an array/list observation or constructed here. -/
+def normalizeReferenceTypes (stx : TSyntax `term) : MacroM (TSyntax `term) := do
+  return ⟨← stx.raw.replaceM fun node => do
+    match referenceType? ⟨node⟩ with
+    | some reference => return some (← valueTypeTerm reference).raw
+    | none => return none⟩
 
 private def expectType (stx : Syntax) (actual expected : Ty) : MacroM Unit := do
   unless actual == expected do
@@ -1261,6 +1275,52 @@ private def normalizeCall (functions : Array Callee) (scope : Scope) (stx : TSyn
           return (normalized.bindings,
             ← `($(normalized.value).$(mkIdent field):ident))
       return (#[], stx)
+
+/-- A source call's checked signature before its body is prepared. The surface
+name may be qualified; the source identity is the actual local or imported
+entry, independently of any optional mathematical model. -/
+structure RawCallHeader where
+  name : TSyntax `ident
+  params : Array (Name × Ty)
+  result : Ty
+  source : SourceFunctionInfo
+
+/-- Actual source locals, innermost first. Mathematical contents observations
+are deliberately absent from this type-and-syntax preparation interface. -/
+abbrev RawScope := List (TSyntax `ident × Ty)
+
+private def RawCallHeader.toCallee (header : RawCallHeader) : Callee := {
+  name := header.name
+  params := header.params.map fun (name, type) => ⟨mkIdent name, type⟩
+  result := header.result
+  id := mkIdent ((header.source.family ++ header.source.name).appendAfter "Id")
+  observation := mkIdent header.source.action
+  fold := mkIdent ((header.source.family ++ header.source.name).appendAfter "_observe") }
+
+private def rawScope (scope : RawScope) : Scope :=
+  scope.map fun (name, type) => {
+    name := some name.getId, proofName := name, type, isMutable := false }
+
+/-- Reuse the source call normalizer, preserving left-to-right operands and
+temporary scopes. Install returned bindings before preparing the rewritten
+call again; node construction can need more than one such step. -/
+def normalizeRawCall (headers : Array RawCallHeader) (scope : RawScope)
+    (call : TSyntax `term) : MacroM (Array (TSyntax `doElem) × TSyntax `term) :=
+  normalizeCall (headers.map (·.toCallee)) (rawScope scope) call
+
+/-- Infer a normalized call's actual result using the existing source operation
+checker. No generated statement escapes: final lowering must still use the
+combined program's relocated function IDs. -/
+def inferRawBindingType (headers : Array RawCallHeader) (scope : RawScope)
+    (call : TSyntax `term) : MacroM Ty := do
+  return (← parseBinding (headers.map (·.toCallee)) (rawScope scope) call).1
+
+/-- Check a normalized standalone action using the same buffer-write and Unit
+call rules as final source lowering. This does not assert successful execution
+or preservation of any mathematical contents observation. -/
+def checkRawAction (headers : Array RawCallHeader) (scope : RawScope)
+    (call : TSyntax `term) : MacroM Unit := do
+  discard <| actionCode (headers.map (·.toCallee)) (rawScope scope) call
 
 private def optionMatch? (element : TSyntax `doElem) :
     Option (TSyntax `term × TSyntax `term × TSyntax ``doSeq × TSyntax `term × TSyntax ``doSeq) :=
