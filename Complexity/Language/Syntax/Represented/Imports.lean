@@ -150,6 +150,14 @@ private structure Encoding where
   embedding : Expr
   relation : Expr
 
+-- Keep the checked representation and embedding parameters when a composed
+-- relation proof is inserted into a generated declaration.
+private def Encoding.relationSyntax (encoding : Encoding) : TermElabM (TSyntax `term) := do
+  let proof ← withOptions (fun options => options.setBool `pp.explicit true) do
+    termOfExpr encoding.relation
+  let type ← termOfExpr (← inferType encoding.relation)
+  `(($proof : $type))
+
 private partial def encoding : NativeType → TermElabM Encoding
   | .pure type => pure ⟨type.embedding, type.relationEq⟩
   | .raw type => do
@@ -347,7 +355,7 @@ private def declarations (family : Name) (info : FunctionInfo) :
       let rawType ← actualTypeTerm parameter.type.coreTy
       let representation ← termOfExpr parameter.type.representation
       let encoded ← termOfExpr (← mkAppM ``Function.Embedding.toFun #[parameter.encoding.embedding])
-      let exactEncoding ← termOfExpr parameter.encoding.relation
+      let exactEncoding ← parameter.encoding.relationSyntax
       let equal := mkIdent (← mkFreshUserName `argumentEncoding)
       roots := roots.push (← `(bracketedBinder| ($(parameter.rawName):ident : $rawType)))
       observations := observations.push (← `(bracketedBinder|
@@ -369,10 +377,13 @@ private def declarations (family : Name) (info : FunctionInfo) :
   let resultRepresentation ← termOfExpr result.representation
   let encoded ← termOfExpr (← mkAppM ``Function.Embedding.toFun #[resultEncoding.embedding])
   let encodedResult ← `($encoded $nativeValue)
-  let exactResult ← termOfExpr resultEncoding.relation
+  let exactResult ← resultEncoding.relationSyntax
   let original := Lean.Syntax.mkApp
     ⟨(mkCIdent originalEquation).raw⟩ nativeArguments
-  equationProof := equationProof.push (← `(tactic| exact congrFun $original $heap:ident))
+  equationProof := equationProof.push (← `(tactic|
+    simpa only [Function.Embedding.optionMap, Function.Embedding.coe_prodMap,
+      Function.Embedding.coe_refl, Prod.map_id, Option.map_id] using
+      (congrFun ($original:term) $heap:ident)))
   let equation := mkIdent (`_root_ ++ equationName)
   let equationDeclaration ← `(command|
     /-- The existing pure correspondence observed at the supplied actual heap. -/

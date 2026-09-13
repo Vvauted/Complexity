@@ -32,7 +32,7 @@ source_program (pure) Metadata where
     else
       return some (n, 0)
 
-source_program Library importing Metadata where
+source_program (native) Library importing Metadata where
   def inspect (xs : Buffer Nat) : Nat × Option (Buffer Nat) := do
     let summary ← Metadata.classifyLength xs.length
     match summary with
@@ -41,7 +41,7 @@ source_program Library importing Metadata where
       let view ← xs.slice offset length
       return (length, some view)
 
-source_program Implementation importing Library where
+source_program (native) Implementation importing Library where
   def bump (xs : Buffer Nat) : Nat × Option (Buffer Nat) := do
     let (length, present) ← Library.inspect xs
     match present with
@@ -80,10 +80,10 @@ theorem classifyLength_total :
 
 /-- The imported classifier selects the actual full slice without changing the heap. -/
 theorem inspect_eval (xs : Buffer .nat) :
-    Library.inspect xs =
+    Library.Source.inspect xs =
       (pure (inspectResult xs) : ExceptT Fault (StateT Heap Part)
         (Nat × Option (Buffer .nat))) := by
-  rw [Library.inspect_eq]
+  rw [Library.Source.inspect_eq]
   dsimp only
   rw [Metadata.classifyLength_action_eq_pure, classifyLength_eq]
   have slice : xs.sliceM 0 xs.length =
@@ -94,9 +94,9 @@ theorem inspect_eval (xs : Buffer .nat) :
 
 /-- Inspecting metadata terminates even for an empty view, without reading its cells. -/
 theorem inspect_total :
-    Library.inspect_contract (fun _ _ => True)
+    Library.Source.inspect_contract (fun _ _ => True)
       (fun xs heap result finish => result = inspectResult xs ∧ finish = heap) := by
-  apply (Library.inspect_total_iff _ _).mpr
+  apply (Library.Source.inspect_total_iff _ _).mpr
   intro xs heap _
   exact ⟨inspectResult xs, heap, congrFun (inspect_eval xs) heap, rfl, rfl⟩
 
@@ -104,9 +104,9 @@ theorem inspect_total :
 read/write contracts; the resulting frame concerns the actual write heap. -/
 theorem bump_spec (xs : Buffer .nat) (contents : Array Nat) (heap : Heap)
     (observed : xs.Contents heap contents) :
-    ⦃fun entry => ⌜entry = heap⌝⦄ Implementation.bump xs
+    ⦃fun entry => ⌜entry = heap⌝⦄ Implementation.Source.bump xs
     ⦃⇓ result finish => ⌜bumpPost xs contents heap result finish⌝⦄ := by
-  rw [Implementation.bump_eq, inspect_eval]
+  rw [Implementation.Source.bump_eq, inspect_eval]
   by_cases empty : xs.length = 0
   · simp only [inspectResult, empty, if_true, pure_bind]
     apply Std.Do.Triple.pure
@@ -136,9 +136,9 @@ theorem bump_spec (xs : Buffer .nat) (contents : Array Nat) (heap : Heap)
 /-- Source correctness in ordinary parameters: the returned optional handle,
 updated native array and outside-view frame share one real final heap. -/
 theorem bump_total (contents : Array Nat) :
-    Implementation.bump_contract (fun xs heap => xs.Contents heap contents)
+    Implementation.Source.bump_contract (fun xs heap => xs.Contents heap contents)
       (fun xs heap result finish => bumpPost xs contents heap result finish) := by
-  apply (Implementation.bump_total_iff _ _).mpr
+  apply (Implementation.Source.bump_total_iff _ _).mpr
   intro xs heap observed
   exact (triple_iff_eval _ _ _).mp (bump_spec xs contents heap observed) heap rfl
 

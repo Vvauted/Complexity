@@ -48,16 +48,16 @@ theorem classifyLength_costBound :
 /-- The inspector reuses the pure imported contract at its actual returned
 option. Its full-length slice needs one nested call and no heap assumption. -/
 theorem inspect_realizable {w : Nat} (hw : 0 < w) :
-    FunctionRealizable Library.program w 1 Library.inspectId
-      (Library.inspect_onArgs fun xs _ => xs.length < 2 ^ w) := by
+    FunctionRealizable Library.Source.program w 1 Library.Source.inspectId
+      (Library.Source.inspect_onArgs fun xs _ => xs.length < 2 ^ w) := by
   have tagFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
   ram_source_realize (xs)
   by_cases empty : xs.length = 0
   · ram_source_call using (classifyLength_realizable hw), classifyLength_total
-      via Library.imports.Metadata.embedding
+      via Library.Source.imports.Complexity.Language.Examples.OptionalBuffer.Metadata.embedding
     all_goals simp_all [Prod.eq_iff_fst_eq_snd_eq] <;> omega
   · ram_source_call using (classifyLength_realizable hw), classifyLength_total
-      via Library.imports.Metadata.embedding
+      via Library.Source.imports.Complexity.Language.Examples.OptionalBuffer.Metadata.embedding
     all_goals simp_all [Prod.eq_iff_fst_eq_snd_eq] <;> omega
 
 /-- The imported helper's real call overhead plus the inspector's field,
@@ -67,19 +67,19 @@ def inspectBodyBound : Nat := callCost Metadata.program Metadata.classifyLengthI
 /-- The same inspector's compiler-derived cost includes the imported call and
 the actual descriptor construction, with no charge for a nonexistent array copy. -/
 theorem inspect_costBound :
-    FunctionCostBound Library.program Library.inspectId (fun _ _ => True)
+    FunctionCostBound Library.Source.program Library.Source.inspectId (fun _ _ => True)
       (fun _ _ => inspectBodyBound) := by
-  ram_source_cost (xs) using classifyLength_costBound via Library.imports.Metadata.embedding
+  ram_source_cost (xs) using classifyLength_costBound via Library.Source.imports.Complexity.Language.Examples.OptionalBuffer.Metadata.embedding
   all_goals
-    simp only [inspectBodyBound, callCost_embeds Library.imports.Metadata.embedding]
+    simp only [inspectBodyBound, callCost_embeds Library.Source.imports.Complexity.Language.Examples.OptionalBuffer.Metadata.embedding]
     omega
 
 /-- The only extra arithmetic range concerns the cell that is actually
 incremented. Other cells retain the ordinary represented-heap requirement. -/
 theorem bump_realizable {w : Nat} (hw : 0 < w) (contents : Array Nat)
     (incrementFits : ∀ h : 0 < contents.size, contents[0] + 1 < 2 ^ w) :
-    FunctionRealizable Implementation.program w 2 Implementation.bumpId
-      (Implementation.bump_onArgs fun xs heap =>
+    FunctionRealizable Implementation.Source.program w 2 Implementation.Source.bumpId
+      (Implementation.Source.bump_onArgs fun xs heap =>
         xs.Contents heap contents ∧ xs.length < 2 ^ w) := by
   have tagFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
   ram_source_realize (xs)
@@ -87,7 +87,7 @@ theorem bump_realizable {w : Nat} (hw : 0 < w) (contents : Array Nat)
   rcases input with ⟨observed, lengthFits⟩
   by_cases empty : xs.length = 0
   · ram_source_call using (inspect_realizable hw), inspect_total
-      via Implementation.imports.Library.embedding
+      via Implementation.Source.imports.Complexity.Language.Examples.OptionalBuffer.Library.Source.embedding
     all_goals simp_all [inspectResult] <;> omega
   · have nonempty : 0 < contents.size := by
       have := observed.size_eq
@@ -98,7 +98,7 @@ theorem bump_realizable {w : Nat} (hw : 0 < w) (contents : Array Nat)
       obtain ⟨finish, written, _⟩ := observed.write_exists nonempty value
       exact ⟨finish, written⟩
     ram_source_call using (inspect_realizable hw), inspect_total
-      via Implementation.imports.Library.embedding
+      via Implementation.Source.imports.Complexity.Language.Examples.OptionalBuffer.Library.Source.embedding
     all_goals
       simp_all [inspectResult, Except.ok.injEq] <;>
       first
@@ -107,22 +107,22 @@ theorem bump_realizable {w : Nat} (hw : 0 < w) (contents : Array Nat)
 
 /-- The caller includes the actual imported inspector call and its selected
 read/update path, including product/option field copies. -/
-def bumpBodyBound : Nat := callCost Library.program Library.inspectId inspectBodyBound + 57
+def bumpBodyBound : Nat := callCost Library.Source.program Library.Source.inspectId inspectBodyBound + 57
 
 /-- This uniform count follows the existing compiler cost rules. It neither
 assumes source termination nor reruns the mathematical array-correctness proof. -/
 theorem bump_costBound :
-    FunctionCostBound Implementation.program Implementation.bumpId (fun _ _ => True)
+    FunctionCostBound Implementation.Source.program Implementation.Source.bumpId (fun _ _ => True)
       (fun _ _ => bumpBodyBound) := by
-  ram_source_cost (xs) using inspect_costBound via Implementation.imports.Library.embedding
+  ram_source_cost (xs) using inspect_costBound via Implementation.Source.imports.Complexity.Language.Examples.OptionalBuffer.Library.Source.embedding
   all_goals
-    simp only [bumpBodyBound, callCost_embeds Implementation.imports.Library.embedding]
+    simp only [bumpBodyBound, callCost_embeds Implementation.Source.imports.Complexity.Language.Examples.OptionalBuffer.Library.Source.embedding]
     omega
 
 /-- The full invocation bound adds the real outer call, return and final halt. -/
 def bumpInvocationBound : Nat :=
-  Ram.LocalCompiler.Function.callSteps (programControl Implementation.program)
-    (lowerFunc Implementation.program Implementation.bumpId) bumpBodyBound + 1
+  Ram.LocalCompiler.Function.callSteps (programControl Implementation.Source.program)
+    (lowerFunc Implementation.Source.program Implementation.Source.bumpId) bumpBodyBound + 1
 
 /-- The verified source operation executes on the real RAM with the same
 mathematical value and array update. The independent step bound describes that
@@ -132,14 +132,14 @@ theorem bump_execute {w heapLimit : Nat} {placement : Nat → Ram.Word w}
     (observed : xs.Contents heap contents)
     (incrementFits : ∀ h : 0 < contents.size, contents[0] + 1 < 2 ^ w)
     {entry : Ram.Source.State w}
-    (launch : FunctionLaunch Implementation.program Implementation.bumpId 2 heapLimit placement
-      (Implementation.bump_args xs) heap entry) :
-    ∃ outcome : FunctionExecution Implementation.program Implementation.bumpId heapLimit placement
-        (Implementation.bump_args xs) heap entry,
+    (launch : FunctionLaunch Implementation.Source.program Implementation.Source.bumpId 2 heapLimit placement
+      (Implementation.Source.bump_args xs) heap entry) :
+    ∃ outcome : FunctionExecution Implementation.Source.program Implementation.Source.bumpId heapLimit placement
+        (Implementation.Source.bump_args xs) heap entry,
       bumpPost xs contents heap outcome.value outcome.heap ∧
       outcome.result.steps ≤ bumpInvocationBound := by
   have lengthFits : xs.length < 2 ^ w := by
-    have arguments : EnvFits (Γ := [.buffer .nat]) w (Implementation.bump_args xs) :=
+    have arguments : EnvFits (Γ := [.buffer .nat]) w (Implementation.Source.bump_args xs) :=
       launch.arguments
     exact arguments .here
   obtain ⟨outcome, property, bounded⟩ :=
@@ -151,8 +151,8 @@ theorem bump_execute {w heapLimit : Nat} {placement : Nat → Ram.Word w}
 not a separately chosen source execution witness. -/
 theorem bump_memory {w heapLimit : Nat} {placement : Nat → Ram.Word w}
     {xs : Buffer .nat} {contents : Array Nat} {heap : Heap} {entry : Ram.Source.State w}
-    (outcome : FunctionExecution Implementation.program Implementation.bumpId heapLimit placement
-      (Implementation.bump_args xs) heap entry)
+    (outcome : FunctionExecution Implementation.Source.program Implementation.Source.bumpId heapLimit placement
+      (Implementation.Source.bump_args xs) heap entry)
     (property : bumpPost xs contents heap outcome.value outcome.heap) :
     Ram.Source.ArrayAt heapLimit (bufferRef placement xs).base
       (objectWords w (τ := .nat) (bumped contents)).toList
@@ -165,8 +165,8 @@ not a fabricated buffer. This is an observation of the shared result, not a
 second execution or a decoder chosen from the specification. -/
 theorem bump_returnedValues {w heapLimit : Nat} {placement : Nat → Ram.Word w}
     {xs : Buffer .nat} {contents : Array Nat} {heap : Heap} {entry : Ram.Source.State w}
-    (outcome : FunctionExecution Implementation.program Implementation.bumpId heapLimit placement
-      (Implementation.bump_args xs) heap entry)
+    (outcome : FunctionExecution Implementation.Source.program Implementation.Source.bumpId heapLimit placement
+      (Implementation.Source.bump_args xs) heap entry)
     (property : bumpPost xs contents heap outcome.value outcome.heap) :
     Ram.LocalCompiler.Function.returnedValues 4 outcome.result.state =
       if xs.length = 0 then [0, 0, 0, 0] else

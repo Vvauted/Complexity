@@ -243,4 +243,34 @@ def expect (site : Syntax) (expected actual : NativeType) : TermElabM Unit := do
   unless ← sameType expected actual do
     throwErrorAt site "expected native type {expected.nativeType}, found {actual.nativeType}"
 
+/-- Expand a pattern parsed by `checkedBindingPattern` over an already evaluated
+value. Annotations are checked nominally, including on ignored fields; records
+are not products merely because their source layouts are products. Untyped
+projection bindings retain their resolved component observations. Nested
+projection bases are shared, and unused fields produce no source bindings. -/
+def patternBindings (pattern : BindingPattern) (type : NativeType)
+    (value : TSyntax `term) : TermElabM (Array (TSyntax `doElem)) := do
+  match pattern with
+  | .wildcard => return #[]
+  | .name name => return #[← `(doElem| let $name:ident := $value)]
+  | .typed pattern annotation =>
+      expect annotation (← resolveType annotation) type
+      patternBindings pattern type value
+  | .pair left right =>
+      let (leftType, rightType) ← match type with
+        | .prod left right => pure (left, right)
+        | .pure pureType => do
+            let .app (.app (.const ``Prod _) left) right ← whnf pureType.nativeType
+              | throwErrorAt value "a product pattern requires a native product"
+            pure (← resolveNativeType left, ← resolveNativeType right)
+        | _ => throwErrorAt value "a product pattern requires a native product"
+      let (bindings, base) ← if value.raw.isIdent then pure (#[], value) else do
+        let name := mkIdent (← mkFreshUserName `pattern)
+        pure (#[← `(doElem| let $name:ident := $value)],
+          (⟨name.raw⟩ : TSyntax `term))
+      let leftBindings ← patternBindings left leftType (← `(Prod.fst $base))
+      let rightBindings ← patternBindings right rightType (← `(Prod.snd $base))
+      let fields := leftBindings ++ rightBindings
+      return if fields.isEmpty then #[] else bindings ++ fields
+
 end Complexity.Language.Syntax.Represented

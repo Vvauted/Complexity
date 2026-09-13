@@ -1349,11 +1349,13 @@ private def somePattern? (pattern : TSyntax `term) : Option (TSyntax `term) :=
   | `(some $payload) | `(Option.some $payload) | `(.some $payload) => some payload
   | _ => none
 
-private inductive BindingPattern where
+/-- Shared source binding-pattern syntax. Type annotations remain syntax so
+each type preparer can check them against its actual types before projection. -/
+inductive BindingPattern where
   | wildcard
   | name (value : TSyntax `ident)
   | pair (left right : BindingPattern)
-  | typed (pattern : BindingPattern) (type : Ty)
+  | typed (pattern : BindingPattern) (type : TSyntax `term)
 
 private instance : Nonempty BindingPattern := ⟨.wildcard⟩
 
@@ -1361,7 +1363,7 @@ private partial def parseBindingPattern (pattern : TSyntax `term) : MacroM Bindi
   match pattern with
   | `(_) => return .wildcard
   | `(($pattern:term : $type:term)) =>
-      return .typed (← parseBindingPattern pattern) (← parseType type)
+      return .typed (← parseBindingPattern pattern) type
   | `(($pattern:term)) => parseBindingPattern pattern
   | `(($left, $right)) | `(Prod.mk $left $right) =>
       return .pair (← parseBindingPattern left) (← parseBindingPattern right)
@@ -1374,7 +1376,9 @@ private def BindingPattern.names : BindingPattern → List Name
   | .pair left right => left.names ++ right.names
   | .typed pattern _ => pattern.names
 
-private def checkedBindingPattern (pattern : TSyntax `term) : MacroM BindingPattern := do
+/-- Parse a shared binding pattern and reject repeated names. Consumers check
+the retained type annotations against their own resolved parameter types. -/
+def checkedBindingPattern (pattern : TSyntax `term) : MacroM BindingPattern := do
   let parsed ← parseBindingPattern pattern
   unless parsed.names.Nodup do
     Macro.throwErrorAt pattern "a source pattern cannot bind the same name twice"
@@ -1390,6 +1394,7 @@ private def patternBindings (pattern : BindingPattern) (type : Ty)
   | .name name =>
       return #[← `(doElem| let $name:ident : $(← valueTypeTerm type) := $value)]
   | .typed pattern expected =>
+      let expected ← parseType expected
       expectType value type expected
       patternBindings pattern type value
   | .pair left right =>

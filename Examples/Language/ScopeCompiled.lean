@@ -32,11 +32,11 @@ Only the remaining call count is read; heap contents do not affect it. -/
 theorem guard_realizable {w depth : Nat} (hw : 0 < w)
     (remaining : Nat) (out : Buffer .nat) (count n value : Nat) (heap : Heap)
     (remainingFits : remaining < 2 ^ w) :
-    RealizationWP Implementation.program w depth Implementation.make_loop1.Guard
+    RealizationWP Implementation.Source.program w depth Implementation.Source.make_loop1.Guard
       (fun _ => False) (fun _ _ => True)
-      ⟨Implementation.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩ := by
+      ⟨Implementation.Source.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩ := by
   have booleanFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
-  rw [Implementation.make_loop1.view_symm_apply]
+  rw [Implementation.Source.make_loop1.view_symm_apply]
   ram_source_realize_step
   all_goals first | omega | split <;> omega
 
@@ -46,8 +46,8 @@ theorem guard_ready {w limit depth cursor : Nat} (hw : 0 < w)
     (remaining : Nat) (out : Buffer .nat) (count n value : Nat) (heap : Heap)
     {finish : State [.nat, .buffer .nat, .nat, .nat, .nat]} {decision : Bool}
     (remainingFits : remaining < 2 ^ w)
-    (execution : Exec Implementation.program Implementation.make_loop1.Guard
-      ⟨Implementation.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
+    (execution : Exec Implementation.Source.program Implementation.Source.make_loop1.Guard
+      ⟨Implementation.Source.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
       finish (.returned decision)) :
     ArenaReady execution w limit depth cursor cursor := by
   obtain ⟨actualFinish, actualControl, actual, _⟩ :=
@@ -65,8 +65,8 @@ theorem body_ready {w limit cursor : Nat} (hw : 0 < w)
     (outRooted : out.Rooted heap) (outFits : out.length < 2 ^ w)
     (remainingFits : remaining < 2 ^ w) (nFits : n < 2 ^ w) (valueFits : value < 2 ^ w)
     (capacity : cursor + 2 * n ≤ limit)
-    (execution : Exec Implementation.program Implementation.make_loop1.Body
-      ⟨Implementation.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
+    (execution : Exec Implementation.Source.program Implementation.Source.make_loop1.Body
+      ⟨Implementation.Source.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
       finish control) (successful : ControlFits w control) :
     ArenaReady execution w limit 1 cursor cursor := by
   have oneFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
@@ -95,12 +95,12 @@ theorem body_ready {w limit cursor : Nat} (hw : 0 < w)
 
 private theorem guard_exec (remaining : Nat) (out : Buffer .nat) (count n value : Nat)
     (heap : Heap) :
-    Exec Implementation.program Implementation.make_loop1.Guard
-      ⟨Implementation.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
-      ⟨Implementation.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
+    Exec Implementation.Source.program Implementation.Source.make_loop1.Guard
+      ⟨Implementation.Source.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
+      ⟨Implementation.Source.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
       (.returned (decide (0 < remaining))) := by
   apply Stmt.observe_eq_some_iff.mp
-  rw [Implementation.make_loop1.guard_observe, guard_eval]
+  rw [Implementation.Source.make_loop1.guard_observe, guard_eval]
   rfl
 
 /-- Every finite source loop reuses the same scratch capacity. The original
@@ -113,13 +113,13 @@ theorem loop_ready {w limit cursor : Nat} (hw : 0 < w)
     (current : invariant out count n value remaining heap)
     (countFits : count < 2 ^ w) (nFits : n < 2 ^ w) (valueFits : value < 2 ^ w)
     (capacity : cursor + 2 * n ≤ limit)
-    (execution : Exec Implementation.program Implementation.make_loop1.Code
-      ⟨Implementation.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
+    (execution : Exec Implementation.Source.program Implementation.Source.make_loop1.Code
+      ⟨Implementation.Source.make_loop1.View.symm (remaining, out, count, n, value, ()), heap⟩
       finish control) (successful : ControlFits w control) :
     ArenaReady execution w limit 1 cursor cursor := by
   let roundInvariant : State [.nat, .buffer .nat, .nat, .nat, .nat] → Prop :=
     fun state => ∃ left,
-      state.locals = Implementation.make_loop1.View.symm (left, out, count, n, value, ()) ∧
+      state.locals = Implementation.Source.make_loop1.View.symm (left, out, count, n, value, ()) ∧
         invariant out count n value left state.heap
   apply ArenaReady.while_of_exec (invariant := roundInvariant) execution
   · rintro ⟨locals, entryHeap⟩ after decision ⟨left, rfl, initial⟩ tested
@@ -138,9 +138,9 @@ theorem loop_ready {w limit cursor : Nat} (hw : 0 < w)
       tested.deterministic (guard_exec left out count n value entryHeap)
     cases sameState
     have active : 0 < left := of_decide_eq_true (Control.returned.inj sameControl).symm
-    have observed : Implementation.make_loop1.body left out count n value entryHeap =
-        Part.some ((.normal, Implementation.make_loop1.View afterBody.locals), afterBody.heap) := by
-      rw [← Implementation.make_loop1.body_observe (left, out, count, n, value, ())]
+    have observed : Implementation.Source.make_loop1.body left out count n value entryHeap =
+        Part.some ((.normal, Implementation.Source.make_loop1.View afterBody.locals), afterBody.heap) := by
+      rw [← Implementation.Source.make_loop1.body_observe (left, out, count, n, value, ())]
       apply Stmt.observe_eq_some_iff.mpr
       simpa only [Equiv.symm_apply_apply] using iterated
     have updated := Part.TotalCorrectness.stateT_post_of_eq
@@ -148,7 +148,7 @@ theorem loop_ready {w limit cursor : Nat} (hw : 0 < w)
     refine ⟨left - 1, ?_, updated.2⟩
     have localsEqual := congrArg Prod.snd updated.1
     simpa only [Equiv.symm_apply_apply] using
-      congrArg Implementation.make_loop1.View.symm localsEqual
+      congrArg Implementation.Source.make_loop1.View.symm localsEqual
   · exact ⟨remaining, rfl, current⟩
   · exact successful
 
@@ -165,7 +165,7 @@ theorem make_ready {w limit cursor : Nat} (hw : 0 < w)
     {finish : State [.nat, .nat, .nat]} {out : Buffer .nat}
     (countFits : count < 2 ^ w) (nFits : n < 2 ^ w) (valueFits : value < 2 ^ w)
     (capacity : cursor + 1 + 2 * n ≤ limit)
-    (execution : Exec Implementation.program Implementation.makeBody
+    (execution : Exec Implementation.Source.program Implementation.Source.makeBody
       ⟨makeArgs count n value, heap⟩ finish (.returned out)) :
     ArenaReady execution w limit 1 cursor (cursor + 1) := by
   have oneFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
@@ -190,8 +190,8 @@ theorem make_ready {w limit cursor : Nat} (hw : 0 < w)
               have preserved : middle.locals.get (.there .here) =
                   (heap.alloc (τ := .nat) 1 0).1 :=
                 loop.get_eq (.there .here) (by
-                  simp [Implementation.make_loop1.Code, Implementation.make_loop1.Guard,
-                    Implementation.make_loop1.Body, Stmt.PreservesLocal])
+                  simp [Implementation.Source.make_loop1.Code, Implementation.Source.make_loop1.Guard,
+                    Implementation.Source.make_loop1.Body, Stmt.PreservesLocal])
               have fits : ValueFits w
                   ((.var (.there .here) : Atom [.nat, .buffer .nat, .nat, .nat, .nat]
                     (.buffer .nat)).eval middle.locals) := by
@@ -205,11 +205,11 @@ theorem make_ready {w limit cursor : Nat} (hw : 0 < w)
                 (Part.TotalCorrectness.stateT_triple_iff _ _ _).mp
                   (loop_spec (heap.alloc (τ := .nat) 1 0).1 count n value count)
                   (heap.alloc (τ := .nat) 1 0).2 initial
-              have actual : Exec Implementation.program Implementation.make_loop1.Code
-                  ⟨Implementation.make_loop1.View.symm
+              have actual : Exec Implementation.Source.program Implementation.Source.make_loop1.Code
+                  ⟨Implementation.Source.make_loop1.View.symm
                     (count, (heap.alloc (τ := .nat) 1 0).1, count, n, value, ()),
                     (heap.alloc (τ := .nat) 1 0).2⟩
-                  ⟨Implementation.make_loop1.View.symm finalLocals, finalHeap⟩ actualControl :=
+                  ⟨Implementation.Source.make_loop1.View.symm finalLocals, finalHeap⟩ actualControl :=
                 Stmt.observe_eq_some_iff.mp actualObserved
               have sameControl := (loop.deterministic actual).2
               cases actualControl with
@@ -221,7 +221,7 @@ theorem make_ready {w limit cursor : Nat} (hw : 0 < w)
 result word, two simultaneously live scratch arrays, and two actual call frames.
 The frame size is derived from the fixed generated program, not from `count`. -/
 def workspaceWords (entryCursor n : Nat) : Nat :=
-  heapLimit entryCursor n + 2 * Ram.ABI.frameSize (programControl Implementation.program)
+  heapLimit entryCursor n + 2 * Ram.ABI.frameSize (programControl Implementation.Source.program)
 
 set_option maxRecDepth 2048 in
 /-- The same high-level declaration returns its mathematical array in the real
@@ -232,9 +232,9 @@ word/code capacity. The result retains actual RAM memory, returned fields and
 counted execution; input loading and output conversion remain outside it. -/
 theorem make_runUntil {w cursor : Nat} (count n value : Nat) {heap : Heap}
     {entry : Ram.Source.State w} {placement : Nat → Ram.Word w}
-    (launch : FunctionArenaLaunch Implementation.program Implementation.makeId 1
+    (launch : FunctionArenaLaunch Implementation.Source.program Implementation.Source.makeId 1
       (heapLimit cursor n) placement (makeArgs count n value) heap cursor entry) :
-    ∃ outcome : FunctionArenaExecution Implementation.program Implementation.makeId 1
+    ∃ outcome : FunctionArenaExecution Implementation.Source.program Implementation.Source.makeId 1
         (heapLimit cursor n) placement (makeArgs count n value) heap entry,
       outcome.value.Contents outcome.heap (resultContents count n value) ∧
       outcome.cursor = cursor + 1 ∧

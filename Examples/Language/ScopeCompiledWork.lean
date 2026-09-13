@@ -29,8 +29,8 @@ theorem inner_ready (temp out : Buffer .nat) (n value : Nat) (heap : Heap)
     {finish : State [.buffer .nat, .buffer .nat, .nat, .nat]}
     {control : Control .unit}
     (capacity : cursor + n ≤ limit)
-    (execution : Exec Implementation.program Implementation.work_scope2.Code
-      ⟨Implementation.work_scope2.View.symm (temp, out, n, value, ()), heap⟩
+    (execution : Exec Implementation.Source.program Implementation.Source.work_scope2.Code
+      ⟨Implementation.Source.work_scope2.View.symm (temp, out, n, value, ()), heap⟩
       finish control)
     (successful : control.Satisfies (fun _ => True) (fun _ _ => True) finish) :
     ArenaReady execution w limit depth cursor cursor := by
@@ -44,9 +44,9 @@ theorem inner_ready (temp out : Buffer .nat) (n value : Nat) (heap : Heap)
 
 private theorem inner_exec (temp out : Buffer .nat) (n value : Nat) (heap : Heap)
     (tempRooted : temp.Rooted heap) (outRooted : out.Rooted heap) :
-    Exec Implementation.program Implementation.work_scope2.Code
-      ⟨Implementation.work_scope2.View.symm (temp, out, n, value, ()), heap⟩
-      ⟨Implementation.work_scope2.View.symm (temp, out, n, value, ()), heap⟩ .normal :=
+    Exec Implementation.Source.program Implementation.Source.work_scope2.Code
+      ⟨Implementation.Source.work_scope2.View.symm (temp, out, n, value, ()), heap⟩
+      ⟨Implementation.Source.work_scope2.View.symm (temp, out, n, value, ()), heap⟩ .normal :=
   Stmt.observe_eq_some_iff.mp (inner_eval temp out n value heap tempRooted outRooted)
 
 /-- The actual worker can be invoked at any available call depth. Its two
@@ -59,8 +59,8 @@ theorem work_ready (out : Buffer .nat) (n value : Nat) (heap : Heap)
     (outRooted : out.Rooted heap) (outFits : out.length < 2 ^ w)
     (nFits : n < 2 ^ w) (valueFits : value < 2 ^ w)
     (capacity : cursor + 2 * n ≤ limit)
-    (execution : Exec Implementation.program Implementation.workBody
-      ⟨Implementation.work_scope1.View.symm (out, n, value, ()), heap⟩
+    (execution : Exec Implementation.Source.program Implementation.Source.workBody
+      ⟨Implementation.Source.work_scope1.View.symm (out, n, value, ()), heap⟩
       finish (.returned ())) :
     ArenaReady execution w limit depth cursor cursor := by
   have zeroFits : 0 < 2 ^ w := Nat.two_pow_pos w

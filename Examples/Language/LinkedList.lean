@@ -47,7 +47,7 @@ the same source body as its executable implementation. -/
 theorem add_eq (accumulator head : Nat) :
     Reducer.add accumulator head = accumulator + head := rfl
 
-source_program Implementation where
+source_program (native) Implementation where
   def uncons (root : Option (NodeRef Nat)) : Option (Nat × Option (NodeRef Nat)) := do
     match root with
     | none => return none
@@ -56,11 +56,11 @@ source_program Implementation where
       return some fields
 
 /-- The high-level declaration generates exactly the already verified source body. -/
-theorem uncons_body_eq : Implementation.unconsBody = List.Uncons.body .nat := rfl
+theorem uncons_body_eq : Implementation.Source.unconsBody = List.Uncons.body .nat := rfl
 
 /-- The public operation's contract applies without another implementation proof. -/
 theorem uncons_total (values : List Nat) :
-    Implementation.uncons_contract
+    Implementation.Source.uncons_contract
       (fun root heap => (Representation.list .nat).Rel values root heap)
       (fun _ initial result finish =>
         (List.Uncons.resultRepresentation .nat).Rel
@@ -84,7 +84,7 @@ theorem uncons_spec (root : Option (NodeRef .nat)) (values : List Nat) (initial 
   apply (triple_iff_eval _ _ _).mpr
   rintro heap ⟨same, observed⟩
   subst heap
-  exact (Implementation.uncons_total_iff _ _).mp (uncons_total values) root initial observed
+  exact (Implementation.Source.uncons_total_iff _ _).mp (uncons_total values) root initial observed
 
 source_program Construction where
   def cons (head : Nat) (tail : Option (NodeRef Nat)) : Option (NodeRef Nat) := do

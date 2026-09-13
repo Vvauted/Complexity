@@ -25,8 +25,11 @@ registered operations and their checked heap relations. A finite range lowers
 to the shared source while and real body calls; its mathematical fold is never
 a runtime primitive. General while and source calls without a total model retain
 their actual control and heap effects, exposing source contracts instead of a
-fabricated pure function. Finite-range exits, mutable-name shadowing and general
-loops inside value-producing branches remain unsupported.
+fabricated pure function. Finite-range exits and general
+loops inside value-producing branches remain unsupported. Shared typed product
+and Option patterns retain one evaluation and ordinary source projections.
+Scratch blocks retain their real cleanup and enclosing returns; their contracts
+observe the post-cleanup heap rather than a pre-cleanup mathematical view.
 -/
 
 namespace Complexity.Language.Syntax.Represented
@@ -36,9 +39,13 @@ open Lean.Parser.Term
 
 private structure Parameter where
   name : TSyntax `ident
+  /-- Hygienic mathematical local; source syntax continues to use `name`. -/
+  nativeName : TSyntax `ident := name
   type : NativeType
   rawName : TSyntax `ident
   relationName : TSyntax `ident
+  /-- Stable lexical slot; assignment changes its value, not its identity. -/
+  slot : Name := rawName.getId
 
 private inductive Observation where
   | refl
@@ -215,8 +222,9 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
       | .prod left right => pure (left, right)
       | .pure type => do
           let .prod _ _ := type.coreTy | throwError "projection requires a product"
-          let native := type.nativeType.getAppArgs
-          pure (← resolveNativeType native[0]!, ← resolveNativeType native[1]!)
+          let .app (.app (.const ``Prod _) left) right ← whnf type.nativeType
+            | throwError "projection requires a native product"
+          pure (← resolveNativeType left, ← resolveNativeType right)
       | _ => throwError "projection requires a product"
     let projection := if first then ``Prod.fst else ``Prod.snd
     let apply (term : TSyntax `term) := Lean.Syntax.mkCApp projection #[term]
@@ -317,6 +325,14 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
       let result ← value scope expression (some expected)
       expect type expected result.type
       return result
+  | `(none) | `(Option.none) | `(.none) =>
+      let some (.option payload) := expected
+        | throwErrorAt stx "none requires an optional result, parameter or binding type"
+      return {
+        type := .option payload, raw := ← `(none)
+        model? := some {
+          native := stx, model := stx, rawModel := ← `(none)
+          observation := .none payload } }
   | `($name:ident) =>
       if name.getId == `true || name.getId == `false then
         return {
@@ -328,7 +344,8 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
       let parameter ← lookup scope name
       return {
         type := parameter.type, raw := stx
-        model? := parameter.model?.map fun model => { toBindingModel := model, native := stx } }
+        model? := parameter.model?.map fun model => {
+          toBindingModel := model, native := ⟨parameter.nativeName.raw⟩ } }
   | `($(pair).$field:fieldIdx) =>
       match field.raw.isFieldIdx? with
       | some 1 => project pair true
@@ -356,21 +373,14 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
         pure expression
       constructRecord expected arguments
   | `(some $expression:term) | `(Option.some $expression:term) =>
-      let result ← value scope expression
+      let payload := expected.bind fun | .option payload => some payload | _ => none
+      let result ← value scope expression payload
       return {
         type := .option result.type, raw := ← `(some $(result.raw))
         model? := ← result.model?.mapM fun model => do
           return {
             native := ← `(some $(model.native)), model := ← `(some $(model.model))
             rawModel := ← `(some $(model.rawModel)), observation := .some model.observation } }
-  | `(none) | `(Option.none) | `(.none) =>
-      let some (.option payload) := expected
-        | throwErrorAt stx "none requires an optional result, parameter or binding type"
-      return {
-        type := .option payload, raw := ← `(none)
-        model? := some {
-          native := stx, model := stx, rawModel := ← `(none)
-          observation := .none payload } }
   | `($_:num) => return {
       type := ← resolveType (← `(Nat)), raw := stx
       model? := some { native := stx, model := stx, rawModel := stx } }
@@ -378,8 +388,18 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
       type := ← resolveType (← `(Unit)), raw := stx
       model? := some { native := stx, model := stx, rawModel := stx } }
   | `(($left, $right)) =>
-      let left ← value scope left
-      let right ← value scope right
+      let fields ← expected.mapM fun type => do
+        match type with
+        | .prod left right => return some (left, right)
+        | .pure type =>
+            if let .prod _ _ := type.coreTy then
+              let arguments := type.nativeType.getAppArgs
+              return some (← resolveNativeType arguments[0]!, ← resolveNativeType arguments[1]!)
+            return none
+        | _ => return none
+      let fields := fields.join
+      let left ← value scope left (fields.map (·.1))
+      let right ← value scope right (fields.map (·.2))
       let type ← mkAppM ``Prod #[left.type.nativeType, right.type.nativeType]
       let type ← resolveNativeType type
       return {
@@ -925,6 +945,32 @@ private def operationCall? (names : DeclarationNames) (imports : ImportedProgram
         modify fun state => { state with calledFamilies := state.calledFamilies.push operation.family }
       return some (operation, arguments)
 
+private def prepareInvocation (names : DeclarationNames) (scope : List Binding)
+    (name : TSyntax `ident) (operation : Operation) (arguments : Array (TSyntax `term)) :
+    TermElabM (Invocation × TSyntax `term × Option (TSyntax `term)) := do
+  unless arguments.size == operation.inputs.size do throwError "wrong number of source call arguments"
+  let arguments ← arguments.mapIdxM fun index argument =>
+    value scope argument operation.inputs[index]?
+  for argument in arguments, expected in operation.inputs do expect name expected argument.type
+  let sourceName := mkIdentFrom name
+    (if operation.family.getId == names.sourceFamily.getId then operation.sourceName
+      else operation.family.getId ++ operation.sourceName)
+  let raw := Lean.Syntax.mkApp ⟨sourceName.raw⟩ (arguments.map (·.raw))
+  let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
+  let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
+  let models : Option (Array ValueModel) := arguments.mapM (·.model?)
+  let callModel : Option (TSyntax `term × BindingModel) := do
+    let operationModel ← operation.model?
+    let arguments : Array ValueModel ← models
+    let native := Lean.Syntax.mkApp operationModel.native (arguments.map (·.native))
+    let model := Lean.Syntax.mkApp operationModel.native (arguments.map (·.model))
+    pure (native, ({
+      model, rawModel := ⟨rawName.raw⟩
+      observation := if operation.result.isIdentity then .refl else .named relationName.getId } : BindingModel))
+  let binding : Binding := {
+    name, type := operation.result, rawName, relationName, model? := callModel.map (·.2) }
+  return (⟨operation, arguments, binding⟩, raw, callModel.map (·.1))
+
 /-- Convert user operands once, before Core's raw normalizer. A raw operation
 requires a handle, not a coincidentally equal Array/List source layout. -/
 private def prepareRawOperands (scope : List Binding) (expression : TSyntax `term) :
@@ -1048,10 +1094,21 @@ private def returnElements (body : TSyntax `term) : TermElabM (Array (TSyntax `d
 private def isNonePattern (pattern : TSyntax `term) : Bool :=
   match pattern with | `(none) | `(Option.none) | `(.none) => true | _ => false
 
-private def someName? (pattern : TSyntax `term) : Option (TSyntax `ident) :=
+private def somePattern? (pattern : TSyntax `term) : Option (TSyntax `term) :=
   match pattern with
-  | `(some $name:ident) | `(Option.some $name:ident) | `(.some $name:ident) => some name
+  | `(some $payload:term) | `(Option.some $payload:term) | `(.some $payload:term) => some payload
   | _ => none
+
+/-- Use the shared checked pattern and nominal projection expander. A simple
+name is the payload binder itself; other patterns share that same payload. -/
+private def preparePayloadPattern (pattern : TSyntax `term) (type : NativeType) :
+    TermElabM (TSyntax `ident × Array (TSyntax `doElem)) := do
+  let pattern ← liftMacroM (checkedBindingPattern pattern)
+  match pattern with
+  | .name name => return (name, #[])
+  | _ =>
+      let name := mkIdent (← mkFreshUserName `payload)
+      return (name, ← patternBindings pattern type ⟨name.raw⟩)
 
 private def isNilPattern (pattern : TSyntax `term) : Bool :=
   match pattern with | `([]) | `(List.nil) => true | _ => false
@@ -1199,31 +1256,6 @@ private partial def requireNormalBlock (stx : Syntax) : TermElabM Unit := do
     throwErrorAt stx "this finite native block does not yet support return, break or continue"
   if let .node _ _ arguments := stx then arguments.forM requireNormalBlock
 
-private partial def hasGeneralWhile (stx : Syntax) : Bool := Id.run do
-  if let `(doElem| while $_:term do $_:doSeq) := stx then return true
-  if let .node _ _ arguments := stx then return arguments.any hasGeneralWhile
-  return false
-
-/-- Only enclosing returns matter here; a return inside a bound expression has
-its own value-producing boundary. -/
-private partial def hasNonlocalExit (stx : Syntax) : Bool := Id.run do
-  let binding := match stx with
-  | `(doElem| let $_:ident $[: $_:term]? := $_:term) |
-    `(doElem| let $_:ident $[: $_:term]? ← $_:term) |
-    `(doElem| let $_:ident $[: $_:term]? ← $_:doElem) |
-    `(doElem| let mut $_:ident $[: $_:term]? := $_:term) |
-    `(doElem| let mut $_:ident $[: $_:term]? ← $_:term) |
-    `(doElem| let mut $_:ident $[: $_:term]? ← $_:doElem) => true
-  | _ => false
-  if binding then return false
-  let exits := match stx with
-  | `(doElem| return $_:term) | `(doElem| return) |
-    `(doElem| break) | `(doElem| continue) => true
-  | _ => false
-  if exits then return true
-  if let .node _ _ arguments := stx then return arguments.any hasNonlocalExit
-  return false
-
 /-- Unspecified effects cannot retain old contents observations. A loop can
 also change mutable scalar locals, but immutable raw handles retain their identity. -/
 private def invalidateObservations (scope : List Binding) (mutableLocals : Bool := false) :
@@ -1259,74 +1291,203 @@ private def restoreState (bindings : Array Binding) (state : TSyntax `ident)
     elements := elements.push element
   return elements
 
+/-- Raw statements and their normal lexical successor are independent of the
+optional mathematical body, call trace and returned-value summary. -/
+private structure PreparedBlock where
+  raw : Array (TSyntax `doElem)
+  native? : Option (Array (TSyntax `doElem))
+  calls? : Option (Array Trace)
+  returned? : Option Value
+  normalScope? : Option (List Binding)
+
+/-- Close a branch's local declarations by slot identity. Shadowing introduces
+a new slot, while the latest assignment retains the enclosing slot. -/
+private def closeScope (entry exit : List Binding) : List Binding :=
+  entry.map fun binding =>
+    (exit.find? (fun candidate => candidate.slot == binding.slot)).getD binding
+
+/-- A join of observations, not a new source local or instruction. -/
+private structure ChoiceModel where
+  result : Binding
+  native : TSyntax `term
+  trace : Trace
+
+private def choiceModel (available : Bool) (type : NativeType)
+    (yes no : PreparedBlock)
+    (choose : Bool → TSyntax `term → TSyntax `term → TermElabM (TSyntax `term))
+    (trace : Array Trace → Array Trace → Value → Value → Binding → Trace) :
+    TermElabM (Option ChoiceModel) := do
+  unless available do return none
+  let some yesNative := yes.native? | return none
+  let some noNative := no.native? | return none
+  let some yesCalls := yes.calls? | return none
+  let some noCalls := no.calls? | return none
+  let some yesResult := yes.returned? | return none
+  let some noResult := no.returned? | return none
+  let some yesModel := yesResult.model? | return none
+  let some noModel := noResult.model? | return none
+  let yesBody ← doTerm yesNative
+  let noBody ← doTerm noNative
+  let native ← choose false (← `(Id.run $yesBody)) (← `(Id.run $noBody))
+  let model ← choose true yesModel.model noModel.model
+  let name := mkIdent (← mkFreshUserName `branchView)
+  let rawName := mkIdent (← mkFreshUserName `branchSource)
+  let relationName := mkIdent (← mkFreshUserName `branchObserved)
+  let result : Binding := {
+    name, type, rawName, relationName
+    model? := some {
+      model, rawModel := ⟨rawName.raw⟩
+      observation := if type.isIdentity then .refl else .named relationName.getId } }
+  return some { result, native, trace := trace yesCalls noCalls yesResult noResult result }
+
+/-- Pack only proof-side normal results. Actual branch bodies keep their
+fallthrough and never receive a synthesized source return. -/
+private def normalSummary (entry : List Binding) (mutable : Array Binding)
+    (type : NativeType) (block : PreparedBlock) : TermElabM PreparedBlock := do
+  let some scope := block.normalScope? | return block
+  let state ← stateValue mutable
+  let returned ← value (closeScope entry scope) state (some type)
+  let native ← mapModelsM block.native? returned.model? fun native model => do
+    return native.push (← `(doElem| return $(model.native)))
+  return { block with native? := native, returned? := some returned }
+
 private partial def sequence (names : DeclarationNames)
     (imports : ImportedPrograms) (resultType : NativeType)
     (scope : List Binding) (elements : List (TSyntax `doElem))
-    (bindingMutable : Bool := false) (allowFallthrough : Bool := false)
+    (bindingKind : BindingKind := .immutable) (allowFallthrough : Bool := false)
     (localReturn : Bool := false) :
-    PrepareM (Array (TSyntax `doElem) × Option (Array (TSyntax `doElem)) ×
-      Option (Array Trace) × Option Value) := do
-  let bindingKind (name : TSyntax `ident) :=
-    if !bindingMutable then BindingKind.immutable
-    else if (scope.find? (fun binding => binding.name.getId == name.getId)).any (·.mutable) then
-      BindingKind.assignment
-    else BindingKind.mutable
+    PrepareM PreparedBlock := do
+  let bindingMutable := match bindingKind with | .immutable => false | _ => true
+  let bindingSlot (name : TSyntax `ident) : TermElabM Name := do
+    match bindingKind with
+    | .assignment => return (← lookup scope name).slot
+    | _ => mkFreshUserName `sourceSlot
   let bindAndContinue (binding : Binding) (raw : TSyntax `doElem)
       (native : Option (TSyntax `doElem)) (calls : Option (Array Trace))
-      (rest : List (TSyntax `doElem)) (invalidateHeap : Bool := false) := do
+      (rest : List (TSyntax `doElem)) (invalidateHeap : Bool := false) : PrepareM PreparedBlock := do
     let raw ← match raw with
       | `(doElem| let $name:ident : $type:term := $expression:term) =>
-          rawBinding (bindingKind name) name type expression
+          rawBinding bindingKind name type expression
       | `(doElem| let $name:ident : $type:term ← $expression:term) =>
-          rawBinding (bindingKind name) name type expression true
+          rawBinding bindingKind name type expression true
       | _ => throwError "a prepared source binding must have its resolved type"
-    let binding := { binding with mutable := bindingMutable }
+    let nativeName := mkIdent (← mkFreshUserName (binding.name.getId.appendAfter "_native"))
+    let native ← native.mapM fun native => do
+      let `(doElem| let $_:ident : $type:term := $expression:term) := native
+        | throwError "a prepared mathematical local must be a typed value binding"
+      `(doElem| let $nativeName:ident : $type := $expression)
+    let binding := { binding with
+      nativeName, mutable := bindingMutable, slot := ← bindingSlot binding.name }
     let scope := if invalidateHeap then invalidateObservations scope else scope
-    let (rawRest, nativeRest, later, returned) ← sequence names imports resultType
-      (binding :: scope) rest false allowFallthrough localReturn
-    return (#[raw] ++ rawRest,
+    let ⟨rawRest, nativeRest, later, returned, normal⟩ ← sequence names imports resultType
+      (binding :: scope) rest .immutable allowFallthrough localReturn
+    return ⟨#[raw] ++ rawRest,
       (fun native rest => #[native] ++ rest) <$> native <*> nativeRest,
-      (· ++ ·) <$> calls <*> later, returned)
+      (· ++ ·) <$> calls <*> later, returned, normal⟩
+  let continueChoice (raw : TSyntax `doElem) (yes no : PreparedBlock)
+      (available : Bool)
+      (choose : Bool → TSyntax `term → TSyntax `term → TermElabM (TSyntax `term))
+      (trace : Array Trace → Array Trace → Value → Value → Binding → Trace)
+      (rest : List (TSyntax `doElem)) : PrepareM PreparedBlock := do
+    if yes.normalScope?.isSome && no.normalScope?.isSome then
+      let mutable := (visibleBindings scope).filter (·.mutable)
+      let stateType ← resolveType (← stateType mutable.toList)
+      let yes ← normalSummary scope mutable stateType yes
+      let no ← normalSummary scope mutable stateType no
+      let choice ← choiceModel available stateType yes no choose trace
+      let mut after := invalidateObservations scope true
+      let mut nativePrefix := #[]
+      let mut calls : Option (Array Trace) := none
+      if let some choice := choice then
+        let type ← termOfExpr stateType.nativeType
+        nativePrefix := #[← `(doElem| let $(choice.result.name):ident : $type := $(choice.native))]
+        after := scope
+        for binding in mutable, index in [:mutable.size] do
+          let projection ← fieldProjection mutable.size index ⟨choice.result.name.raw⟩
+          let projected ← value [choice.result] projection
+          let nativeName := mkIdent (← mkFreshUserName (binding.name.getId.appendAfter "_native"))
+          after := after.map fun current =>
+            if current.slot == binding.slot then
+              { current with nativeName, model? := projected.model?.map (·.toBindingModel) }
+            else current
+          let type ← termOfExpr binding.type.nativeType
+          nativePrefix := nativePrefix.push
+            (← `(doElem| let $nativeName:ident : $type := $projection))
+        calls := some #[choice.trace]
+      let continued ← sequence names imports resultType after rest .immutable allowFallthrough localReturn
+      return { continued with
+        raw := #[raw] ++ continued.raw
+        native? := (fun _ native => nativePrefix ++ native) <$> choice <*> continued.native?
+        calls? := (· ++ ·) <$> calls <*> continued.calls? }
+    if yes.normalScope?.isNone && no.normalScope?.isNone then
+      unless rest.isEmpty do
+        throwError "statements after a branch that returns on every path are not supported"
+      let choice ← choiceModel available resultType yes no choose trace
+      let native ← choice.mapM fun choice => do
+        return #[← `(doElem| return $(choice.native))]
+      let returned := choice.map fun choice => ({
+        type := resultType, raw := ⟨choice.result.rawName.raw⟩
+        model? := choice.result.model?.map fun model => {
+          toBindingModel := model, native := choice.native } } : Value)
+      return (⟨#[raw], native, choice.map (fun choice => #[choice.trace]), returned, none⟩ : PreparedBlock)
+    -- Mixed normal/return control is preserved without asserting one pure
+    -- output summary. The enclosing continuation runs only on normal paths.
+    if localReturn then
+      throwError "early return inside a value-producing branch needs a local-return boundary; \
+        use a source function for that computation"
+    let continued ← sequence names imports resultType (invalidateObservations scope true)
+      rest .immutable allowFallthrough localReturn
+    return { continued with raw := #[raw] ++ continued.raw, native? := none, calls? := none }
   match elements with
   | [] =>
-      if allowFallthrough then return (#[], some #[], some #[], none)
+      if allowFallthrough then return ⟨#[], some #[], some #[], none, some scope⟩
       throwError "a value-producing source block must end with a return"
   | element :: rest => withRef element do
     -- The mathematical view uses local versions; rawBinding retains actual
     -- mutable declarations and assignments for the shared source semantics.
     if let `(doElem| let mut $name:ident $[: $annotation:term]? := $expression:term) := element then
-      if (scope.find? (fun binding => binding.name.getId == name.getId)).any (·.mutable) then
-        throwErrorAt name "shadowing a mutable native local is not yet supported; assign it or use a fresh name"
       let normalized ← `(doElem| let $name:ident $[: $annotation:term]? := $expression)
-      return ← sequence names imports resultType scope (normalized :: rest) true allowFallthrough localReturn
+      return ← sequence names imports resultType scope (normalized :: rest) .mutable allowFallthrough localReturn
     if let `(doElem| let mut $name:ident $[: $annotation:term]? ← $expression:term) := element then
-      if (scope.find? (fun binding => binding.name.getId == name.getId)).any (·.mutable) then
-        throwErrorAt name "shadowing a mutable native local is not yet supported; assign it or use a fresh name"
       let normalized ← `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term)
-      return ← sequence names imports resultType scope (normalized :: rest) true allowFallthrough localReturn
+      return ← sequence names imports resultType scope (normalized :: rest) .mutable allowFallthrough localReturn
     if let `(doElem| let mut $name:ident $[: $annotation:term]? ← $rhs:doElem) := element then
-      if (scope.find? (fun binding => binding.name.getId == name.getId)).any (·.mutable) then
-        throwErrorAt name "shadowing a mutable native local is not yet supported; assign it or use a fresh name"
       let normalized ← `(doElem| let $name:ident $[: $annotation:term]? ← $rhs:doElem)
-      return ← sequence names imports resultType scope (normalized :: rest) true allowFallthrough localReturn
+      return ← sequence names imports resultType scope (normalized :: rest) .mutable allowFallthrough localReturn
     if let `(doElem| $name:ident := $expression:term) := element then
       let previous ← lookup scope name
       unless previous.mutable do throwErrorAt name "assignment requires a local declared with let mut"
       let type ← termOfExpr previous.type.nativeType
       let normalized ← `(doElem| let $name:ident : $type := $expression)
-      return ← sequence names imports resultType scope (normalized :: rest) true allowFallthrough localReturn
+      return ← sequence names imports resultType scope (normalized :: rest) .assignment allowFallthrough localReturn
     if let `(doElem| $name:ident ← $expression:term) := element then
       let previous ← lookup scope name
       unless previous.mutable do throwErrorAt name "assignment requires a local declared with let mut"
       let type ← termOfExpr previous.type.nativeType
       let normalized ← `(doElem| let $name:ident : $type ← $expression:term)
-      return ← sequence names imports resultType scope (normalized :: rest) true allowFallthrough localReturn
+      return ← sequence names imports resultType scope (normalized :: rest) .assignment allowFallthrough localReturn
     if let `(doElem| $name:ident ← $rhs:doElem) := element then
       let previous ← lookup scope name
       unless previous.mutable do throwErrorAt name "assignment requires a local declared with let mut"
       let type ← termOfExpr previous.type.nativeType
       let normalized ← `(doElem| let $name:ident : $type ← $rhs:doElem)
-      return ← sequence names imports resultType scope (normalized :: rest) true allowFallthrough localReturn
+      return ← sequence names imports resultType scope (normalized :: rest) .assignment allowFallthrough localReturn
+    if let `(doElem| with_scratch do $body:doSeq) := element then
+      if localReturn then
+        throwErrorAt element "a scratch scope inside a value-producing branch needs a local-return boundary; \
+          use a source function for that computation"
+      let body ← sequence names imports resultType scope (getDoElems body).toList .immutable true
+      let bodySyntax : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (body.raw.map (·.raw))⟩
+      let raw ← `(doElem| with_scratch do $bodySyntax:doSeq)
+      if body.normalScope?.isNone && rest.isEmpty then
+        return ⟨#[raw], none, none, none, none⟩
+      let after := invalidateObservations
+        (body.normalScope?.map (closeScope scope) |>.getD scope) true
+      let continued ← sequence names imports resultType after rest .immutable allowFallthrough localReturn
+      return { continued with
+        raw := #[raw] ++ continued.raw, native? := none, calls? := none
+        returned? := if body.normalScope?.isSome then continued.returned? else none
+        normalScope? := if body.normalScope?.isSome then continued.normalScope? else none }
     if let `(doElem| while $condition:term do $body:doSeq) := element then
       if localReturn then
         throwErrorAt element "general while inside a value-producing branch needs a local-return boundary; \
@@ -1334,13 +1495,13 @@ private partial def sequence (names : DeclarationNames)
       let loopScope := invalidateObservations scope true
       let boolType ← resolveType (← `(Bool))
       let guardElements ← returnElements condition
-      let (guardRaw, _, _, _) ← sequence names imports boolType loopScope guardElements.toList
-      let (bodyRaw, _, _, _) ← sequence names imports resultType loopScope
-        (getDoElems body).toList false true
-      let (rawRest, _, _, returned) ← sequence names imports resultType loopScope rest false true
+      let ⟨guardRaw, _, _, _, _⟩ ← sequence names imports boolType loopScope guardElements.toList
+      let ⟨bodyRaw, _, _, _, _⟩ ← sequence names imports resultType loopScope
+        (getDoElems body).toList .immutable true
+      let ⟨rawRest, _, _, returned, normal⟩ ← sequence names imports resultType loopScope rest .immutable true
       let guard ← doTerm guardRaw
       let body : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (bodyRaw.map (·.raw))⟩
-      return (#[← `(doElem| while $guard:term do $body:doSeq)] ++ rawRest, none, none, returned)
+      return ⟨#[← `(doElem| while $guard:term do $body:doSeq)] ++ rawRest, none, none, returned, normal⟩
     if let `(doElem| for $pattern:term in $collection:term do $body:doSeq) := element then
       let index ← match pattern with
         | `($name:ident) => pure name
@@ -1371,7 +1532,7 @@ private partial def sequence (names : DeclarationNames)
       -- A loop helper is a genuine separately called source function. Calling
       -- its enclosing recursive function would require a mutual descent proof.
       modify fun state => { state with current := none, currentRecursive := false }
-      let (bodyRaw, bodyNative, bodyCalls, bodyReturned) ← sequence names imports stateNativeType
+      let ⟨bodyRaw, bodyNative, bodyCalls, bodyReturned, _⟩ ← sequence names imports stateNativeType
         [stateBinding, indexBinding] bodyElements.toList
       let some bodyReturned := bodyReturned
         | throwErrorAt body "a finite range body must return its prepared loop state"
@@ -1436,7 +1597,7 @@ private partial def sequence (names : DeclarationNames)
         ← `(doElem| let $result:ident : $stateSyntax ←
           $rangeName:ident $start:term $stop:term $stride:term $packed:ident)] ++
         (← restoreState captured result true)
-      return ← sequence names imports resultType scope (normalized.toList ++ rest) false allowFallthrough localReturn
+      return ← sequence names imports resultType scope (normalized.toList ++ rest) .immutable allowFallthrough localReturn
     let statementConditional? ← match element with
       | `(doElem| if $condition:term then $yes:doSeq else $no:doSeq) =>
           pure (some (condition, yes, no))
@@ -1444,52 +1605,85 @@ private partial def sequence (names : DeclarationNames)
           pure (some (condition, yes, (⟨Lean.Elab.Term.Do.mkDoSeq #[]⟩ : TSyntax ``doSeq)))
       | _ => pure none
     if let some (condition, yes, no) := statementConditional? then
-      let needsContract := allowFallthrough || hasGeneralWhile yes.raw || hasGeneralWhile no.raw ||
-        (!rest.isEmpty && (hasNonlocalExit yes.raw || hasNonlocalExit no.raw))
-      if needsContract then
-        if localReturn then
-          throwErrorAt element "early return inside a value-producing branch needs a local-return boundary; \
-            use a source function for that computation"
-        let condition ← value scope condition
-        expect element (← resolveType (← `(Bool))) condition.type
-        let (yesRaw, _, _, _) ← sequence names imports resultType scope
-          (getDoElems yes).toList false true
-        let (noRaw, _, _, _) ← sequence names imports resultType scope
-          (getDoElems no).toList false true
-        let after := invalidateObservations scope true
-        let (rawRest, _, _, returned) ← sequence names imports resultType after rest false true
-        let yes : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (yesRaw.map (·.raw))⟩
-        let no : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (noRaw.map (·.raw))⟩
-        return (#[← `(doElem| if $(condition.raw) then $yes:doSeq else $no:doSeq)] ++ rawRest,
-          none, none, returned)
-    if !rest.isEmpty then
-      if let some (condition, yes, no) := statementConditional? then
-        requireNormalBlock yes.raw
-        requireNormalBlock no.raw
-        let mutableBindings := (visibleBindings scope).filter (·.mutable)
-        let stateSyntax ← stateType mutableBindings.toList
-        let stateTerm ← stateValue mutableBindings
-        let yesBody ← doTerm (getDoElems yes |>.push (← `(doElem| return $stateTerm)))
-        let noBody ← doTerm (getDoElems no |>.push (← `(doElem| return $stateTerm)))
-        let joined := mkIdent (← mkFreshUserName `mutableJoin)
-        let normalized := #[← `(doElem| let $joined:ident : $stateSyntax ←
-          (if $condition:term then $yesBody:term else $noBody:term))] ++
-          (← restoreState mutableBindings joined true)
-        return ← sequence names imports resultType scope (normalized.toList ++ rest) false allowFallthrough localReturn
+      let condition ← value scope condition
+      expect element (← resolveType (← `(Bool))) condition.type
+      let yes ← sequence names imports resultType scope (getDoElems yes).toList .immutable true localReturn
+      let no ← sequence names imports resultType scope (getDoElems no).toList .immutable true localReturn
+      let yesBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (yes.raw.map (·.raw))⟩
+      let noBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (no.raw.map (·.raw))⟩
+      let raw ← `(doElem| if $(condition.raw) then $yesBody:doSeq else $noBody:doSeq)
+      let choose (mathematical : Bool) (yes no : TSyntax `term) := do
+        let model ← condition.requireModel
+        let condition := if mathematical then model.model else model.native
+        `(if $condition then $yes else $no)
+      return ← continueChoice raw yes no condition.model?.isSome choose
+        (Trace.conditional condition) rest
+    if let `(doElem| match $matched:term with
+        | $first:term => $firstBody:doSeq
+        | $second:term => $secondBody:doSeq) := element then
+      let discriminant ← value scope matched
+      if let .list _ := discriminant.type then
+        let (nilBody, head, tail, consBody) ←
+          if isNilPattern first then do
+            let some (head, tail) := consNames? second
+              | throwErrorAt second "expected a head :: tail List pattern"
+            pure (firstBody, head, tail, secondBody)
+          else if isNilPattern second then do
+            let some (head, tail) := consNames? first
+              | throwErrorAt first "expected a head :: tail List pattern"
+            pure (secondBody, head, tail, firstBody)
+          else throwErrorAt element "a List match needs exactly [] and head :: tail branches"
+        let inspected := mkIdent (← mkFreshUserName `listParts)
+        let payload := mkIdent (← mkFreshUserName `listFields)
+        let someElements := #[
+          ← `(doElem| let $head:ident := $payload:ident.1),
+          ← `(doElem| let $tail:ident := $payload:ident.2)] ++ getDoElems consBody
+        let someBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (someElements.map (·.raw))⟩
+        let read ← `(doElem| let $inspected:ident := List.uncons $matched:term)
+        let selected ← `(doElem| match $inspected:ident with
+          | none => $nilBody:doSeq
+          | some $payload:ident => $someBody:doSeq)
+        return ← sequence names imports resultType scope (read :: selected :: rest)
+          .immutable allowFallthrough localReturn
+      let .option payloadType := discriminant.type
+        | throwErrorAt matched "source matching currently supports List and Option values"
+      let (noneBody, payloadPattern, someBody) ←
+        if isNonePattern first then do
+          let some payload := somePattern? second
+            | throwErrorAt second "expected a some payload option pattern"
+          pure (firstBody, payload, secondBody)
+        else if isNonePattern second then do
+          let some payload := somePattern? first
+            | throwErrorAt first "expected a some payload option pattern"
+          pure (secondBody, payload, firstBody)
+        else throwErrorAt element "an Option match needs exactly none and some payload branches"
+      let (payloadName, payloadBindings) ← preparePayloadPattern payloadPattern payloadType
+      let payloadRaw := mkIdent (← mkFreshUserName (payloadName.getId.appendAfter "_source"))
+      let payloadRelation := mkIdent (← mkFreshUserName (payloadName.getId.appendAfter "_represented"))
+      let payloadNative := mkIdent (← mkFreshUserName (payloadName.getId.appendAfter "_native"))
+      let payload : Binding := {
+        name := payloadName, nativeName := payloadNative
+        type := payloadType, rawName := payloadRaw, relationName := payloadRelation
+        model? := discriminant.model?.map fun _ => {
+          model := ⟨payloadNative.raw⟩, rawModel := ⟨payloadRaw.raw⟩
+          observation := if payloadType.isIdentity then .refl else .named payloadRelation.getId } }
+      let absent ← sequence names imports resultType scope (getDoElems noneBody).toList .immutable true localReturn
+      let present ← sequence names imports resultType (payload :: scope)
+        (payloadBindings ++ getDoElems someBody).toList .immutable true localReturn
+      let noneBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (absent.raw.map (·.raw))⟩
+      let someBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (present.raw.map (·.raw))⟩
+      let raw ← `(doElem| match $(discriminant.raw):term with
+        | none => $noneBody:doSeq
+        | some $payloadName:ident => $someBody:doSeq)
+      let choose (mathematical : Bool) (absent present : TSyntax `term) := do
+        let model ← discriminant.requireModel
+        let discriminant := if mathematical then model.model else model.native
+        let type ← termOfExpr payloadType.nativeType
+        `(Option.elim $discriminant $absent (fun ($payloadNative:ident : $type) => $present))
+      return ← continueChoice raw absent present discriminant.model?.isSome choose
+        (Trace.optionMatch discriminant payload) rest
     if rest.isEmpty then
       let terminal? ← match element with
-        | `(doElem| if $test:term then $yes:doSeq else $no:doSeq) => do
-            let yesTerm ← branchTerm yes
-            let noTerm ← branchTerm no
-            pure (some (← `(if $test:term then $yesTerm:term else $noTerm:term)))
-        | `(doElem| match $discriminant:term with
-            | $first:term => $firstBody:doSeq
-            | $second:term => $secondBody:doSeq) => do
-            let firstTerm ← branchTerm firstBody
-            let secondTerm ← branchTerm secondBody
-            pure (some (← `(match $discriminant:term with
-              | $first:term => $firstTerm:term
-              | $second:term => $secondTerm:term)))
         | `(doElem| return $expression:term) =>
             pure (if (conditionalParts? expression).isSome || (matchParts? expression).isSome then
               some expression else none)
@@ -1499,7 +1693,7 @@ private partial def sequence (names : DeclarationNames)
         let type ← termOfExpr resultType.nativeType
         return ← sequence names imports resultType scope [
           ← `(doElem| let $temporary:ident : $type ← ($expression:term)),
-          ← `(doElem| return $temporary:ident)] false allowFallthrough localReturn
+          ← `(doElem| return $temporary:ident)] .immutable allowFallthrough localReturn
     -- An unparenthesized `if` after `←` is a `doIf`, not a term.
     -- Normalize that parser shape before the shared typed conditional path.
     if let `(doElem| let $name:ident $[: $annotation:term]? ← $rhs:doElem) := element then
@@ -1508,7 +1702,7 @@ private partial def sequence (names : DeclarationNames)
         let noTerm ← branchTerm no
         let expression ← `(if $test:term then $yesTerm:term else $noTerm:term)
         let normalized ← `(doElem| let $name:ident $[: $annotation:term]? ← ($expression:term))
-        return ← sequence names imports resultType scope (normalized :: rest) bindingMutable allowFallthrough localReturn
+        return ← sequence names imports resultType scope (normalized :: rest) bindingKind allowFallthrough localReturn
       if let `(doElem| match $discriminant:term with
           | $first:term => $firstBody:doSeq
           | $second:term => $secondBody:doSeq) := rhs then
@@ -1518,7 +1712,7 @@ private partial def sequence (names : DeclarationNames)
           | $first:term => $firstBody:term
           | $second:term => $secondBody:term)
         let normalized ← `(doElem| let $name:ident $[: $annotation:term]? ← ($expression:term))
-        return ← sequence names imports resultType scope (normalized :: rest) bindingMutable allowFallthrough localReturn
+        return ← sequence names imports resultType scope (normalized :: rest) bindingKind allowFallthrough localReturn
     let binding? := match element with
       | `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term) =>
           some (name, annotation, expression)
@@ -1526,9 +1720,6 @@ private partial def sequence (names : DeclarationNames)
           some (name, annotation, expression)
       | _ => none
     if let some (name, annotation, expression) := binding? then
-      if !bindingMutable &&
-          (scope.find? (fun binding => binding.name.getId == name.getId)).any (·.mutable) then
-        throwErrorAt name "shadowing a mutable native local is not yet supported; assign it or use a fresh name"
       if let some (matched, first, firstBody, second, secondBody) := matchParts? expression then
         let some annotation := annotation
           | throwErrorAt name "a native match binding requires an explicit result type"
@@ -1555,39 +1746,40 @@ private partial def sequence (names : DeclarationNames)
             | none => $nilBody:term
             | some $payload:ident => $someBody:term)
           let read ← `(doElem| let $inspected:ident := List.uncons $matched:term)
-          let select ← if bindingMutable then
-              if (scope.find? (fun binding => binding.name.getId == name.getId)).any (·.mutable) then
-                `(doElem| $name:ident ← ($optionMatch:term))
-              else `(doElem| let mut $name:ident : $annotation ← ($optionMatch:term))
-            else `(doElem| let $name:ident : $annotation ← ($optionMatch:term))
-          return ← sequence names imports resultType scope (read :: select :: rest) false allowFallthrough localReturn
+          let select ← match bindingKind with
+            | .assignment => `(doElem| $name:ident ← ($optionMatch:term))
+            | .mutable => `(doElem| let mut $name:ident : $annotation ← ($optionMatch:term))
+            | .immutable => `(doElem| let $name:ident : $annotation ← ($optionMatch:term))
+          return ← sequence names imports resultType scope (read :: select :: rest) .immutable allowFallthrough localReturn
         let .option payloadType := discriminant.type
           | throwErrorAt matched "native matching currently supports List and Option values"
-        let (noneBody, payloadName, someBody) ←
+        let (noneBody, payloadPattern, someBody) ←
           if isNonePattern first then do
-            let some payload := someName? second
+            let some payload := somePattern? second
               | throwErrorAt second "expected a some payload option pattern"
             pure (firstBody, payload, secondBody)
           else if isNonePattern second then do
-            let some payload := someName? first
+            let some payload := somePattern? first
               | throwErrorAt first "expected a some payload option pattern"
             pure (secondBody, payload, firstBody)
           else throwErrorAt expression "an Option match needs exactly none and some payload branches"
+        let (payloadName, payloadBindings) ← preparePayloadPattern payloadPattern payloadType
         let selectedType ← resolveType annotation
         let noneElements ← returnElements noneBody
-        let someElements ← returnElements someBody
+        let someElements := payloadBindings ++ (← returnElements someBody)
         let payloadRaw := mkIdent (← mkFreshUserName (payloadName.getId.appendAfter "_source"))
         let payloadRelation := mkIdent (← mkFreshUserName (payloadName.getId.appendAfter "_represented"))
+        let payloadNative := mkIdent (← mkFreshUserName (payloadName.getId.appendAfter "_native"))
         let payload : Binding := {
-          name := payloadName, type := payloadType, rawName := payloadRaw,
+          name := payloadName, nativeName := payloadNative, type := payloadType, rawName := payloadRaw,
           relationName := payloadRelation
           model? := discriminant.model?.map fun _ => {
-            model := ⟨payloadName.raw⟩, rawModel := ⟨payloadRaw.raw⟩
+            model := ⟨payloadNative.raw⟩, rawModel := ⟨payloadRaw.raw⟩
             observation := if payloadType.isIdentity then .refl else .named payloadRelation.getId } }
-        let (noneRaw, noneNative, noneCalls, noneResult) ←
-          sequence names imports selectedType scope noneElements.toList false false true
-        let (someRaw, someNative, someCalls, someResult) ←
-          sequence names imports selectedType (payload :: scope) someElements.toList false false true
+        let ⟨noneRaw, noneNative, noneCalls, noneResult, _⟩ ←
+          sequence names imports selectedType scope noneElements.toList .immutable false true
+        let ⟨someRaw, someNative, someCalls, someResult, _⟩ ←
+          sequence names imports selectedType (payload :: scope) someElements.toList .immutable false true
         let some noneResult := noneResult
           | throwErrorAt noneBody "a value-producing branch must return a value"
         let some someResult := someResult
@@ -1597,6 +1789,7 @@ private partial def sequence (names : DeclarationNames)
         let joinSlot ← makeJoinSlot slot selectedType.coreTy
         let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
         let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
+        let nativeName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_native"))
         let noneBlock ← joinSlot.branch noneRaw
         let someBlock ← joinSlot.branch someRaw
         let payloadNativeType ← termOfExpr payloadType.nativeType
@@ -1611,33 +1804,34 @@ private partial def sequence (names : DeclarationNames)
           let noneNativeBody ← doTerm noneNative
           let someNativeBody ← doTerm someNative
           let nativeChoice ← `(Option.elim $(discriminant.native) (Id.run $noneNativeBody:term)
-            (fun ($payloadName:ident : $payloadNativeType) => Id.run $someNativeBody:term))
+            (fun ($payloadNative:ident : $payloadNativeType) => Id.run $someNativeBody:term))
           let model ← `(Option.elim $(discriminant.model) $(noneResult.model)
-            (fun ($payloadName:ident : $payloadNativeType) => $(someResult.model)))
+            (fun ($payloadNative:ident : $payloadNativeType) => $(someResult.model)))
           pure (nativeChoice, ({
             model, rawModel := ⟨rawName.raw⟩
             observation := if selectedType.isIdentity then .refl else .named relationName.getId } : BindingModel))
         let binding : Binding := {
-          name, type := selectedType, rawName, relationName,
+          name, nativeName, type := selectedType, rawName, relationName,
           model? := choice.map (·.2)
+          slot := ← bindingSlot name
           mutable := bindingMutable }
-        let (rawRest, nativeRest, later, returned) ←
-          sequence names imports resultType (binding :: scope) rest false allowFallthrough localReturn
+        let ⟨rawRest, nativeRest, later, returned, normal⟩ ←
+          sequence names imports resultType (binding :: scope) rest .immutable allowFallthrough localReturn
         let rawPrefix := #[
           ← `(doElem| let mut $slot:ident : $(joinSlot.type) := $(joinSlot.initial)),
           ← `(doElem| match $(discriminant.raw):term with
             | none => $noneBlock:doSeq
             | some $payloadName:ident => $someBlock:doSeq)]
         let nativeBinding ← choice.mapM fun (nativeChoice, _) =>
-          `(doElem| let $name:ident : $nativeType := $nativeChoice)
+          `(doElem| let $nativeName:ident : $nativeType := $nativeChoice)
         let calls : Option (Array Trace) := do
           let _ ← choice
           let noneCalls ← noneCalls
           let someCalls ← someCalls
           let later ← later
           pure (#[.optionMatch discriminant payload noneCalls someCalls noneResult someResult binding] ++ later)
-        return (rawPrefix ++ (← joinSlot.continuation name rawRest (bindingKind name)),
-          (fun binding rest => #[binding] ++ rest) <$> nativeBinding <*> nativeRest, calls, returned)
+        return ⟨rawPrefix ++ (← joinSlot.continuation name rawRest bindingKind),
+          (fun binding rest => #[binding] ++ rest) <$> nativeBinding <*> nativeRest, calls, returned, normal⟩
       if let some (test, yes, no) := conditionalParts? expression then
         let some annotation := annotation
           | throwErrorAt name "a native conditional binding requires an explicit result type"
@@ -1646,10 +1840,10 @@ private partial def sequence (names : DeclarationNames)
         expect test (← resolveType (← `(Bool))) condition.type
         let yesElements ← returnElements yes
         let noElements ← returnElements no
-        let (yesRaw, yesNative, yesCalls, yesResult) ←
-          sequence names imports selectedType scope yesElements.toList false false true
-        let (noRaw, noNative, noCalls, noResult) ←
-          sequence names imports selectedType scope noElements.toList false false true
+        let ⟨yesRaw, yesNative, yesCalls, yesResult, _⟩ ←
+          sequence names imports selectedType scope yesElements.toList .immutable false true
+        let ⟨noRaw, noNative, noCalls, noResult, _⟩ ←
+          sequence names imports selectedType scope noElements.toList .immutable false true
         let some yesResult := yesResult
           | throwErrorAt yes "a value-producing branch must return a value"
         let some noResult := noResult
@@ -1659,6 +1853,7 @@ private partial def sequence (names : DeclarationNames)
         let joinSlot ← makeJoinSlot slot selectedType.coreTy
         let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
         let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
+        let nativeName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_native"))
         let yesBlock ← joinSlot.branch yesRaw
         let noBlock ← joinSlot.branch noRaw
         let choiceInputs := do
@@ -1678,39 +1873,91 @@ private partial def sequence (names : DeclarationNames)
             model, rawModel := ⟨rawName.raw⟩
             observation := if selectedType.isIdentity then .refl else .named relationName.getId } : BindingModel))
         let binding : Binding := {
-          name, type := selectedType, rawName, relationName,
+          name, nativeName, type := selectedType, rawName, relationName,
           model? := choice.map (·.2)
+          slot := ← bindingSlot name
           mutable := bindingMutable }
-        let (rawRest, nativeRest, later, returned) ←
-          sequence names imports resultType (binding :: scope) rest false allowFallthrough localReturn
+        let ⟨rawRest, nativeRest, later, returned, normal⟩ ←
+          sequence names imports resultType (binding :: scope) rest .immutable allowFallthrough localReturn
         let rawPrefix := #[
           ← `(doElem| let mut $slot:ident : $(joinSlot.type) := $(joinSlot.initial)),
           ← `(doElem| if $(condition.raw) then $yesBlock:doSeq else $noBlock:doSeq)]
         let nativeBinding ← choice.mapM fun (nativeChoice, _) =>
-          `(doElem| let $name:ident : $nativeType := $nativeChoice)
+          `(doElem| let $nativeName:ident : $nativeType := $nativeChoice)
         let calls : Option (Array Trace) := do
           let _ ← choice
           let yesCalls ← yesCalls
           let noCalls ← noCalls
           let later ← later
           pure (#[.conditional condition yesCalls noCalls yesResult noResult binding] ++ later)
-        return (rawPrefix ++ (← joinSlot.continuation name rawRest (bindingKind name)),
-          (fun binding rest => #[binding] ++ rest) <$> nativeBinding <*> nativeRest, calls, returned)
+        return ⟨rawPrefix ++ (← joinSlot.continuation name rawRest bindingKind),
+          (fun binding rest => #[binding] ++ rest) <$> nativeBinding <*> nativeRest, calls, returned, normal⟩
+    if binding?.isNone then
+      let destructuring? := match element with
+        | `(doElem| let $pattern:term ← $expression:term) => some (pattern, expression, true)
+        | `(doElem| let $pattern:term := $expression:term) => some (pattern, expression, false)
+        | _ => none
+      if let some (pattern, expression, action) := destructuring? then
+        let parsed ← prepareMacro (checkedBindingPattern pattern)
+        let annotation := match parsed with | .typed _ type => some type | _ => none
+        let install (type : NativeType) (expression : TSyntax `term) : PrepareM PreparedBlock := do
+          let name := mkIdent (← mkFreshUserName `pattern)
+          let bindings ← patternBindings parsed type ⟨name.raw⟩
+          let initial ← if action then
+              `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term)
+            else `(doElem| let $name:ident $[: $annotation:term]? := $expression:term)
+          return ← sequence names imports resultType scope
+            (initial :: bindings.toList ++ rest) .immutable allowFallthrough localReturn
+        let canonical ← canonicalCall? imports scope expression
+        if !action then
+          if let some call := canonical then
+            let rewritten ← `(doElem| let $pattern:term ← $call:term)
+            return ← sequence names imports resultType scope (rewritten :: rest)
+              .immutable allowFallthrough localReturn
+          if let some (called, rebuild) ← hoistValueCall? imports scope expression then
+            let name := mkIdent (← mkFreshUserName `sourceValue)
+            let called ← `(doElem| let $name:ident ← $called:term)
+            let expression ← rebuild ⟨name.raw⟩
+            let rewritten ← `(doElem| let $pattern:term := $expression:term)
+            return ← sequence names imports resultType scope (called :: rewritten :: rest)
+              .immutable allowFallthrough localReturn
+          let result ← value scope expression (← annotation.mapM fun stx => return ← resolveType stx)
+          return ← install result.type expression
+        let expression := canonical.getD expression
+        if let some (operation, _) ← operationCall? names imports scope expression then
+          return ← install operation.result expression
+        if (conditionalParts? expression).isSome || (matchParts? expression).isSome then
+          let some annotation := annotation
+            | throwErrorAt pattern "a branching destructuring binding requires its result type"
+          return ← install (← resolveType annotation) expression
+        let raw ← match expression with
+          | `(source_raw_value% ($raw)) => pure raw
+          | _ => prepareRawOperands scope expression
+        let headers ← rawHeaders names
+        let rawScope := scope.map fun binding => (binding.name, binding.type.coreTy)
+        let (bindings, rewritten) ← prepareMacro (normalizeRawCall headers rawScope raw)
+        let expression ← `(source_raw_value% ($rewritten))
+        if !bindings.isEmpty then
+          let rewritten ← `(doElem| let $pattern:term ← $expression:term)
+          return ← sequence names imports resultType scope
+            ((← markRawElements bindings).toList ++ rewritten :: rest)
+            .immutable allowFallthrough localReturn
+        let type ← prepareMacro (inferRawBindingType headers rawScope rewritten)
+        return ← install (← resolveType (← rawTypeTerm type)) expression
     match element with
     | `(doElem| let $name:ident $[: $annotation:term]? := $expression:term) =>
         if let some call ← canonicalCall? imports scope expression then
           let binding ← `(doElem| let $name:ident $[: $annotation:term]? ← $call:term)
-          return ← sequence names imports resultType scope (binding :: rest) bindingMutable allowFallthrough localReturn
+          return ← sequence names imports resultType scope (binding :: rest) bindingKind allowFallthrough localReturn
         if let some (called, rebuild) ← hoistValueCall? imports scope expression then
           let temporary := mkIdent (← mkFreshUserName `sourceValue)
           let call ← `(doElem| let $temporary:ident ← $called:term)
           let rewritten ← rebuild ⟨temporary.raw⟩
-          let binding ← if bindingMutable then
-              if (scope.find? (fun binding => binding.name.getId == name.getId)).any (·.mutable) then
-                `(doElem| $name:ident := $rewritten:term)
-              else `(doElem| let mut $name:ident $[: $annotation:term]? := $rewritten:term)
-            else `(doElem| let $name:ident $[: $annotation:term]? := $rewritten:term)
-          return ← sequence names imports resultType scope (call :: binding :: rest) false allowFallthrough localReturn
+          let binding ← match bindingKind with
+            | .assignment => `(doElem| $name:ident := $rewritten:term)
+            | .mutable => `(doElem| let mut $name:ident $[: $annotation:term]? := $rewritten:term)
+            | .immutable => `(doElem| let $name:ident $[: $annotation:term]? := $rewritten:term)
+          return ← sequence names imports resultType scope (call :: binding :: rest) .immutable allowFallthrough localReturn
         let result ← value scope expression (← annotation.mapM fun stx => return ← resolveType stx)
         if let some annotation := annotation then expect annotation (← resolveType annotation) result.type
         let rawType ← rawTypeTerm result.type.coreTy
@@ -1733,12 +1980,12 @@ private partial def sequence (names : DeclarationNames)
           let (bindings, rewritten) ← prepareMacro (normalizeRawCall headers rawScope raw)
           if !bindings.isEmpty then
             let expression ← `(source_raw_value% ($rewritten))
-            let call ← match bindingKind name with
+            let call ← match bindingKind with
               | .immutable => `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term)
               | .mutable => `(doElem| let mut $name:ident $[: $annotation:term]? ← $expression:term)
               | .assignment => `(doElem| $name:ident ← $expression:term)
             return ← sequence names imports resultType scope
-              ((← markRawElements bindings).toList ++ call :: rest) false allowFallthrough localReturn
+              ((← markRawElements bindings).toList ++ call :: rest) .immutable allowFallthrough localReturn
           let type ← prepareMacro (inferRawBindingType headers rawScope rewritten)
           let nativeType ← resolveType (← rawTypeTerm type)
           if let some annotation := annotation then
@@ -1747,39 +1994,18 @@ private partial def sequence (names : DeclarationNames)
           return ← bindAndContinue {
             name, type := nativeType, rawName := name, relationName := name }
             (← `(doElem| let $name:ident : $type ← $rewritten:term)) none none rest true
-        unless arguments.size == operation.inputs.size do throwError "wrong number of native call arguments"
-        let arguments ← arguments.mapIdxM fun index argument =>
-          value scope argument operation.inputs[index]?
-        for argument in arguments, expected in operation.inputs do expect element expected argument.type
         if let some annotation := annotation then expect annotation (← resolveType annotation) operation.result
-        let sourceName := mkIdentFrom name
-          (if operation.family.getId == names.sourceFamily.getId then operation.sourceName
-            else operation.family.getId ++ operation.sourceName)
-        let raw := Lean.Syntax.mkApp ⟨sourceName.raw⟩ (arguments.map (·.raw))
+        let (invocation, raw, native) ← prepareInvocation names scope name operation arguments
         let rawType ← rawTypeTerm operation.result.coreTy
         let nativeType ← termOfExpr operation.result.nativeType
-        let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
-        let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
-        let models : Option (Array ValueModel) := arguments.mapM (·.model?)
-        let callModel : Option (TSyntax `term × BindingModel) := do
-          let operationModel ← operation.model?
-          let arguments : Array ValueModel ← models
-          let native := Lean.Syntax.mkApp operationModel.native (arguments.map (·.native))
-          let model := Lean.Syntax.mkApp operationModel.native (arguments.map (·.model))
-          pure (native, ({
-            model, rawModel := ⟨rawName.raw⟩
-            observation := if operation.result.isIdentity then .refl else .named relationName.getId } : BindingModel))
-        let binding : Binding := {
-          name, type := operation.result, rawName, relationName,
-          model? := callModel.map (·.2) }
-        bindAndContinue binding
+        bindAndContinue invocation.result
           (← `(doElem| let $name:ident : $rawType ← $raw:term))
-          (← callModel.mapM fun (native, _) => `(doElem| let $name:ident : $nativeType := $native))
-          (callModel.map fun _ => #[.call ⟨operation, arguments, binding⟩]) rest operation.model?.isNone
+          (← native.mapM fun native => `(doElem| let $name:ident : $nativeType := $native))
+          (native.map fun _ => #[.call invocation]) rest operation.model?.isNone
     | `(doElem| return) =>
         let returned ← `(doElem| return ())
         return ← sequence names imports resultType scope (returned :: rest)
-          false allowFallthrough localReturn
+          .immutable allowFallthrough localReturn
     | `(doElem| return $expression:term) =>
         unless rest.isEmpty do throwError "statements after the final return are not supported"
         if let some (called, rebuild) ← hoistValueCall? imports scope expression then
@@ -1787,15 +2013,30 @@ private partial def sequence (names : DeclarationNames)
           let call ← `(doElem| let $temporary:ident ← $called:term)
           let rewritten ← rebuild ⟨temporary.raw⟩
           let returned ← `(doElem| return $rewritten:term)
-          return ← sequence names imports resultType scope [call, returned] false allowFallthrough localReturn
+          return ← sequence names imports resultType scope [call, returned] .immutable allowFallthrough localReturn
         let result ← value scope expression (some resultType)
         expect element resultType result.type
         let native ← result.model?.mapM fun model => do
           return #[← `(doElem| return $(model.native))]
-        return (#[← `(doElem| return $(result.raw))], native, some #[], some result)
+        return ⟨#[← `(doElem| return $(result.raw))], native, some #[], some result, none⟩
     | `(doElem| $expression:term) =>
         let called := (← canonicalCall? imports scope expression).getD expression
-        if (← operationCall? names imports scope called).isNone then
+        let operation? ← operationCall? names imports scope called
+        if let some (operation, arguments) := operation? then
+          unless operation.result.coreTy == .unit do
+            throwErrorAt expression "a standalone source call must return Unit; bind its result"
+          let ignored := mkIdent (← mkFreshUserName `ignoredResult)
+          let (invocation, raw, native) ← prepareInvocation names scope ignored operation arguments
+          let after := if operation.model?.isNone then invalidateObservations scope else scope
+          let continued ← sequence names imports resultType after rest .immutable allowFallthrough localReturn
+          let nativeType ← termOfExpr operation.result.nativeType
+          let nativePrefix ← native.mapM fun native =>
+            `(doElem| let $ignored:ident : $nativeType := $native)
+          return { continued with
+            raw := #[← `(doElem| $raw:term)] ++ continued.raw
+            native? := (fun binding rest => #[binding] ++ rest) <$> nativePrefix <*> continued.native?
+            calls? := (fun _ rest => #[.call invocation] ++ rest) <$> native <*> continued.calls? }
+        else
           let raw ← match called with
             | `(source_raw_value% ($raw)) => pure raw
             | _ => prepareRawOperands scope called
@@ -1805,17 +2046,14 @@ private partial def sequence (names : DeclarationNames)
           if !bindings.isEmpty then
             let action ← `(doElem| source_raw_value% ($rewritten))
             return ← sequence names imports resultType scope
-              ((← markRawElements bindings).toList ++ action :: rest) false allowFallthrough localReturn
+              ((← markRawElements bindings).toList ++ action :: rest) .immutable allowFallthrough localReturn
           prepareMacro (checkRawAction headers rawScope rewritten)
-          let (rawRest, _, _, returned) ← sequence names imports resultType
-            (invalidateObservations scope) rest false allowFallthrough localReturn
-          return (#[← `(doElem| $rewritten:term)] ++ rawRest, none, none, returned)
-        let ignored := mkIdent (← mkFreshUserName `ignoredResult)
-        let call ← `(doElem| let $ignored:ident : Unit ← $called:term)
-        return ← sequence names imports resultType scope (call :: rest)
-          false allowFallthrough localReturn
-    | _ => throwError "source blocks support lets, let mut and assignment, source calls and raw operations, \
-        conditional/match bindings, normal finite Nat ranges, general while and return; \
+          let ⟨rawRest, _, _, returned, normal⟩ ← sequence names imports resultType
+            (invalidateObservations scope) rest .immutable allowFallthrough localReturn
+          return ⟨#[← `(doElem| $rewritten:term)] ++ rawRest, none, none, returned, normal⟩
+    | _ => throwError "source blocks support typed product/Option patterns, lets, let mut and assignment, \
+        source calls and raw operations, conditional/match bindings, with_scratch, \
+        normal finite Nat ranges, general while and return; \
         break/continue and general loops inside value-producing branches are not supported here"
 
 private partial def hasTerminationHints : Syntax → Bool
@@ -1866,7 +2104,7 @@ private def prepareFunction (names : DeclarationNames)
       refinement := fieldName family name "_refines"
       preservingRelation := some (fieldName family name "_action_rel_native_preserving") } }
   modify fun state => { state with current := some current, currentRecursive := false }
-  let (raw, native, calls, returned) ← sequence names imports result scope elements
+  let ⟨raw, native, calls, returned, _⟩ ← sequence names imports result scope elements
   let recursive := (← get).currentRecursive
   let fn : Function := {
     name := name
@@ -2654,11 +2892,11 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
                   | none =>
                       simp only [Complexity.Language.Representation.option, $rawCase:ident,
                         $nativeCase:ident] at $observed:ident
-                  | some $(payload.name):ident =>
+                  | some $(payload.nativeName):ident =>
                       have $payloadObserved:ident :
                           ($payloadRepresentation : Complexity.Language.Representation
                             $payloadType $payloadCore).Rel
-                            $(payload.name):ident $(payload.rawName):ident $currentHeap := by
+                            $(payload.nativeName):ident $(payload.rawName):ident $currentHeap := by
                         simpa only [Complexity.Language.Representation.option, $rawCase:ident,
                           $nativeCase:ident] using $observed:ident
                       simp (config := { failIfUnchanged := false }) only [$rawCase:ident, $nativeCase:ident,

@@ -1,16 +1,19 @@
 # High-level language design
 
-Status: `source_program (pure)` generates native total functions over scalars
-and their products/options with checked source correspondence. Self-recursion,
-acyclic calls and finite-range `for` are supported; general pure `while`, mutually
-recursive pure families and buffers are not. Effectful declarations
-retain their partial heap-action interface. Named `Buffer.alloc` has a checked
-allocating-callee/using-caller path to RAM, including resource-import transport.
-Scoped scratch reclamation now has a checked same-source runner and physical
-workspace bound independent of repeated call count; see
-[the implementation checklist](RECLAMATION_TODO.md). The
-high-level programming/proof interface remains incomplete; the
-[roadmap](ROADMAP.md) distinguishes its working foundations from planned APIs.
+The intended interface is one program declaration. Arrays, records, calls,
+mutation, loops and recursion are language features that must compose; authors
+should not choose a frontend before combining them. Correctness can use an
+ordinary Lean function equation or a mathematical state contract, depending on
+the program. These are proof views of the same implementation, not different
+languages or execution models.
+
+**Current status: integration is incomplete.** Existing `(pure)` and `(native)`
+entry forms still expose different subsets of the implementation. The shared
+typed source and RAM backend, mathematical representation metadata and optional
+model preparation are connected, but a common default entry and control-flow
+preparation are not finished. The [active integration gate](ROADMAP.md#active-integration-gate)
+lists the remaining work. The mechanisms described below are current evidence,
+not a recommendation to split an algorithm across three source modes.
 
 Integration now also connects represented records/arrays to scalar expressions,
 direct pure-source imports and self-recursion, including actual allocation before
@@ -28,11 +31,22 @@ only mutable locals and closes over fixed captures. The generator uses
 `List.foldl_hom` to prove that view corresponds to the unchanged full-state
 source loop; authors do not unfold captured-state tuples.
 
+Statement branches, lexical shadowing, standalone Unit calls, nested product
+patterns and scratch scopes now pass through the same represented preparation.
+Their actual source control remains distinct from proof-only result joins and
+local versions. The original linked-list body identity, optional-buffer import
+chain and nested-scratch consumers retain their correctness and compiled
+resource statements. Scoped cleanup does not preserve observations of reclaimed
+storage. Finite ranges still need one common actual lowering before the public
+entry forms can be collapsed.
+
 The [cross-prover research report](DESIGN_RESEARCH.md) supplies the rationale
-for the next interface: one supported implementation, a common mathematical
-contract layer, and complementary pure-equation and mutable-VCG proof modes.
-Executable pure functions are implemented for the buffer-free subset; extending that
-interface does not replace verification of genuinely effectful algorithms.
+for a common mathematical contract layer with complementary function-equation
+and state-invariant proofs. A model can describe mathematical Arrays or Lists
+even when their implementation allocates. Conversely, arbitrary mutation of
+aliased inputs need not have a total function of their entry-time contents;
+its correctness remains a state contract. Generating a total model must not be
+a prerequisite for accepting the underlying source program.
 
 The independent scalar core now has
 source correctness rules, generic whole-function lowering and proof transfer to

@@ -30,7 +30,7 @@ namespace Complexity.Language.Examples.Scope
 
 open scoped Part.TotalCorrectness
 
-source_program Implementation where
+source_program (native) Implementation where
   def work (out : Buffer Nat) (n : Nat) (value : Nat) : Unit := do
     with_scratch do
       let temp ← Buffer.alloc n value
@@ -67,9 +67,9 @@ def heapLimit (entryCursor n : Nat) : Nat := entryCursor + 1 + 2 * n
 /-- The inner body allocates its actual scratch array and then falls through.
 Its surrounding lexical bindings retain their original ordinary values. -/
 theorem inner_body_eval (temp out : Buffer .nat) (n value : Nat) (heap : Heap) :
-    Implementation.work_scope2.body temp out n value heap =
+    Implementation.Source.work_scope2.body temp out n value heap =
       Part.some ((.normal, temp, out, n, value, ()), (heap.alloc (τ := .nat) n 0).2) := by
-  rw [Implementation.work_scope2.body_eq]
+  rw [Implementation.Source.work_scope2.body_eq]
   simp only [Buffer.allocM, ExceptT.run, Bind.bind, StateT.bind,
     Pure.pure, StateT.pure, Part.bind_some]
 
@@ -77,15 +77,15 @@ theorem inner_body_eval (temp out : Buffer .nat) (n value : Nat) (heap : Heap) :
 borrowed handles were live on entry, so neither is an escaping temporary. -/
 theorem inner_eval (temp out : Buffer .nat) (n value : Nat) (heap : Heap)
     (tempRooted : temp.Rooted heap) (outRooted : out.Rooted heap) :
-    Implementation.work_scope2 temp out n value heap =
+    Implementation.Source.work_scope2 temp out n value heap =
       Part.some ((.normal, temp, out, n, value, ()), heap) := by
   have safe : ScopeSafe heap
-      ⟨Implementation.work_scope2.View.symm (temp, out, n, value, ()),
+      ⟨Implementation.Source.work_scope2.View.symm (temp, out, n, value, ()),
         (heap.alloc (τ := .nat) n 0).2⟩ (.normal : Control .unit) := by
-    simp only [ScopeSafe, Implementation.work_scope2.view_symm_apply,
+    simp only [ScopeSafe, Implementation.Source.work_scope2.view_symm_apply,
       Env.Rooted.cons_iff, Env.Rooted.empty, ValueRooted, Control.Rooted,
       tempRooted, outRooted, and_self]
-  rw [Implementation.work_scope2.eq]
+  rw [Implementation.Source.work_scope2.eq]
   dsimp only
   rw [inner_body_eval]
   simp only [Part.map_some, scopeExit_of_safe safe, Heap.take_alloc_self,
@@ -95,9 +95,9 @@ theorem inner_eval (temp out : Buffer .nat) (n value : Nat) (heap : Heap)
 allocation or reclamation detail imposed on its continuation. -/
 theorem inner_spec (temp out : Buffer .nat) (n value : Nat)
     (post : Std.Do.PostCond
-      (Control .unit × Implementation.work_scope2.Locals) (.arg Heap .pure)) :
+      (Control .unit × Implementation.Source.work_scope2.Locals) (.arg Heap .pure)) :
     Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
-      (Implementation.work_scope2 temp out n value)
+      (Implementation.Source.work_scope2 temp out n value)
       (fun heap => ⟨temp.Rooted heap ∧ out.Rooted heap ∧
         (post.1 (.normal, temp, out, n, value, ()) heap).down⟩) post := by
   apply (Part.TotalCorrectness.stateT_triple_iff _ _ _).mpr
@@ -110,11 +110,11 @@ The ordinary contents contract describes the write to the surviving output. -/
 theorem outer_body_spec (out : Buffer .nat) (n value previous : Nat)
     (heap : Heap) (observed : out.Contents heap #[previous]) :
     Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
-      (Implementation.work_scope1.body out n value)
+      (Implementation.Source.work_scope1.body out n value)
       (fun entry => ⟨entry = heap⟩)
       (fun outcome finish => ⟨outcome = (.returned (), out, n, value, ()) ∧
         out.Contents finish (workContents n value previous)⟩, ⟨⟩) := by
-  rw [Implementation.work_scope1.body_eq]
+  rw [Implementation.Source.work_scope1.body_eq]
   mvcgen [inner_spec]
   rename_i entry same
   subst entry
@@ -146,7 +146,7 @@ while releasing the temporary object from the actual final heap. -/
 theorem outer_eval (out : Buffer .nat) (n value previous : Nat)
     (heap : Heap) (observed : out.Contents heap #[previous]) :
     ∃ finish,
-      Implementation.work_scope1 out n value heap =
+      Implementation.Source.work_scope1 out n value heap =
         Part.some ((.returned (), out, n, value, ()), finish) ∧
       out.Contents finish (workContents n value previous) := by
   obtain ⟨outcome, finish, executed, same, updated⟩ :=
@@ -154,13 +154,13 @@ theorem outer_eval (out : Buffer .nat) (n value previous : Nat)
       (outer_body_spec out n value previous heap observed) heap rfl
   subst outcome
   have safe : ScopeSafe heap
-      ⟨Implementation.work_scope1.View.symm (out, n, value, ()), finish⟩
+      ⟨Implementation.Source.work_scope1.View.symm (out, n, value, ()), finish⟩
       (.returned () : Control .unit) := by
-    simp only [ScopeSafe, Implementation.work_scope1.view_symm_apply,
+    simp only [ScopeSafe, Implementation.Source.work_scope1.view_symm_apply,
       Env.Rooted.cons_iff, Env.Rooted.empty, ValueRooted, Control.Rooted,
       observed.valid.rooted, and_self]
   refine ⟨finish.take heap.objects.size, ?_, updated.take observed.valid.rooted⟩
-  rw [Implementation.work_scope1.eq]
+  rw [Implementation.Source.work_scope1.eq]
   dsimp only
   rw [executed]
   simp only [Part.map_some, scopeExit_of_safe safe, Equiv.apply_symm_apply]
@@ -169,21 +169,21 @@ theorem outer_eval (out : Buffer .nat) (n value previous : Nat)
 borrowed output. No word width, memory capacity or time budget is assumed. -/
 theorem work_eval (out : Buffer .nat) (n value previous : Nat)
     (heap : Heap) (observed : out.Contents heap #[previous]) :
-    ∃ finish, Implementation.work out n value heap = Part.some (.ok (), finish) ∧
+    ∃ finish, Implementation.Source.work out n value heap = Part.some (.ok (), finish) ∧
       out.Contents finish (workContents n value previous) := by
   obtain ⟨finish, executed, updated⟩ := outer_eval out n value previous heap observed
   refine ⟨finish, ?_, updated⟩
-  rw [Implementation.work_eq]
+  rw [Implementation.Source.work_eq]
   simp [source_eval, executed]
 
 /-- A source call reuses the worker's mathematical contents contract at its
 actual entry and final heaps, through the generated ordinary-argument bridge. -/
 theorem work_total (previous : Nat) :
-    FunctionTotal Implementation.program Implementation.workId
+    FunctionTotal Implementation.Source.program Implementation.Source.workId
       (fun args heap => args.head.Contents heap #[previous])
       (fun args _ _ finish =>
         args.head.Contents finish (workContents args.tail.head args.tail.tail.head previous)) := by
-  apply (Implementation.work_total_iff
+  apply (Implementation.Source.work_total_iff
     (fun out _ _ heap => out.Contents heap #[previous])
     (fun out n value _ _ finish => out.Contents finish (workContents n value previous))).mpr
   intro out n value heap observed
@@ -228,10 +228,10 @@ theorem invariant_done (out : Buffer .nat) (count n value : Nat)
 /-- The loop's actual guard preserves its full lexical state and decides the
 ordinary positivity test used by the termination argument. -/
 theorem guard_eval (remaining : Nat) (out : Buffer .nat) (count n value : Nat) :
-    Implementation.make_loop1.guard remaining out count n value =
+    Implementation.Source.make_loop1.guard remaining out count n value =
       (pure (.returned (decide (0 < remaining)), remaining, out, count, n, value, ()) :
-        StateT Heap Part (Control .bool × Implementation.make_loop1.Locals)) :=
-  Implementation.make_loop1.guard_eq remaining out count n value
+        StateT Heap Part (Control .bool × Implementation.Source.make_loop1.Locals)) :=
+  Implementation.Source.make_loop1.guard_eq remaining out count n value
 
 /-- A real loop body calls the scoped worker and decreases only the remaining
 count. Its contents contract and complete local update also serve the separate
@@ -240,14 +240,14 @@ theorem body_spec (out : Buffer .nat) (count n value : Nat)
     {remaining : Nat} {heap : Heap}
     (current : invariant out count n value remaining heap) (active : 0 < remaining) :
     Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
-      (Implementation.make_loop1.body remaining out count n value)
+      (Implementation.Source.make_loop1.body remaining out count n value)
       (fun entry => ⟨entry = heap⟩)
       (fun outcome finish =>
         ⟨outcome = (.normal, remaining - 1, out, count, n, value, ()) ∧
           invariant out count n value (remaining - 1) finish⟩, ⟨⟩) := by
-  have workerSpec := Implementation.work_spec
+  have workerSpec := Implementation.Source.work_spec
     (work_total (if remaining < count ∧ 0 < n then value else 0))
-  rw [Implementation.make_loop1.body_eq]
+  rw [Implementation.Source.make_loop1.body_eq]
   mvcgen [workerSpec]
   rename_i entry same
   subst entry
@@ -262,16 +262,16 @@ source loop. The relation concerns mathematical progress, not a machine budget;
 its body contract carries the current heap through every real call. -/
 theorem loop_spec (out : Buffer .nat) (count n value remaining : Nat) :
     Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
-      (Implementation.make_loop1 remaining out count n value)
+      (Implementation.Source.make_loop1 remaining out count n value)
       (fun heap => ⟨invariant out count n value remaining heap⟩)
       (fun outcome finish => ⟨match outcome.1 with
         | .normal => out.Contents finish (resultContents count n value)
         | .returned _ => False
         | .fault _ => False⟩, ⟨⟩) := by
-  refine Implementation.make_loop1.wellFounded_spec out count n value
+  refine Implementation.Source.make_loop1.wellFounded_spec out count n value
     (invariant out count n value)
-    (measure fun state : Implementation.make_loop1.Mutable × Heap => state.1.1).rel
-    (measure fun state : Implementation.make_loop1.Mutable × Heap => state.1.1).wf
+    (measure fun state : Implementation.Source.make_loop1.Mutable × Heap => state.1.1).rel
+    (measure fun state : Implementation.Source.make_loop1.Mutable × Heap => state.1.1).wf
     (fun _ finish => out.Contents finish (resultContents count n value))
     (fun _ _ _ => False) ?_ remaining
   intro left heap current
@@ -294,13 +294,13 @@ the same nested scratch scopes. Its successful result has the ordinary array
 contents, for every count and every initial heap, including both empty cases. -/
 theorem make_spec (count n value : Nat) :
     Std.Do.Triple (m := ExceptT Fault (StateT Heap Part))
-      (ps := .except Fault (.arg Heap .pure)) (Implementation.make count n value)
+      (ps := .except Fault (.arg Heap .pure)) (Implementation.Source.make count n value)
       (fun _ => ⟨True⟩)
       (fun out finish => ⟨out.Contents finish (resultContents count n value)⟩,
         (fun _ _ => ⟨False⟩, ⟨⟩)) := by
   have loopSpec := fun (out : Buffer .nat) (remaining : Nat) =>
     loop_spec out count n value remaining
-  rw [Implementation.make_eq]
+  rw [Implementation.Source.make_eq]
   mvcgen [loopSpec]
   intro out finish allocated initialized growth fresh
   mvcgen [loopSpec]
@@ -311,17 +311,17 @@ theorem make_spec (count n value : Nat) :
 /-- The mathematical contract supplies actual finite source evaluation and
 the retained output contents without a separate termination or budget proof. -/
 theorem make_eval (count n value : Nat) (heap : Heap) :
-    ∃ out finish, Implementation.make count n value heap = Part.some (.ok out, finish) ∧
+    ∃ out finish, Implementation.Source.make count n value heap = Part.some (.ok out, finish) ∧
       out.Contents finish (resultContents count n value) :=
   (triple_iff_eval _ _ _).mp (make_spec count n value) heap trivial
 
 /-- The same named declaration's source contract is ready for the separate
 range, capacity, instruction-count and physical-space proofs. -/
 theorem make_total :
-    FunctionTotal Implementation.program Implementation.makeId (fun _ _ => True)
+    FunctionTotal Implementation.Source.program Implementation.Source.makeId (fun _ _ => True)
       (fun args _ out finish =>
         out.Contents finish (resultContents args.head args.tail.head args.tail.tail.head)) := by
-  apply (Implementation.make_total_iff (fun _ _ _ _ => True)
+  apply (Implementation.Source.make_total_iff (fun _ _ _ _ => True)
     (fun count n value _ out finish => out.Contents finish (resultContents count n value))).mpr
   intro count n value heap _
   exact make_eval count n value heap

@@ -54,10 +54,28 @@ The current integration work has these concrete obligations:
   needs no already-proved mathematical model. The existing allocating `make`
   now passes through represented preparation with its original Array contract;
   its fixed `Program` interface does not require a pure model.
+- [x] Preserve actual statement branches, standalone calls, scratch scopes and lexical slots.
+  Mathematical joins and hygienic local versions are proof-side only. The
+  original linked-list `unconsBody` identity and compiled consumers still check;
+  assignments and shadowing no longer require different source lowering.
+  The original nested-scratch program retains its scope owners, early returns,
+  cleanup contract and physical workspace bound. Reclaimed contents do not
+  acquire an automatic total-function model.
+- [x] Reuse shared nested binding patterns for represented calls and Option
+  branches. Right-hand sides are evaluated once and only used projections are
+  emitted. The original optional-buffer import chain retains its mathematical
+  update/frame statements and compiler-derived body bounds. Its imported pure
+  Option/product result uses the checked encoding and existing map identities.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. The general-while consumer still supplies its record/heap
   state relation and guard/body transport explicitly. This checks composability,
   but is not yet the intended invariant-only proof experience.
+  Generate local guard/body mathematical transitions where their operation
+  contracts justify them, then apply the existing named loop rule. Authors keep
+  the algorithm's invariant, decrease argument and exit result; they should not
+  construct raw tuples or unfold `Part`. Fixed captured handles do not by
+  themselves preserve captured contents, and no total model of the complete
+  while is required.
 - [ ] Compose mathematical functions and state contracts through the same
   heap-indexed representation. A pure encoding is a special case; mutable
   array contents are not preserved by arbitrary heap extension.
@@ -78,8 +96,8 @@ The current integration work has these concrete obligations:
   state. The linked-list consumer allocates nodes on each round and has generated
   total source correspondence. The array-record consumer now exercises general
   `while` with an explicit mathematical-state contract after each real append.
-  Finite-range exits, recursive calls to the enclosing function from a range,
-  mutable-name shadowing and loops in value-producing branches remain open.
+  Finite-range exits, recursive calls to the enclosing function from a range
+  and loops in value-producing branches remain open.
 - [x] Simplify the generated range's mathematical view to its mutable
   accumulator, closing over immutable captures. `List.foldl_hom` automatically
   connects it to the unchanged full source state. The existing List proofs use
@@ -107,9 +125,8 @@ The current integration work has these concrete obligations:
   correctness statements and same-program RAM bounds on 0v0. Update the manual
   and remove obsolete capability claims when those consumers actually pass.
 
-The next control-flow step must preserve statement-level branches and scratch
-scopes, including normal fallthrough, separately from value-expression joins.
-Finite ranges must have one actual lowering independent of model availability.
+The next control-flow step is to give finite ranges one actual lowering
+independent of model availability.
 The current helper-extracting represented range changes the original loop owner;
 Traversal's `Implementation.boundedMap_loop1`, Scope's
 `Implementation.work_scope1/work_scope2` and LinkedList's exact `unconsBody`
