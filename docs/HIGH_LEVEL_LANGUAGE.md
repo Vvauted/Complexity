@@ -641,6 +641,15 @@ supported pure fragment, not arbitrary effectful native recursion.
 Effectful total correctness reuses the same mathematical foundation through
 source rules, without fuel or a time budget:
 
+The represented preparation pass keeps actual source code and mathematical
+types independently of its optional total-function model. It emits function IDs
+and representation interfaces even without such a model, and does not register
+nonexistent correspondence declarations. For a selected header without a model,
+`program_correct ... using contract` accepts an explicit `RepresentedFunction.Total`
+for that same entry and postcondition. Its packing transport reuses the real
+source call. This separation is implemented; general represented control-flow
+lowering remains part of the integration gate.
+
 - `TotalWP.while_wellFounded` accepts an ordinary `WellFounded` relation.
   `Stmt.observe_while_fixed_spec` exposes it through native `Std.Do` triples
   while fixing immutable captures internally. A named loop's `wellFounded_spec`

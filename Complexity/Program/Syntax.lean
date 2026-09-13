@@ -34,6 +34,13 @@ selection creates neither a wrapper nor additional named correspondence theorems
 The mathematical proof must establish the caller's actual postcondition; it is
 never used as an evaluator. Curried pure equations can be supplied directly.
 
+When the selected header has no mathematical model, `using` instead supplies an
+explicit `RepresentedFunction.Total` contract for the same actual source entry,
+domain and postcondition. Direct entries use the fixed function representation;
+packed entries use the registered single-argument observation and fixed output
+representation. The existing packing bridge transports this contract, including
+its actual final heap, without requiring a pure function or a new ABI proof.
+
 `program_packing% program` exposes the packing already stored in an elaborated
 `ofPacking` program for compiler/resource consumers. It does not reconstruct a
 second packing or execute the mathematical input convention.
@@ -394,8 +401,9 @@ def elaborateProgramPacking : TermElab := fun stx expected? => do
       throwErrorAt stx "the stored packing does not have the requested type"
   return packing
 
-/-- Prove the same selected source function's mathematical contract from its
-existing total correspondence and a caller-supplied mathematical proof. -/
+/-- Prove the selected source function's contract. With a registered model,
+`using` supplies mathematics for its existing correspondence; without a model,
+it supplies a represented total contract for the same entry and observations. -/
 syntax (name := programCorrect) "program_correct " ident " using " term : tactic
 
 elab_rules : tactic
@@ -412,6 +420,29 @@ elab_rules : tactic
           throwError "the goal does not refer to the same selected source entry"
         let valid ← exprToSyntax target.getAppArgs[5]!
         let post ← exprToSyntax target.getAppArgs[6]!
+        let information := match prepared.entry with
+          | .direct entry => entry.information
+          | .packed entry => entry.information
+        if information.model?.isNone then
+          match prepared.entry with
+          | .direct _ =>
+              Lean.Elab.Tactic.evalTactic (← `(tactic|
+                exact Complexity.Program.Correct.of_total ($mathematics:term)))
+          | .packed entry => do
+              let source ← exprToSyntax entry.source
+              let fn ← exprToSyntax entry.fn
+              let same ← exprToSyntax entry.same
+              let packing ← exprToSyntax entry.packing
+              let representation ← exprToSyntax entry.inputRepresentation
+              let inputProof ← exprToSyntax entry.inputProof
+              Lean.Elab.Tactic.evalTactic (← `(tactic|
+                apply Complexity.Program.Correct.of_packing_total
+                  $source $fn $same $packing $representation
+                  (valid := $valid) (post := $post)))
+              Lean.Elab.Tactic.evalTactic (← `(tactic| exact $mathematics:term))
+              Lean.Elab.Tactic.evalTactic (← `(tactic|
+                exact fun input _ => ($inputProof:term) input))
+          return ()
         let argumentCount ← match prepared.entry with
           | .packed information => do
               let some model := information.information.model?

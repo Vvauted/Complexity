@@ -55,10 +55,13 @@ private structure RetainedObservation where
   type : NativeType
   proof : TSyntax `term
 
-private structure Binding extends Parameter where
+private structure BindingModel where
   model : TSyntax `term
   rawModel : TSyntax `term
   observation : Observation := .refl
+
+private structure Binding extends Parameter where
+  model? : Option BindingModel := none
   mutable : Bool := false
 
 private structure Callback where
@@ -69,22 +72,25 @@ private structure Callback where
   kind : CellTy
   relation : Option Name := none
 
-/-- Both views and their checked source theorem name belong to one operation.
-No instruction price or machine assumption is stored in frontend metadata. -/
-private structure Operation where
-  family : TSyntax `ident
-  sourceName : Name
+private structure OperationModel where
   native : TSyntax `term
-  inputs : Array NativeType
-  result : NativeType
   equation : Option (TSyntax `ident)
   relation : TSyntax `ident
   refinement : TSyntax `ident
-  /-- Proof-side observation only; the source call still uses `sourceName`. -/
-  actionName : Option Name := none
   preservingRelation : Option (TSyntax `ident) := none
   /-- Internal finite-range helpers require their actual stride to be positive. -/
   positiveStride : Option Nat := none
+
+/-- Actual source identity and mathematical types do not require a total-function
+model. Model names are checked before they enter the public function registry. -/
+private structure Operation where
+  family : TSyntax `ident
+  sourceName : Name
+  inputs : Array NativeType
+  result : NativeType
+  model? : Option OperationModel := none
+  /-- Proof-side observation only; the source call still uses `sourceName`. -/
+  actionName : Option Name := none
 
 private structure FoldRegistration where
   callback : Callback
@@ -102,13 +108,36 @@ private structure IsEmptyRegistration where
   kind : CellTy
   operation : Operation
 
+private structure ValueModel extends BindingModel where
+  native : TSyntax `term
+
 private structure Value where
   type : NativeType
   raw : TSyntax `term
-  native : TSyntax `term
-  model : TSyntax `term
-  rawModel : TSyntax `term
-  observation : Observation := .refl
+  model? : Option ValueModel := none
+
+/-- Absence propagates through source preparation, without catching elaboration
+or correspondence failures. -/
+private def mapModelsM {α β γ : Type} (left : Option α) (right : Option β)
+    (f : α → β → TermElabM γ) : TermElabM (Option γ) := do
+  match left, right with
+  | some left, some right => return some (← f left right)
+  | _, _ => return none
+
+private def Value.requireModel (value : Value) : TermElabM ValueModel := do
+  let some model := value.model?
+    | throwError "internal correspondence construction requires a prepared value model"
+  return model
+
+private def Binding.requireModel (binding : Binding) : TermElabM BindingModel := do
+  let some model := binding.model?
+    | throwError "internal correspondence construction requires a prepared binding model"
+  return model
+
+private def Operation.requireModel (operation : Operation) : TermElabM OperationModel := do
+  let some model := operation.model?
+    | throwError "internal correspondence construction requires a prepared operation model"
+  return model
 
 private structure Invocation where
   operation : Operation
@@ -168,9 +197,12 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
     let operation ← `(fun ($first:ident $second:ident : $inputSyntax) => $operationBody)
     return ({
       type := ← resolveType output, raw := ← build left.raw right.raw,
-      native := ← nativeBuild left.native right.native, model := ← nativeBuild left.model right.model,
-      rawModel := ← nativeBuild left.rawModel right.rawModel,
-      observation := .binary operation left.observation right.observation } : Value)
+      model? := ← mapModelsM left.model? right.model? fun left right => do
+        return {
+          native := ← nativeBuild left.native right.native
+          model := ← nativeBuild left.model right.model
+          rawModel := ← nativeBuild left.rawModel right.rawModel
+          observation := .binary operation left.observation right.observation } } : Value)
   let comparison (left right : TSyntax `term)
       (build : TSyntax `term → TSyntax `term → TermElabM (TSyntax `term)) := do
     binary left right (← `(Nat)) (← `(Bool)) build
@@ -188,9 +220,11 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
     let apply (term : TSyntax `term) := Lean.Syntax.mkCApp projection #[term]
     return ({
       type := if first then left else right,
-      raw := apply pair.raw, native := apply pair.native,
-      model := apply pair.model, rawModel := apply pair.rawModel,
-      observation := .projection pair.type.isPure first pair.observation } : Value)
+      raw := apply pair.raw
+      model? := pair.model?.map fun model => {
+        native := apply model.native
+        model := apply model.model, rawModel := apply model.rawModel
+        observation := .projection pair.type.isPure first model.observation } } : Value)
   let projectRecord (expression : TSyntax `term) (fieldName : Name) := do
     let record ← value scope expression
     if let .array _ := record.type then
@@ -199,10 +233,12 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
       return ({
         type := ← resolveType (← `(Nat))
         raw := ← `(($(record.raw)).$(mkIdent `length):ident)
-        rawModel := ← `(($(record.rawModel)).length)
-        native := ← `(Array.size $(record.native))
-        model := ← `(Array.size $(record.model))
-        observation := .arraySize record.observation } : Value)
+        model? := ← record.model?.mapM fun model => do
+          return {
+            rawModel := ← `(($(model.rawModel)).length)
+            native := ← `(Array.size $(model.native))
+            model := ← `(Array.size $(model.model))
+            observation := .arraySize model.observation } } : Value)
     let .record name _ _ := record.type
       | throwErrorAt expression "named field access requires a native record"
     let fields ← recordFields name
@@ -214,10 +250,12 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
     return ({
       type := field.type
       raw := ← fieldProjection fields.size index record.raw
-      rawModel := ← fieldProjection fields.size index record.rawModel
-      native := Lean.Syntax.mkCApp field.projection #[record.native]
-      model := Lean.Syntax.mkCApp field.projection #[record.model]
-      observation := fieldObservation fields.size index record.observation } : Value)
+      model? := ← record.model?.mapM fun model => do
+        return {
+          rawModel := ← fieldProjection fields.size index model.rawModel
+          native := Lean.Syntax.mkCApp field.projection #[model.native]
+          model := Lean.Syntax.mkCApp field.projection #[model.model]
+          observation := fieldObservation fields.size index model.observation } } : Value)
   let constructRecord (type : NativeType) (arguments : Array (TSyntax `term)) := do
     let .record name _ _ := type | throwError "record construction requires a native record type"
     let fields ← recordFields name
@@ -228,13 +266,16 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
       expect argument field.type fieldValue.type
       values := values.push fieldValue
     let constructor := (getStructureCtor (← getEnv) name).name
+    let models : Option (Array ValueModel) := values.mapM (·.model?)
     return ({
       type
       raw := ← fieldsTerm (values.map (·.raw)).toList
-      rawModel := ← fieldsTerm (values.map (·.rawModel)).toList
-      native := Lean.Syntax.mkCApp constructor (values.map (·.native))
-      model := Lean.Syntax.mkCApp constructor (values.map (·.model))
-      observation := fieldsObservation (values.map (·.observation)).toList } : Value)
+      model? := ← models.mapM fun models => do
+        return {
+          rawModel := ← fieldsTerm (models.map (·.rawModel)).toList
+          native := Lean.Syntax.mkCApp constructor (models.map (·.native))
+          model := Lean.Syntax.mkCApp constructor (models.map (·.model))
+          observation := fieldsObservation (models.map (·.observation)).toList } } : Value)
   match stx with
   | `(($expression:term)) => value scope expression expected
   | `(($expression:term : $type:term)) =>
@@ -242,29 +283,32 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
       if let .list kind := expected then
         if let `([]) := expression then
           return {
-            type := expected, raw := ← `(none), native := stx,
-            model := stx, rawModel := ← `(none), observation := .nil kind }
+            type := expected, raw := ← `(none)
+            model? := some {
+              native := stx
+              model := stx, rawModel := ← `(none), observation := .nil kind } }
       if let .option payload := expected then
         if let `(none) := expression then
           return {
-            type := expected, raw := ← `(none), native := stx,
-            model := stx, rawModel := ← `(none), observation := .none payload }
+            type := expected, raw := ← `(none)
+            model? := some {
+              native := stx
+              model := stx, rawModel := ← `(none), observation := .none payload } }
       let result ← value scope expression (some expected)
       expect type expected result.type
       return result
   | `($name:ident) =>
       if name.getId == `true || name.getId == `false then
         return {
-          type := ← resolveType (← `(Bool)), raw := stx, native := stx,
-          model := stx, rawModel := stx }
+          type := ← resolveType (← `(Bool)), raw := stx
+          model? := some { native := stx, model := stx, rawModel := stx } }
       if let .str receiver field := name.getId then
         if scope.any (fun binding => binding.name.getId.isPrefixOf receiver) then
           return ← projectRecord ⟨(mkIdent receiver).raw⟩ (Name.mkSimple field)
       let parameter ← lookup scope name
       return {
-        type := parameter.type, raw := stx, native := stx,
-        model := parameter.model, rawModel := parameter.rawModel,
-        observation := parameter.observation }
+        type := parameter.type, raw := stx
+        model? := parameter.model?.map fun model => { toBindingModel := model, native := stx } }
   | `($(pair).$field:fieldIdx) =>
       match field.raw.isFieldIdx? with
       | some 1 => project pair true
@@ -294,15 +338,17 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
   | `(some $expression:term) | `(Option.some $expression:term) =>
       let result ← value scope expression
       return {
-        type := .option result.type, raw := ← `(some $(result.raw)),
-        native := ← `(some $(result.native)), model := ← `(some $(result.model)),
-        rawModel := ← `(some $(result.rawModel)), observation := .some result.observation }
+        type := .option result.type, raw := ← `(some $(result.raw))
+        model? := ← result.model?.mapM fun model => do
+          return {
+            native := ← `(some $(model.native)), model := ← `(some $(model.model))
+            rawModel := ← `(some $(model.rawModel)), observation := .some model.observation } }
   | `($_:num) => return {
-      type := ← resolveType (← `(Nat)), raw := stx, native := stx,
-      model := stx, rawModel := stx }
+      type := ← resolveType (← `(Nat)), raw := stx
+      model? := some { native := stx, model := stx, rawModel := stx } }
   | `(()) => return {
-      type := ← resolveType (← `(Unit)), raw := stx, native := stx,
-      model := stx, rawModel := stx }
+      type := ← resolveType (← `(Unit)), raw := stx
+      model? := some { native := stx, model := stx, rawModel := stx } }
   | `(($left, $right)) =>
       let left ← value scope left
       let right ← value scope right
@@ -310,10 +356,13 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
       let type ← resolveNativeType type
       return {
         type,
-        raw := ← `(($(left.raw), $(right.raw))), native := ← `(($(left.native), $(right.native))),
-        model := ← `(($(left.model), $(right.model))),
-        rawModel := ← `(($(left.rawModel), $(right.rawModel))),
-        observation := .pair type.isPure left.observation right.observation }
+        raw := ← `(($(left.raw), $(right.raw)))
+        model? := ← mapModelsM left.model? right.model? fun left right => do
+          return {
+            native := ← `(($(left.native), $(right.native)))
+            model := ← `(($(left.model), $(right.model)))
+            rawModel := ← `(($(left.rawModel), $(right.rawModel)))
+            observation := .pair type.isPure left.observation right.observation } }
   | `($left + $right) => binary left right (← `(Nat)) (← `(Nat)) fun a b => `($a + $b)
   | `($left * $right) => binary left right (← `(Nat)) (← `(Nat)) fun a b => `($a * $b)
   | `($left - $right) => binary left right (← `(Nat)) (← `(Nat)) fun a b => `($a - $b)
@@ -339,9 +388,12 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
       let argument ← value scope expression
       expect expression (← resolveType (← `(Bool))) argument.type
       return { argument with
-        raw := ← `(!$(argument.raw)), native := ← `(!$(argument.native)),
-        model := ← `(!$(argument.model)), rawModel := ← `(!$(argument.rawModel)),
-        observation := .unary (← `(Bool.not)) argument.observation }
+        raw := ← `(!$(argument.raw))
+        model? := ← argument.model?.mapM fun model => do
+          return {
+            native := ← `(!$(model.native))
+            model := ← `(!$(model.model)), rawModel := ← `(!$(model.rawModel))
+            observation := .unary (← `(Bool.not)) model.observation } }
   | `($called:ident $arguments:term*) =>
       let name ← resolveGlobalConstNoOverload called
       if let .ctorInfo constructor ← getConstInfo name then
@@ -361,38 +413,46 @@ private structure RangeRegistration where
   indices : TSyntax `term
   emptyState : Bool
 
-private structure Function where
-  name : TSyntax `ident
-  parameters : Array Parameter
-  result : NativeType
-  rawBody : TSyntax `term
+private structure FunctionModel where
   nativeBody : TSyntax `term
   calls : Array Trace
   returned : Value
   termination : TSyntax ``Lean.Parser.Termination.suffix
   recursive : Bool := false
   range : Option RangeRegistration := none
+
+private structure Function where
+  name : TSyntax `ident
+  parameters : Array Parameter
+  result : NativeType
+  rawBody : TSyntax `term
+  model? : Option FunctionModel := none
   exposed : Bool := true
 
 private def Function.hasExactEquation (fn : Function) : Bool :=
-  let scalarArguments := fn.parameters.all fun parameter =>
-    match parameter.type with | .pure _ | .list _ => true | _ => false
-  match fn.result with
-  | .pure _ => fn.range.isNone && !fn.recursive && scalarArguments && fn.calls.all fun
-      | .call invocation => invocation.operation.equation.isSome
-      | _ => false
-  | _ => false
+  match fn.model? with
+  | none => false
+  | some model =>
+    let scalarArguments := fn.parameters.all fun parameter =>
+      match parameter.type with | .pure _ | .list _ => true | _ => false
+    match fn.result with
+    | .pure _ => model.range.isNone && !model.recursive && scalarArguments && model.calls.all fun
+        | .call invocation => invocation.operation.model?.any (·.equation.isSome)
+        | _ => false
+    | _ => false
 
 private partial def Trace.preservesArrays : Trace → Bool
-  | .call invocation => invocation.operation.preservingRelation.isSome
+  | .call invocation => invocation.operation.model?.any (·.preservingRelation.isSome)
   | .conditional _ yes no _ _ _ => yes.all Trace.preservesArrays && no.all Trace.preservesArrays
   | .optionMatch _ _ absent present _ _ _ =>
       absent.all Trace.preservesArrays && present.all Trace.preservesArrays
 
 private def Function.preservesArrays (fn : Function) : Bool :=
-  match fn.range with
-  | some range => range.callback.preservingRelation.isSome
-  | none => fn.hasExactEquation || fn.calls.all Trace.preservesArrays
+  match fn.model? with
+  | none => false
+  | some model => match model.range with
+    | some range => range.callback.model?.any (·.preservingRelation.isSome)
+    | none => fn.hasExactEquation || model.calls.all Trace.preservesArrays
 
 private structure Preparation where
   folds : Array FoldRegistration := #[]
@@ -429,27 +489,29 @@ private def sourceFamily (family : TSyntax `ident) : TSyntax `ident :=
 private def functionOperation (family : TSyntax `ident) (fn : Function) : Operation := {
   family := sourceFamily family
   sourceName := fn.name.getId
-  native := ⟨(fieldName family fn.name).raw⟩
   inputs := fn.parameters.map (·.type)
   result := fn.result
-  equation := if fn.hasExactEquation then some (fieldName family fn.name "_action_eq_native") else none
-  relation := fieldName family fn.name "_action_rel_native"
-  refinement := fieldName family fn.name "_refines"
-  preservingRelation := if fn.preservesArrays then
-    some (fieldName family fn.name "_action_rel_native_preserving") else none
-  positiveStride := if fn.range.isSome then some 2 else none }
+  model? := fn.model?.map fun model => {
+    native := ⟨(fieldName family fn.name).raw⟩
+    equation := if fn.hasExactEquation then some (fieldName family fn.name "_action_eq_native") else none
+    relation := fieldName family fn.name "_action_rel_native"
+    refinement := fieldName family fn.name "_refines"
+    preservingRelation := if fn.preservesArrays then
+      some (fieldName family fn.name "_action_rel_native_preserving") else none
+    positiveStride := if model.range.isSome then some 2 else none } }
 
 private def importedOperation (info : NativeFunctionInfo) : Operation := {
   family := mkIdent info.sourceFamily
   sourceName := info.sourceName
-  native := ⟨(mkCIdent info.nativeName).raw⟩
   inputs := info.parameters.map (·.2)
   result := info.result
-  equation := info.equation.map mkCIdent
-  relation := mkCIdent info.relation
-  refinement := mkCIdent info.refinement
   actionName := info.actionName
-  preservingRelation := info.preservingRelation.map mkCIdent }
+  model? := some {
+    native := ⟨(mkCIdent info.nativeName).raw⟩
+    equation := info.equation.map mkCIdent
+    relation := mkCIdent info.relation
+    refinement := mkCIdent info.refinement
+    preservingRelation := info.preservingRelation.map mkCIdent } }
 
 private def findImportedNative? (imports : ImportedPrograms) (name : TSyntax `ident) :
     TermElabM (Option NativeFunctionInfo) := do
@@ -517,13 +579,14 @@ private def foldOperation (family : TSyntax `ident)
   let operation : Operation := {
     family := operationFamily
     sourceName := `fold
-    native
     inputs := #[callback.accumulator, .list callback.kind]
     result := callback.accumulator
-    equation := if callback.relation.isNone then
-      some (mkIdentFrom name (operationFamily.getId ++ `fold_eq)) else none
-    relation := mkIdentFrom name (operationFamily.getId ++ `fold_rel)
-    refinement := mkIdentFrom name (operationFamily.getId ++ `fold_refines) }
+    model? := some {
+      native
+      equation := if callback.relation.isNone then
+        some (mkIdentFrom name (operationFamily.getId ++ `fold_eq)) else none
+      relation := mkIdentFrom name (operationFamily.getId ++ `fold_rel)
+      refinement := mkIdentFrom name (operationFamily.getId ++ `fold_refines) } }
   modify fun state => { state with folds := state.folds.push ⟨callback, operation⟩ }
   return operation
 
@@ -537,12 +600,13 @@ private def consOperation (family : TSyntax `ident) (kind : CellTy) : PrepareM O
   let operation : Operation := {
     family := operationFamily
     sourceName := `cons
-    native := ⟨(mkCIdent ``List.cons).raw⟩
     inputs := #[head, .list kind]
     result := .list kind
-    equation := none
-    relation := mkIdentFrom family (operationFamily.getId ++ `cons_rel)
-    refinement := mkIdentFrom family (operationFamily.getId ++ `cons_refines) }
+    model? := some {
+      native := ⟨(mkCIdent ``List.cons).raw⟩
+      equation := none
+      relation := mkIdentFrom family (operationFamily.getId ++ `cons_rel)
+      refinement := mkIdentFrom family (operationFamily.getId ++ `cons_refines) } }
   modify fun state => { state with constructors := state.constructors.push ⟨kind, operation⟩ }
   return operation
 
@@ -555,10 +619,12 @@ private def unconsOperation (family : TSyntax `ident) (kind : CellTy) : PrepareM
   let head ← resolveType headType
   let native ← `(fun (values : List $headType) => values.head?.map (fun head => (head, values.tail)))
   let operation : Operation := {
-    family := operationFamily, sourceName := `uncons, native,
-    inputs := #[.list kind], result := .option (.prod head (.list kind)), equation := none,
-    relation := mkIdentFrom family (operationFamily.getId ++ `uncons_rel),
-    refinement := mkIdentFrom family (operationFamily.getId ++ `uncons_refines) }
+    family := operationFamily, sourceName := `uncons
+    inputs := #[.list kind], result := .option (.prod head (.list kind))
+    model? := some {
+      native, equation := none
+      relation := mkIdentFrom family (operationFamily.getId ++ `uncons_rel)
+      refinement := mkIdentFrom family (operationFamily.getId ++ `uncons_refines) } }
   modify fun state => { state with deconstructors := state.deconstructors.push ⟨kind, operation⟩ }
   return operation
 
@@ -570,11 +636,12 @@ private def isEmptyOperation (family : TSyntax `ident) (kind : CellTy) : Prepare
   let result ← resolveType (← `(Bool))
   let operation : Operation := {
     family := operationFamily, sourceName := `isEmpty,
-    native := ⟨(mkCIdent ``List.isEmpty).raw⟩,
     inputs := #[.list kind], result,
-    equation := some (mkIdentFrom family (operationFamily.getId ++ `isEmpty_eq)),
-    relation := mkIdentFrom family (operationFamily.getId ++ `isEmpty_rel),
-    refinement := mkIdentFrom family (operationFamily.getId ++ `isEmpty_refines) }
+    model? := some {
+      native := ⟨(mkCIdent ``List.isEmpty).raw⟩
+      equation := some (mkIdentFrom family (operationFamily.getId ++ `isEmpty_eq))
+      relation := mkIdentFrom family (operationFamily.getId ++ `isEmpty_rel)
+      refinement := mkIdentFrom family (operationFamily.getId ++ `isEmpty_refines) } }
   modify fun state => { state with emptinessTests := state.emptinessTests.push ⟨kind, operation⟩ }
   return operation
 
@@ -590,17 +657,18 @@ private def arrayOperation (append : Bool) : PrepareM Operation := do
     else `(fun (xs : Array Nat) => xs)
   return {
     family, sourceName := if append then `append else `copy
-    native
     inputs := if append then #[.array .nat, .array .nat] else #[.array .nat]
     result := .array .nat
-    equation := none
-    relation := mkCIdent (if append then ``Complexity.Language.Buffer.Copy.append_eval_exists
-      else ``Complexity.Language.Buffer.Copy.copy_eval_exists)
-    refinement := mkCIdent (if append then ``Complexity.Language.Buffer.append_array_refines
-      else ``Complexity.Language.Buffer.copy_array_refines)
-    preservingRelation := some (mkCIdent (if append then
-      ``Complexity.Language.Buffer.Copy.append_eval_exists_preserving
-      else ``Complexity.Language.Buffer.Copy.copy_eval_exists_preserving)) }
+    model? := some {
+      native
+      equation := none
+      relation := mkCIdent (if append then ``Complexity.Language.Buffer.Copy.append_eval_exists
+        else ``Complexity.Language.Buffer.Copy.copy_eval_exists)
+      refinement := mkCIdent (if append then ``Complexity.Language.Buffer.append_array_refines
+        else ``Complexity.Language.Buffer.copy_array_refines)
+      preservingRelation := some (mkCIdent (if append then
+        ``Complexity.Language.Buffer.Copy.append_eval_exists_preserving
+        else ``Complexity.Language.Buffer.Copy.copy_eval_exists_preserving)) } }
 
 private partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
     (expression : TSyntax `term) :
@@ -856,9 +924,11 @@ private def parameterBinding (name : TSyntax `ident) (type : NativeType) : TermE
   let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
   let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
   return {
-    name, type, rawName, relationName, model := ⟨name.raw⟩
-    rawModel := if type.isPure then ⟨name.raw⟩ else ⟨rawName.raw⟩
-    observation := if type.isPure then .refl else .named relationName.getId }
+    name, type, rawName, relationName
+    model? := some {
+      model := ⟨name.raw⟩
+      rawModel := if type.isPure then ⟨name.raw⟩ else ⟨rawName.raw⟩
+      observation := if type.isPure then .refl else .named relationName.getId } }
 
 private def restoreState (bindings : Array Binding) (state : TSyntax `ident)
     (existing : Bool := false) :
@@ -880,12 +950,16 @@ private partial def sequence (family : TSyntax `ident)
     (imports : ImportedPrograms) (resultType : NativeType)
     (scope : List Binding) (elements : List (TSyntax `doElem))
     (bindingMutable : Bool := false) :
-    PrepareM (Array (TSyntax `doElem) × Array (TSyntax `doElem) × Array Trace × Value) := do
-  let bindAndContinue (binding : Binding) (raw native : TSyntax `doElem)
-      (calls : Array Trace) (rest : List (TSyntax `doElem)) := do
+    PrepareM (Array (TSyntax `doElem) × Option (Array (TSyntax `doElem)) ×
+      Option (Array Trace) × Value) := do
+  let bindAndContinue (binding : Binding) (raw : TSyntax `doElem)
+      (native : Option (TSyntax `doElem)) (calls : Option (Array Trace))
+      (rest : List (TSyntax `doElem)) := do
     let binding := { binding with mutable := bindingMutable }
     let (rawRest, nativeRest, later, returned) ← sequence family imports resultType (binding :: scope) rest
-    return (#[raw] ++ rawRest, #[native] ++ nativeRest, calls ++ later, returned)
+    return (#[raw] ++ rawRest,
+      (fun native rest => #[native] ++ rest) <$> native <*> nativeRest,
+      (· ++ ·) <$> calls <*> later, returned)
   match elements with
   | [] => throwError "every native source function must end with a return"
   | element :: rest => withRef element do
@@ -959,8 +1033,11 @@ private partial def sequence (family : TSyntax `ident)
       modify fun state => { state with current := previousCurrent, currentRecursive := previousRecursive }
       let helper : Function := {
         name := bodyName, parameters := #[indexBinding.toParameter, stateBinding.toParameter]
-        result := stateNativeType, rawBody := ← doTerm bodyRaw, nativeBody := ← doTerm bodyNative
-        calls := bodyCalls, returned := bodyReturned, termination := ← `(Lean.Parser.Termination.suffix|)
+        result := stateNativeType, rawBody := ← doTerm bodyRaw
+        model? := ← mapModelsM bodyNative bodyCalls fun native calls => do
+          return {
+            nativeBody := ← doTerm native, calls, returned := bodyReturned
+            termination := ← `(Lean.Parser.Termination.suffix|) }
         exposed := false }
       modify fun state => { state with functions := state.functions.push helper }
       let startName := mkIdent (← mkFreshUserName `rangeStart)
@@ -999,11 +1076,13 @@ private partial def sequence (family : TSyntax `ident)
             rangeAccumulator := $next:ident
             $cursor:ident := $cursor:ident + $strideName:ident
           return rangeAccumulator)
-        nativeBody := ← `(do return $nativeResult)
-        calls := #[], returned := bodyReturned, termination := ← `(Lean.Parser.Termination.suffix|)
-        range := some {
-          callback := functionOperation family helper
-          embedding, mutableStep, initialMutable, indices, emptyState := captured.isEmpty }
+        model? := ← helper.model?.mapM fun _ => do
+          return {
+            nativeBody := ← `(do return $nativeResult)
+            calls := #[], returned := bodyReturned, termination := ← `(Lean.Parser.Termination.suffix|)
+            range := some {
+              callback := functionOperation family helper
+              embedding, mutableStep, initialMutable, indices, emptyState := captured.isEmpty } }
         exposed := false }
       modify fun state => { state with functions := state.functions.push wrapper }
       let packed := mkIdent (← mkFreshUserName `rangeInput)
@@ -1137,8 +1216,10 @@ private partial def sequence (family : TSyntax `ident)
         let payloadRelation := mkIdent (← mkFreshUserName (payloadName.getId.appendAfter "_represented"))
         let payload : Binding := {
           name := payloadName, type := payloadType, rawName := payloadRaw,
-          relationName := payloadRelation, model := ⟨payloadName.raw⟩, rawModel := ⟨payloadRaw.raw⟩,
-          observation := if payloadType.isPure then .refl else .named payloadRelation.getId }
+          relationName := payloadRelation
+          model? := discriminant.model?.map fun _ => {
+            model := ⟨payloadName.raw⟩, rawModel := ⟨payloadRaw.raw⟩
+            observation := if payloadType.isPure then .refl else .named payloadRelation.getId } }
         let (noneRaw, noneNative, noneCalls, noneResult) ←
           sequence family imports selectedType scope noneElements.toList
         let (someRaw, someNative, someCalls, someResult) ←
@@ -1150,17 +1231,27 @@ private partial def sequence (family : TSyntax `ident)
         let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
         let noneBlock ← joinSlot.branch noneRaw
         let someBlock ← joinSlot.branch someRaw
-        let noneNativeBody ← doTerm noneNative
-        let someNativeBody ← doTerm someNative
         let payloadNativeType ← termOfExpr payloadType.nativeType
-        let nativeChoice ← `(Option.elim $(discriminant.native) (Id.run $noneNativeBody:term)
-          (fun ($payloadName:ident : $payloadNativeType) => Id.run $someNativeBody:term))
-        let model ← `(Option.elim $(discriminant.model) $(noneResult.model)
-          (fun ($payloadName:ident : $payloadNativeType) => $(someResult.model)))
+        let choiceInputs := do
+          let discriminant ← discriminant.model?
+          let noneNative ← noneNative
+          let someNative ← someNative
+          let noneResult ← noneResult.model?
+          let someResult ← someResult.model?
+          pure (discriminant, noneNative, someNative, noneResult, someResult)
+        let choice ← choiceInputs.mapM fun (discriminant, noneNative, someNative, noneResult, someResult) => do
+          let noneNativeBody ← doTerm noneNative
+          let someNativeBody ← doTerm someNative
+          let nativeChoice ← `(Option.elim $(discriminant.native) (Id.run $noneNativeBody:term)
+            (fun ($payloadName:ident : $payloadNativeType) => Id.run $someNativeBody:term))
+          let model ← `(Option.elim $(discriminant.model) $(noneResult.model)
+            (fun ($payloadName:ident : $payloadNativeType) => $(someResult.model)))
+          pure (nativeChoice, ({
+            model, rawModel := ⟨rawName.raw⟩
+            observation := if selectedType.isPure then .refl else .named relationName.getId } : BindingModel))
         let binding : Binding := {
           name, type := selectedType, rawName, relationName,
-          model, rawModel := ⟨rawName.raw⟩,
-          observation := if selectedType.isPure then .refl else .named relationName.getId
+          model? := choice.map (·.2)
           mutable := bindingMutable }
         let (rawRest, nativeRest, later, returned) ←
           sequence family imports resultType (binding :: scope) rest
@@ -1169,10 +1260,16 @@ private partial def sequence (family : TSyntax `ident)
           ← `(doElem| match $(discriminant.raw):term with
             | none => $noneBlock:doSeq
             | some $payloadName:ident => $someBlock:doSeq)]
-        let nativeBinding ← `(doElem| let $name:ident : $nativeType := $nativeChoice)
-        return (rawPrefix ++ (← joinSlot.continuation name rawRest), #[nativeBinding] ++ nativeRest,
-          #[.optionMatch discriminant payload noneCalls someCalls noneResult someResult binding] ++ later,
-          returned)
+        let nativeBinding ← choice.mapM fun (nativeChoice, _) =>
+          `(doElem| let $name:ident : $nativeType := $nativeChoice)
+        let calls : Option (Array Trace) := do
+          let _ ← choice
+          let noneCalls ← noneCalls
+          let someCalls ← someCalls
+          let later ← later
+          pure (#[.optionMatch discriminant payload noneCalls someCalls noneResult someResult binding] ++ later)
+        return (rawPrefix ++ (← joinSlot.continuation name rawRest),
+          (fun binding rest => #[binding] ++ rest) <$> nativeBinding <*> nativeRest, calls, returned)
       if let some (test, yes, no) := conditionalParts? expression then
         let some annotation := annotation
           | throwErrorAt name "a native conditional binding requires an explicit result type"
@@ -1192,24 +1289,41 @@ private partial def sequence (family : TSyntax `ident)
         let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
         let yesBlock ← joinSlot.branch yesRaw
         let noBlock ← joinSlot.branch noRaw
-        let yesNativeBody ← doTerm yesNative
-        let noNativeBody ← doTerm noNative
-        let nativeChoice ← `(if $(condition.native) then Id.run $yesNativeBody:term
-          else Id.run $noNativeBody:term)
-        let model ← `(if $(condition.model) then $(yesResult.model) else $(noResult.model))
+        let choiceInputs := do
+          let condition ← condition.model?
+          let yesNative ← yesNative
+          let noNative ← noNative
+          let yesResult ← yesResult.model?
+          let noResult ← noResult.model?
+          pure (condition, yesNative, noNative, yesResult, noResult)
+        let choice ← choiceInputs.mapM fun (condition, yesNative, noNative, yesResult, noResult) => do
+          let yesNativeBody ← doTerm yesNative
+          let noNativeBody ← doTerm noNative
+          let nativeChoice ← `(if $(condition.native) then Id.run $yesNativeBody:term
+            else Id.run $noNativeBody:term)
+          let model ← `(if $(condition.model) then $(yesResult.model) else $(noResult.model))
+          pure (nativeChoice, ({
+            model, rawModel := ⟨rawName.raw⟩
+            observation := if selectedType.isPure then .refl else .named relationName.getId } : BindingModel))
         let binding : Binding := {
           name, type := selectedType, rawName, relationName,
-          model, rawModel := ⟨rawName.raw⟩,
-          observation := if selectedType.isPure then .refl else .named relationName.getId
+          model? := choice.map (·.2)
           mutable := bindingMutable }
         let (rawRest, nativeRest, later, returned) ←
           sequence family imports resultType (binding :: scope) rest
         let rawPrefix := #[
           ← `(doElem| let mut $slot:ident : $(joinSlot.type) := $(joinSlot.initial)),
           ← `(doElem| if $(condition.raw) then $yesBlock:doSeq else $noBlock:doSeq)]
-        let nativeBinding ← `(doElem| let $name:ident : $nativeType := $nativeChoice)
-        return (rawPrefix ++ (← joinSlot.continuation name rawRest), #[nativeBinding] ++ nativeRest,
-          #[.conditional condition yesCalls noCalls yesResult noResult binding] ++ later, returned)
+        let nativeBinding ← choice.mapM fun (nativeChoice, _) =>
+          `(doElem| let $name:ident : $nativeType := $nativeChoice)
+        let calls : Option (Array Trace) := do
+          let _ ← choice
+          let yesCalls ← yesCalls
+          let noCalls ← noCalls
+          let later ← later
+          pure (#[.conditional condition yesCalls noCalls yesResult noResult binding] ++ later)
+        return (rawPrefix ++ (← joinSlot.continuation name rawRest),
+          (fun binding rest => #[binding] ++ rest) <$> nativeBinding <*> nativeRest, calls, returned)
     match element with
     | `(doElem| let $name:ident $[: $annotation:term]? := $expression:term) =>
         if let some call ← canonicalCall? imports scope expression then
@@ -1231,10 +1345,10 @@ private partial def sequence (family : TSyntax `ident)
         let nativeType ← termOfExpr result.type.nativeType
         bindAndContinue {
           name, type := result.type, rawName := name, relationName := name,
-          model := result.model,
-          rawModel := result.rawModel, observation := result.observation }
+          model? := result.model?.map (·.toBindingModel) }
           (← `(doElem| let $name:ident : $rawType := $(result.raw)))
-          (← `(doElem| let $name:ident : $nativeType := $(result.native))) #[] rest
+          (← result.model?.mapM fun model =>
+            `(doElem| let $name:ident : $nativeType := $(model.native))) (some #[]) rest
     | `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term) =>
         let expression := (← canonicalCall? imports scope expression).getD expression
         let (operation, arguments) ← match expression with
@@ -1278,21 +1392,26 @@ private partial def sequence (family : TSyntax `ident)
           (if operation.family.getId == (sourceFamily family).getId then operation.sourceName
             else operation.family.getId ++ operation.sourceName)
         let raw := Lean.Syntax.mkApp ⟨sourceName.raw⟩ (arguments.map (·.raw))
-        let native := Lean.Syntax.mkApp operation.native (arguments.map (·.native))
-        let model := Lean.Syntax.mkApp operation.native (arguments.map (·.model))
         let rawType ← rawTypeTerm operation.result.coreTy
         let nativeType ← termOfExpr operation.result.nativeType
         let rawName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_source"))
         let relationName := mkIdent (← mkFreshUserName (name.getId.appendAfter "_represented"))
+        let models : Option (Array ValueModel) := arguments.mapM (·.model?)
+        let callModel : Option (TSyntax `term × BindingModel) := do
+          let operationModel ← operation.model?
+          let arguments : Array ValueModel ← models
+          let native := Lean.Syntax.mkApp operationModel.native (arguments.map (·.native))
+          let model := Lean.Syntax.mkApp operationModel.native (arguments.map (·.model))
+          pure (native, ({
+            model, rawModel := ⟨rawName.raw⟩
+            observation := if operation.result.isPure then .refl else .named relationName.getId } : BindingModel))
         let binding : Binding := {
           name, type := operation.result, rawName, relationName,
-          model
-          rawModel := ⟨rawName.raw⟩
-          observation := if operation.result.isPure then .refl else .named relationName.getId }
+          model? := callModel.map (·.2) }
         bindAndContinue binding
           (← `(doElem| let $name:ident : $rawType ← $raw:term))
-          (← `(doElem| let $name:ident : $nativeType := $native))
-          #[.call ⟨operation, arguments, binding⟩] rest
+          (← callModel.mapM fun (native, _) => `(doElem| let $name:ident : $nativeType := $native))
+          (callModel.map fun _ => #[.call ⟨operation, arguments, binding⟩]) rest
     | `(doElem| return $expression:term) =>
         unless rest.isEmpty do throwError "statements after the final return are not supported"
         if let some (called, rebuild) ← hoistValueCall? imports scope expression then
@@ -1303,7 +1422,9 @@ private partial def sequence (family : TSyntax `ident)
           return ← sequence family imports resultType scope [call, returned]
         let result ← value scope expression (some resultType)
         expect element resultType result.type
-        return (#[← `(doElem| return $(result.raw))], #[← `(doElem| return $(result.native))], #[], result)
+        let native ← result.model?.mapM fun model => do
+          return #[← `(doElem| return $(model.native))]
+        return (#[← `(doElem| return $(result.raw))], native, some #[], result)
     | _ => throwError "native source blocks support lets, let mut and assignment, registered calls, \
         conditional/match bindings, normal finite Nat ranges and a final return; \
         general while requires an explicit source contract, and break/continue are not supported here"
@@ -1328,8 +1449,9 @@ private def prepareFunction (family : TSyntax `ident)
     parsed := parsed.push parameter
     let binding : Binding := {
       toParameter := parameter,
-      model := ⟨parameterName.raw⟩, rawModel,
-      observation := if type.isPure then .refl else .named relation.getId }
+      model? := some {
+        model := ⟨parameterName.raw⟩, rawModel
+        observation := if type.isPure then .refl else .named relation.getId } }
     scope := binding :: scope
   let elements ← match body with
     | `(do $elements:doSeq) => pure (getDoElems elements).toList
@@ -1340,13 +1462,14 @@ private def prepareFunction (family : TSyntax `ident)
   let current : Operation := {
     family := sourceFamily family
     sourceName := name.getId
-    native := ⟨(fieldName family name).raw⟩
     inputs := parsed.map (·.type)
     result
-    equation := none
-    relation := fieldName family name "_action_rel_native"
-    refinement := fieldName family name "_refines"
-    preservingRelation := some (fieldName family name "_action_rel_native_preserving") }
+    model? := some {
+      native := ⟨(fieldName family name).raw⟩
+      equation := none
+      relation := fieldName family name "_action_rel_native"
+      refinement := fieldName family name "_refines"
+      preservingRelation := some (fieldName family name "_action_rel_native_preserving") } }
   modify fun state => { state with current := some current, currentRecursive := false }
   let (raw, native, calls, returned) ← sequence family imports result scope elements
   let recursive := (← get).currentRecursive
@@ -1355,11 +1478,9 @@ private def prepareFunction (family : TSyntax `ident)
     parameters := parsed
     result := result
     rawBody := ← doTerm raw
-    nativeBody := ← doTerm native
-    calls := calls
-    returned := returned
-    termination := termination
-    recursive := recursive }
+    model? := ← mapModelsM native calls fun native calls => do
+      return {
+        nativeBody := ← doTerm native, calls, returned, termination, recursive } }
   modify fun state => { state with
     functions := state.functions.push fn
     current := none
@@ -1372,6 +1493,7 @@ private def relationalFoldProofDeclarations (registration : FoldRegistration)
     (callbackRelation : Name) : TermElabM (Array Syntax) := do
   let callback := registration.callback
   let operation := registration.operation
+  let operationModel ← operation.requireModel
   let name (suffix : Name) := mkIdentFrom operation.family (operation.family.getId ++ suffix)
   let source := mkCIdent (callback.sourceFamily ++ `program)
   let fn := mkCIdent ((callback.sourceFamily ++ callback.sourceName).appendAfter "Id")
@@ -1442,7 +1564,7 @@ private def relationalFoldProofDeclarations (registration : FoldRegistration)
         (accTy := $accTy) (kind := $kind) (R := $represented)
         (step := $native:ident) (domain := fun _ _ => True) $evaluated:ident)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.relation):ident ($initial:ident : $accType) (values : List $headType)
+    theorem $(operationModel.relation):ident ($initial:ident : $accType) (values : List $headType)
         $roots:bracketedBinder* (root : Option (Complexity.Language.NodeRef $kind))
         ($heap:ident : Complexity.Language.Heap) $observations:bracketedBinder*
         (observed : (Complexity.Language.Representation.list $kind).Rel values root $heap:ident) :
@@ -1459,7 +1581,7 @@ private def relationalFoldProofDeclarations (registration : FoldRegistration)
           (by intro processed head suffix equality; trivial) $accProof observed
       exact ⟨value, finish, executed, related, preserved⟩)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.refinement):ident : Complexity.Language.RepresentedFunction.Refines
+    theorem $(operationModel.refinement):ident : Complexity.Language.RepresentedFunction.Refines
         $program:ident $foldId:ident (Complexity.Language.List.Fold.representation $represented $kind)
         (fun _ => True) (fun input => input.2.foldl $native:ident input.1) := by
       intro input _
@@ -1470,6 +1592,7 @@ private def relationalFoldProofDeclarations (registration : FoldRegistration)
 private def foldDeclarations (registration : FoldRegistration) : TermElabM (Array Syntax) := do
   let callback := registration.callback
   let operation := registration.operation
+  let operationModel ← operation.requireModel
   let family := operation.family
   let name (suffix : Name) := mkIdentFrom family (family.getId ++ suffix)
   let originalProgram := mkCIdent (callback.sourceFamily ++ `program)
@@ -1524,7 +1647,7 @@ private def foldDeclarations (registration : FoldRegistration) : TermElabM (Arra
       rfl)).raw
   if let some relation := callback.relation then
     return declarations ++ (← relationalFoldProofDeclarations registration relation)
-  let some equation := operation.equation | throwError "registered pure fold is missing its exact equation"
+  let some equation := operationModel.equation | throwError "registered pure fold is missing its exact equation"
   declarations := declarations.push (← `(command|
     theorem $callbackPure:ident (initial : $accType) (head : $headType) (_ : True) :
         Complexity.Language.List.Fold.calleeEval $originalProgram:ident $originalId:ident
@@ -1554,7 +1677,7 @@ private def foldDeclarations (registration : FoldRegistration) : TermElabM (Arra
         (Function.Embedding.refl $accType) $callbackPure:ident initial values root heap
         (by intro processed head suffix equality; trivial) observed)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.relation):ident (initial : $accType) (values : List $headType)
+    theorem $(operationModel.relation):ident (initial : $accType) (values : List $headType)
         (root : Option (Complexity.Language.NodeRef $kind)) (heap : Complexity.Language.Heap)
         (observed : (Complexity.Language.Representation.list $kind).Rel values root heap) :
         ∃ returned finish,
@@ -1565,7 +1688,7 @@ private def foldDeclarations (registration : FoldRegistration) : TermElabM (Arra
       exact ⟨_, heap, $equation:ident initial values root heap observed, rfl,
         Complexity.Language.Heap.ShapeExtends.refl heap⟩)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.refinement):ident : Complexity.Language.RepresentedFunction.Refines
+    theorem $(operationModel.refinement):ident : Complexity.Language.RepresentedFunction.Refines
         $program:ident $foldId:ident
         (Complexity.Language.List.Fold.representation
           (Complexity.Language.Representation.ofEmbedding (Function.Embedding.refl $accType)) $kind)
@@ -1577,6 +1700,7 @@ private def foldDeclarations (registration : FoldRegistration) : TermElabM (Arra
 
 private def consDeclarations (registration : ConsRegistration) : TermElabM (Array Syntax) := do
   let operation := registration.operation
+  let operationModel ← operation.requireModel
   let family := operation.family
   let name (suffix : Name) := mkIdentFrom family (family.getId ++ suffix)
   let kind ← kindTerm registration.kind
@@ -1614,7 +1738,7 @@ private def consDeclarations (registration : ConsRegistration) : TermElabM (Arra
       refine (Complexity.Language.Env.forall_nil _).mpr ?_
       rfl)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.relation):ident (head : $headType) (values : List $headType)
+    theorem $(operationModel.relation):ident (head : $headType) (values : List $headType)
         (tail : Option (Complexity.Language.NodeRef $kind)) (heap : Complexity.Language.Heap)
         (observed : (Complexity.Language.Representation.list $kind).Rel values tail heap) :
         ∃ returned finish,
@@ -1623,7 +1747,7 @@ private def consDeclarations (registration : ConsRegistration) : TermElabM (Arra
           heap.ShapeExtends finish := by
       exact Complexity.Language.List.Cons.eval_exists $kind head values tail heap observed)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.refinement):ident : Complexity.Language.RepresentedFunction.Refines
+    theorem $(operationModel.refinement):ident : Complexity.Language.RepresentedFunction.Refines
         $program:ident $consId:ident (Complexity.Language.List.Cons.representation $kind)
         (fun _ => True) (fun input => input.1 :: input.2) :=
       Complexity.Language.List.Cons.refines $kind)).raw
@@ -1631,6 +1755,7 @@ private def consDeclarations (registration : ConsRegistration) : TermElabM (Arra
 
 private def unconsDeclarations (registration : UnconsRegistration) : TermElabM (Array Syntax) := do
   let operation := registration.operation
+  let operationModel ← operation.requireModel
   let name (suffix : Name) := mkIdentFrom operation.family (operation.family.getId ++ suffix)
   let kind ← kindTerm registration.kind
   let headType ← termOfExpr (match registration.kind with
@@ -1662,7 +1787,7 @@ private def unconsDeclarations (registration : UnconsRegistration) : TermElabM (
       refine (Complexity.Language.Env.forall_nil _).mpr ?_
       rfl)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.relation):ident (values : List $headType)
+    theorem $(operationModel.relation):ident (values : List $headType)
         (root : Option (Complexity.Language.NodeRef $kind)) (heap : Complexity.Language.Heap)
         (observed : (Complexity.Language.Representation.list $kind).Rel values root heap) :
         ∃ returned finish,
@@ -1672,7 +1797,7 @@ private def unconsDeclarations (registration : UnconsRegistration) : TermElabM (
           heap.ShapeExtends finish := by
       exact Complexity.Language.List.Uncons.eval_exists $kind values root heap observed)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.refinement):ident : Complexity.Language.RepresentedFunction.Refines
+    theorem $(operationModel.refinement):ident : Complexity.Language.RepresentedFunction.Refines
         $program:ident $unconsId:ident (Complexity.Language.List.Uncons.representation $kind)
         (fun _ => True) (fun values => values.head?.map (fun head => (head, values.tail))) :=
       Complexity.Language.List.Uncons.refines $kind)).raw
@@ -1680,6 +1805,7 @@ private def unconsDeclarations (registration : UnconsRegistration) : TermElabM (
 
 private def isEmptyDeclarations (registration : IsEmptyRegistration) : TermElabM (Array Syntax) := do
   let operation := registration.operation
+  let operationModel ← operation.requireModel
   let name (suffix : Name) := mkIdentFrom operation.family (operation.family.getId ++ suffix)
   let kind ← kindTerm registration.kind
   let headType ← termOfExpr (match registration.kind with
@@ -1689,7 +1815,7 @@ private def isEmptyDeclarations (registration : IsEmptyRegistration) : TermElabM
   let isEmptyId := name `isEmptyId
   let isEmpty := name `isEmpty
   let observe := name `isEmpty_observe
-  let some equation := operation.equation
+  let some equation := operationModel.equation
     | throwError "registered emptiness test is missing its unchanged-heap equation"
   let mut declarations := #[]
   declarations := declarations.push (← `(command|
@@ -1723,7 +1849,7 @@ private def isEmptyDeclarations (registration : IsEmptyRegistration) : TermElabM
       rw [← related, unchanged] at evaluated
       exact evaluated)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.relation):ident (values : List $headType)
+    theorem $(operationModel.relation):ident (values : List $headType)
         (root : Option (Complexity.Language.NodeRef $kind)) (heap : Complexity.Language.Heap)
         (observed : (Complexity.Language.Representation.list $kind).Rel values root heap) :
         ∃ returned finish,
@@ -1732,7 +1858,7 @@ private def isEmptyDeclarations (registration : IsEmptyRegistration) : TermElabM
           heap.ShapeExtends finish := by
       exact Complexity.Language.List.IsEmpty.eval_exists $kind values root heap observed)).raw
   declarations := declarations.push (← `(command|
-    theorem $(operation.refinement):ident : Complexity.Language.RepresentedFunction.Refines
+    theorem $(operationModel.refinement):ident : Complexity.Language.RepresentedFunction.Refines
         $program:ident $isEmptyId:ident (Complexity.Language.List.IsEmpty.representation $kind)
         (fun _ => True) (fun values => values.isEmpty) :=
       Complexity.Language.List.IsEmpty.refines $kind)).raw
@@ -1748,7 +1874,8 @@ private def rawFunction (fn : Function) : TermElabM (TSyntax `sourceFunction) :=
     termination := ← `(Lean.Parser.Termination.suffix|) }
   liftMacroM declaration.toSyntax
 
-private def nativeDeclaration (family : TSyntax `ident) (fn : Function) : TermElabM Syntax := do
+private def nativeDeclaration (family : TSyntax `ident) (fn : Function)
+    (model : FunctionModel) : TermElabM Syntax := do
   let parameters ← fn.parameters.mapM fun parameter => do
     let type ← termOfExpr parameter.type.nativeType
     `(bracketedBinder| ($(parameter.name):ident : $type))
@@ -1756,20 +1883,21 @@ private def nativeDeclaration (family : TSyntax `ident) (fn : Function) : TermEl
   let name := fieldName family fn.name
   return (← `(command|
     /-- Ordinary mathematical function generated from the same represented source block. -/
-    def $name:ident $parameters:bracketedBinder* : $result := Id.run $(fn.nativeBody)
-      $(fn.termination):suffix)).raw
+    def $name:ident $parameters:bracketedBinder* : $result := Id.run $(model.nativeBody)
+      $(model.termination):suffix)).raw
 
 /-- The native model closes over fixed captures, while the source still passes
 its full accumulator. The existing fold homomorphism checks that coordinate
 change once for each prepared body; no execution or resource fact is changed. -/
 private def rangeModelDeclaration (family : TSyntax `ident) (fn : Function)
-    (range : RangeRegistration) : TermElabM Syntax := do
+    (_model : FunctionModel) (range : RangeRegistration) : TermElabM Syntax := do
   let parameters ← fn.parameters.mapM fun parameter => do
     let type ← termOfExpr parameter.type.nativeType
     `(bracketedBinder| ($(parameter.name):ident : $type))
   let some initial := fn.parameters[3]? | throwError "range helper is missing its state parameter"
   let stateType ← termOfExpr fn.result.nativeType
-  let step ← `(fun (state : $stateType) (index : Nat) => $(range.callback.native) index state)
+  let callback ← range.callback.requireModel
+  let step ← `(fun (state : $stateType) (index : Nat) => $(callback.native) index state)
   let arguments := fn.parameters.map (fun parameter => (⟨parameter.name.raw⟩ : TSyntax `term))
   let native := Lean.Syntax.mkApp ⟨(fieldName family fn.name).raw⟩ arguments
   let equation := fieldName family fn.name "_fold_eq_native"
@@ -1884,8 +2012,8 @@ private partial def observationProof (observation : Observation) (heap : TSyntax
       `(Complexity.Language.Buffer.Contents.size_eq $(← observationProof array heap relations))
 
 private def observationAt (argument : Value) (heap : TSyntax `term)
-    (relations : Array RetainedObservation) : TermElabM (TSyntax `term) :=
-  observationProof argument.observation heap relations
+    (relations : Array RetainedObservation) : TermElabM (TSyntax `term) := do
+  observationProof (← argument.requireModel).observation heap relations
 
 private partial def preservation (type : NativeType) (initial finish shape : TSyntax `term)
     (contents : Option (TSyntax `term) := none) :
@@ -1930,19 +2058,23 @@ private partial def traceAction (trace : List Trace) (returned : Value)
     (known : Array (Name × TSyntax `term) := #[]) :
     TermElabM (TSyntax `term) := do
   let action ← match trace with
-    | [] => `(pure $(resolveRaw returned.rawModel known))
+    | [] => do
+        let model ← returned.requireModel
+        `(pure $(resolveRaw model.rawModel known))
     | .call invocation :: rest => do
         let name := mkIdentFrom invocation.operation.family
           (invocation.operation.actionName.getD
             (invocation.operation.family.getId ++ invocation.operation.sourceName))
+        let arguments ← invocation.arguments.mapM Value.requireModel
         let called := Lean.Syntax.mkApp ⟨name.raw⟩
-          (invocation.arguments.map (fun argument => resolveRaw argument.rawModel known))
+          (arguments.map (fun argument => resolveRaw argument.rawModel known))
         let type ← actualTypeTerm invocation.result.type.coreTy
         let next ← traceAction rest returned known
         `(do
           let $(invocation.result.rawName):ident : $type ← ($called:term)
           $next:term)
     | .conditional condition yes no yesResult noResult result :: rest => do
+        let condition ← condition.requireModel
         let yesAction ← traceAction yes.toList yesResult known
         let noAction ← traceAction no.toList noResult known
         let next ← traceAction rest returned known
@@ -1953,6 +2085,7 @@ private partial def traceAction (trace : List Trace) (returned : Value)
           let $(result.rawName):ident : $type ← ($selected:term)
           $next:term)
     | .optionMatch discriminant payload absent present noneResult someResult result :: rest => do
+        let discriminant ← discriminant.requireModel
         let noneAction ← traceAction absent.toList noneResult known
         let someAction ← traceAction present.toList someResult known
         let next ← traceAction rest returned known
@@ -1983,37 +2116,41 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
   for instruction in trace do
     let (result, relationProof) ← match instruction with
       | .call invocation => do
-          let mut applied := invocation.arguments.map (·.model)
+          let models ← invocation.arguments.mapM Value.requireModel
+          let operation ← invocation.operation.requireModel
+          let mut applied := models.map (·.model)
           let mut hypotheses := #[]
-          for argument in invocation.arguments do
+          for argument in invocation.arguments, model in models do
             if argument.type.isPure then
               let observed ← observationAt argument currentHeap relations
               let equality := mkIdent (← mkFreshUserName `argumentEqual)
-              let raw := resolveRaw argument.rawModel known
+              let raw := resolveRaw model.rawModel known
               tactics := tactics.push (← `(tactic|
-                have $equality:ident : $(argument.model) = $raw := $observed))
+                have $equality:ident : $(model.model) = $raw := $observed))
               scalarEqualities := scalarEqualities.push ⟨equality.raw⟩
               tactics := tactics.push (← `(tactic|
                 simp (config := { failIfUnchanged := false }) only [← $equality:ident]))
             else
-              applied := applied.push argument.rawModel
+              applied := applied.push model.rawModel
               hypotheses := hypotheses.push (← observationAt argument currentHeap relations)
           applied := applied.push currentHeap ++ hypotheses
-          if let some index := invocation.operation.positiveStride then
-            let some argument := invocation.arguments[index]?
+          if let some index := operation.positiveStride then
+            let some argument := models[index]?
               | throwError "finite-range operation is missing its stride argument"
             let stride := argument.model
             applied := applied.push (← `(show 0 < $stride from by
               simp (config := { zetaDelta := true, failIfUnchanged := false }) only
                 [Nat.add_eq] <;> omega))
           let relation ← if preserveArrays then do
-              let some strong := invocation.operation.preservingRelation
+              let some strong := operation.preservingRelation
                 | throwError "native array composition requires a proved contents-preserving call"
               pure strong
-            else pure invocation.operation.relation
+            else pure operation.relation
           pure (invocation.result, Lean.Syntax.mkApp ⟨relation.raw⟩ applied)
       | .conditional condition yes no yesResult noResult result => do
           let observed ← observationAt condition currentHeap relations
+          let condition ← condition.requireModel
+          let resultModel ← result.requireModel
           let equality := mkIdent (← mkFreshUserName `conditionEqual)
           let rawCondition := resolveRaw condition.rawModel known
           tactics := tactics.push (← `(tactic|
@@ -2040,7 +2177,7 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
                 (if $(condition.model) then $yesAction else $noAction) $currentHeap =
                   Part.some (.ok returned, finish) ∧
                 ($representation : Complexity.Language.Representation $nativeType $coreType).Rel
-                  $(result.model) returned finish ∧
+                  $(resultModel.model) returned finish ∧
                 $heapPost finish := by
               by_cases $test:ident : $(condition.model) = true
               · simp only [if_pos $test:ident]
@@ -2049,9 +2186,12 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
                 $noProof:tactic*))
           pure (result, (⟨summary.raw⟩ : TSyntax `term))
       | .optionMatch discriminant payload absent present noneResult someResult result => do
+          let discriminantModel ← discriminant.requireModel
+          let payloadModel ← payload.requireModel
+          let resultModel ← result.requireModel
           let noneAction ← traceAction absent.toList noneResult known
           let someAction ← traceAction present.toList someResult known
-          let raw := resolveRaw discriminant.rawModel known
+          let raw := resolveRaw discriminantModel.rawModel known
           let type ← actualTypeTerm result.type.coreTy
           let coreType ← termOfExpr (coreTypeExpr result.type.coreTy)
           let nativeType ← termOfExpr result.type.nativeType
@@ -2076,9 +2216,9 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           let mut somePrefix := #[]
           if payload.type.isPure then
             somePrefix := somePrefix.push (← `(tactic|
-              change $(payload.model) = $(payload.rawName):ident at $payloadObserved:ident))
+              change $(payloadModel.model) = $(payload.rawName):ident at $payloadObserved:ident))
             somePrefix := somePrefix.push (← `(tactic| subst $(payload.rawName):ident))
-            someKnown := someKnown.push (payload.rawName.getId, payload.model)
+            someKnown := someKnown.push (payload.rawName.getId, payloadModel.model)
           else
             someRelations := someRelations.push ⟨payloadObserved.getId, payload.type,
               ⟨payloadObserved.raw⟩⟩
@@ -2094,15 +2234,15 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
                   (fun ($(payload.rawName):ident : $rawPayloadType) => $someAction:term)) $currentHeap =
                     Part.some (.ok returned, finish) ∧
                 ($representation : Complexity.Language.Representation $nativeType $coreType).Rel
-                  $(result.model) returned finish ∧
+                  $(resultModel.model) returned finish ∧
                 $heapPost finish := by
               have $observed:ident :
                   ($discriminantRepresentation : Complexity.Language.Representation
-                    $discriminantType $discriminantCore).Rel $(discriminant.model) $raw $currentHeap :=
+                    $discriminantType $discriminantCore).Rel $(discriminantModel.model) $raw $currentHeap :=
                 $observation
               cases $rawCase:ident : $raw:term with
               | none =>
-                  cases $nativeCase:ident : $(discriminant.model):term with
+                  cases $nativeCase:ident : $(discriminantModel.model):term with
                   | none =>
                       simp (config := { failIfUnchanged := false }) only [$rawCase:ident, $nativeCase:ident,
                         Option.elim_none, Option.elim_some]
@@ -2111,7 +2251,7 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
                       simp only [Complexity.Language.Representation.option, $rawCase:ident,
                         $nativeCase:ident] at $observed:ident
               | some $(payload.rawName):ident =>
-                  cases $nativeCase:ident : $(discriminant.model):term with
+                  cases $nativeCase:ident : $(discriminantModel.model):term with
                   | none =>
                       simp only [Complexity.Language.Representation.option, $rawCase:ident,
                         $nativeCase:ident] at $observed:ident
@@ -2139,9 +2279,10 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
       tactics := tactics.push (← `(tactic|
         obtain ⟨$extended:ident, $contents:ident⟩ := $extended:ident))
     if let .pure _ := result.type then
-      tactics := tactics.push (← `(tactic| change $(result.model) = $returned:ident at $observed:ident))
+      let model ← result.requireModel
+      tactics := tactics.push (← `(tactic| change $(model.model) = $returned:ident at $observed:ident))
       tactics := tactics.push (← `(tactic| subst $returned:ident))
-      known := known.push (result.rawName.getId, result.model)
+      known := known.push (result.rawName.getId, model.model)
     tactics := tactics.push (← `(tactic|
       simp (config := { failIfUnchanged := false }) only [Id.run, Id.instMonad, Bind.bind, Pure.pure,
         ExceptT.bind, ExceptT.bindCont, ExceptT.pure, ExceptT.mk, ExceptT.run,
@@ -2165,7 +2306,8 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
         $contents:ident (kind := kind) view values ($preservedContents view values observed))
     currentHeap := ⟨finish.raw⟩
   let observed ← observationAt returnedValue currentHeap relations
-  let result := resolveRaw returnedValue.rawModel known
+  let returnedModel ← returnedValue.requireModel
+  let result := resolveRaw returnedModel.rawModel known
   let heapPost ← if preserveArrays then `(And.intro $preserved $preservedContents) else pure preserved
   -- Argument rewrites also affect scalar fields retained in a mixed raw state.
   -- Keep their actual projection equalities, without replacing its heap-backed
@@ -2177,23 +2319,25 @@ private partial def relationTrace (trace : Array Trace) (returnedValue : Value)
     exact ⟨$result, $currentHeap, $executed, $observed, $heapPost⟩))
   return tactics
 
-private def equationDeclaration (family : TSyntax `ident) (fn : Function) : TermElabM Syntax := do
+private def equationDeclaration (family : TSyntax `ident) (fn : Function)
+    (model : FunctionModel) : TermElabM Syntax := do
   let header ← correspondenceHeader family fn
   let ⟨nativeName, rawEquation, heap, parameters, roots, observations, nativeValue, rawAction,
     inputRelations⟩ := header
   let equationName := fieldName family fn.name "_action_eq_native"
   let mut tactics := #[← `(tactic| rw [$rawEquation:ident]),
     ← `(tactic| unfold $nativeName:ident), ← normalizeAction]
-  for instruction in fn.calls do
+  for instruction in model.calls do
     let .call invocation := instruction
       | throwError "a conditional block uses relational correspondence"
-    let operation := invocation.operation
+    let operation ← invocation.operation.requireModel
     let arguments := invocation.arguments
-    let mut applied := arguments.map (·.model)
+    let models ← arguments.mapM Value.requireModel
+    let mut applied := models.map (·.model)
     let mut relations := #[]
-    for argument in arguments do
+    for argument in arguments, model in models do
       unless argument.type.isPure do
-        applied := applied.push argument.rawModel
+        applied := applied.push model.rawModel
         relations := relations.push (← observationAt argument ⟨heap.raw⟩ inputRelations)
     applied := applied.push ⟨heap.raw⟩ ++ relations
     let some equation := operation.equation
@@ -2212,6 +2356,7 @@ private def equationDeclaration (family : TSyntax `ident) (fn : Function) : Term
 private def rangeRelationTactics (family : TSyntax `ident) (fn : Function)
     (range : RangeRegistration) (heap positive : TSyntax `ident) (preserveArrays : Bool) :
     TermElabM (Array (TSyntax `tactic)) := do
+  let callbackModel ← range.callback.requireModel
   let source := fieldName (sourceFamily family) (mkIdent `program)
   let bodyId := fieldName (sourceFamily family) (mkIdent range.callback.sourceName) "Id"
   let bodyObserve := fieldName (sourceFamily family) (mkIdent range.callback.sourceName) "_observe"
@@ -2241,10 +2386,10 @@ private def rangeRelationTactics (family : TSyntax `ident) (fn : Function)
   arguments := arguments.push ⟨current.raw⟩
   unless fn.result.isPure do arguments := arguments.push ⟨observed.raw⟩
   let relation ← if preserveArrays then
-      match range.callback.preservingRelation with
+      match callbackModel.preservingRelation with
       | some relation => pure relation
       | none => throwError "range contents preservation requires the actual callback frame"
-    else pure range.callback.relation
+    else pure callbackModel.relation
   let invocation := Lean.Syntax.mkApp ⟨relation.raw⟩ arguments
   callbackProof := callbackProof ++ (← if preserveArrays then do
       pure #[
@@ -2283,13 +2428,13 @@ private def rangeRelationTactics (family : TSyntax `ident) (fn : Function)
     else `(tactic| refine ⟨value, finish, ?_, ?_, shape⟩)
   return #[
     ← `(tactic| have $callback:ident : Complexity.Language.Range.Fold.Contract
-        $source:ident $bodyId:ident rfl $representation $(range.callback.native) $frame := by
+        $source:ident $bodyId:ident rfl $representation $(callbackModel.native) $frame := by
       intro $index:ident $initial:ident $actual:ident $current:ident $observed:ident
       $callbackProof:tactic*),
     ← `(tactic| obtain ⟨value, finish, executed, related, contents, shape⟩ :=
       Complexity.Language.Range.Fold.function_eval_exists
         (source := $source:ident) (fn := $bodyId:ident) (same := rfl)
-        (R := $representation) (step := $(range.callback.native)) (frame := $frame)
+        (R := $representation) (step := $(callbackModel.native)) (frame := $frame)
         $callback:ident $frameRefl $frameTrans $rangeId:ident rfl (by rfl)
         $start:ident $stop:ident $stride:ident $positive:ident
         $(state.name):ident $rawState $heap:ident $stateObserved),
@@ -2306,7 +2451,7 @@ private def rangeRelationTactics (family : TSyntax `ident) (fn : Function)
     ← `(tactic| · simpa only [$modelEquation:ident] using related)]
 
 private def relationDeclaration (family : TSyntax `ident) (fn : Function)
-    (preserveArrays : Bool := false) : TermElabM Syntax := do
+    (model : FunctionModel) (preserveArrays : Bool := false) : TermElabM Syntax := do
   let header ← correspondenceHeader family fn
   let ⟨nativeName, rawEquation, heap, parameters, roots, observations, nativeValue, rawAction,
     inputRelations⟩ := header
@@ -2317,7 +2462,7 @@ private def relationDeclaration (family : TSyntax `ident) (fn : Function)
   let nativeResultType ← termOfExpr fn.result.nativeType
   let resultRepresentation ← termOfExpr fn.result.representation
   let positive := mkIdent (← mkFreshUserName `positiveStride)
-  let extra ← if fn.range.isSome then do
+  let extra ← if model.range.isSome then do
       let some stride := fn.parameters[2]? | throwError "range helper is missing its stride parameter"
       pure #[← `(bracketedBinder| ($positive:ident : 0 < $(stride.name):ident))]
     else pure #[]
@@ -2326,8 +2471,8 @@ private def relationDeclaration (family : TSyntax `ident) (fn : Function)
         Complexity.Language.Buffer.PreservesContents $heap:ident finish)
     else `(fun finish => Complexity.Language.Heap.ShapeExtends $heap:ident finish)
   let declaration (tactics : Array (TSyntax `tactic)) : TermElabM Syntax := do
-    let termination ← if fn.recursive && !(fn.preservesArrays && !preserveArrays) then
-        pure fn.termination
+    let termination ← if model.recursive && !(fn.preservesArrays && !preserveArrays) then
+        pure model.termination
       else `(Lean.Parser.Termination.suffix|)
     return (← `(command|
       /-- Successful execution observes the native result in its actual final heap
@@ -2361,16 +2506,16 @@ private def relationDeclaration (family : TSyntax `ident) (fn : Function)
     for parameter in fn.parameters do
       unless parameter.type.isPure do applied := applied.push ⟨parameter.rawName.raw⟩
     applied := applied.push ⟨heap.raw⟩ ++ inputRelations.map (·.proof)
-    if fn.range.isSome then applied := applied.push ⟨positive.raw⟩
+    if model.range.isSome then applied := applied.push ⟨positive.raw⟩
     let correct := Lean.Syntax.mkApp ⟨strong.raw⟩ applied
     return ← declaration #[
       ← `(tactic| obtain ⟨returned, finish, executed, related, shape, _⟩ := $correct),
       ← `(tactic| exact ⟨returned, finish, executed, related, shape⟩)]
-  if let some range := fn.range then
+  if let some range := model.range then
     return ← declaration (← rangeRelationTactics family fn range heap positive preserveArrays)
   let mut tactics := #[]
-  if fn.calls.any (fun | .call _ => false | _ => true) then
-    let action ← traceAction fn.calls.toList fn.returned
+  if model.calls.any (fun | .call _ => false | _ => true) then
+    let action ← traceAction model.calls.toList model.returned
     let canonical := mkIdent (← mkFreshUserName `sourceComposition)
     tactics := tactics.push (← `(tactic|
       have $canonical:ident : $rawAction = $action := by
@@ -2387,7 +2532,7 @@ private def relationDeclaration (family : TSyntax `ident) (fn : Function)
   else
     tactics := tactics.push (← `(tactic| rw [$rawEquation:ident]))
   tactics := tactics.push (← `(tactic| unfold $nativeName:ident))
-  tactics := tactics ++ (← relationTrace fn.calls fn.returned ⟨heap.raw⟩ inputRelations #[] preserveArrays)
+  tactics := tactics ++ (← relationTrace model.calls model.returned ⟨heap.raw⟩ inputRelations #[] preserveArrays)
   declaration tactics
 
 private partial def inputType : List Parameter → TermElabM (TSyntax `term)
@@ -2414,21 +2559,38 @@ private def inputFields (count : Nat) (input : TSyntax `term) :
       rest ← `(Prod.snd $rest)
   return fields
 
-private def refinementDeclarations (family : TSyntax `ident) (fn : Function) :
+private def interfaceDeclarations (family : TSyntax `ident) (fn : Function) :
     TermElabM (Array Syntax) := do
-  let program := mkIdentFrom family (family.getId ++ `program)
   let id := fieldName family fn.name "Id"
   let rawId := fieldName (sourceFamily family) fn.name "Id"
-  let native := fieldName family fn.name
   let representation := fieldName family fn.name "_representation"
-  let refinement := fieldName family fn.name "_refines"
-  let equation := fieldName family fn.name "_action_rel_native"
   let params ← fn.parameters.mapM (fun parameter => termOfExpr (coreTypeExpr parameter.type.coreTy))
   let result ← termOfExpr (coreTypeExpr fn.result.coreTy)
   let nativeInputType ← inputType fn.parameters.toList
   let nativeResultType ← termOfExpr fn.result.nativeType
   let argumentRepresentation ← inputRepresentation fn.parameters.toList
   let resultRepresentation ← termOfExpr fn.result.representation
+  let idDeclaration ← `(command|
+    abbrev $id:ident := $rawId:ident)
+  let representationDeclaration ← `(command|
+    /-- Ordinary arguments and the actual result observed in their real source heaps.
+    This interface does not assert the existence of a total mathematical model. -/
+    def $representation:ident : Complexity.Language.FunctionRepresentation
+        $nativeInputType (fun _ => $nativeResultType) { params := [$params,*], result := $result } :=
+      Complexity.Language.FunctionRepresentation.ofResult $argumentRepresentation
+        (fun _ => $resultRepresentation))
+  return #[idDeclaration.raw, representationDeclaration.raw]
+
+private def refinementDeclaration (family : TSyntax `ident) (fn : Function) :
+    TermElabM Syntax := do
+  let program := mkIdentFrom family (family.getId ++ `program)
+  let id := fieldName family fn.name "Id"
+  let native := fieldName family fn.name
+  let representation := fieldName family fn.name "_representation"
+  let refinement := fieldName family fn.name "_refines"
+  let equation := fieldName family fn.name "_action_rel_native"
+  let params ← fn.parameters.mapM (fun parameter => termOfExpr (coreTypeExpr parameter.type.coreTy))
+  let nativeInputType ← inputType fn.parameters.toList
   let input := mkIdent (← mkFreshUserName `input)
   let heap := mkIdent (← mkFreshUserName `heap)
   let represented := mkIdent (← mkFreshUserName `represented)
@@ -2473,21 +2635,13 @@ private def refinementDeclarations (family : TSyntax `ident) (fn : Function) :
   tactics := tactics.push (← `(tactic|
     obtain ⟨$returned:ident, $finish:ident, $executed:ident, $observed:ident, _⟩ := $correct))
   tactics := tactics.push (← `(tactic| exact ⟨$returned:ident, $finish:ident, $executed:ident, $observed:ident⟩))
-  let idDeclaration ← `(command|
-    abbrev $id:ident := $rawId:ident)
-  let representationDeclaration ← `(command|
-    /-- Ordinary arguments and the actual result observed in their real source heaps. -/
-    def $representation:ident : Complexity.Language.FunctionRepresentation
-        $nativeInputType (fun _ => $nativeResultType) { params := [$params,*], result := $result } :=
-      Complexity.Language.FunctionRepresentation.ofResult $argumentRepresentation
-        (fun _ => $resultRepresentation))
   let refinementDeclaration ← `(command|
     /-- Automatic correspondence for the same generated source function, without a machine budget. -/
     theorem $refinement:ident : Complexity.Language.RepresentedFunction.Refines
         $program:ident $id:ident $representation:ident (fun _ => True)
         (fun ($input:ident : $nativeInputType) => $nativeValue) := by
       $tactics:tactic*)
-  return #[idDeclaration.raw, representationDeclaration.raw, refinementDeclaration.raw]
+  return refinementDeclaration.raw
 
 private def emitDeclarations (declarations : Array Syntax) : CommandElabM Unit :=
   elabCommand (mkNullNode declarations)
@@ -2498,27 +2652,36 @@ private def readImports (libraries : Array (TSyntax `ident)) : CommandElabM Impo
 private def registerNativeProgram (family rawFamily : TSyntax `ident) (functions : Array Function) :
     CommandElabM Unit := do
   let sourceProgramName ← resolveGlobalConstNoOverload (mkIdentFrom rawFamily (rawFamily.getId ++ `program))
+  let typeInfo (type : NativeType) : FunctionTypeInfo := {
+    nativeType := type.nativeType, coreTy := type.coreTy, representation := type.representation }
   let headers ← (functions.filter (·.exposed)).mapM fun fn => do
-    let nativeName ← resolveGlobalConstNoOverload (fieldName family fn.name)
-    let relation ← resolveGlobalConstNoOverload (fieldName family fn.name "_action_rel_native")
-    let refinement ← resolveGlobalConstNoOverload (fieldName family fn.name "_refines")
-    let equation ← if fn.hasExactEquation then
-        some <$> resolveGlobalConstNoOverload (fieldName family fn.name "_action_eq_native")
-      else pure none
-    let preservingRelation ← if fn.preservesArrays then
-        some <$> resolveGlobalConstNoOverload (fieldName family fn.name "_action_rel_native_preserving")
-      else pure none
+    let action ← resolveGlobalConstNoOverload (fieldName rawFamily fn.name)
+    let model? : Option FunctionModelInfo ← match fn.model? with
+      | none => pure none
+      | some _ => do
+          let name ← resolveGlobalConstNoOverload (fieldName family fn.name)
+          let relation ← resolveGlobalConstNoOverload (fieldName family fn.name "_action_rel_native")
+          let refinement ← resolveGlobalConstNoOverload (fieldName family fn.name "_refines")
+          let equation ← if fn.hasExactEquation then
+              some <$> resolveGlobalConstNoOverload (fieldName family fn.name "_action_eq_native")
+            else pure none
+          let preservingRelation ← if fn.preservesArrays then
+              some <$> resolveGlobalConstNoOverload
+                (fieldName family fn.name "_action_rel_native_preserving")
+            else pure none
+          pure (some {
+            name, equation, relation := some relation
+            refinement := some refinement, preservingRelation })
     pure ({
-      sourceFamily := sourceProgramName.getPrefix
-      sourceName := fn.name.getId
-      nativeName
-      parameters := fn.parameters.map (fun parameter => (parameter.name.getId, parameter.type))
-      result := fn.result
-      equation
-      relation
-      refinement
-      preservingRelation } : NativeFunctionInfo)
-  registerNativeProgramInfo family headers
+      name := fn.name.getId
+      params := fn.parameters.map (fun parameter => (parameter.name.getId, parameter.type.coreTy))
+      result := fn.result.coreTy
+      source? := some { family := sourceProgramName.getPrefix, name := fn.name.getId, action }
+      mathematical? := some {
+        params := fn.parameters.map (fun parameter => (parameter.name.getId, typeInfo parameter.type))
+        result := typeInfo fn.result }
+      model? } : FunctionInfo)
+  registerProgramInfo family headers
 
 private def elaborate (family : TSyntax `ident) (libraries : Array (TSyntax `ident))
     (functions : Array (TSyntax `sourceFunction)) : CommandElabM Unit := do
@@ -2570,13 +2733,25 @@ private def elaborate (family : TSyntax `ident) (libraries : Array (TSyntax `ide
     (← `(command| abbrev $signatures:ident := $rawSignatures:ident)).raw,
     (← `(command| def $program:ident : Complexity.Language.Program $signatures:ident := $rawProgram:ident)).raw]
   for fn in prepared.functions do
-    elabCommand (← liftTermElabM (nativeDeclaration family fn))
-    if let some range := fn.range then
-      elabCommand (← liftTermElabM (rangeModelDeclaration family fn range))
-    if fn.hasExactEquation then elabCommand (← liftTermElabM (equationDeclaration family fn))
-    if fn.preservesArrays then elabCommand (← liftTermElabM (relationDeclaration family fn true))
-    elabCommand (← liftTermElabM (relationDeclaration family fn))
-    if fn.exposed then emitDeclarations (← liftTermElabM (refinementDeclarations family fn))
+    if fn.exposed then emitDeclarations (← liftTermElabM (interfaceDeclarations family fn))
+    match fn.model? with
+    | none =>
+        if fn.exposed then
+          let name := fieldName family fn.name
+          let action := fieldName rawFamily fn.name
+          elabCommand (← `(command|
+            /-- The same source action, without an asserted total mathematical model. -/
+            noncomputable abbrev $name:ident := $action:ident))
+    | some model =>
+        elabCommand (← liftTermElabM (nativeDeclaration family fn model))
+        if let some range := model.range then
+          elabCommand (← liftTermElabM (rangeModelDeclaration family fn model range))
+        if fn.hasExactEquation then
+          elabCommand (← liftTermElabM (equationDeclaration family fn model))
+        if fn.preservesArrays then
+          elabCommand (← liftTermElabM (relationDeclaration family fn model true))
+        elabCommand (← liftTermElabM (relationDeclaration family fn model))
+        if fn.exposed then elabCommand (← liftTermElabM (refinementDeclaration family fn))
   registerNativeProgram family rawFamily prepared.functions
 
 /-- Generate ordinary mathematical functions and checked represented source

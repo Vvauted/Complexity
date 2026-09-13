@@ -35,6 +35,12 @@ The current integration work has these concrete obligations:
   proofs are distinct fields; the separate native-function registry is removed.
 - [ ] Share resolved types, operations and control-flow lowering, with existing
   entry modes retained only as compatibility or explicit proof-view choices.
+- [x] Separate mandatory source/type preparation from optional mathematical
+  models in the represented preparation pass. Expressions and calls propagate
+  the absence of a model explicitly; actual function IDs and representation
+  interfaces do not depend on generating a pure function. A promised
+  correspondence proof failing is still an error, not silent model removal.
+  This structural change does not itself implement general represented loops.
 - [ ] Compose mathematical functions and state contracts through the same
   heap-indexed representation. A pure encoding is a special case; mutable
   array contents are not preserved by arbitrary heap extension.
@@ -77,6 +83,9 @@ The current integration work has these concrete obligations:
   original allocating `make` consumer proves its ordinary `Array.replicate`
   result through `Correct.of_triple` and its existing standard state contract,
   without generating a total pure model first.
+  `program_correct` also accepts an explicit represented total contract when
+  the selected header has no model. The same packing bridge carries that
+  contract to the fixed interface; no pure model or private ABI proof is needed.
 - [ ] Migrate existing consumers to the common entry and verify their ordinary
   correctness statements and same-program RAM bounds on 0v0. Update the manual
   and remove obsolete capability claims when those consumers actually pass.

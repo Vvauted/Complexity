@@ -180,6 +180,49 @@ def ofPacking {α : Type u} {β : Type v} [Input α] [Output β]
     (Packing.entry (Input.params α) (Output.type β) signatures)
     (Packing.entry_signature (Input.params α) (Output.type β) signatures)
 
+private theorem representedTotal_cast {α : Type u} {β : Type v}
+    {signatures : List Signature} (source : Language.Program signatures)
+    (fn : Fin signatures.length) {selected : Signature} (same : selected = signatures[fn])
+    (representation : FunctionRepresentation α (fun _ => β) selected)
+    {valid : α → Prop} {post : α → β → Prop}
+    (specification : RepresentedFunction.Total source fn
+      (cast (congrArg (FunctionRepresentation α (fun _ => β)) same) representation) valid post)
+    (x : α) (legal : valid x) :
+    FunctionTotal source fn
+      (cast (congrArg (fun s => Env s.params → Heap → Prop) same)
+        (representation.input.Rel x))
+      (cast (congrArg (fun s =>
+        Env s.params → Heap → Value s.result → Heap → Prop) same)
+        (fun args initial value finish =>
+          ∃ y, representation.post x args initial value finish y ∧ post x y)) := by
+  cases same
+  exact specification x legal
+
+/-- Publish a represented total contract through the real packing entry without
+requiring a pure mathematical model. The contract observes the original callee's
+actual result and final heap with the fixed output representation. Input
+compatibility concerns only the existing preloaded arguments. -/
+theorem Correct.of_packing_total {α : Type u} {β : Type v} [Input α] [Output β]
+    {signatures : List Signature} {τ : Ty} (source : Language.Program signatures)
+    (fn : Fin signatures.length) (same : signatures[fn] = ⟨[τ], Output.type β⟩)
+    (packing : Packing (Input.params α) τ) (inputRepresentation : Representation α τ)
+    {valid : α → Prop} {post : α → β → Prop}
+    (specification : RepresentedFunction.Total source fn
+      (cast (congrArg (FunctionRepresentation α (fun _ => β)) same.symm)
+        (FunctionRepresentation.ofResult (ArgumentRepresentation.single inputRepresentation)
+          (fun _ => Output.representation (β := β)))) valid post)
+    (input : ∀ x, valid x →
+      inputRepresentation.Rel x (packing.eval (Input.args x)) (Input.heap x)) :
+    (ofPacking source fn same packing).Correct valid post := by
+  intro x legal
+  have callee := representedTotal_cast source fn same.symm
+    (FunctionRepresentation.ofResult (ArgumentRepresentation.single inputRepresentation)
+      (fun _ => Output.representation (β := β))) specification x legal
+  have wrapped := packing.program_total source fn same callee
+  obtain ⟨value, heap, evaluated, y, observed, property⟩ :=
+    FunctionTotal.iff_eval.mp wrapped (Input.args x) (Input.heap x) (input x legal)
+  exact ⟨y, ⟨value, heap, evaluated, observed⟩, property⟩
+
 /-- Publish ordinary mathematical correctness from the original native/source
 refinement, using the real packing entry. The input compatibility proof concerns
 the fixed preloaded values; it is not executable host preprocessing. The output
@@ -196,14 +239,8 @@ theorem Correct.of_packing_refines {α : Type u} {β : Type v} [Input α] [Outpu
     (input : ∀ x, valid x →
       inputRepresentation.Rel x (packing.eval (Input.args x)) (Input.heap x))
     (mathematics : ∀ x, valid x → post x (function x)) :
-    (ofPacking source fn same packing).Correct valid post := by
-  intro x legal
-  have callee := (RepresentedFunction.Refines.cast_iff source fn same.symm
-    (FunctionRepresentation.ofResult (ArgumentRepresentation.single inputRepresentation)
-      (fun _ => Output.representation (β := β))) valid function).mp refinement x legal
-  have wrapped := packing.program_total source fn same callee
-  obtain ⟨value, heap, evaluated, observed⟩ :=
-    FunctionTotal.iff_eval.mp wrapped (Input.args x) (Input.heap x) (input x legal)
-  exact ⟨function x, ⟨value, heap, evaluated, observed⟩, mathematics x legal⟩
+    (ofPacking source fn same packing).Correct valid post :=
+  Correct.of_packing_total source fn same packing inputRepresentation
+    (refinement.of_math mathematics) input
 
 end Complexity.Program
