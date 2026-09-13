@@ -17,8 +17,8 @@ without changing the remaining input's heap or copying its contents.
 `Input.comap` registers an injective presentation of an existing input layout.
 Neither it nor `Input.ofEmbedding` implements arbitrary Lean transformations in
 the source language or makes their execution free. Input preparation remains an
-external invocation boundary. General combinations of independently heap-backed
-inputs require their own fixed layout and representation proof.
+external invocation boundary. `Program.ArrayInput` extends these instances with
+multiple preloaded arrays, using an exact object-prefix preservation property.
 
 Output instances only select existing structural representations of the actual
 returned value and final heap. They depend on the result type, not on a proposed

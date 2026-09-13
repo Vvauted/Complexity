@@ -1090,17 +1090,31 @@ them through the fixed-type program wrapper below.
 selects the same typed source function with externally fixed input and output
 representations. `Correct valid post` accepts an ordinary mathematical relation;
 `TimeO valid size growth` keeps the task's size measure explicit and uses the
-existing actual RAM execution. The source wrapper, scalar/single-array inputs,
-scalar-prefix tuples, structural outputs and compatibility with `ArrayFunction`
-are checked. The [typed-program consumer](../Examples/Language/Program.lean)
+existing actual RAM execution. The source wrapper, scalar and multiple-array
+inputs, structural outputs and compatibility with `ArrayFunction` are checked.
+The [typed-program consumer](../Examples/Language/Program.lean)
 publishes an existing two-argument source function using its generated total
 contract and ordinary mathematical equation. `Correct.of_functionTotal` supplies
 the shared invocation bridge, without a second algorithm or environment adapter.
-Registration must be fixed by the interface, not supplied by a candidate as free preprocessing
-or answer decoding. Arbitrary combinations of heap-backed inputs and automatic
-registration of array-bearing records are not provided yet. This wrapper does
-not extend the frontend to compile arbitrary Lean functions or make resource
-proofs follow from mathematical correctness alone.
+Registration must be fixed by the interface, not supplied by a candidate as free
+preprocessing or answer decoding. Right-associated natural/Boolean array and
+scalar inputs now compose in a shared layout: arrays append objects to the
+existing heap, while scalars only prepend arguments. Old identities and contents
+remain unchanged. The opt-in `Input.PrefixClosed` property
+records exactly the preservation needed for composition; arbitrary custom input
+relations are not silently assumed to have it. Physical initialization reuses
+the same generic `ArenaRep.push_buffer` theorem as actual runtime allocation.
+
+Standard `deriving Program.Input, Program.RamInput` and `deriving Program.Output`
+register closed records through one checked direct-field embedding. The append
+consumer has two array fields and an array-valued output record; its correctness
+proof reuses the existing allocating source implementation and `Array.append`
+contents contract. The supported ordered field tuple must already have a layout.
+Parameterized/dependent/inherited records and general heap-backed datatypes are
+not covered. Extending native source-record syntax to heap-backed fields remains
+separate work: currently the record is a mathematical invocation interface and
+the source function receives separate typed arguments. These wrappers do not
+compile arbitrary Lean functions or derive resource proofs from correctness.
 
 Keep three layers distinct: mathematical behavior; resource arguments over the
 same source implementation; and a concrete backend adequacy theorem. Ordinary

@@ -221,13 +221,42 @@ bounded-increment declaration as `Program (Nat × Nat) Nat`. Its proof applies
 the ordinary minimum equation. This keeps invocation and evaluation bookkeeping
 in the library; it does not require another implementation or argument adapter.
 
-The [input instances](##Complexity.Program.Input) supply scalars, a natural
-array, and right-associated scalar prefixes such as `Nat × Array Nat` as
-separate source parameters. Results include scalars, natural arrays, products
-and options. Task authors fix these conventions before choosing a candidate.
-An ordinary record can be registered through an injective field presentation;
-that registration is not automatic support for record syntax in the frontend.
-General products of independently heap-backed inputs still need a shared layout.
+The [input instances](##Complexity.Program.Input) and
+[array composition](##Complexity.Program.ArrayInput) supply scalars and multiple
+`Array Nat` or `Array Bool` arguments in right-associated tuples. Each array has
+its own source object and physical interval; appending an input retains earlier
+object identifiers and contents. Empty arrays also retain distinct identities.
+The shared proof supplies initialization at every admitted word width. Results
+include scalars, arrays, products and options, observed in the actual final heap.
+
+Ordinary closed records can use standard Lean deriving:
+
+```lean
+structure AppendInput where
+  left : Array Nat
+  right : Array Nat
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+structure AppendOutput where
+  values : Array Nat
+  deriving Complexity.Program.Output
+```
+
+The [deriving handlers](##Complexity.Program.Deriving) generate a checked
+direct-field view and reuse the same tuple interfaces; the
+[RAM handler](##Complexity.Computability.Ram.Compiler.Language.Program.Deriving)
+uses exactly that input layout. The typed-program example selects the existing
+allocating append as `Program AppendInput AppendOutput` and proves
+`output.values = input.left ++ input.right` using the library's contents theorem.
+There is no per-record heap proof or second append implementation.
+
+Registration is fixed by the task before choosing a candidate. It does not run
+arbitrary host preprocessing or compile arbitrary Lean record operations.
+Currently deriving requires nondependent direct fields, no type parameters or
+inheritance, and an existing interface for the resulting ordered field tuple.
+Array-bearing records describe the mathematical invocation boundary; the source
+body still uses separate typed buffer parameters, not native record-field syntax.
+The append example proves source correctness, not an independent time bound.
 
 The [RAM interface](##Complexity.Computability.Ram.Compiler.Language.Program)
 requires actual halted executions uniformly over all admitted word widths.

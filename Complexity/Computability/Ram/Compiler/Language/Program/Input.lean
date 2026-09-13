@@ -28,19 +28,8 @@ universe u v
 
 private theorem inputWordWidth_cons (head : Nat) (tail : Array Nat) :
     Ram.LanguageCompiler.ArrayFunction.inputWordWidth tail ≤
-      Ram.LanguageCompiler.ArrayFunction.inputWordWidth (#[head] ++ tail) := by
-  have maximum : Ram.LanguageCompiler.ArrayFunction.inputMax tail ≤
-      Ram.LanguageCompiler.ArrayFunction.inputMax (#[head] ++ tail) := by
-    simp only [Ram.LanguageCompiler.ArrayFunction.inputMax, Array.toList_append]
-    change tail.toList.max?.getD 0 ≤ (head :: tail.toList).max?.getD 0
-    cases found : tail.toList.max? <;> simp [List.max?_cons, found]
-  have size : (#[head] ++ tail).size = 1 + tail.size := by simp
-  unfold Ram.LanguageCompiler.ArrayFunction.inputWordWidth
-  apply Nat.add_le_add_left
-  apply (Nat.le_log2 (by omega)).2
-  have base := Nat.log2_self_le
-    (n := tail.size + Ram.LanguageCompiler.ArrayFunction.inputMax tail + 2) (by omega)
-  omega
+      Ram.LanguageCompiler.ArrayFunction.inputWordWidth (#[head] ++ tail) :=
+  Ram.LanguageCompiler.ArrayFunction.inputWordWidth_append_right #[head] tail
 
 private theorem tail_width {head : Nat} {tail : Array Nat} {w : Nat}
     (width : 1 + Ram.LanguageCompiler.ArrayFunction.inputWordWidth (#[head] ++ tail) ≤ w) :
@@ -54,7 +43,8 @@ private theorem head_lt_word {head : Nat} {tail : Array Nat} {w : Nat}
   simpa using Ram.LanguageCompiler.ArrayFunction.cell_lt_word
     (xs := #[head] ++ tail) width 0 (by simp)
 
-private theorem empty_arenaRep {words : Array Nat} {w : Nat}
+/-- The initialized empty arena is available at the scale of any fixed input. -/
+theorem empty_arenaRep {words : Array Nat} {w : Nat}
     (width : 1 + Ram.LanguageCompiler.ArrayFunction.inputWordWidth words ≤ w) :
     ArenaRep (Ram.LanguageCompiler.ArrayFunction.placement w) 1
       (Ram.LanguageCompiler.ArrayFunction.heapLimit w) Input.emptyHeap

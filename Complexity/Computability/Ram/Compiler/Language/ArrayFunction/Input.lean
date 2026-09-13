@@ -58,6 +58,43 @@ theorem inputWordWidth_pos (xs : Array Nat) : 0 < inputWordWidth xs := by
   unfold inputWordWidth
   omega
 
+/-- Including every old input word cannot decrease the largest input value. -/
+theorem inputMax_mono {xs ys : Array Nat}
+    (included : ∀ value, value ∈ xs.toList → value ∈ ys.toList) :
+    inputMax xs ≤ inputMax ys := by
+  cases found : xs.toList.max? with
+  | none => simp [inputMax, found]
+  | some value =>
+      simpa only [inputMax, found, Option.getD_some] using
+        (List.le_max?_getD_of_mem (k := 0) (included value (List.max?_mem found)))
+
+/-- The fixed width scale is monotone in input length and retained word values. -/
+theorem inputWordWidth_mono {xs ys : Array Nat} (size : xs.size ≤ ys.size)
+    (included : ∀ value, value ∈ xs.toList → value ∈ ys.toList) :
+    inputWordWidth xs ≤ inputWordWidth ys := by
+  have maximum := inputMax_mono included
+  unfold inputWordWidth
+  apply Nat.add_le_add_left
+  apply (Nat.le_log2 (by omega)).2
+  have base := Nat.log2_self_le (n := xs.size + inputMax xs + 2) (by omega)
+  omega
+
+/-- Appending words retains the width required by the left input. -/
+theorem inputWordWidth_append_left (xs ys : Array Nat) :
+    inputWordWidth xs ≤ inputWordWidth (xs ++ ys) := by
+  apply inputWordWidth_mono (by simp)
+  intro value present
+  simp only [Array.toList_append, List.mem_append]
+  exact Or.inl present
+
+/-- Appending words retains the width required by the right input. -/
+theorem inputWordWidth_append_right (xs ys : Array Nat) :
+    inputWordWidth ys ≤ inputWordWidth (xs ++ ys) := by
+  apply inputWordWidth_mono (by simp)
+  intro value present
+  simp only [Array.toList_append, List.mem_append]
+  exact Or.inr present
+
 /-- The policy leaves a genuine, nonzero machine word width. -/
 theorem width_pos {xs : Array Nat} {w : Nat}
     (width : 1 + inputWordWidth xs ≤ w) : 0 < w := by
@@ -73,6 +110,15 @@ private theorem input_lt_base (xs : Array Nat) :
     xs.size + inputMax xs + 2 < 2 ^ inputWordWidth xs := by
   simpa only [inputWordWidth, Nat.add_comm 1] using
     (Nat.lt_log2_self (n := xs.size + inputMax xs + 2))
+
+/-- The fixed input scale accommodates its length together with any represented
+structural extent, such as the cursor of an already preloaded input layout. -/
+theorem size_add_max_lt_heapLimit {xs : Array Nat} {w : Nat}
+    (width : 1 + inputWordWidth xs ≤ w) : xs.size + inputMax xs + 2 < heapLimit w := by
+  have base := input_lt_base xs
+  have grows : 2 ^ inputWordWidth xs ≤ 2 ^ (w - 1) :=
+    Nat.pow_le_pow_right (by decide) (by omega)
+  exact base.trans_le grows
 
 /-- The initial cursor fits strictly inside the fixed lower-half arena. -/
 theorem cursor_lt_heapLimit {xs : Array Nat} {w : Nat}
