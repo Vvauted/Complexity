@@ -303,7 +303,9 @@ This is not arbitrary Lean compilation or a complete persistent-array API.
 The same linked-list example now uses mutable locals and finite ranges to
 allocate list nodes and repeatedly append to an array-valued record. Generated
 correspondence supplies source totality and actual-heap observations; the
-mathematical fold still exposes captured-state tuples. General represented
+mathematical fold contains only the mutable accumulator. The ordinary List and
+record proofs no longer mention capture tuples: `List.foldl_hom` connects those
+coordinates to the unchanged source state inside the generator. General represented
 `while`, nonlocal loop exits and recursion from within a range remain open.
 Native record selection currently accepts one mathematical input parameter;
 direct pure selection also accepts ordinary curried arguments through their

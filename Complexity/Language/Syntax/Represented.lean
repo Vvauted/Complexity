@@ -355,6 +355,11 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
 
 private structure RangeRegistration where
   callback : Operation
+  embedding : TSyntax `term
+  mutableStep : TSyntax `term
+  initialMutable : TSyntax `term
+  indices : TSyntax `term
+  emptyState : Bool
 
 private structure Function where
   name : TSyntax `ident
@@ -804,6 +809,28 @@ private def returnedState (bindings : Array Binding) (initial : TSyntax `ident) 
     else fieldProjection bindings.size index ⟨initial.raw⟩
   fieldsTerm fields.toList
 
+/-- Mathematical loop coordinates contain only locals that the body can update. -/
+private def mutableState (bindings : Array Binding) (state : TSyntax `term) :
+    TermElabM (TSyntax `term) := do
+  let mut fields := #[]
+  for binding in bindings, index in [:bindings.size] do
+    if binding.mutable then fields := fields.push (← fieldProjection bindings.size index state)
+  fieldsTerm fields.toList
+
+/-- Captures are closed over at loop entry, not selected again from each step's
+mathematical result. The actual source accumulator still contains every field. -/
+private def packMutableState (bindings : Array Binding) (captured mutable : TSyntax `term) :
+    TermElabM (TSyntax `term) := do
+  let count := (bindings.filter (·.mutable)).size
+  let mut nextMutable := 0
+  let mut fields := #[]
+  for binding in bindings, index in [:bindings.size] do
+    if binding.mutable then
+      fields := fields.push (← fieldProjection count nextMutable mutable)
+      nextMutable := nextMutable + 1
+    else fields := fields.push (← fieldProjection bindings.size index captured)
+  fieldsTerm fields.toList
+
 /-- Normal range bodies and statement branches do not erase nonlocal exits.
 Their eventual extension needs an explicit control result in the source iterator. -/
 private partial def requireNormalBlock (stx : Syntax) : TermElabM Unit := do
@@ -945,9 +972,20 @@ private partial def sequence (family : TSyntax `ident)
       let next := mkIdent (← mkFreshUserName `rangeNext)
       let rawStateType ← rawTypeTerm stateNativeType.coreTy
       let bodyNativeName := fieldName family bodyName
-      let nativeFold ← `((List.range' $startName:ident
+      let indices ← `(List.range' $startName:ident
         (($stopName:ident - $startName:ident + $strideName:ident - 1) / $strideName:ident)
-        $strideName:ident).foldl (fun state index => $bodyNativeName:ident index state) $initial:ident)
+        $strideName:ident)
+      let mutableType ← stateType (captured.filter (·.mutable)).toList
+      let mutableName := mkIdent (← mkFreshUserName `mutableState)
+      let stepIndex := mkIdent (← mkFreshUserName `index)
+      let packedMutable ← packMutableState captured ⟨initial.raw⟩ ⟨mutableName.raw⟩
+      let embedding ← `(fun ($mutableName:ident : $mutableType) => $packedMutable)
+      let nextState ← `($bodyNativeName:ident $stepIndex:ident $packedMutable)
+      let nextMutable ← mutableState captured nextState
+      let mutableStep ← `(fun ($mutableName:ident : $mutableType) ($stepIndex:ident : Nat) => $nextMutable)
+      let initialMutable ← mutableState captured ⟨initial.raw⟩
+      let nativeFold ← `(($indices).foldl $mutableStep $initialMutable)
+      let nativeResult := Lean.Syntax.mkApp embedding #[nativeFold]
       let wrapper : Function := {
         name := rangeName
         parameters := #[startBinding.toParameter, stopBinding.toParameter,
@@ -961,9 +999,12 @@ private partial def sequence (family : TSyntax `ident)
             rangeAccumulator := $next:ident
             $cursor:ident := $cursor:ident + $strideName:ident
           return rangeAccumulator)
-        nativeBody := ← `(do return $nativeFold)
+        nativeBody := ← `(do return $nativeResult)
         calls := #[], returned := bodyReturned, termination := ← `(Lean.Parser.Termination.suffix|)
-        range := some ⟨functionOperation family helper⟩, exposed := false }
+        range := some {
+          callback := functionOperation family helper
+          embedding, mutableStep, initialMutable, indices, emptyState := captured.isEmpty }
+        exposed := false }
       modify fun state => { state with functions := state.functions.push wrapper }
       let packed := mkIdent (← mkFreshUserName `rangeInput)
       let result := mkIdent (← mkFreshUserName `rangeOutput)
@@ -1718,6 +1759,32 @@ private def nativeDeclaration (family : TSyntax `ident) (fn : Function) : TermEl
     def $name:ident $parameters:bracketedBinder* : $result := Id.run $(fn.nativeBody)
       $(fn.termination):suffix)).raw
 
+/-- The native model closes over fixed captures, while the source still passes
+its full accumulator. The existing fold homomorphism checks that coordinate
+change once for each prepared body; no execution or resource fact is changed. -/
+private def rangeModelDeclaration (family : TSyntax `ident) (fn : Function)
+    (range : RangeRegistration) : TermElabM Syntax := do
+  let parameters ← fn.parameters.mapM fun parameter => do
+    let type ← termOfExpr parameter.type.nativeType
+    `(bracketedBinder| ($(parameter.name):ident : $type))
+  let some initial := fn.parameters[3]? | throwError "range helper is missing its state parameter"
+  let stateType ← termOfExpr fn.result.nativeType
+  let step ← `(fun (state : $stateType) (index : Nat) => $(range.callback.native) index state)
+  let arguments := fn.parameters.map (fun parameter => (⟨parameter.name.raw⟩ : TSyntax `term))
+  let native := Lean.Syntax.mkApp ⟨(fieldName family fn.name).raw⟩ arguments
+  let equation := fieldName family fn.name "_fold_eq_native"
+  let mut proof := #[]
+  if range.emptyState then proof := proof.push (← `(tactic| cases $(initial.name):ident))
+  proof := proof.push (← `(tactic| exact List.foldl_hom $(range.embedding)
+    (g₁ := $(range.mutableStep)) (g₂ := $step)
+    (l := $(range.indices)) (init := $(range.initialMutable)) (by intro state index; rfl)))
+  return (← `(command|
+    /-- Fixed captures disappear from the mathematical accumulator only; the
+    full-state source traversal is unchanged. -/
+    theorem $equation:ident $parameters:bracketedBinder* :
+        ($(range.indices)).foldl $step $(initial.name):ident = $native := by
+      $proof:tactic*)).raw
+
 private def normalizeAction : TermElabM (TSyntax `tactic) :=
   `(tactic| simp only [Id.run, Id.instMonad, Bind.bind, Pure.pure,
     ExceptT.bind, ExceptT.bindCont, ExceptT.pure, ExceptT.mk, ExceptT.run,
@@ -2150,7 +2217,7 @@ private def rangeRelationTactics (family : TSyntax `ident) (fn : Function)
   let bodyObserve := fieldName (sourceFamily family) (mkIdent range.callback.sourceName) "_observe"
   let rangeId := fieldName (sourceFamily family) fn.name "Id"
   let rangeObserve := fieldName (sourceFamily family) fn.name "_observe"
-  let nativeName := fieldName family fn.name
+  let modelEquation := fieldName family fn.name "_fold_eq_native"
   let type ← termOfExpr fn.result.nativeType
   let core ← termOfExpr (coreTypeExpr fn.result.coreTy)
   let representation ← termOfExpr fn.result.representation
@@ -2236,7 +2303,7 @@ private def rangeRelationTactics (family : TSyntax `ident) (fn : Function)
           $heap:ident = _ at executed
         rw [$rangeObserve:ident] at executed
         exact executed),
-    ← `(tactic| · simpa only [$nativeName:ident, Id.run, Id.instMonad] using related)]
+    ← `(tactic| · simpa only [$modelEquation:ident] using related)]
 
 private def relationDeclaration (family : TSyntax `ident) (fn : Function)
     (preserveArrays : Bool := false) : TermElabM Syntax := do
@@ -2504,6 +2571,8 @@ private def elaborate (family : TSyntax `ident) (libraries : Array (TSyntax `ide
     (← `(command| def $program:ident : Complexity.Language.Program $signatures:ident := $rawProgram:ident)).raw]
   for fn in prepared.functions do
     elabCommand (← liftTermElabM (nativeDeclaration family fn))
+    if let some range := fn.range then
+      elabCommand (← liftTermElabM (rangeModelDeclaration family fn range))
     if fn.hasExactEquation then elabCommand (← liftTermElabM (equationDeclaration family fn))
     if fn.preservesArrays then elabCommand (← liftTermElabM (relationDeclaration family fn true))
     elabCommand (← liftTermElabM (relationDeclaration family fn))

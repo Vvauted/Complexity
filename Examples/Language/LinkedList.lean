@@ -324,12 +324,9 @@ theorem choosePrepend_eq (choose : Bool) (head : Nat) (tail : List Nat) :
     RangeNative.choosePrepend choose head tail = if choose then head :: tail else tail := by
   cases choose <;> rfl
 
-private theorem fold_prepend (indices : List Nat) (initial tail : List Nat) (head count : Nat) :
-    indices.foldl
-      (fun (state : List Nat × List Nat × Nat × Nat) _ =>
-        (state.2.2.1 :: state.1, state.2.1, state.2.2.1, state.2.2.2))
-      (initial, tail, head, count) =
-      (List.replicate indices.length head ++ initial, tail, head, count) := by
+private theorem fold_prepend (indices : List Nat) (initial : List Nat) (head : Nat) :
+    indices.foldl (fun result _ => head :: result) initial =
+      List.replicate indices.length head ++ initial := by
   induction indices generalizing initial with
   | nil => rfl
   | cons index rest ih =>
@@ -341,10 +338,8 @@ private theorem fold_prepend (indices : List Nat) (initial tail : List Nat) (hea
 source correspondence supplies the allocating loop and its intermediate heaps. -/
 theorem prependRange_eq (count head : Nat) (tail : List Nat) :
     RangeNative.prependRange count head tail = List.replicate count head ++ tail := by
-  change ((List.range' 0 ((count - 0 + 1 - 1) / 1) 1).foldl
-    (fun (state : List Nat × List Nat × Nat × Nat) _ =>
-      (state.2.2.1 :: state.1, state.2.1, state.2.2.1, state.2.2.2))
-    (tail, tail, head, count)).1 = _
+  change (List.range' 0 ((count - 0 + 1 - 1) / 1) 1).foldl
+    (fun result _ => head :: result) tail = _
   rw [fold_prepend]
   simp only [List.length_range', Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
 
@@ -379,14 +374,12 @@ source_program (native) ArrayRangeNative where
       state := { values := values, copies := state.copies + 1 }
     return state
 
-private theorem fold_append_copies (indices : List Nat) (current initial : Payload)
-    (chunk : Array Nat) (count : Nat) :
+private theorem fold_append_copies (indices : List Nat) (current : Payload)
+    (chunk : Array Nat) :
     (indices.foldl
-      (fun (state : Payload × Payload × Array Nat × Nat) _ =>
-        (({ values := Array.append state.1.values state.2.2.1,
-            copies := state.1.copies + 1 } : Payload),
-          state.2.1, state.2.2.1, state.2.2.2))
-      (current, initial, chunk, count)).1.copies = current.copies + indices.length := by
+      (fun (state : Payload) _ =>
+        { values := Array.append state.values chunk, copies := state.copies + 1 })
+      current).copies = current.copies + indices.length := by
   induction indices generalizing current with
   | nil => exact (Nat.add_zero _).symm
   | cons index rest ih =>
@@ -400,11 +393,9 @@ The author's proof concerns only an ordinary mathematical record projection. -/
 theorem repeatAppend_copies (count : Nat) (chunk : Array Nat) (initial : Payload) :
     (ArrayRangeNative.repeatAppend count chunk initial).copies = initial.copies + count := by
   change ((List.range' 0 ((count - 0 + 1 - 1) / 1) 1).foldl
-    (fun (state : Payload × Payload × Array Nat × Nat) _ =>
-      (({ values := Array.append state.1.values state.2.2.1,
-          copies := state.1.copies + 1 } : Payload),
-        state.2.1, state.2.2.1, state.2.2.2))
-    (initial, initial, chunk, count)).1.copies = _
+    (fun (state : Payload) _ =>
+      { values := Array.append state.values chunk, copies := state.copies + 1 })
+    initial).copies = _
   rw [fold_append_copies]
   simp only [List.length_range', Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
 

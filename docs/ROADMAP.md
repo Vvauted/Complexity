@@ -55,9 +55,11 @@ The current integration work has these concrete obligations:
   total source correspondence and ordinary mathematical proofs on 0v0.
   This does not yet cover general represented `while`, loop exits, recursive
   calls to the enclosing function from a range, or mutable-name shadowing.
-- [ ] Simplify the generated range's mathematical view: captured immutable
-  variables still appear in its folded state tuple. The implementation bridge
-  is automatic, but authors should reason about the mutable accumulator alone.
+- [x] Simplify the generated range's mathematical view to its mutable
+  accumulator, closing over immutable captures. `List.foldl_hom` automatically
+  connects it to the unchanged full source state. The existing List and
+  array-record proofs now use only their ordinary accumulators; the compiled
+  linked-list consumer remains checked.
 - [x] Publish `Program.TimeO` at input-dependent call depth. A supplied uniform
   polynomial depth envelope now gives code/stack capacity under the existing
   width policy; actual values, allocation and execution still require proofs.

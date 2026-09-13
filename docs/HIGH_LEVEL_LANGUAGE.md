@@ -20,9 +20,10 @@ dispatch to select another frontend. Mutable local bindings and normal finite
 ranges now have checked allocating List and array-record consumers. Their source
 correspondence follows the actual callback calls and intermediate heaps.
 General represented `while`, nonlocal loop exits and calls to an enclosing
-recursive function from a range remain open. The mathematical range view still
-exposes captured-state tuples; simplifying that view is a separate unfinished
-part of the proof interface.
+recursive function from a range remain open. The mathematical range view folds
+only mutable locals and closes over fixed captures. The generator uses
+`List.foldl_hom` to prove that view corresponds to the unchanged full-state
+source loop; authors do not unfold captured-state tuples.
 
 The [cross-prover research report](DESIGN_RESEARCH.md) supplies the rationale
 for the next interface: one supported implementation, a common mathematical
