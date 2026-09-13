@@ -42,6 +42,8 @@ The current integration work has these concrete obligations:
   Normal iterations supply the next model; guard/body heaps and early returns
   remain actual source outcomes. Existing local-value contracts are the
   equality specialization, exercised by the original mutable traversal.
+  Named `rel_contract` additionally hides fixed captures through the actual
+  guard/body frames; its mathematical model need not encode source pointers.
 - [x] Permit array-valued records at branch joins without a fabricated default
   handle. The existing typed-program consumer selects a real record in one
   branch, then executes one common append call; its `Program.Correct` checks.

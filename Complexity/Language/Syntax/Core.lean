@@ -98,6 +98,9 @@ on the mutable locals and heap; it does not impose a numeric fuel or time budget
 Immutable lexical captures are fixed by generated preservation proofs, not
 additional author-maintained invariant fields. This does not infer the
 mathematical invariant or turn descriptor preservation into a heap frame.
+The named `rel_contract` instead permits a mathematical state related to those
+mutable locals and the current heap. Its invariant and well-founded progress
+use that model; each normal body exit provides the next related model.
 
 Buffers expose `xs.length`, `let x ← xs.get i`, `xs.set i value` and
 `let ys ← xs.slice offset length`. Reads and writes observe the current shared
@@ -2337,6 +2340,129 @@ private def loopIndependentContractDeclaration (program : TSyntax `ident) (site 
     Actual guard effects and early body returns are retained; only normal iterations decrease. -/
     theorem $name:ident : $type := $proof)).raw
 
+/-- Expose a related mathematical loop state with named mutable arguments.
+The generated frame theorems keep captured values out of the author's relation. -/
+private def loopRelatedContractDeclaration (program : TSyntax `ident) (site : BlockSite) :
+    MacroM Syntax := do
+  let name := loopMember site "rel_contract"
+  let mutableScope := site.scope.filter (·.isMutable)
+  let capturedScope := site.scope.filter (! ·.isMutable)
+  let afterScope := (← freshMutableScope site "after_").filter (·.isMutable)
+  let mutableType := loopMember site "Mutable"
+  let captureView := loopMember site "CaptureView"
+  let modelType ← freshProofName site.name `Model
+  let model ← freshProofName site.name `model
+  let next ← freshProofName site.name `next
+  let stateRel ← freshProofName site.name `stateRel
+  let invariant ← freshProofName site.name `invariant
+  let relation ← freshProofName site.name `relation
+  let wellFounded ← freshProofName site.name `wellFounded
+  let ready ← freshProofName site.name `ready
+  let normal ← freshProofName site.name `normal
+  let returned ← freshProofName site.name `returned
+  let guardSpec ← freshProofName site.name `guardSpec
+  let bodySpec ← freshProofName site.name `bodySpec
+  let before ← freshProofName site.name `before
+  let after ← freshProofName site.name `after
+  let heap ← freshProofName site.name `heap
+  let finish ← freshProofName site.name `finish
+  let value ← freshProofName site.name `value
+  let again ← freshProofName site.name `again
+  let valid ← freshProofName site.name `valid
+  let observed ← freshProofName site.name `observed
+  let captures ← scopeTuple capturedScope
+  let capturedValues := capturedScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+  let beforeValues := mutableScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+  let afterValues := afterScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+  let app (function : TSyntax `ident) (arguments : Array (TSyntax `term)) :=
+    Lean.Syntax.mkApp ⟨function.raw⟩ arguments
+  let contract (suffix : String) (pre normal returned : TSyntax `term) :=
+    app (loopMember site suffix) (capturedValues ++ #[pre, normal, returned])
+  let ignoreStart (body : TSyntax `term) : MacroM (TSyntax `term) := do
+    let mut result ← `(fun _ => $body)
+    for _ in mutableScope do result ← `(fun _ => $result)
+    return result
+  let predicateType ← quantifyScope mutableScope (← `(Complexity.Language.Heap → Prop))
+  let readyType ← quantifyScope mutableScope (← `(Complexity.Language.Heap →
+    $(← quantifyScope afterScope (← `(Complexity.Language.Heap → Prop)))))
+  let result ← valueTypeTerm site.result
+  let falseNormal ← ignoreStart
+    (← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) => False)))
+  let guardReturned ← curryScope mutableScope
+    (← `(fun ($heap:ident : Complexity.Language.Heap) ($again:ident : Bool) =>
+      $(← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+        if $again:ident then
+          $(app ready (#[⟨model.raw⟩] ++ beforeValues ++ #[⟨heap.raw⟩] ++
+            afterValues ++ #[⟨finish.raw⟩]))
+        else $(app normal (afterValues.push ⟨finish.raw⟩)))))))
+  let guardType ← `(∀ ($model:ident : $modelType:ident), $invariant:ident $model:ident →
+    $(contract "guard_contract" (app stateRel #[⟨model.raw⟩]) falseNormal guardReturned))
+  let bodyNormal ← ignoreStart
+    (← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+      ∃ ($next:ident : $modelType:ident), $invariant:ident $next:ident ∧
+        $(app stateRel (#[⟨next.raw⟩] ++ afterValues ++ #[⟨finish.raw⟩])) ∧
+        $relation:ident $next:ident $model:ident)))
+  let finalReturnedBody ← curryScope afterScope
+    (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+      $(app returned (#[⟨value.raw⟩] ++ afterValues ++ #[⟨finish.raw⟩]))))
+  let finalReturned ← ignoreStart (← `(fun ($value:ident : $result) => $finalReturnedBody))
+  let bodyType ← quantifyScope mutableScope (← `(∀ ($heap:ident : Complexity.Language.Heap),
+    $invariant:ident $model:ident →
+    $(app stateRel (#[⟨model.raw⟩] ++ beforeValues ++ #[⟨heap.raw⟩])) →
+    $(contract "body_contract"
+      (app ready (#[⟨model.raw⟩] ++ beforeValues ++ #[⟨heap.raw⟩])) bodyNormal finalReturned)))
+  let bodyType ← `(∀ ($model:ident : $modelType:ident), $bodyType)
+  let finalNormal ← ignoreStart
+    (← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+      $(app normal (afterValues.push ⟨finish.raw⟩)))))
+  let conclusion := contract "contract" (app stateRel #[⟨model.raw⟩]) finalNormal finalReturned
+  let type ← quantifyScope capturedScope (← `(∀ {$modelType:ident : Type}
+    ($stateRel:ident : $modelType:ident → $predicateType)
+    ($invariant:ident : $modelType:ident → Prop)
+    {$relation:ident : $modelType:ident → $modelType:ident → Prop}
+    ($wellFounded:ident : WellFounded $relation:ident)
+    ($ready:ident : $modelType:ident → $readyType) ($normal:ident : $predicateType)
+    ($returned:ident : $result → $predicateType)
+    ($guardSpec:ident : $guardType) ($bodySpec:ident : $bodyType)
+    ($model:ident : $modelType:ident) ($valid:ident : $invariant:ident $model:ident), $conclusion))
+  let beforeFields ← tupleFields mutableScope ⟨before.raw⟩
+  let afterFields ← tupleFields mutableScope ⟨after.raw⟩
+  let rawStateRel ← `(fun ($model:ident : $modelType:ident)
+    ($before:ident : $mutableType:ident) ($heap:ident : Complexity.Language.Heap) =>
+      $(app stateRel (#[⟨model.raw⟩] ++ beforeFields ++ #[⟨heap.raw⟩])))
+  let rawReady ← `(fun ($model:ident : $modelType:ident)
+    ($before:ident : $mutableType:ident) ($heap:ident : Complexity.Language.Heap)
+    ($after:ident : $mutableType:ident) ($finish:ident : Complexity.Language.Heap) =>
+      $(app ready (#[⟨model.raw⟩] ++ beforeFields ++ #[⟨heap.raw⟩] ++
+        afterFields ++ #[⟨finish.raw⟩])))
+  let rawNormal ← `(fun ($after:ident : $mutableType:ident)
+    ($finish:ident : Complexity.Language.Heap) =>
+      $(app normal (afterFields.push ⟨finish.raw⟩)))
+  let rawReturned ← `(fun ($value:ident : $result) ($after:ident : $mutableType:ident)
+    ($finish:ident : Complexity.Language.Heap) =>
+      $(app returned (#[⟨value.raw⟩] ++ afterFields ++ #[⟨finish.raw⟩])))
+  let rawBody ← `(fun ($model:ident : $modelType:ident)
+    ($before:ident : $mutableType:ident) ($heap:ident : Complexity.Language.Heap)
+    $valid:ident $observed:ident =>
+      $(app bodySpec (#[⟨model.raw⟩] ++ beforeFields ++
+        #[⟨heap.raw⟩, ⟨valid.raw⟩, ⟨observed.raw⟩])))
+  let guard := loopMember site "Guard"
+  let body := loopMember site "Body"
+  let guardFrame := loopMember site "guard_preservesCaptures"
+  let bodyFrame := loopMember site "body_preservesCaptures"
+  let specification ← `(Complexity.Language.Stmt.observe_while_fixed_rel_contract
+    $captureView:ident $program:ident $guard:ident $body:ident
+    $guardFrame:ident $bodyFrame:ident $captures $rawStateRel $invariant:ident
+    $wellFounded:ident $rawReady $rawNormal $rawReturned $guardSpec:ident $rawBody
+    $model:ident $valid:ident)
+  let proof ← curryScope capturedScope (← `(fun {$modelType:ident} $stateRel:ident
+    $invariant:ident {$relation:ident} $wellFounded:ident $ready:ident $normal:ident
+    $returned:ident $guardSpec:ident $bodySpec:ident $model:ident $valid:ident => $specification))
+  return (← `(command|
+    /-- Prove this actual loop using a related mathematical state and well-founded progress.
+    Fixed captures are retained by the generated execution frames. -/
+    theorem $name:ident : $type := $proof)).raw
+
 private def loopVariantPost (site : BlockSite) (normal returned : TSyntax `ident)
     (fullScope : Bool) : MacroM (TSyntax `term) := do
   let finishScope ← freshMutableScope site "final_"
@@ -3866,6 +3992,7 @@ private def programDeclarations (family : TSyntax `ident)
       declarations := declarations ++ (← loopNativeContractDeclarations programName site)
       declarations := declarations.push (← loopIndependentContractDeclaration programName site false)
       declarations := declarations.push (← loopIndependentContractDeclaration programName site true)
+      declarations := declarations.push (← loopRelatedContractDeclaration programName site)
       declarations := declarations.push (← loopTerminationDeclaration programName site false)
       declarations := declarations.push (← loopTerminationDeclaration programName site true)
     else

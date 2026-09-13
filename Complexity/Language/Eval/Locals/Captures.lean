@@ -25,11 +25,15 @@ proposed runtime budget.
 The corresponding `observe_while_fixed_contract` rule composes independent
 guard and body contracts while keeping these same checked capture frames.
 Their predicates need only the mutable values and actual endpoint heaps.
+`observe_while_fixed_rel_contract` instead keeps its invariant and progress on
+a heap-indexed mathematical model, without requiring a lossless model encoding.
 -/
 
 namespace Complexity.Language.Stmt
 
 open scoped Part.TotalCorrectness
+
+universe u
 
 variable {signatures : List Signature} {Γ : List Ty} {result : Ty}
 
@@ -223,6 +227,111 @@ theorem observe_while_fixed_variant_spec {Mutable Captured : Type}
     (measure fun current : Mutable × Heap => variant current.1 current.2).rel
     (measure fun current : Mutable × Heap => variant current.1 current.2).wf post step mutable
 
+private theorem blockSpec_with_captures {Mutable Captured : Type}
+    (view : Env Γ ≃ Mutable × Captured) (program : Program signatures)
+    (stmt : Stmt signatures Γ result)
+    (frame : ∀ {entry finish : State Γ} {control : Control result},
+      Exec program stmt entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (captures : Captured)
+    {pre : Mutable → Heap → Prop}
+    {normal : Mutable → Heap → Mutable → Heap → Prop}
+    {returned : Mutable → Heap → Value result → Mutable → Heap → Prop}
+    (specification : BlockSpec (fun mutable => observe view stmt program (mutable, captures))
+      pre (fun start heap output finish => normal start heap output.1 finish)
+      (fun start heap value output finish => returned start heap value output.1 finish)) :
+    BlockSpec (fun locals => observe view stmt program locals)
+      (fun locals heap => locals.2 = captures ∧ pre locals.1 heap)
+      (fun start heap output finish => output.2 = captures ∧ normal start.1 heap output.1 finish)
+      (fun start heap value output finish =>
+        output.2 = captures ∧ returned start.1 heap value output.1 finish) := by
+  rintro ⟨mutable, actual⟩ heap ⟨sameCaptures, initial⟩
+  change actual = captures at sameCaptures
+  subst actual
+  have fixed := observe_fixed_spec view (Equiv.refl _) program stmt frame captures
+    specification mutable
+    (fun outcome finish => ⟨match outcome.1 with
+      | .normal => outcome.2.2 = captures ∧ normal mutable heap outcome.2.1 finish
+      | .returned value =>
+          outcome.2.2 = captures ∧ returned mutable heap value outcome.2.1 finish
+      | .fault _ => False⟩, ⟨⟩)
+  apply fixed.mono
+  · rintro current rfl
+    exact ⟨initial, fun _ _ property => ⟨rfl, property⟩,
+      fun _ _ _ property => ⟨rfl, property⟩⟩
+  · exact ⟨fun _ _ property => property, trivial⟩
+
+/-- Independent contracts for a fixed-capture loop with a relational
+mathematical state. Captures are preserved by the actual guard and body frames;
+the invariant and well-founded relation mention only the mathematical model.
+Guards may update mutable values and the heap. Normal body exits provide a
+related next model and decrease, whereas false guards and early returns prove
+their postconditions at the actual endpoint without a decrease obligation. -/
+theorem observe_while_fixed_rel_contract {Model : Type u} {Mutable Captured : Type}
+    (view : Env Γ ≃ Mutable × Captured) (program : Program signatures)
+    (guard : Stmt signatures Γ .bool) (body : Stmt signatures Γ result)
+    (guardFrame : ∀ {entry finish : State Γ} {control : Control .bool},
+      Exec program guard entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (bodyFrame : ∀ {entry finish : State Γ} {control : Control result},
+      Exec program body entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (captures : Captured) (stateRel : Model → Mutable → Heap → Prop)
+    (invariant : Model → Prop) {relation : Model → Model → Prop}
+    (wellFounded : WellFounded relation)
+    (ready : Model → Mutable → Heap → Mutable → Heap → Prop)
+    (normal : Mutable → Heap → Prop) (returned : Value result → Mutable → Heap → Prop)
+    (guardSpec : ∀ model, invariant model →
+      BlockSpec (fun mutable => observe view guard program (mutable, captures))
+        (stateRel model) (fun _ _ _ _ => False)
+        (fun start heap again afterGuard finish =>
+          if again then ready model start heap afterGuard.1 finish
+          else normal afterGuard.1 finish))
+    (bodySpec : ∀ model start heap, invariant model → stateRel model start heap →
+      BlockSpec (fun mutable => observe view body program (mutable, captures))
+        (ready model start heap)
+        (fun _ _ afterBody finish => ∃ next, invariant next ∧
+          stateRel next afterBody.1 finish ∧ relation next model)
+        (fun _ _ value afterBody finish => returned value afterBody.1 finish))
+    (model : Model) (initial : invariant model) :
+    BlockSpec (fun mutable => observe view (.while guard body) program (mutable, captures))
+      (stateRel model) (fun _ _ finish heap => normal finish.1 heap)
+      (fun _ _ value finish heap => returned value finish.1 heap) := by
+  intro mutable heap represented
+  apply observe_while_rel_contract view program guard body
+    (fun current locals heap => locals.2 = captures ∧ stateRel current locals.1 heap)
+    invariant wellFounded
+    (fun current start heap afterGuard finish =>
+      afterGuard.2 = captures ∧ ready current start.1 heap afterGuard.1 finish)
+    (fun locals heap => normal locals.1 heap)
+    (fun value locals heap => returned value locals.1 heap)
+    ?_ ?_ model initial (mutable, captures) heap ⟨rfl, represented⟩
+  · intro current valid
+    apply (blockSpec_with_captures view program guard guardFrame captures
+      (pre := stateRel current) (normal := fun _ _ _ _ => False)
+      (returned := fun start heap again afterGuard finish =>
+        if again then ready current start heap afterGuard finish else normal afterGuard finish)
+      (guardSpec current valid)).mono (fun _ _ property => property)
+    · intro _ _ _ _ _ property
+      exact property.2
+    · intro _ _ again _ _ _ property
+      cases again with
+      | false => exact property.2
+      | true => exact property
+  · rintro current ⟨start, actual⟩ startHeap valid ⟨sameCaptures, related⟩
+    change actual = captures at sameCaptures
+    subst actual
+    apply (blockSpec_with_captures view program body bodyFrame captures
+      (pre := ready current start startHeap)
+      (normal := fun _ _ afterBody finish => ∃ next, invariant next ∧
+        stateRel next afterBody finish ∧ relation next current)
+      (returned := fun _ _ value afterBody finish => returned value afterBody finish)
+      (bodySpec current start startHeap valid related)).mono (fun _ _ property => property)
+    · rintro _ _ _ _ _ ⟨sameCaptures, next, nextValid, nextRelated, smaller⟩
+      exact ⟨next, nextValid, ⟨sameCaptures, nextRelated⟩, smaller⟩
+    · intro _ _ _ _ _ _ property
+      exact property.2
+
 /-- Separate guard and body contracts with fixed captured values. Their
 mathematical predicates mention only mutable coordinates and actual heaps;
 the proved execution frames retain the captures internally. The guard may
@@ -255,28 +364,26 @@ theorem observe_while_fixed_contract {Mutable Captured : Type}
       invariant (fun _ _ finish heap => normal finish.1 heap)
       (fun _ _ value finish heap => returned value finish.1 heap) := by
   intro mutable heap initial
-  have specification := observe_while_fixed_spec view program guard body guardFrame bodyFrame
-    captures invariant relation wellFounded
-    (fun outcome heap => ⟨match outcome.1 with
-      | .normal => normal outcome.2 heap
-      | .returned value => returned value outcome.2 heap
-      | .fault _ => False⟩, ⟨⟩)
-    (by
-      intro start startHeap input
-      refine (guardSpec start startHeap input).mono (fun _ same => same) ?_
-      constructor
-      · rintro ⟨control, afterGuard⟩ afterGuardHeap property
-        cases control with
-        | normal => exact property
-        | fault error => exact property
-        | returned again =>
-            cases again with
-            | false => exact property
-            | true => exact bodySpec start startHeap input afterGuard.1 afterGuardHeap property
-      · trivial)
-    mutable
-  exact specification.mono (fun _ same => same.symm ▸ initial)
-    ⟨fun _ _ property => property, trivial⟩
+  apply observe_while_fixed_rel_contract view program guard body guardFrame bodyFrame captures
+    (fun model mutable heap => mutable = model.1 ∧ heap = model.2)
+    (fun model => invariant model.1 model.2) wellFounded
+    (fun _ => ready) normal returned ?_ ?_ (mutable, heap) initial mutable heap ⟨rfl, rfl⟩
+  · rintro ⟨start, startHeap⟩ valid
+    apply guardSpec.mono
+    · rintro _ _ ⟨rfl, rfl⟩
+      exact valid
+    · intro _ _ _ _ _ property
+      exact property
+    · intro _ _ _ _ _ _ property
+      exact property
+  · rintro ⟨start, startHeap⟩ current currentHeap valid ⟨same, sameHeap⟩
+    subst current
+    subst currentHeap
+    apply (bodySpec start startHeap valid).mono (fun _ _ property => property)
+    · intro _ _ finish finishHeap _ property
+      exact ⟨(finish.1, finishHeap), property.1, ⟨rfl, rfl⟩, property.2⟩
+    · intro _ _ _ _ _ _ property
+      exact property
 
 /-- A natural-valued variant specializes the same independent contracts and
 fixed-capture rule. Progress compares the actual final body state to the state

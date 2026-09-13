@@ -656,6 +656,11 @@ source rules, without fuel or a time budget:
   from handles to arrays and does not assume captured array contents persist.
   The existing ordinary-local `observe_while_contract` now reuses this rule
   through the equality relation; the original traversal proof still checks.
+  `Stmt.observe_while_fixed_rel_contract` retains fixed captures using their
+  actual guard/body preservation proofs. Generated named loops expose it as
+  `rel_contract`, with curried mutable arguments in the state relation and
+  independent guard/body contracts. The existing fixed-local contracts are
+  its equality-model specialization, not a second loop argument.
 - `FunctionTotal.verify_wellFounded` supplies complete source-function contracts
   at smaller mathematical indices using `WellFounded.induction`. The index may
   select different functions and signatures for mutual recursion. This is a
