@@ -1315,6 +1315,14 @@ def inferRawBindingType (headers : Array RawCallHeader) (scope : RawScope)
     (call : TSyntax `term) : MacroM Ty := do
   return (← parseBinding (headers.map (·.toCallee)) (rawScope scope) call).1
 
+/-- Infer an already normalized source value, for example a temporary created
+when a mathematical record projection is expanded to its actual field layout.
+This reuses primitive typing rather than assigning a new contents observation
+to the temporary. -/
+def inferRawValueType (scope : RawScope) (value : TSyntax `term)
+    (expected : Option Ty := none) : MacroM Ty := do
+  return (← parsePrimitive (rawScope scope) value expected).type
+
 /-- Check a normalized standalone action using the same buffer-write and Unit
 call rules as final source lowering. This does not assert successful execution
 or preservation of any mathematical contents observation. -/

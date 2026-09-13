@@ -29,7 +29,7 @@ namespace Complexity.Language.Examples.Allocation
 open Ram.LanguageCompiler
 open scoped Part.TotalCorrectness
 
-source_program Named where
+source_program (native) Named where
   def make (n : Nat) (initial : Nat) : Buffer Nat := do
     let xs ← Buffer.alloc n initial
     return xs
@@ -42,7 +42,8 @@ theorem named_make_spec (n initial : Nat) :
       (fun _ => ⟨True⟩)
       (fun buffer heap => ⟨buffer.Contents heap (Array.replicate n initial)⟩,
         (fun _ _ => ⟨False⟩, ⟨⟩)) := by
-  rw [Named.make_eq]
+  dsimp only [Named.make]
+  rw [Named.Source.make_eq]
   mvcgen
   simp_all
 

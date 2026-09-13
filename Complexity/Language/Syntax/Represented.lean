@@ -292,6 +292,11 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
           model := Lean.Syntax.mkCApp constructor (models.map (·.model))
           observation := fieldsObservation (models.map (·.observation)).toList } } : Value)
   match stx with
+  | `(source_raw_value% ($expression)) =>
+      let type ← liftMacroM <| inferRawValueType
+        (scope.map fun binding => (binding.name, binding.type.coreTy))
+        expression (expected.map (·.coreTy))
+      return { type := ← resolveType (← rawTypeTerm type), raw := expression }
   | `(($expression:term)) => value scope expression expected
   | `(($expression:term : $type:term)) =>
       let expected ← resolveType type
@@ -358,6 +363,14 @@ private partial def value (scope : List Binding) (stx : TSyntax `term)
           return {
             native := ← `(some $(model.native)), model := ← `(some $(model.model))
             rawModel := ← `(some $(model.rawModel)), observation := .some model.observation } }
+  | `(none) | `(Option.none) | `(.none) =>
+      let some (.option payload) := expected
+        | throwErrorAt stx "none requires an optional result, parameter or binding type"
+      return {
+        type := .option payload, raw := ← `(none)
+        model? := some {
+          native := stx, model := stx, rawModel := ← `(none)
+          observation := .none payload } }
   | `($_:num) => return {
       type := ← resolveType (← `(Nat)), raw := stx
       model? := some { native := stx, model := stx, rawModel := stx } }
@@ -469,12 +482,19 @@ private def Function.preservesArrays (fn : Function) : Bool :=
     | some range => range.callback.model?.any (·.preservingRelation.isSome)
     | none => fn.hasExactEquation || model.calls.all Trace.preservesArrays
 
+/-- Every local signature is available before any body or model is prepared. -/
+private structure LocalHeader where
+  name : TSyntax `ident
+  parameters : Array (Name × NativeType)
+  result : NativeType
+
 private structure Preparation where
   folds : Array FoldRegistration := #[]
   constructors : Array ConsRegistration := #[]
   deconstructors : Array UnconsRegistration := #[]
   emptinessTests : Array IsEmptyRegistration := #[]
   functions : Array Function := #[]
+  localHeaders : Array LocalHeader := #[]
   calledFamilies : Array (TSyntax `ident) := #[]
   current : Option Operation := none
   currentRecursive : Bool := false
@@ -482,6 +502,9 @@ private structure Preparation where
   declarationGenerator : Lean.DeclNameGenerator := {}
 
 private abbrev PrepareM := StateT Preparation TermElabM
+
+private def prepareMacro {α : Type} (action : MacroM α) : PrepareM α :=
+  liftM (liftMacroM action : TermElabM α)
 
 /-- Reserve family-local helper declarations before their bodies are emitted.
 The generator sees public names only for naming purposes; declaration visibility
@@ -541,6 +564,28 @@ private def functionOperation (names : DeclarationNames) (fn : Function) : Opera
     preservingRelation := if fn.preservesArrays then
       some (fieldName names.publicFamily fn.name "_action_rel_native_preserving") else none
     positiveStride := if model.range.isSome then some 2 else none } }
+
+private def localOperation? (names : DeclarationNames) (called : TSyntax `ident)
+    (recursive : Bool := false) : PrepareM (Option Operation) := do
+  if let some operation := (← get).current.filter
+      (fun operation => operation.sourceName == called.getId) then
+    if recursive then modify fun state => { state with currentRecursive := true }
+    return some operation
+  if let some fn := (← get).functions.find? (fun fn => fn.name.getId == called.getId) then
+    return some (functionOperation names fn)
+  return (← get).localHeaders.find? (fun header => header.name.getId == called.getId) |>.map
+    fun header => {
+      family := names.sourceFamily, sourceName := header.name.getId
+      inputs := header.parameters.map (·.2), result := header.result }
+
+private def rawHeaders (names : DeclarationNames) : PrepareM (Array RawCallHeader) := do
+  return (← get).localHeaders.map fun header => {
+    name := header.name
+    params := header.parameters.map (fun (name, type) => (name, type.coreTy))
+    result := header.result.coreTy
+    source := {
+      family := names.sourceFamily.getId, name := header.name.getId
+      action := names.sourceFamily.getId ++ header.name.getId } }
 
 private def importedOperation (info : NativeFunctionInfo) : Operation := {
   family := mkIdent info.sourceFamily
@@ -753,9 +798,35 @@ private def namedCall? (expression : TSyntax `term) :
   | `($called:ident $arguments:term*) => some (called, arguments)
   | _ => none
 
+private def rawFieldAccess? (expression : TSyntax `term) :
+    Option (TSyntax `term × Name) :=
+  match expression with
+  | `($receiver:term.$field:ident) => some (receiver, field.getId)
+  | `($name:ident) => match name.getId with
+      | .str receiver field =>
+          if receiver.isAnonymous then none
+          else some (⟨(mkIdentFrom name receiver).raw⟩, Name.mkSimple field)
+      | _ => none
+  | _ => none
+
+private def rawCallSyntax (expression : TSyntax `term) : Bool := Id.run do
+  let head := match expression with
+    | `($head:term $_arguments:term*) => head
+    | _ => expression
+  if head.raw.getId == `Buffer.alloc || head.raw.getId == `NodeRef.cons then return true
+  let some (_, field) := rawFieldAccess? head | return false
+  return field == `get || field == `slice || field == `read || field == `set
+
 private partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
     (expression : TSyntax `term) :
     PrepareM (Option (TSyntax `term)) := do
+  if let some (called, _) := namedCall? expression then
+    unless scope.any (fun binding => binding.name.getId == called.getId) do
+      if (← get).current.any (fun operation => operation.sourceName == called.getId) ||
+          (← get).functions.any (fun fn => fn.name.getId == called.getId) ||
+          (← get).localHeaders.any (fun header => header.name.getId == called.getId) then
+        return some expression
+  if rawCallSyntax expression then return some expression
   if let `($called:ident) := expression then
     if let .str receiverName "uncons" := called.getId then
       unless receiverName == `List do
@@ -818,6 +889,97 @@ private partial def canonicalCall? (imports : ImportedPrograms) (scope : List Bi
       if (← findImportedOperation? imports called).isSome then return some expression
       return none
   | _ => return none
+
+/-- Checked local models take precedence over their precollected source-only
+headers; all local names take precedence over intrinsic spellings. -/
+private def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
+    (scope : List Binding) (expression : TSyntax `term) :
+    PrepareM (Option (Operation × Array (TSyntax `term))) := do
+  if let some (called, arguments) := namedCall? expression then
+    if let some operation ← localOperation? names called true then
+      return some (operation, arguments)
+  match expression with
+  | `(Array.append $left:term $right:term) =>
+      return some (← arrayOperation true, #[left, right])
+  | `(List.foldl $callback:ident $initial:term $values:term) =>
+      return some (← foldOperation names.publicFamily imports callback, #[initial, values])
+  | `(List.cons $head:term $tail:term) =>
+      let tailValue ← value scope tail
+      let .list kind := tailValue.type
+        | throwErrorAt tail "List.cons requires a represented list tail"
+      return some (← consOperation names.publicFamily kind, #[head, tail])
+  | `(List.uncons $values:term) =>
+      let valuesValue ← value scope values
+      let .list kind := valuesValue.type
+        | throwErrorAt values "List.uncons requires a represented list"
+      return some (← unconsOperation names.publicFamily kind, #[values])
+  | `(List.isEmpty $values:term) =>
+      let valuesValue ← value scope values
+      let .list kind := valuesValue.type
+        | throwErrorAt values "List.isEmpty requires a represented list"
+      return some (← isEmptyOperation names.publicFamily kind, #[values])
+  | _ =>
+      let some (called, arguments) := namedCall? expression | return none
+      let some operation ← findImportedOperation? imports called | return none
+      unless (← get).calledFamilies.any (fun imported => imported.getId == operation.family.getId) do
+        modify fun state => { state with calledFamilies := state.calledFamilies.push operation.family }
+      return some (operation, arguments)
+
+/-- Convert user operands once, before Core's raw normalizer. A raw operation
+requires a handle, not a coincidentally equal Array/List source layout. -/
+private def prepareRawOperands (scope : List Binding) (expression : TSyntax `term) :
+    TermElabM (TSyntax `term) := do
+  let (head, operands) := match expression with
+    | `($head:term $operands:term*) => (head, operands)
+    | _ => (expression, #[])
+  if head.raw.getId == `NodeRef.cons then
+    unless operands.size == 2 do
+      throwErrorAt expression "node construction expects a scalar head and an optional raw tail"
+    let first ← value scope operands[0]!
+    let kind ← match first.type.coreTy with
+      | .nat => pure CellTy.nat
+      | .bool => pure CellTy.bool
+      | _ => throwErrorAt operands[0]! "node construction requires a Nat or Bool head"
+    let tailType ← resolveType (← rawTypeTerm (.option (.node kind)))
+    let tail ← value scope operands[1]! (some tailType)
+    expect operands[1]! tailType tail.type
+    return Lean.Syntax.mkApp head #[first.raw, tail.raw]
+  if head.raw.getId == `Buffer.alloc then
+    let arguments ← operands.mapM fun operand => return (← value scope operand).raw
+    return Lean.Syntax.mkApp head arguments
+  let some (receiver, field) := rawFieldAccess? head
+    | throwErrorAt expression "expected a declared source call or raw buffer/node operation"
+  unless field == `get || field == `slice || field == `set || field == `read do
+    throwErrorAt expression "unsupported raw source operation"
+  let receiver ← value scope receiver
+  match field, receiver.type with
+  | `read, .raw (.node _) => pure ()
+  | `get, .raw (.buffer _) | `slice, .raw (.buffer _) | `set, .raw (.buffer _) => pure ()
+  | _, _ => throwErrorAt expression "raw operations require a Buffer or NodeRef handle; \
+      use a registered represented operation for mathematical Array/List values"
+  let head ← `($(receiver.raw).$(mkIdent field):ident)
+  let arguments ← operands.mapM fun operand => return (← value scope operand).raw
+  return if arguments.isEmpty then head else Lean.Syntax.mkApp head arguments
+
+/-- Raw ANF expressions retain their already established source interpretation
+when re-entering the same statement preparer. No control or scope is changed. -/
+private partial def markRawElements (elements : Array (TSyntax `doElem)) :
+    TermElabM (Array (TSyntax `doElem)) :=
+  elements.mapM fun element => do
+    match element with
+    | `(doElem| let $name:ident $[: $type:term]? := $expression:term) =>
+        `(doElem| let $name:ident $[: $type:term]? := source_raw_value% ($expression))
+    | `(doElem| let mut $name:ident $[: $type:term]? := $expression:term) =>
+        `(doElem| let mut $name:ident $[: $type:term]? := source_raw_value% ($expression))
+    | `(doElem| $name:ident := $expression:term) =>
+        `(doElem| $name:ident := source_raw_value% ($expression))
+    | `(doElem| if $guard:term then $yes:doSeq else $no:doSeq) =>
+        let yes : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq
+          ((← markRawElements (getDoElems yes)).map (·.raw))⟩
+        let no : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq
+          ((← markRawElements (getDoElems no)).map (·.raw))⟩
+        `(doElem| if source_raw_value% ($guard) then $yes:doSeq else $no:doSeq)
+    | _ => throwErrorAt element "unexpected statement produced by raw operand normalization"
 
 private partial def conditionalParts? (expression : TSyntax `term) :
     Option (TSyntax `term × TSyntax `term × TSyntax `term) :=
@@ -1104,7 +1266,6 @@ private partial def sequence (names : DeclarationNames)
     (localReturn : Bool := false) :
     PrepareM (Array (TSyntax `doElem) × Option (Array (TSyntax `doElem)) ×
       Option (Array Trace) × Option Value) := do
-  let family := names.publicFamily
   let bindingKind (name : TSyntax `ident) :=
     if !bindingMutable then BindingKind.immutable
     else if (scope.find? (fun binding => binding.name.getId == name.getId)).any (·.mutable) then
@@ -1562,41 +1723,33 @@ private partial def sequence (names : DeclarationNames)
             `(doElem| let $name:ident : $nativeType := $(model.native))) (some #[]) rest
     | `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term) =>
         let expression := (← canonicalCall? imports scope expression).getD expression
-        let (operation, arguments) ← match expression with
-          | `(Array.append $left:term $right:term) =>
-              pure (← arrayOperation true, #[left, right])
-          | `(List.foldl $callback:ident $initial:term $values:term) => do
-              pure (← foldOperation family imports callback, #[initial, values])
-          | `(List.cons $head:term $tail:term) => do
-              let tailValue ← value scope tail
-              let .list kind := tailValue.type | throwErrorAt tail "List.cons requires a represented list tail"
-              pure (← consOperation family kind, #[head, tail])
-          | `(List.uncons $values:term) => do
-              let valuesValue ← value scope values
-              let .list kind := valuesValue.type | throwErrorAt values "List.uncons requires a represented list"
-              pure (← unconsOperation family kind, #[values])
-          | `(List.isEmpty $values:term) => do
-              let valuesValue ← value scope values
-              let .list kind := valuesValue.type
-                | throwErrorAt values "List.isEmpty requires a represented list"
-              pure (← isEmptyOperation family kind, #[values])
-          | _ => do
-              let some (called, arguments) := namedCall? expression
-                | throwErrorAt expression "expected a named registered source operation"
-              if let some operation := (← get).current.filter
-                  (fun operation => operation.sourceName == called.getId) then
-                modify fun state => { state with currentRecursive := true }
-                pure (operation, arguments)
-              else if let some fn := (← get).functions.find? (fun fn => fn.name.getId == called.getId) then
-                pure (functionOperation names fn, arguments)
-              else
-                let some operation ← findImportedOperation? imports called
-                  | throwErrorAt called "expected a registered operation, earlier function or imported source function"
-                unless (← get).calledFamilies.any (fun imported => imported.getId == operation.family.getId) do
-                  modify fun state => { state with calledFamilies := state.calledFamilies.push operation.family }
-                pure (operation, arguments)
+        let operation? ← operationCall? names imports scope expression
+        let some (operation, arguments) := operation? | do
+          let raw ← match expression with
+            | `(source_raw_value% ($raw)) => pure raw
+            | _ => prepareRawOperands scope expression
+          let headers ← rawHeaders names
+          let rawScope := scope.map fun binding => (binding.name, binding.type.coreTy)
+          let (bindings, rewritten) ← prepareMacro (normalizeRawCall headers rawScope raw)
+          if !bindings.isEmpty then
+            let expression ← `(source_raw_value% ($rewritten))
+            let call ← match bindingKind name with
+              | .immutable => `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term)
+              | .mutable => `(doElem| let mut $name:ident $[: $annotation:term]? ← $expression:term)
+              | .assignment => `(doElem| $name:ident ← $expression:term)
+            return ← sequence names imports resultType scope
+              ((← markRawElements bindings).toList ++ call :: rest) false allowFallthrough localReturn
+          let type ← prepareMacro (inferRawBindingType headers rawScope rewritten)
+          let nativeType ← resolveType (← rawTypeTerm type)
+          if let some annotation := annotation then
+            expect annotation (← resolveType annotation) nativeType
+          let type ← rawTypeTerm type
+          return ← bindAndContinue {
+            name, type := nativeType, rawName := name, relationName := name }
+            (← `(doElem| let $name:ident : $type ← $rewritten:term)) none none rest true
         unless arguments.size == operation.inputs.size do throwError "wrong number of native call arguments"
-        let arguments ← arguments.mapM fun argument => return (← value scope argument)
+        let arguments ← arguments.mapIdxM fun index argument =>
+          value scope argument operation.inputs[index]?
         for argument in arguments, expected in operation.inputs do expect element expected argument.type
         if let some annotation := annotation then expect annotation (← resolveType annotation) operation.result
         let sourceName := mkIdentFrom name
@@ -1641,13 +1794,27 @@ private partial def sequence (names : DeclarationNames)
           return #[← `(doElem| return $(model.native))]
         return (#[← `(doElem| return $(result.raw))], native, some #[], some result)
     | `(doElem| $expression:term) =>
-        let some called ← canonicalCall? imports scope expression
-          | throwErrorAt expression "a standalone source action must be a registered Unit-returning call"
+        let called := (← canonicalCall? imports scope expression).getD expression
+        if (← operationCall? names imports scope called).isNone then
+          let raw ← match called with
+            | `(source_raw_value% ($raw)) => pure raw
+            | _ => prepareRawOperands scope called
+          let headers ← rawHeaders names
+          let rawScope := scope.map fun binding => (binding.name, binding.type.coreTy)
+          let (bindings, rewritten) ← prepareMacro (normalizeRawCall headers rawScope raw)
+          if !bindings.isEmpty then
+            let action ← `(doElem| source_raw_value% ($rewritten))
+            return ← sequence names imports resultType scope
+              ((← markRawElements bindings).toList ++ action :: rest) false allowFallthrough localReturn
+          prepareMacro (checkRawAction headers rawScope rewritten)
+          let (rawRest, _, _, returned) ← sequence names imports resultType
+            (invalidateObservations scope) rest false allowFallthrough localReturn
+          return (#[← `(doElem| $rewritten:term)] ++ rawRest, none, none, returned)
         let ignored := mkIdent (← mkFreshUserName `ignoredResult)
         let call ← `(doElem| let $ignored:ident : Unit ← $called:term)
         return ← sequence names imports resultType scope (call :: rest)
           false allowFallthrough localReturn
-    | _ => throwError "source blocks support lets, let mut and assignment, registered calls, \
+    | _ => throwError "source blocks support lets, let mut and assignment, source calls and raw operations, \
         conditional/match bindings, normal finite Nat ranges, general while and return; \
         break/continue and general loops inside value-producing branches are not supported here"
 
@@ -2934,7 +3101,14 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
     let declarations ← functions.mapM fun declaration => liftMacroM (parseDeclaration declaration)
     let mut initial : Preparation := {}
     for declaration in declarations do
+      if initial.localHeaders.any (fun header => header.name.getId == declaration.name.getId) then
+        throwErrorAt declaration.name "duplicate source function"
+      let parameters ← declaration.params.mapM fun parameter => do
+        return (parameter.name.getId, ← resolveType parameter.type)
+      let header : LocalHeader := {
+        name := declaration.name, parameters, result := ← resolveType declaration.result }
       initial := { initial with
+        localHeaders := initial.localHeaders.push header
         declarationNames := initial.declarationNames.insert declaration.name.getId |>.insert
           (declaration.name.getId.appendAfter names.modelSuffix) }
     let (_, state) ← (declarations.forM (prepareFunction names imports)).run initial

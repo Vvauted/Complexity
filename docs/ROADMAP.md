@@ -47,7 +47,13 @@ The current integration work has these concrete obligations:
   identity representation, not an inferred array/list contents observation.
   The existing array-record consumer uses a mathematical loop state and the
   shared named contract; its original represented correctness statement is
-  retained. Raw primitive calls and a common default entry are still open.
+  retained. A common default entry is still open.
+- [x] Reuse Core's actual call/primitive typing and operand normalization for
+  raw buffer allocation, reads, writes and slices, and node construction/reads.
+  All local source signatures are prepared before bodies, so a forward call
+  needs no already-proved mathematical model. The existing allocating `make`
+  now passes through represented preparation with its original Array contract;
+  its fixed `Program` interface does not require a pure model.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. The general-while consumer still supplies its record/heap
   state relation and guard/body transport explicitly. This checks composability,
@@ -100,6 +106,15 @@ The current integration work has these concrete obligations:
 - [ ] Migrate existing consumers to the common entry and verify their ordinary
   correctness statements and same-program RAM bounds on 0v0. Update the manual
   and remove obsolete capability claims when those consumers actually pass.
+
+The next control-flow step must preserve statement-level branches and scratch
+scopes, including normal fallthrough, separately from value-expression joins.
+Finite ranges must have one actual lowering independent of model availability.
+The current helper-extracting represented range changes the original loop owner;
+Traversal's `Implementation.boundedMap_loop1`, Scope's
+`Implementation.work_scope1/work_scope2` and LinkedList's exact `unconsBody`
+theorem are concrete consumers of the real code, not names that can be restored
+with aliases.
 
 This gate does not claim arbitrary Lean compilation, infer algorithmic invariants
 or turn every mutable computation into a pure total function. It requires that

@@ -654,8 +654,12 @@ source call. General represented `while` and statement conditionals now use
 the existing source control flow. Its scope preparation drops obsolete contents
 observations after unspecified effects, and mutable-value observations after a
 loop. A raw `Buffer` or `NodeRef` retains only handle identity; it supplies no
-validity, bounds or contents proof. Unifying raw primitive preparation and the
-default public entry remains part of the integration gate.
+validity, bounds or contents proof. Raw allocation, reads/writes, slices and
+node operations reuse Core's own type checker and operand normalizer; forward
+source signatures are available before their bodies or proofs. The original
+allocation consumer now uses this preparation with its unchanged mathematical
+Array contract. Canonical statement/range lowering and the default public entry
+remain part of the integration gate.
 
 - `TotalWP.while_wellFounded` accepts an ordinary `WellFounded` relation.
   `Stmt.observe_while_fixed_spec` exposes it through native `Std.Do` triples
