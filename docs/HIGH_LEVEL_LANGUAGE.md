@@ -12,6 +12,18 @@ workspace bound independent of repeated call count; see
 high-level programming/proof interface remains incomplete; the
 [roadmap](ROADMAP.md) distinguishes its working foundations from planned APIs.
 
+Integration now also connects represented records/arrays to scalar expressions,
+direct pure-source imports and self-recursion, including actual allocation before
+the recursive call. The public `Syntax.elaborateSourceProgram` entry supplies the
+existing typed-source emitter; proof views must not re-enter public command
+dispatch to select another frontend. Mutable local bindings and normal finite
+ranges now have checked allocating List and array-record consumers. Their source
+correspondence follows the actual callback calls and intermediate heaps.
+General represented `while`, nonlocal loop exits and calls to an enclosing
+recursive function from a range remain open. The mathematical range view still
+exposes captured-state tuples; simplifying that view is a separate unfinished
+part of the proof interface.
+
 The [cross-prover research report](DESIGN_RESEARCH.md) supplies the rationale
 for the next interface: one supported implementation, a common mathematical
 contract layer, and complementary pure-equation and mutable-VCG proof modes.
@@ -636,6 +648,13 @@ source rules, without fuel or a time budget:
   of a normally completed body with the state before the guard. A false guard
   or early return needs no descent. The existing `variant_spec` is the
   natural-valued `measure` specialization, not a separate termination checker.
+- `TotalWP.while_rel` permits well-founded descent on a mathematical model
+  related to the actual locals and heap. The corresponding
+  `Stmt.observe_while_rel_contract` composes separate guard/body contracts;
+  each normal body exit supplies a related next model. It needs no inverse
+  from handles to arrays and does not assume captured array contents persist.
+  The existing ordinary-local `observe_while_contract` now reuses this rule
+  through the equality relation; the original traversal proof still checks.
 - `FunctionTotal.verify_wellFounded` supplies complete source-function contracts
   at smaller mathematical indices using `WellFounded.induction`. The index may
   select different functions and signatures for mutual recursion. This is a
@@ -993,19 +1012,28 @@ The same binding interface supports `match` with exactly two List branches
 matching calls the real Uncons operation before matching its returned option;
 the head and tail projections are actual source operations. The branches retain
 their selected heap and return to one common continuation. Both `←` and `:=`
-forms require an explicit supported result type and branch do-blocks ending in
-`return`. Results may be scalars, linked Lists or their recursive products and
-options. `headOr` and allocating `inspectOrPrepend` have checked ordinary equations,
+forms use the supported result type; a branch may be a value or a do-block
+ending in `return`. Results may be scalars, represented containers or their
+supported products, options and closed records. `headOr` and allocating
+`inspectOrPrepend` have checked ordinary equations,
 generated source correspondence and end-to-end RAM theorems; `headOption` still
 has only source correctness and correspondence. Join initialization and copies
-remain real source operations. Bare node and buffer slots are not admitted,
-and preservation is composed only for proved-stable representations.
+remain real source operations. A result with a bare node/buffer field uses an
+optional join slot: the selected branch supplies `some` of its actual result,
+and generated correspondence excludes the absent case before the continuation.
+No default pointer is fabricated. Preservation is composed only from proved
+operation contracts.
 
 `NativeViews.replaceHead` uses List matching and a subsequent constructor call.
 Its ordinary equation is `replaceHead replacement values = replacement :: values.tail`,
 proved by cases on the mathematical list. Generated relational correspondence
 supplies the actual source correctness without another heap or traversal proof.
-General patterns, native recursion, general element layouts and escaping
+Self-recursion retains the same source function identity and relates recursive
+arguments in the current heap. The linked-list `replicateAppend` consumer proves
+its ordinary replicate/append equation after allocating before each recursive
+call. One user termination hint is checked independently for the native function
+and its generated relational correspondence; no budget proves termination.
+General patterns, mutually recursive native families, general element layouts and escaping
 callbacks remain open. The existing effectful fold library retains its wider
 contract; this is not a complete persistent collection interface.
 

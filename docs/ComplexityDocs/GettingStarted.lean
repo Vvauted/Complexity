@@ -216,10 +216,18 @@ reference algorithm. `TimeO` separately takes the input-size function and
 growth bound. Both obligations refer to this same `solve`.
 
 The [typed-program example](##Examples.Language.Program) selects the existing
-bounded-increment declaration as `Program (Nat × Nat) Nat`. Its proof applies
-`Program.Correct.of_functionTotal` to the generated source contract, then reuses
-the ordinary minimum equation. This keeps invocation and evaluation bookkeeping
-in the library; it does not require another implementation or argument adapter.
+bounded-increment declaration as `Program (Nat × Nat) Nat` with `program%`.
+Its `program_correct` proof reuses the ordinary minimum equation and the
+generated source contract. The same selection and proof commands work for the
+record-valued declaration below. Invocation and evaluation bookkeeping remain
+in the library; neither path requires another algorithm or an argument adapter.
+
+Selection itself does not require an existing correctness proof or total pure
+model. The same example selects the original effectful allocating `make` as
+`Program (Nat × Nat) (Array Nat)` using `program%`. Its separately stated
+correctness is the ordinary `Array.replicate` result. `Correct.of_triple` reuses
+its standard `Std.Do.Triple` contract and the actual final-heap array observation;
+no alternate pure implementation or pointer decoder is supplied.
 
 The [input instances](##Complexity.Program.Input) and
 [array composition](##Complexity.Program.ArrayInput) supply scalars and multiple
@@ -277,11 +285,31 @@ Currently deriving requires nondependent direct fields, no type parameters or
 inheritance, and an existing interface for the resulting ordered field tuple.
 Native source supports field projection, construction and returned records with
 array fields; natural-array `++` uses an actual allocation and copying call.
+Branch results may also contain arrays: the selected branch supplies the actual
+record, and a common continuation executes once. Array `.size`, scalar/Boolean
+conditions and direct calls to imported pure source functions use the same
+source correspondence. The typed-program example combines these operations;
+it does not supply a second record implementation or a private import bridge.
+
+Self-recursive native functions may carry heap-backed values. The
+[linked-list example](##Examples.Language.LinkedList) allocates one node, passes
+the resulting list to its recursive call and proves the ordinary equation
+`replicateAppend count head tail = List.replicate count head ++ tail`.
+The same user termination hint is checked for the mathematical function and its
+generated source correspondence. The latter relates values at the actual heap
+after allocation; it does not identify list handles with mathematical lists.
+
 This is not arbitrary Lean compilation or a complete persistent-array API.
-The selector currently accepts one mathematical input parameter and requires
-compatibility with the fixed input and output representations. Source correctness
-alone does not supply the independent whole-program time bound, including the
-added packing and call instructions.
+The same linked-list example now uses mutable locals and finite ranges to
+allocate list nodes and repeatedly append to an array-valued record. Generated
+correspondence supplies source totality and actual-heap observations; the
+mathematical fold still exposes captured-state tuples. General represented
+`while`, nonlocal loop exits and recursion from within a range remain open.
+Native record selection currently accepts one mathematical input parameter;
+direct pure selection also accepts ordinary curried arguments through their
+fixed product input. Both check the fixed input and output representations.
+Source correctness alone does not supply the independent whole-program time
+bound, including any added packing and call instructions.
 
 The [compiled record example](##Examples.Language.ProgramCompiled) independently
 proves `append.TimeO (fun _ => True) (fun x => x.left.size + x.right.size) (fun n => n)`.
@@ -293,6 +321,11 @@ calls, returns and the final halt.
 
 The shared [capacity rule](##Complexity.Computability.Ram.Compiler.Language.Program.Capacity)
 chooses one input-independent constant for the actual code and fixed-depth stack.
+For recursive programs, its
+[polynomial-depth extension](##Complexity.Computability.Ram.Compiler.Language.Program.Capacity.Polynomial)
+instead accepts input-dependent call depth with one uniform polynomial envelope.
+`Program.TimeO.of_measured_depth_auto` uses that bound under the same width policy.
+It does not discharge bounds on computed values, allocation or total execution.
 The [array-input rules](##Complexity.Computability.Ram.Compiler.Language.Program.ArrayInputResources)
 provide cell ranges and room for the combined output. The
 [time publication rule](##Complexity.Computability.Ram.Compiler.Language.Program.Time)
@@ -300,6 +333,11 @@ combines these with the measured body at every admitted width. This example
 covers all input arrays, not just inputs for which capacity was assumed.
 Resource proofs still explicitly compose operation certificates; general native
 resource inference is separate from the automated correctness correspondence.
+The shared `program_wrapper_measured` and `program_wrapper_cost` tactics now
+perform the structural entry/call composition in this example from the supplied
+append certificate. They follow the actual generated source, preserve its
+function-table embeddings and retain every call's initialization and return cost.
+Mathematical loop invariants and result-dependent operation bounds are not inferred.
 
 The [RAM interface](##Complexity.Computability.Ram.Compiler.Language.Program)
 requires actual halted executions uniformly over all admitted word widths.

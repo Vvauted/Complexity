@@ -8,16 +8,17 @@ import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInputResource
 import Complexity.Computability.Ram.Compiler.Language.Program.Packing
 import Complexity.Computability.Ram.Compiler.Language.Program.Time
 import Complexity.Computability.Ram.Compiler.Language.Program.Uncurry
+import Complexity.Computability.Ram.Compiler.Language.Program.WrapperTactic
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendCost
 
 /-!
 # Uniform RAM time of the native record append
 
 The program is the same `program% NativeAppend.append` selected in the source
-example. Its generated record projections reuse the shared binary-call bridge;
-its fixed input boundary reuses the executable packing bridge. The existing
-array append supplies allocation, copying and their linear cost. No second
-append implementation, register proof or host conversion is provided.
+example. Shared composition follows its actual generated packing, projections
+and calls. The existing array append supplies allocation, copying and their
+linear cost. No second append implementation, register proof or host conversion
+is provided.
 
 The complete time theorem covers every mathematical input at every admitted
 word width. The shared width rules discharge input ranges, output allocation,
@@ -45,19 +46,6 @@ private def nativeBodyBound (n : Nat) : Nat :=
 private def appendBodyBound (n : Nat) : Nat :=
   inputPacking.callBound append.source importedNative (nativeBodyBound n)
 
-private theorem native_costBound (left right : Array Nat) (w limit : Nat) :
-    FunctionArenaCostBound NativeAppend.Source.program
-      (NativeAppend.Source.program.body NativeAppend.Source.appendId)
-      (fun pair : Buffer .nat × Buffer .nat => Env.cons pair Env.empty)
-      (fun pair heap => pair.1.Contents heap left ∧ pair.2.Contents heap right)
-      w limit 2 (fun _ => nativeBodyBound (left.size + right.size)) := by
-  apply FunctionArenaCostBound.of_stmt
-  intro pair heap allowed
-  exact Program.Uncurry.call_costBound_imported
-    NativeAppend.Source.imports.Complexity.Language.Buffer.Copy.embedding
-    Buffer.Copy.appendId rfl (BufferCopy.append_costBound left right w limit)
-    ⟨Env.cons pair Env.empty, heap⟩ pair rfl allowed
-
 private theorem append_measured (input : AppendInput) (w : Nat)
     (admitted : Program.width 1 input ≤ w) :
     ArenaMeasured append.source w (Ram.LanguageCompiler.ArrayFunction.heapLimit w) 3
@@ -67,58 +55,16 @@ private theorem append_measured (input : AppendInput) (w : Nat)
   have sourceFits : EnvFits w (Input.args input) := by
     intro τ v
     exact RamInput.fits input w (Program.width_base admitted) v
-  have pairFits : ValueFits (τ := .prod (.buffer .nat) (.buffer .nat)) w
-      ((Input.args input).head, (Input.args input).tail.head) :=
-    ⟨sourceFits .here, sourceFits (.there .here)⟩
-  have library := Program.arrayPair_append_arenaMeasured input.left input.right
-    (by decide : 1 ≤ 1) admitted
-  have libraryReturned : ArenaMeasured Buffer.Copy.program w
-      (Ram.LanguageCompiler.ArrayFunction.heapLimit w) 1
-      (Buffer.Copy.program.body Buffer.Copy.appendId)
-      (fun _ control _ _ => ∃ value, control = .returned value ∧ True)
-      ⟨Input.args input, Input.heap input⟩ (RamInput.cursor input) := by
-    apply library.mono_post
-    rintro _ _ _ _ ⟨value, returned, _⟩
-    exact ⟨value, returned, trivial⟩
-  have native := Program.Uncurry.call_measured_imported
-    NativeAppend.Source.imports.Complexity.Language.Buffer.Copy.embedding
-    Buffer.Copy.appendId rfl
-    (P := fun _ _ _ _ => True)
-    ⟨Env.cons ((Input.args input).head, (Input.args input).tail.head) Env.empty,
-      Input.heap input⟩ pairFits libraryReturned
-  have nativeReturned : ArenaMeasured NativeAppend.Source.program w
-      (Ram.LanguageCompiler.ArrayFunction.heapLimit w) 2
-      (NativeAppend.Source.program.body NativeAppend.Source.appendId)
-      (fun _ control _ _ => ∃ value, control = .returned value ∧ True)
-      ⟨Env.cons (inputPacking.eval (Input.args input)) Env.empty, Input.heap input⟩
-      (RamInput.cursor input) := by
-    apply native.mono_post
-    rintro _ _ _ _ ⟨value, _, returned, _⟩
-    exact ⟨value, returned, trivial⟩
-  have packingFits : inputPacking.Fits w (Input.args input) := ⟨pairFits, pairFits⟩
-  have packed := inputPacking.program_measured NativeAppend.Source.program
-    NativeAppend.Source.appendId rfl (Input.args input) (Input.heap input)
-    (P := fun _ _ _ _ => True) packingFits nativeReturned
-  apply packed.mono_post
-  rintro _ _ _ _ ⟨value, _, returned, _⟩
-  exact ⟨value, returned, trivial⟩
+  program_wrapper_measured [Program.arrayPair_append_arenaMeasured
+    input.left input.right (by decide : 1 ≤ 1) admitted]
 
 private theorem append_costBound (input : AppendInput) (w limit : Nat) :
     StmtArenaCostBound append.source w limit 3 (append.source.body append.fn)
       ⟨append.args input, Input.heap input⟩
       (appendBodyBound (input.left.size + input.right.size)) := by
-  have callee : FunctionArenaCostBound NativeAppend.Source.program
-      (NativeAppend.Source.program.body NativeAppend.Source.appendId)
-      (fun pair : Buffer .nat × Buffer .nat =>
-        Env.cons (inputPacking.eval (Buffer.Copy.append_args pair.1 pair.2)) Env.empty)
-      (fun pair heap => pair.1.Contents heap input.left ∧ pair.2.Contents heap input.right)
-      w limit 2 (fun _ => nativeBodyBound (input.left.size + input.right.size)) :=
-    native_costBound input.left input.right w limit
-  intro finish control execution cursor finalCursor ready steps counted
-  exact inputPacking.program_stmt_costBound NativeAppend.Source.program
-    NativeAppend.Source.appendId rfl callee
-    ((Input.args input).head, (Input.args input).tail.head) (Input.heap input)
-    (Program.arrayPair_contents input.left input.right) execution ready counted
+  have contents := Program.arrayPair_contents input.left input.right
+  unfold appendBodyBound nativeBodyBound
+  program_wrapper_cost [BufferCopy.append_costBound input.left input.right w limit]
 
 private theorem appendBodyBound_linear :
     Asymptotics.IsBigO Filter.atTop (fun n => (appendBodyBound n : ℝ))

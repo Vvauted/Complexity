@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Language.Eval.Locals.Specification
+import Complexity.Language.Eval.Locals.While.Represented
 
 /-!
 # Loop correctness with ordinary local values
@@ -179,27 +179,26 @@ theorem observe_while_contract (view : Env Γ ≃ Locals) (program : Program sig
     BlockSpec (fun locals => observe view (.while guard body) program locals) invariant
       (fun _ _ => normal) (fun _ _ => returned) := by
   intro locals heap initial
-  have specification := observe_while_spec view program guard body invariant relation wellFounded
-    (fun outcome heap => ⟨match outcome.1 with
-      | .normal => normal outcome.2 heap
-      | .returned value => returned value outcome.2 heap
-      | .fault _ => False⟩, ⟨⟩)
-    (by
-      intro start startHeap input
-      refine (guardSpec start startHeap input).mono (fun _ same => same) ?_
-      constructor
-      · rintro ⟨control, afterGuard⟩ afterGuardHeap property
-        cases control with
-        | normal => exact property
-        | fault error => exact property
-        | returned again =>
-            cases again with
-            | false => exact property
-            | true => exact bodySpec start startHeap input afterGuard afterGuardHeap property
-      · trivial)
-    locals
-  exact specification.mono (fun _ same => same.symm ▸ initial)
-    ⟨fun _ _ property => property, trivial⟩
+  apply observe_while_rel_contract view program guard body
+    (fun model locals heap => locals = model.1 ∧ heap = model.2)
+    (fun model => invariant model.1 model.2) wellFounded
+    (fun _ => ready) normal returned ?_ ?_ (locals, heap) initial locals heap ⟨rfl, rfl⟩
+  · rintro ⟨start, startHeap⟩ valid
+    apply guardSpec.mono
+    · rintro _ _ ⟨rfl, rfl⟩
+      exact valid
+    · intro _ _ _ _ _ property
+      exact property
+    · intro _ _ _ _ _ _ property
+      exact property
+  · rintro ⟨start, startHeap⟩ current currentHeap valid ⟨same, sameHeap⟩
+    subst current
+    subst currentHeap
+    apply (bodySpec start startHeap valid).mono (fun _ _ h => h)
+    · intro _ _ finish finishHeap _ property
+      exact ⟨(finish, finishHeap), property.1, ⟨rfl, rfl⟩, property.2⟩
+    · intro _ _ _ _ _ _ property
+      exact property
 
 /-- Use a natural mathematical variant with the same separate guard and body
 contracts. Its strict decrease is measured across a complete guard/body round,

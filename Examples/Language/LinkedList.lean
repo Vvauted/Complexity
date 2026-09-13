@@ -266,6 +266,160 @@ theorem prependPair_correct :
   NativeConstruction.prependPair_refines.of_math
     (fun input _ => prependPair_eq input.1 input.2.1 input.2.2)
 
+source_program (native) NativeRecursive where
+  def replicateAppend (count : Nat) (head : Nat) (tail : List Nat) : List Nat := do
+    let result : List Nat ← if 0 < count then do
+      let grown := head :: tail
+      let result := replicateAppend (count - 1) head grown
+      return result
+    else do
+      return tail
+    return result
+    termination_by count
+    decreasing_by simp_all +zetaDelta; omega
+
+/-- Recursive calls receive the actually allocated tail. Ordinary induction
+proves the native equation; generated correspondence handles every represented
+input and current heap using the declaration's single descent annotation. -/
+theorem replicateAppend_eq (count head : Nat) (tail : List Nat) :
+    NativeRecursive.replicateAppend count head tail = List.replicate count head ++ tail := by
+  induction count generalizing tail with
+  | zero =>
+      rw [NativeRecursive.replicateAppend]
+      rfl
+  | succ count ih =>
+      rw [NativeRecursive.replicateAppend]
+      change NativeRecursive.replicateAppend count head (head :: tail) =
+        List.replicate (count + 1) head ++ tail
+      rw [ih, List.replicate_succ', List.append_assoc]
+      rfl
+
+/-- This contract refers to the same allocating recursive source, not a second
+list program. Source termination and correctness have no machine-budget premise. -/
+theorem replicateAppend_correct :
+    RepresentedFunction.Total NativeRecursive.program NativeRecursive.replicateAppendId
+      NativeRecursive.replicateAppend_representation (fun _ => True)
+      (fun input result => result = List.replicate input.1 input.2.1 ++ input.2.2) :=
+  NativeRecursive.replicateAppend_refines.of_math
+    (fun input _ => replicateAppend_eq input.1 input.2.1 input.2.2)
+
+namespace NativeRange
+
+source_program (native) RangeNative where
+  def choosePrepend (choose : Bool) (head : Nat) (tail : List Nat) : List Nat := do
+    let mut result := tail
+    if choose then
+      result := head :: result
+    return result
+
+  def prependRange (count : Nat) (head : Nat) (tail : List Nat) : List Nat := do
+    let mut result := tail
+    for _ in [:count] do
+      result := head :: result
+    return result
+
+/-- A statement branch updates the represented mutable local only on its
+selected path; the mathematical result uses the ordinary List constructor. -/
+theorem choosePrepend_eq (choose : Bool) (head : Nat) (tail : List Nat) :
+    RangeNative.choosePrepend choose head tail = if choose then head :: tail else tail := by
+  cases choose <;> rfl
+
+private theorem fold_prepend (indices : List Nat) (initial tail : List Nat) (head count : Nat) :
+    indices.foldl
+      (fun (state : List Nat × List Nat × Nat × Nat) _ =>
+        (state.2.2.1 :: state.1, state.2.1, state.2.2.1, state.2.2.2))
+      (initial, tail, head, count) =
+      (List.replicate indices.length head ++ initial, tail, head, count) := by
+  induction indices generalizing initial with
+  | nil => rfl
+  | cons index rest ih =>
+      simp only [List.foldl_cons, List.length_cons]
+      rw [ih, List.replicate_succ', List.append_assoc]
+      rfl
+
+/-- Ordinary finite-list induction proves the range's result. The generated
+source correspondence supplies the allocating loop and its intermediate heaps. -/
+theorem prependRange_eq (count head : Nat) (tail : List Nat) :
+    RangeNative.prependRange count head tail = List.replicate count head ++ tail := by
+  change ((List.range' 0 ((count - 0 + 1 - 1) / 1) 1).foldl
+    (fun (state : List Nat × List Nat × Nat × Nat) _ =>
+      (state.2.2.1 :: state.1, state.2.1, state.2.2.1, state.2.2.2))
+    (tail, tail, head, count)).1 = _
+  rw [fold_prepend]
+  simp only [List.length_range', Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
+
+/-- Mutable branch correctness reuses the same generated source refinement,
+without assumptions about word width, allocation capacity or a time budget. -/
+theorem choosePrepend_correct :
+    RepresentedFunction.Total RangeNative.program RangeNative.choosePrependId
+      RangeNative.choosePrepend_representation (fun _ => True)
+      (fun input result => result = if input.1 then input.2.1 :: input.2.2 else input.2.2) :=
+  RangeNative.choosePrepend_refines.of_math
+    (fun input _ => choosePrepend_eq input.1 input.2.1 input.2.2)
+
+/-- Finite allocating iteration has budget-free source total correctness from
+the ordinary replicate equation; no second source-loop induction is supplied. -/
+theorem prependRange_correct :
+    RepresentedFunction.Total RangeNative.program RangeNative.prependRangeId
+      RangeNative.prependRange_representation (fun _ => True)
+      (fun input result => result = List.replicate input.1 input.2.1 ++ input.2.2) :=
+  RangeNative.prependRange_refines.of_math
+    (fun input _ => prependRange_eq input.1 input.2.1 input.2.2)
+
+/-- A mathematical record whose array field is backed by actual source storage. -/
+structure Payload where
+  values : Array Nat
+  copies : Nat
+
+source_program (native) ArrayRangeNative where
+  def repeatAppend (count : Nat) (chunk : Array Nat) (initial : Payload) : Payload := do
+    let mut state := initial
+    for _ in [:count] do
+      let values := Array.append state.values chunk
+      state := { values := values, copies := state.copies + 1 }
+    return state
+
+private theorem fold_append_copies (indices : List Nat) (current initial : Payload)
+    (chunk : Array Nat) (count : Nat) :
+    (indices.foldl
+      (fun (state : Payload × Payload × Array Nat × Nat) _ =>
+        (({ values := Array.append state.1.values state.2.2.1,
+            copies := state.1.copies + 1 } : Payload),
+          state.2.1, state.2.2.1, state.2.2.2))
+      (current, initial, chunk, count)).1.copies = current.copies + indices.length := by
+  induction indices generalizing current with
+  | nil => exact (Nat.add_zero _).symm
+  | cons index rest ih =>
+      simp only [List.foldl_cons, List.length_cons]
+      rw [ih]
+      dsimp only
+      omega
+
+/-- A represented record is updated after each actual array-append call.
+The author's proof concerns only an ordinary mathematical record projection. -/
+theorem repeatAppend_copies (count : Nat) (chunk : Array Nat) (initial : Payload) :
+    (ArrayRangeNative.repeatAppend count chunk initial).copies = initial.copies + count := by
+  change ((List.range' 0 ((count - 0 + 1 - 1) / 1) 1).foldl
+    (fun (state : Payload × Payload × Array Nat × Nat) _ =>
+      (({ values := Array.append state.1.values state.2.2.1,
+          copies := state.1.copies + 1 } : Payload),
+        state.2.1, state.2.2.1, state.2.2.2))
+    (initial, initial, chunk, count)).1.copies = _
+  rw [fold_append_copies]
+  simp only [List.length_range', Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
+
+/-- The generated correspondence observes the entire returned record, including
+its actual final array. The supplied mathematical postcondition tracks its count;
+termination and correspondence require no machine resource premise. -/
+theorem repeatAppend_correct :
+    RepresentedFunction.Total ArrayRangeNative.program ArrayRangeNative.repeatAppendId
+      ArrayRangeNative.repeatAppend_representation (fun _ => True)
+      (fun input result => result.copies = input.2.2.copies + input.1) :=
+  ArrayRangeNative.repeatAppend_refines.of_math
+    (fun input _ => repeatAppend_copies input.1 input.2.1 input.2.2)
+
+end NativeRange
+
 source_program (native) ListReducer where
   def push (accumulator : List Nat) (head : Nat) : List Nat := do
     let result := head :: accumulator

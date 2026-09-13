@@ -204,10 +204,13 @@ import Complexity.Computability.Ram.Compiler.Language.Program.ArrayFunction
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInputResources
 import Complexity.Computability.Ram.Compiler.Language.Program.Capacity
+import Complexity.Computability.Ram.Compiler.Language.Program.Capacity.Polynomial
 import Complexity.Computability.Ram.Compiler.Language.Program.Deriving
 import Complexity.Computability.Ram.Compiler.Language.Program.Input
 import Complexity.Computability.Ram.Compiler.Language.Program.Packing
 import Complexity.Computability.Ram.Compiler.Language.Program.Time
+import Complexity.Computability.Ram.Compiler.Language.Program.Wrapper
+import Complexity.Computability.Ram.Compiler.Language.Program.WrapperTactic
 import Complexity.Computability.Ram.Compiler.Language.Program.Uncurry
 import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Compiler.Language.Realization.Finite
@@ -418,6 +421,9 @@ import Complexity.Language.Eval.Locals.Composition
 import Complexity.Language.Eval.Locals.Continuation
 import Complexity.Language.Eval.Locals.Effects
 import Complexity.Language.Eval.Locals.Range
+import Complexity.Language.Eval.Locals.Range.Represented
+import Complexity.Language.Eval.Locals.While.Represented
+import Complexity.Language.Range.Fold
 import Complexity.Language.Eval.Locals.RangeControl
 import Complexity.Language.Eval.Locals.Specification
 import Complexity.Language.Eval.Locals.Verification
@@ -463,9 +469,11 @@ import Complexity.Language.Rooted.Execution
 import Complexity.Language.Semantics
 import Complexity.Language.State
 import Complexity.Language.Syntax
+import Complexity.Language.Syntax.Declaration
 import Complexity.Language.Syntax.Imports
 import Complexity.Language.Syntax.Pure
 import Complexity.Language.Syntax.Represented
+import Complexity.Language.Syntax.Represented.Imports
 import Complexity.Language.Syntax.Represented.Types
 import Complexity.Language.Syntax.Types
 import Complexity.Language.Verification

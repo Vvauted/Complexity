@@ -160,6 +160,24 @@ theorem Correct.of_functionTotal {p : Program α β} {valid : α → Prop} {post
   obtain ⟨y, represented, mathematical⟩ := output x legal value heap property
   exact ⟨y, ⟨value, heap, evaluated, represented⟩, mathematical⟩
 
+open scoped Part.TotalCorrectness in
+/-- Publish a standard successful monadic contract at the fixed input boundary.
+The source may allocate or mutate: its actual final-heap observation supplies
+the mathematical output, without a separately generated pure function. -/
+theorem Correct.of_triple {p : Program α β} {valid : α → Prop} {post : α → β → Prop}
+    {pre : α → Language.Heap → Prop}
+    (specification : ∀ x, valid x →
+      Std.Do.Triple (m := ExceptT Language.Fault (StateT Language.Heap Part))
+        (ps := .except Language.Fault (.arg Language.Heap .pure))
+        (p.source.eval p.fn (p.args x)) (fun heap => ⟨pre x heap⟩)
+        (fun value heap => ⟨∃ y, p.resultRepresentation.Rel y value heap ∧ post x y⟩,
+          (fun _ _ => ⟨False⟩, ⟨⟩)))
+    (input : ∀ x, valid x → pre x (Input.heap x)) : p.Correct valid post := by
+  intro x legal
+  obtain ⟨value, heap, evaluated, y, represented, mathematical⟩ :=
+    (Language.triple_iff_eval _ _ _).mp (specification x legal) _ (input x legal)
+  exact ⟨y, ⟨value, heap, evaluated, represented⟩, mathematical⟩
+
 /-- Publish a represented source contract on the fixed, inhabited input
 convention. The original contract still applies to every actual representation;
 this theorem specializes it to the declared preloaded invocation. -/

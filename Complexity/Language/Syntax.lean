@@ -15,6 +15,7 @@ import Complexity.Language.Eval.Locals.Range
 import Complexity.Language.Linking.Eval
 import Complexity.Language.Linking.Extension
 import Complexity.Language.Syntax.Imports
+import Complexity.Language.Syntax.Declaration
 import Complexity.Language.Syntax.Pure
 import Complexity.Language.RepresentedFunction
 import Std.Do.WP.SimpLemmas
@@ -208,15 +209,6 @@ private structure LoopCoordinateRegistration where
   rules : Array (TSyntax `ident)
   captures : Array LoopCaptureCoordinateRegistration
   nativeTypes : Array (TSyntax `term)
-
-/-- One explicitly typed source parameter. -/
-declare_syntax_cat sourceParameter
-syntax "(" ident " : " term ")" : sourceParameter
-
-/-- A source function uses an ordinary parsed Lean `do` body. -/
-declare_syntax_cat sourceFunction
-syntax "def " ident sourceParameter* " : " term " := " term
-  Lean.Parser.Termination.suffix : sourceFunction
 
 /-- Declare a finite family of named, independently interpreted source functions. -/
 syntax (name := sourceProgram) "source_program " ident " where" ppLine
@@ -489,7 +481,7 @@ private def parameterTypes (params : Array Parameter) : MacroM (TSyntax `term) :
 
 private def generatedName (family : TSyntax `ident) (fn : TSyntax `ident)
     (suffix : String) : TSyntax `ident :=
-  mkIdentFrom fn (family.getId ++ Name.mkSimple (fn.getId.toString ++ suffix))
+  mkIdentFrom fn ((family.getId ++ fn.getId).appendAfter suffix)
 
 private def actionName (family fn : TSyntax `ident) (pureMode : Bool) : TSyntax `ident :=
   generatedName family fn (if pureMode then "_action" else "")
@@ -676,19 +668,11 @@ private def tupleApplication (scope : Scope) (name : TSyntax `ident) (tuple : TS
   return Lean.Syntax.mkApp ⟨name.raw⟩ (← tupleFields scope tuple)
 
 private def parseFunction (stx : TSyntax `sourceFunction) : MacroM Function := do
-  match stx with
-  | `(sourceFunction| def $name:ident $parameters:sourceParameter* : $result:term := $body:term
-      $termination:suffix) =>
-      let mut params : Array Parameter := #[]
-      for parameter in parameters do
-        match parameter with
-        | `(sourceParameter| ($param:ident : $type:term)) =>
-            if params.any (fun previous => previous.name.getId == param.getId) then
-              Macro.throwErrorAt param "duplicate source parameter name"
-            params := params.push ⟨param, ← parseType type⟩
-        | _ => Macro.throwErrorAt parameter "expected a source parameter '(name : type)'"
-      return ⟨name, params, ← parseType result, body, termination, none⟩
-  | _ => Macro.throwErrorAt stx "expected 'def name (argument : type) : type := do ...'"
+  let declaration ← parseDeclaration stx
+  let params ← declaration.params.mapM fun parameter => do
+    pure ({ name := parameter.name, type := ← parseType parameter.type } : Parameter)
+  return ⟨declaration.name, params, ← parseType declaration.result, declaration.body,
+    declaration.termination, none⟩
 
 private def variableTerm (index : Nat) : MacroM (TSyntax `term) := do
   let mut result ← `(Complexity.Language.Var.here)
@@ -2970,8 +2954,8 @@ private def importedObservationDeclaration (program map embedded : TSyntax `iden
     (source : ImportedProgram) (fn : FunctionInfo) (callee : Callee) : MacroM Syntax := do
   let params ← parameterTypes callee.params
   let env ← freshProofName callee.name `arguments
-  let originalId := mkCIdent (source.family ++ Name.mkSimple (fn.name.toString ++ "Id"))
-  let originalFold := mkCIdent (source.family ++ Name.mkSimple (fn.name.toString ++ "_observe"))
+  let originalId := mkCIdent ((source.family ++ fn.name).appendAfter "Id")
+  let originalFold := mkCIdent ((source.family ++ fn.name).appendAfter "_observe")
   let mut remaining ← `($env:ident)
   let mut arguments := #[]
   for _ in callee.params do
@@ -3792,7 +3776,7 @@ private def programDeclarations (family : TSyntax `ident)
           Macro.throwErrorAt name "ambiguous source function name"
         let id ← freshProofName family `sourceImportedFunction
         let fold ← freshProofName family `sourceImportedObservation
-        let originalId := mkCIdent (entry.source.family ++ Name.mkSimple (fn.name.toString ++ "Id"))
+        let originalId := mkCIdent ((entry.source.family ++ fn.name).appendAfter "Id")
         declarations := declarations.push (← `(command|
           /-- The actual target index of an imported function. -/
           abbrev $id:ident : Fin ($signaturesName:ident).length :=
@@ -3800,12 +3784,11 @@ private def programDeclarations (family : TSyntax `ident)
         let callee : Callee := ⟨name,
           fn.params.map (fun param => ⟨mkIdentFrom entry.source.name param.1, param.2⟩),
           fn.result, id,
-          mkCIdent (entry.source.family ++
-            Name.mkSimple (fn.name.toString ++ if fn.pure then "_action" else "")), fold,
+          mkCIdent ((entry.source.family ++ fn.name).appendAfter
+            (if fn.pure then "_action" else "")), fold,
           if fn.pure then some (mkCIdent (entry.source.family ++ fn.name)) else none,
-          if fn.pure then some (mkCIdent (entry.source.family ++
-            Name.mkSimple (fn.name.toString ++
-              if fn.nativeHeader.isSome then "_action_eq_pure_raw" else "_action_eq_pure"))) else none⟩
+          if fn.pure then some (mkCIdent ((entry.source.family ++ fn.name).appendAfter
+            (if fn.nativeHeader.isSome then "_action_eq_pure_raw" else "_action_eq_pure"))) else none⟩
         callees := callees.push callee
         importFolds := importFolds.push fold
         importedObservations := importedObservations.push (← importedObservationDeclaration
@@ -3938,9 +3921,12 @@ private def programDeclarations (family : TSyntax `ident)
         captures := captures
         nativeTypes := nativeTypes
       }
-  return (mkNullNode declarations, (functions.map fun fn =>
-    ⟨fn.name.getId, fn.params.map (fun param => (param.name.getId, param.type)), fn.result,
-      pureMode, fn.nativeView.map (·.header)⟩), coordinates)
+  return (mkNullNode declarations, (functions.map fun fn => ({
+    name := fn.name.getId
+    params := fn.params.map (fun param => (param.name.getId, param.type))
+    result := fn.result
+    pure := pureMode
+    nativeHeader := fn.nativeView.map (·.header) } : FunctionInfo)), coordinates)
 
 private def nativeExprSyntax (value : Lean.Expr) : Lean.Elab.Term.TermElabM (TSyntax `term) :=
   Lean.withOptions (fun options => options.setBool `pp.fullNames true) do
@@ -4026,21 +4012,18 @@ private def prepareNativeSources (family : TSyntax `ident)
   let mut headers : Array NativeHeader := #[]
   let mut needed := false
   for source in sources do
-    let `(sourceFunction| def $name:ident $parameters:sourceParameter* : $result:term := $body:term
-        $_termination:suffix) := source
-      | Lean.throwErrorAt source "expected a named source function"
+    let declaration ← Lean.Elab.liftMacroM (parseDeclaration source)
     let mut params : Array NativeParameter := #[]
-    for parameter in parameters do
-      let `(sourceParameter| ($param:ident : $type:term)) := parameter
-        | Lean.throwErrorAt parameter "expected a named source parameter"
-      let type ← elabPureType type
+    for parameter in declaration.params do
+      let type ← elabPureType parameter.type
       needed := needed || !(← registeredTypeNames type.nativeType).isEmpty
-      params := params.push { name := param, type := type }
-    let result ← elabPureType result
+      params := params.push { name := parameter.name, type := type }
+    let result ← elabPureType declaration.result
     needed := needed || !(← registeredTypeNames result.nativeType).isEmpty
-    needed := needed || (← mentionsRegisteredConstructor body.raw)
+    needed := needed || (← mentionsRegisteredConstructor declaration.body.raw)
     headers := headers.push {
-      name := name, params := params, result := result, native := generatedName family name ""
+      name := declaration.name, params := params, result := result
+      native := generatedName family declaration.name ""
     }
   for source in imports do
     needed := needed || source.functions.any (·.nativeHeader.isSome)
@@ -4069,20 +4052,22 @@ private def prepareNativeSources (family : TSyntax `ident)
   let mut lowered := #[]
   let mut views := #[]
   for source in sources, header in headers do
-    let `(sourceFunction| def $name:ident $_parameters:sourceParameter* : $_result:term := $body:term
-        $termination:suffix) := source
-      | Lean.throwErrorAt source "expected a named source function"
-    let body ← lowerNativeBody callees header body
+    let declaration ← Lean.Elab.liftMacroM (parseDeclaration source)
+    let body ← lowerNativeBody callees header declaration.body
     let parameters ← header.params.mapM fun parameter => do
       let type ← Lean.Elab.liftMacroM (valueTypeTerm parameter.type.coreTy)
-      `(sourceParameter| ($(parameter.name):ident : $type))
+      pure ({ name := parameter.name, type } : ParsedParameter)
     let result ← Lean.Elab.liftMacroM (valueTypeTerm header.result.coreTy)
-    lowered := lowered.push (← `(sourceFunction| def $name:ident $parameters:sourceParameter* : $result:term := $body:term
-      $termination:suffix))
+    lowered := lowered.push (← Lean.Elab.liftMacroM
+      ({ declaration with params := parameters, result, body }.toSyntax))
     views := views.push (← nativeView header)
   return (lowered, views)
 
-private def elaborateProgram (family : TSyntax `ident)
+/-- Elaborate a family through the shared typed-source lowering and declaration
+generator. Higher-level proof views call this entry directly: they do not
+re-enter the public command elaborator or install another source semantics.
+The optional pure view is checked against the same emitted source program. -/
+def elaborateSourceProgram (family : TSyntax `ident)
     (functions : Array (TSyntax `sourceFunction)) (libraries : Array (TSyntax `ident))
     (pureMode : Bool := false) :
     Lean.Elab.Command.CommandElabM Unit := do
@@ -4111,14 +4096,14 @@ private def elaborateProgram (family : TSyntax `ident)
 
 elab_rules : command
   | `(command| source_program $family:ident where $functions:sourceFunction*) => do
-      elaborateProgram family functions #[]
+      elaborateSourceProgram family functions #[]
   | `(command| source_program $family:ident importing $libraries:ident,* where
       $functions:sourceFunction*) => do
-      elaborateProgram family functions libraries.getElems
+      elaborateSourceProgram family functions libraries.getElems
   | `(command| source_program (pure) $family:ident where $functions:sourceFunction*) => do
-      elaborateProgram family functions #[] true
+      elaborateSourceProgram family functions #[] true
   | `(command| source_program (pure) $family:ident importing $libraries:ident,* where
       $functions:sourceFunction*) => do
-      elaborateProgram family functions libraries.getElems true
+      elaborateSourceProgram family functions libraries.getElems true
 
 end Complexity.Language.Syntax

@@ -19,6 +19,79 @@ interfaces. No surveyed framework supplies all of this repository's guarantees
 by import, and a native total function is not a prerequisite for every
 effectful proof.
 
+## Active integration gate
+
+The public target is one program declaration, not a choice between three
+languages. `pure` and `effectful` describe semantic properties; a native function
+is a mathematical proof view. They must not determine whether a program can
+combine records, arrays, calls, finite loops and recursion. The existing typed
+source and RAM backend remain shared; another wrapper around disconnected
+frontends does not complete this gate.
+
+The current integration work has these concrete obligations:
+
+- [x] Parse one shared source declaration and register one set of function
+  headers. Actual source identity, mathematical observations and optional model
+  proofs are distinct fields; the separate native-function registry is removed.
+- [ ] Share resolved types, operations and control-flow lowering, with existing
+  entry modes retained only as compatibility or explicit proof-view choices.
+- [ ] Compose mathematical functions and state contracts through the same
+  heap-indexed representation. A pure encoding is a special case; mutable
+  array contents are not preserved by arbitrary heap extension.
+- [x] Share well-founded while reasoning over a related mathematical state.
+  Normal iterations supply the next model; guard/body heaps and early returns
+  remain actual source outcomes. Existing local-value contracts are the
+  equality specialization, exercised by the original mutable traversal.
+- [x] Permit array-valued records at branch joins without a fabricated default
+  handle. The existing typed-program consumer selects a real record in one
+  branch, then executes one common append call; its `Program.Correct` checks.
+- [x] Integrate direct pure-source imports and represented self-recursion at
+  actual intermediate heaps. The record consumer imports a scalar helper;
+  the linked-list consumer allocates before recursively calling itself.
+  Ordinary mathematical equations give their total source correctness.
+- [x] Integrate normal finite ranges and mutable local bindings with represented
+  state. The linked-list consumer allocates nodes on each round; the array
+  consumer updates a record after each real append call. Both have generated
+  total source correspondence and ordinary mathematical proofs on 0v0.
+  This does not yet cover general represented `while`, loop exits, recursive
+  calls to the enclosing function from a range, or mutable-name shadowing.
+- [ ] Simplify the generated range's mathematical view: captured immutable
+  variables still appear in its folded state tuple. The implementation bridge
+  is automatic, but authors should reason about the mutable accumulator alone.
+- [x] Publish `Program.TimeO` at input-dependent call depth. A supplied uniform
+  polynomial depth envelope now gives code/stack capacity under the existing
+  width policy; actual values, allocation and execution still require proofs.
+- [x] Compose the actual generated entry and call-wrapper resource proofs from
+  supplied operation certificates, using the existing structural rules rather
+  than per-function ABI adapters or guessed operation prices. The original
+  record append's full uniform `TimeO` proof now uses these shared passes.
+  Result-dependent continuations still require their own source contracts;
+  the passes do not infer mathematical invariants or data-dependent prices.
+- [x] Select code independently of correctness: `program%` also selects an
+  effectful raw entry when it matches the fixed input/output layout. Proofs
+  are prepared by `program_correct`, not by selecting the candidate. The
+  original allocating `make` consumer proves its ordinary `Array.replicate`
+  result through `Correct.of_triple` and its existing standard state contract,
+  without generating a total pure model first.
+- [ ] Migrate existing consumers to the common entry and verify their ordinary
+  correctness statements and same-program RAM bounds on 0v0. Update the manual
+  and remove obsolete capability claims when those consumers actually pass.
+
+This gate does not claim arbitrary Lean compilation, infer algorithmic invariants
+or turn every mutable computation into a pure total function. It requires that
+the already implemented capabilities work together without author-maintained
+representation, environment or machine bridges.
+
+The shared declaration must distinguish three pieces of information: its actual
+source function and action; its mathematical types and heap-indexed observations;
+and an optional proved total-function view. Absence of the last must not prevent
+lowering a loop or an effectful call. In particular, two array parameters can
+alias: their entry contents alone need not determine the result of a mutation
+followed by a read through the other handle. Such a program needs a state
+contract, not an invented contents-only pure function. Control-flow lowering
+must be shared before the public entry modes are collapsed; trying several
+frontends until one accepts the program is not this design.
+
 ## What the current programs actually show
 
 The source-to-RAM path handles
@@ -515,10 +588,13 @@ and their recursive products/options. Ordinary equations and generated source
 correctness are checked, including `replaceHead` followed by a constructor call.
 `headOr` and `inspectOrPrepend` also have end-to-end RAM theorems for their scalar
 and compound results; `headOption` remains at source correctness and generated
-correspondence. Initialization and field copies remain actual source operations;
-bare node and buffer result slots are
-not admitted. General patterns, native recursion and escaping callbacks remain
-separate frontend work. This does not restrict the
+correspondence. Initialization and field copies remain actual source operations.
+Results containing a bare buffer or node use an optional join slot: the selected
+branch stores a real result, and correspondence excludes the absent case before
+the common continuation. No default pointer is fabricated. Represented
+self-recursion is also checked, including allocation before the recursive call;
+general patterns, mutual recursion and escaping callbacks remain separate work.
+This does not restrict the
 more general effectful fold library or change the existing `(pure)` path.
 
 The same frontend also accepts `List.cons`, `head :: tail`, explicitly typed

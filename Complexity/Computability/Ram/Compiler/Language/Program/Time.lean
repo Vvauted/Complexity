@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.Program.Capacity
+import Complexity.Computability.Ram.Compiler.Language.Program.Capacity.Polynomial
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.FunctionExecution
 import Mathlib.Analysis.Asymptotics.Lemmas
 
@@ -19,6 +19,11 @@ No source correctness specification or proposed mathematical answer is needed.
 fixed code and stack constant. Mathematical input validity is not restricted by
 a capacity premise. Body readiness must still prove actual numerical ranges,
 allocation capacity and the fixed call depth at every admitted width.
+
+`TimeO.of_measured_depth` permits an input-dependent depth. Its automatic
+capacity specialization accepts a polynomial depth bound on the legal domain,
+then chooses one width constant for the whole domain. Neither publication
+changes the execution, input representation or mathematical precondition.
 -/
 
 namespace Complexity.Program
@@ -62,9 +67,45 @@ theorem isBigO_invocationBound_linear (program : Complexity.Program α β)
 
 variable [RamInput α]
 
-/-- Publish uniform time from actual measured returns and a separate body bound.
+/-- Publish uniform time from actual measured returns at an input-dependent
+call depth and a separate body bound.
 Launch capacity is proved for every legal input; it is not added to `valid`.
 The arbitrary measured observation may retain results, heaps or exact counts. -/
+theorem TimeO.of_measured_depth {program : Complexity.Program α β}
+    {valid : α → Prop} {size : α → Nat} {growth bound : Nat → Nat}
+    {depth : α → Nat} {overhead : Nat}
+    {P : α → Heap → Value program.signatures[program.fn].result → Nat → Nat → Prop}
+    (measured : ∀ x, valid x → ∀ w, width overhead x ≤ w →
+      ArenaMeasured program.source w (Ram.LanguageCompiler.ArrayFunction.heapLimit w) (depth x)
+        (program.source.body program.fn)
+        (fun finish control finalCursor steps =>
+          ∃ value, control = .returned value ∧ P x finish.heap value finalCursor steps)
+        ⟨program.args x, Input.heap x⟩ (RamInput.cursor x))
+    (bounded : ∀ x, valid x → ∀ w, width overhead x ≤ w →
+      StmtArenaCostBound program.source w (Ram.LanguageCompiler.ArrayFunction.heapLimit w) (depth x)
+        (program.source.body program.fn) ⟨program.args x, Input.heap x⟩ (bound (size x)))
+    (capacity : ∀ x, valid x → ∀ w, width overhead x ≤ w →
+      FunctionCapacity program.source program.fn w (depth x)
+        (Ram.LanguageCompiler.ArrayFunction.heapLimit w))
+    (asymptotic : Asymptotics.IsBigO Filter.atTop
+      (fun n => (program.invocationBound (bound n) : ℝ)) (fun n => (growth n : ℝ))) :
+    program.TimeO valid size growth := by
+  refine ⟨overhead, fun n => program.invocationBound (bound n), asymptotic, ?_⟩
+  intro x legal w admitted
+  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, _⟩ :=
+    ArenaMeasured.exists_returned_iff.mp (measured x legal w admitted)
+  obtain ⟨outcome, _, _, _, bodyEq⟩ :=
+    cost.execute (program.launch (width_base admitted) (capacity x legal w admitted))
+  refine ⟨depth x, outcome, ?_⟩
+  have bodyBound : outcome.bodySteps ≤ bound (size x) + 2 := by
+    rw [bodyEq]
+    exact Nat.add_le_add_right (bounded x legal w admitted execution ready cost) 2
+  rw [outcome.steps_eq]
+  exact Nat.add_le_add_right
+    (Ram.LocalCompiler.Function.callSteps_mono _ _ bodyBound) 1
+
+/-- Fixed-depth publication is the constant-depth instance of the general
+measured execution rule. Source correctness remains independent of time. -/
 theorem TimeO.of_measured {program : Complexity.Program α β}
     {valid : α → Prop} {size : α → Nat} {growth bound : Nat → Nat}
     {depth overhead : Nat}
@@ -83,20 +124,43 @@ theorem TimeO.of_measured {program : Complexity.Program α β}
         (Ram.LanguageCompiler.ArrayFunction.heapLimit w))
     (asymptotic : Asymptotics.IsBigO Filter.atTop
       (fun n => (program.invocationBound (bound n) : ℝ)) (fun n => (growth n : ℝ))) :
+    program.TimeO valid size growth :=
+  TimeO.of_measured_depth (depth := fun _ => depth) measured bounded capacity asymptotic
+
+/-- Publish input-dependent recursion with automatic code and stack capacity.
+The author supplies one polynomial bound on live call frames over all legal
+inputs, independently of the time bound. The fixed input-width scale and one
+global constant then accommodate those frames without restricting `valid`.
+Actual source word ranges and allocation still come from `measured`. -/
+theorem TimeO.of_measured_depth_auto {program : Complexity.Program α β}
+    {valid : α → Prop} {size : α → Nat} {growth bound : Nat → Nat}
+    {depth : α → Nat} {overhead coefficient degree : Nat}
+    {P : α → Heap → Value program.signatures[program.fn].result → Nat → Nat → Prop}
+    (measured : ∀ x, valid x → ∀ w, width overhead x ≤ w →
+      ArenaMeasured program.source w (Ram.LanguageCompiler.ArrayFunction.heapLimit w) (depth x)
+        (program.source.body program.fn)
+        (fun finish control finalCursor steps =>
+          ∃ value, control = .returned value ∧ P x finish.heap value finalCursor steps)
+        ⟨program.args x, Input.heap x⟩ (RamInput.cursor x))
+    (bounded : ∀ x, valid x → ∀ w, width overhead x ≤ w →
+      StmtArenaCostBound program.source w (Ram.LanguageCompiler.ArrayFunction.heapLimit w) (depth x)
+        (program.source.body program.fn) ⟨program.args x, Input.heap x⟩ (bound (size x)))
+    (depthBound : ∀ x, valid x → depth x + 1 ≤ coefficient *
+      ((RamInput.words x).size + Ram.LanguageCompiler.ArrayFunction.inputMax
+        (RamInput.words x) + 2) ^ degree)
+    (asymptotic : Asymptotics.IsBigO Filter.atTop
+      (fun n => (program.invocationBound (bound n) : ℝ)) (fun n => (growth n : ℝ))) :
     program.TimeO valid size growth := by
-  refine ⟨overhead, fun n => program.invocationBound (bound n), asymptotic, ?_⟩
-  intro x legal w admitted
-  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, _⟩ :=
-    ArenaMeasured.exists_returned_iff.mp (measured x legal w admitted)
-  obtain ⟨outcome, _, _, _, bodyEq⟩ :=
-    cost.execute (program.launch (width_base admitted) (capacity x legal w admitted))
-  refine ⟨depth, outcome, ?_⟩
-  have bodyBound : outcome.bodySteps ≤ bound (size x) + 2 := by
-    rw [bodyEq]
-    exact Nat.add_le_add_right (bounded x legal w admitted execution ready cost) 2
-  rw [outcome.steps_eq]
-  exact Nat.add_le_add_right
-    (Ram.LocalCompiler.Function.callSteps_mono _ _ bodyBound) 1
+  let combined := max overhead (program.capacityOverheadPow coefficient degree)
+  have smaller (x : α) : width overhead x ≤ width combined x := by
+    change (overhead + 1) * _ ≤ (combined + 1) * _
+    exact Nat.mul_le_mul_right _ (Nat.add_le_add_right (Nat.le_max_left _ _) 1)
+  apply TimeO.of_measured_depth (overhead := combined)
+    (fun x legal w admitted => measured x legal w ((smaller x).trans admitted))
+    (fun x legal w admitted => bounded x legal w ((smaller x).trans admitted))
+    (fun x legal _ admitted => program.capacity_of_depth_le_pow (depthBound x legal)
+      (Nat.le_max_right _ _) admitted)
+    asymptotic
 
 /-- Fixed code and stack capacity are supplied automatically by one larger
 uniform width constant. Readiness and body bounds keep their original resource
