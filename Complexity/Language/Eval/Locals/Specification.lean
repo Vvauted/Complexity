@@ -136,6 +136,39 @@ theorem of_eq (outcome : Input → Heap → (Control result × Output) × Heap)
   exact Part.TotalCorrectness.stateT_triple_of_eq
     (executed start heap initial) (property start heap initial)
 
+/-- Close a scratch scope using a contract for its actual body. Both successful
+exits retain their control and complete locals, while the postcondition uses
+the current heap with only the fresh suffix reclaimed. The body contract must
+establish non-escape and that postcondition at its actual final state. -/
+theorem scope {signatures : List Signature} {Γ : List Ty}
+    (view : Env Γ ≃ Output) (program : Program signatures)
+    (body : Stmt signatures Γ result) (inputLocals : Input → Output)
+    (specification : BlockSpec
+      (fun start => observe view body program (inputLocals start)) pre
+      (fun start heap output finish =>
+        ScopeSafe heap ⟨view.symm output, finish⟩ (.normal : Control result) ∧
+          normal start heap output (finish.take heap.objects.size))
+      (fun start heap value output finish =>
+        ScopeSafe heap ⟨view.symm output, finish⟩ (.returned value) ∧
+          returned start heap value output (finish.take heap.objects.size))) :
+    BlockSpec (fun start => observe view (.scope body) program (inputLocals start))
+      pre normal returned := by
+  intro start heap initial
+  apply (Part.TotalCorrectness.stateT_triple_iff _ _ _).mpr
+  intro current sameHeap
+  subst current
+  obtain ⟨⟨control, output⟩, finish, executed, property⟩ :=
+    (Part.TotalCorrectness.stateT_triple_iff _ _ _).mp
+      (specification.«at» start heap initial) heap rfl
+  cases control with
+  | normal =>
+    refine ⟨(.normal, output), finish.take heap.objects.size, ?_, property.2⟩
+    exact observe_eq_some_iff.mpr (.scope (observe_eq_some_iff.mp executed) property.1)
+  | returned value =>
+    refine ⟨(.returned value, output), finish.take heap.objects.size, ?_, property.2⟩
+    exact observe_eq_some_iff.mpr (.scope (observe_eq_some_iff.mp executed) property.1)
+  | fault error => exact False.elim property
+
 /-- Transport an output-local observation through its actual map, preserving
 control and the final heap. The map need not be injective: the right-hand
 contract asks exactly the properties visible through the mapped coordinates. -/

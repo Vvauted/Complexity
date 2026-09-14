@@ -6,7 +6,12 @@ Authors: vvauted
 import Complexity.Language.Semantics
 
 /-!
-# Preserving individual source locals
+# Structural control and local effects
+
+`Stmt.NoReturn` excludes a return from the enclosing statement while allowing
+normal completion, faults and divergence. Loop guards and callees may return to
+their own boundaries; only the loop body and caller continuation are checked.
+`Exec.not_returned` applies this condition to the same actual finite execution.
 
 `Stmt.PreservesLocal` checks that a statement does not assign to a selected
 typed lexical variable. Other locals and the shared heap may change. Scoped
@@ -76,6 +81,29 @@ theorem get_set_of_index_ne {Γ : List Ty} {τ σ : Ty} (env : Env Γ)
 end Env
 
 namespace Stmt
+
+/-- A sufficient structural condition for excluding an enclosing return.
+Loop guards and callees return at their own boundaries, so only the loop body
+and caller continuation are checked. Faults and divergence remain possible. -/
+@[simp] def NoReturn {signatures : List Signature} {Γ : List Ty} {result : Ty}
+    (stmt : Stmt signatures Γ result) : Prop :=
+  match stmt with
+  | .skip => True
+  | .assign _ _ => True
+  | .letPrim _ continuation => continuation.NoReturn
+  | .read _ _ continuation => continuation.NoReturn
+  | .readNode _ continuation => continuation.NoReturn
+  | .write _ _ _ => True
+  | .slice _ _ _ continuation => continuation.NoReturn
+  | .alloc _ _ continuation => continuation.NoReturn
+  | .consNode _ _ continuation => continuation.NoReturn
+  | .scope body => body.NoReturn
+  | .call _ _ continuation => continuation.NoReturn
+  | .seq first second => first.NoReturn ∧ second.NoReturn
+  | .ite _ yes no => yes.NoReturn ∧ no.NoReturn
+  | .matchOption _ noneBranch someBranch => noneBranch.NoReturn ∧ someBranch.NoReturn
+  | .while _ body => body.NoReturn
+  | .ret _ => False
 
 /-- A sufficient structural condition for preserving one lexical value.
 Assignment compares lexical positions, not source types or stored values. Both branches
@@ -153,6 +181,41 @@ theorem NoLocalWrites.preservesLocal {signatures : List Signature} {Γ : List Ty
 end Stmt
 
 namespace Exec
+
+/-- A structurally non-returning statement has no enclosing returned outcome
+on any actual finite execution. This does not assert termination, exclude
+faults, or change the locals and heap retained by that execution. -/
+theorem not_returned {signatures : List Signature} {program : Program signatures}
+    {Γ : List Ty} {result : Ty} {stmt : Stmt signatures Γ result}
+    {entry finish : State Γ} {control : Control result}
+    (execution : Exec program stmt entry finish control) (closed : stmt.NoReturn) :
+    ∀ value, control ≠ .returned value := by
+  revert closed
+  induction execution with
+  | skip | assign | readFault | readNodeFault | write | writeFault | sliceFault
+  | seqFault | whileFalse | whileFault | whileGuardFault | whileGuardMissingReturn
+  | ret | callFault | callMissingReturn => simp [Stmt.NoReturn]
+  | letPrim body ih => intro closed; exact ih closed
+  | read loaded body ih => intro closed; exact ih closed
+  | readNode loaded body ih => intro closed; exact ih closed
+  | slice sliced body ih => intro closed; exact ih closed
+  | alloc body ih => intro closed; exact ih closed
+  | consNode body ih => intro closed; exact ih closed
+  | scope body safe ih => intro closed; exact ih closed
+  | @scopeEscape Γ result stmt entry finish control body escapes ih =>
+      intro _
+      cases control <;> simp [Control.scopeFailure]
+  | seqNormal head tail ihHead ihTail => intro closed; exact ihTail closed.2
+  | seqReturn head ih => intro closed; exact ih closed.1
+  | iteTrue test body ih => intro closed; exact ih closed.1
+  | iteFalse test body ih => intro closed; exact ih closed.2
+  | matchNone selected body ih => intro closed; exact ih closed.1
+  | matchSome selected body ih => intro closed; exact ih closed.2
+  | whileTrue test iteration rest ihTest ihIteration ihRest =>
+      intro closed
+      exact ihRest closed
+  | whileReturn test iteration ihTest ihIteration => intro closed; exact ihIteration closed
+  | callReturn callee body ihCallee ihBody => intro closed; exact ihBody closed
 
 /-- A structurally protected lexical value survives the actual execution.
 The conclusion applies to normal, returning and faulting paths alike; neither

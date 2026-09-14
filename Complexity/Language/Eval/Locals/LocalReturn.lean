@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Eval.Locals.Composition
+import Complexity.Language.Eval.Locals.Specification
 
 /-!
 # Source fragments for an inline local return
@@ -32,6 +33,8 @@ discard roots only in a proof view.
 -/
 
 namespace Complexity.Language.Stmt.LocalReturn
+
+open scoped Part.TotalCorrectness
 
 variable {signatures : List Signature} {Γ : List Ty} {result τ : Ty} {Locals : Type}
 
@@ -96,6 +99,55 @@ theorem observe_guard_some (view : Env Γ ≃ Locals) (program : Program signatu
     observe view (guard pending test) program locals = pure (.returned false, locals) := by
   rw [guard, observe_matchOption, stopped]
   simp only [observe_ret, Atom.eval, pure_bind]
+
+/-- Apply a successful local-block contract through its visible locals and
+pending result. Both author-level continuations retain the actual normal
+control and final heap of the original action. The supplied frame reconstructs
+the complete locals only at that same successful execution; it need not be an
+inverse on arbitrary observations. Actual function returns and faults remain
+excluded by the block contract. -/
+theorem completion_spec {Input Output Visible : Type}
+    {action : Input → StateT Heap Part (Control result × Output)}
+    {pre : Input → Heap → Prop}
+    {normal : Input → Heap → Visible → Heap → Prop}
+    {returned : Input → Heap → Value τ → Visible → Heap → Prop}
+    (pending : Output → Option (Value τ)) (visible : Output → Visible)
+    (specification : BlockSpec action pre
+      (fun start heap output finish => match pending output with
+        | none => normal start heap (visible output) finish
+        | some value => returned start heap value (visible output) finish)
+      (fun _ _ _ _ _ => False))
+    (start : Input) (restore : Option (Value τ) → Visible → Output)
+    (frame : ∀ {heap output finish}, pre start heap →
+      action start heap = Part.some ((.normal, output), finish) →
+      restore (pending output) (visible output) = output)
+    (post : Std.Do.PostCond (Control result × Output) (.arg Heap .pure)) :
+    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+      (action start)
+      (fun heap => ⟨pre start heap ∧
+        (∀ output finish, normal start heap output finish →
+          (post.1 (.normal, restore none output) finish).down) ∧
+        (∀ value output finish, returned start heap value output finish →
+          (post.1 (.normal, restore (some value) output) finish).down)⟩)
+      post := by
+  apply (Part.TotalCorrectness.stateT_triple_iff _ _ _).mpr
+  rintro heap ⟨initial, normalPost, returnedPost⟩
+  obtain ⟨⟨control, output⟩, finish, executed, property⟩ :=
+    (Part.TotalCorrectness.stateT_triple_iff _ _ _).mp
+      (specification.«at» start heap initial) heap rfl
+  refine ⟨(control, output), finish, executed, ?_⟩
+  cases control with
+  | normal =>
+    have restored := frame initial executed
+    cases stopped : pending output with
+    | none =>
+      simp only [stopped] at property restored
+      simpa only [restored] using normalPost (visible output) finish property
+    | some value =>
+      simp only [stopped] at property restored
+      simpa only [restored] using returnedPost value (visible output) finish property
+  | returned value => exact False.elim property
+  | fault error => exact False.elim property
 
 /-- Separate the roots of a pending local result from the unchanged actual
 control. In particular, a fault does not erase a nonempty slot's roots. -/

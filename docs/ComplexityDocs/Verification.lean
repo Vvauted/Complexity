@@ -703,10 +703,21 @@ Copying an existing buffer handle does not copy its contents or alter the heap.
 
 `with_scratch do ...` explicitly gives fresh objects a lexical lifetime. Its
 core `Stmt.scope` reclaims the fresh suffix on a safe exit while keeping the
-current contents of older objects. A `return` still leaves the enclosing
-function after cleanup; it does not merely return from the scratch block.
+current contents of older objects. A `return` finishes the enclosing value block,
+or the function when there is no value-block boundary. It first leaves any
+intervening scratch scopes through their normal cleanup; the scratch scope
+itself is not a separate return boundary.
 For an output that must survive, allocate it outside the scratch scope and use
 the inner buffers only temporarily. No implicit copy or freeze is performed.
+
+For scratch scopes inside a value block, generated `body_completion_contract`
+and `completion_contract` describe fallthrough and a local result using only
+source-visible variables. `completion_spec` applies these contracts in `mvcgen`.
+`completion_contract_of_body` closes the scope after checking the visible roots
+and any local result against its entry heap. The full compiler state is restored
+by an execution frame before cleanup; projecting the proof view cannot discard
+an escaping root. The nested worker below uses these contracts. Loop invariants
+do not yet have the corresponding private-slot-free interface.
 
 The safety premise `ScopeSafe initial finish control` says surviving locals
 and any returned value are rooted in the entry object domain. `TotalWP.scope`

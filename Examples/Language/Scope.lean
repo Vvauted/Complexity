@@ -32,16 +32,18 @@ open scoped Part.TotalCorrectness
 
 source_program (native) Implementation where
   def work (out : Buffer Nat) (n : Nat) (value : Nat) : Unit := do
-    with_scratch do
-      let temp ← Buffer.alloc n value
+    let result : Unit ← do
       with_scratch do
-        let trash ← Buffer.alloc n 0
-      if 0 < n then
-        let x ← temp.get 0
-        out.set 0 x
-        return
-      else
-        return
+        let temp ← Buffer.alloc n value
+        with_scratch do
+          let trash ← Buffer.alloc n 0
+        if 0 < n then
+          let x ← temp.get 0
+          out.set 0 x
+          return
+        else
+          return
+    return result
 
   def make (count : Nat) (n : Nat) (value : Nat) : Buffer Nat := do
     let out ← Buffer.alloc 1 0
@@ -65,57 +67,59 @@ suffice independently of how many calls the loop performs. -/
 def heapLimit (entryCursor n : Nat) : Nat := entryCursor + 1 + 2 * n
 
 /-- The inner body allocates its actual scratch array and then falls through.
-Its surrounding lexical bindings retain their original ordinary values. -/
-theorem inner_body_eval (temp out : Buffer .nat) (n value : Nat) (heap : Heap) :
-    Implementation.Source.work_scope2.body temp out n value heap =
-      Part.some ((.normal, temp, out, n, value, ()), (heap.alloc (τ := .nat) n 0).2) := by
+Its contract mentions only the original source variables and actual heap. -/
+theorem inner_body_eval (temp out : Buffer .nat) (n value : Nat) :
+    Implementation.Source.work_scope2.body_completion_contract
+      (fun locals _ => locals = (temp, out, n, value, ()))
+      (fun _ heap locals finish => locals = (temp, out, n, value, ()) ∧
+        finish = (heap.alloc (τ := .nat) n 0).2)
+      (fun _ _ _ _ _ => False) := by
+  rintro _ heap rfl
+  dsimp only
   rw [Implementation.Source.work_scope2.body_eq]
-  simp only [Buffer.allocM, ExceptT.run, Bind.bind, StateT.bind,
-    Pure.pure, StateT.pure, Part.bind_some]
+  mvcgen
+  rename_i entry same
+  subst entry
+  intro trash finish allocated initialized growth fresh
+  mvcgen
+  exact ⟨trivial, (congrArg Prod.snd allocated).symm⟩
 
 /-- A nested allocation-only scope releases its entire fresh suffix. Both
 borrowed handles were live on entry, so neither is an escaping temporary. -/
-theorem inner_eval (temp out : Buffer .nat) (n value : Nat) (heap : Heap)
-    (tempRooted : temp.Rooted heap) (outRooted : out.Rooted heap) :
-    Implementation.Source.work_scope2 temp out n value heap =
-      Part.some ((.normal, temp, out, n, value, ()), heap) := by
-  have safe : ScopeSafe heap
-      ⟨Implementation.Source.work_scope2.View.symm (temp, out, n, value, ()),
-        (heap.alloc (τ := .nat) n 0).2⟩ (.normal : Control .unit) := by
-    simp only [ScopeSafe, Implementation.Source.work_scope2.view_symm_apply,
-      Env.Rooted.cons_iff, Env.Rooted.empty, ValueRooted, Control.Rooted,
+theorem inner_eval (temp out : Buffer .nat) (n value : Nat) :
+    Implementation.Source.work_scope2.completion_contract
+      (fun locals heap => locals = (temp, out, n, value, ()) ∧
+        temp.Rooted heap ∧ out.Rooted heap)
+      (fun _ heap locals finish => locals = (temp, out, n, value, ()) ∧ finish = heap)
+      (fun _ _ _ _ _ => False) := by
+  apply Implementation.Source.work_scope2.completion_contract_of_body
+  rintro _ heap ⟨rfl, tempRooted, outRooted⟩
+  refine (Implementation.Source.work_scope2.body_completion_spec_at
+    (inner_body_eval temp out n value) (temp, out, n, value, ()) _).mono ?_
+      (Std.Do.PostCond.entails.refl _)
+  rintro _ rfl
+  refine ⟨rfl, ?_, ?_⟩
+  · rintro _ _ ⟨rfl, rfl⟩
+    refine ⟨?_, rfl, Heap.take_alloc_self (τ := .nat) _ n 0⟩
+    simp only [Implementation.Source.work_scope2.VisibleRooted, ValueRooted,
       tempRooted, outRooted, and_self]
-  rw [Implementation.Source.work_scope2.eq]
-  dsimp only
-  rw [inner_body_eval]
-  simp only [Part.map_some, scopeExit_of_safe safe, Heap.take_alloc_self,
-    Equiv.apply_symm_apply]
-
-/-- The checked inner scope is reusable in native verification, with no
-allocation or reclamation detail imposed on its continuation. -/
-theorem inner_spec (temp out : Buffer .nat) (n value : Nat)
-    (post : Std.Do.PostCond
-      (Control .unit × Implementation.Source.work_scope2.Locals) (.arg Heap .pure)) :
-    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
-      (Implementation.Source.work_scope2 temp out n value)
-      (fun heap => ⟨temp.Rooted heap ∧ out.Rooted heap ∧
-        (post.1 (.normal, temp, out, n, value, ()) heap).down⟩) post := by
-  apply (Part.TotalCorrectness.stateT_triple_iff _ _ _).mpr
-  intro heap ⟨tempRooted, outRooted, property⟩
-  exact ⟨(.normal, temp, out, n, value, ()), heap,
-    inner_eval temp out n value heap tempRooted outRooted, property⟩
+  · intro _ _ _ impossible
+    exact False.elim impossible
 
 /-- The actual outer body reads its still-live temporary after inner cleanup.
 The ordinary contents contract describes the write to the surviving output. -/
-theorem outer_body_spec (out : Buffer .nat) (n value previous : Nat)
-    (heap : Heap) (observed : out.Contents heap #[previous]) :
-    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
-      (Implementation.Source.work_scope1.body out n value)
-      (fun entry => ⟨entry = heap⟩)
-      (fun outcome finish => ⟨outcome = (.returned (), out, n, value, ()) ∧
-        out.Contents finish (workContents n value previous)⟩, ⟨⟩) := by
+theorem outer_body_spec (out : Buffer .nat) (n value previous : Nat) :
+    Implementation.Source.work_scope1.body_completion_contract
+      (fun locals heap => locals = (out, n, value, ()) ∧ out.Contents heap #[previous])
+      (fun _ _ _ _ => False)
+      (fun _ _ _ locals finish => locals = (out, n, value, ()) ∧
+        out.Contents finish (workContents n value previous)) := by
+  rintro _ heap ⟨rfl, observed⟩
+  have innerSpec := fun temp => Implementation.Source.work_scope2.completion_spec
+    (inner_eval temp out n value) temp out n value
+  dsimp only
   rw [Implementation.Source.work_scope1.body_eq]
-  mvcgen [inner_spec]
+  mvcgen [innerSpec]
   rename_i entry same
   subst entry
   intro temp middle allocated initialized growth fresh
@@ -123,8 +127,12 @@ theorem outer_body_spec (out : Buffer .nat) (n value previous : Nat)
     have preserved := observed.alloc (τ := .nat) n value
     rw [allocated] at preserved
     exact preserved
-  mvcgen [inner_spec]
-  refine ⟨initialized.valid.rooted, observed.valid.rooted.mono growth, ?_⟩
+  mvcgen [innerSpec]
+  refine ⟨⟨trivial, initialized.valid.rooted, observed.valid.rooted.mono growth⟩, ?_, ?_⟩
+  swap
+  · intro _ _ _ impossible
+    exact False.elim impossible
+  rintro _ _ rfl rfl
   mvcgen
   · rename_i nonempty
     have active : 0 < n := by simpa only [decide_eq_true_eq] using nonempty
@@ -143,27 +151,25 @@ theorem outer_body_spec (out : Buffer .nat) (n value previous : Nat)
 
 /-- Returning from the outer scope preserves the output's updated contents
 while releasing the temporary object from the actual final heap. -/
-theorem outer_eval (out : Buffer .nat) (n value previous : Nat)
-    (heap : Heap) (observed : out.Contents heap #[previous]) :
-    ∃ finish,
-      Implementation.Source.work_scope1 out n value heap =
-        Part.some ((.returned (), out, n, value, ()), finish) ∧
-      out.Contents finish (workContents n value previous) := by
-  obtain ⟨outcome, finish, executed, same, updated⟩ :=
-    (Part.TotalCorrectness.stateT_triple_iff _ _ _).mp
-      (outer_body_spec out n value previous heap observed) heap rfl
-  subst outcome
-  have safe : ScopeSafe heap
-      ⟨Implementation.Source.work_scope1.View.symm (out, n, value, ()), finish⟩
-      (.returned () : Control .unit) := by
-    simp only [ScopeSafe, Implementation.Source.work_scope1.view_symm_apply,
-      Env.Rooted.cons_iff, Env.Rooted.empty, ValueRooted, Control.Rooted,
+theorem outer_eval (out : Buffer .nat) (n value previous : Nat) :
+    Implementation.Source.work_scope1.completion_contract
+      (fun locals heap => locals = (out, n, value, ()) ∧ out.Contents heap #[previous])
+      (fun _ _ _ _ => False)
+      (fun _ _ _ locals finish => locals = (out, n, value, ()) ∧
+        out.Contents finish (workContents n value previous)) := by
+  apply Implementation.Source.work_scope1.completion_contract_of_body
+  rintro _ heap ⟨rfl, observed⟩
+  refine (Implementation.Source.work_scope1.body_completion_spec_at
+    (outer_body_spec out n value previous) (out, n, value, ()) _).mono ?_
+      (Std.Do.PostCond.entails.refl _)
+  rintro _ rfl
+  refine ⟨⟨rfl, observed⟩, ?_, ?_⟩
+  · intro _ _ impossible
+    exact False.elim impossible
+  · rintro _ _ finish ⟨rfl, updated⟩
+    refine ⟨?_, trivial, rfl, updated.take observed.valid.rooted⟩
+    simp only [Implementation.Source.work_scope1.VisibleRooted, ValueRooted,
       observed.valid.rooted, and_self]
-  refine ⟨finish.take heap.objects.size, ?_, updated.take observed.valid.rooted⟩
-  rw [Implementation.Source.work_scope1.eq]
-  dsimp only
-  rw [executed]
-  simp only [Part.map_some, scopeExit_of_safe safe, Equiv.apply_symm_apply]
 
 /-- The declared worker terminates and updates the ordinary contents of its
 borrowed output. No word width, memory capacity or time budget is assumed. -/
@@ -171,10 +177,28 @@ theorem work_eval (out : Buffer .nat) (n value previous : Nat)
     (heap : Heap) (observed : out.Contents heap #[previous]) :
     ∃ finish, Implementation.Source.work out n value heap = Part.some (.ok (), finish) ∧
       out.Contents finish (workContents n value previous) := by
-  obtain ⟨finish, executed, updated⟩ := outer_eval out n value previous heap observed
-  refine ⟨finish, ?_, updated⟩
-  rw [Implementation.Source.work_eq]
-  simp [source_eval, executed]
+  have outerSpec := Implementation.Source.work_scope1.completion_spec
+    (outer_eval out n value previous) out n value
+  have specification :
+      Std.Do.Triple (m := ExceptT Fault (StateT Heap Part))
+        (ps := .except Fault (.arg Heap .pure))
+        (Implementation.Source.work out n value)
+        (fun entry => ⟨entry = heap⟩)
+        (fun _ finish => ⟨out.Contents finish (workContents n value previous)⟩,
+          (fun _ _ => ⟨False⟩, ⟨⟩)) := by
+    rw [Implementation.Source.work_eq]
+    mvcgen [outerSpec]
+    rename_i entry same
+    subst entry
+    refine ⟨⟨trivial, observed⟩, ?_, ?_⟩
+    · intro _ _ impossible
+      exact False.elim impossible
+    · rintro _ _ finish rfl updated
+      mvcgen
+  obtain ⟨result, finish, executed, updated⟩ :=
+    (triple_iff_eval _ _ _).mp specification heap rfl
+  cases result
+  exact ⟨finish, executed, updated⟩
 
 /-- A source call reuses the worker's mathematical contents contract at its
 actual entry and final heaps, through the generated ordinary-argument bridge. -/

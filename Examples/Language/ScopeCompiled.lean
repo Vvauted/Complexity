@@ -85,7 +85,7 @@ theorem body_ready {w limit cursor : Nat} (hw : 0 < w)
               cases assigned
               exact .seqNormal
                 (.callReturn (callee := callee) (fun {τ} => arguments (τ := τ))
-                  (work_ready out n value heap outRooted outFits nFits valueFits capacity callee)
+                  (work_ready out n value heap hw outRooted outFits nFits valueFits capacity callee)
                   (.skip _))
                 (.assign _ _ _ ⟨remainingFits, oneFits⟩)
   | seqReturn called =>

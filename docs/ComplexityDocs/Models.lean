@@ -153,8 +153,9 @@ consumer and the complete manual build are checked on 0v0.
 In a named source program, `with_scratch do ...` keeps temporary allocations
 within a lexical scope. Allocate longer-lived output before entering the scope.
 On a safe exit, old objects keep their **current** contents while new objects
-are discarded. Returning from inside the block still returns from the enclosing
-function, after cleanup. No copying, freezing or rollback is implicit.
+are discarded. Returning finishes the enclosing value block, or the function
+when there is no value-block boundary, after cleanup of any intervening scratch
+scopes. No copying, freezing or rollback is implicit.
 
 Safety requires all surviving local and returned handles, including handles
 nested in products and options, to refer to objects that existed at scope entry.

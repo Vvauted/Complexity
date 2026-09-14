@@ -82,7 +82,7 @@ The current integration work has these concrete obligations:
   update/frame statements and compiler-derived body bounds. Its imported pure
   Option/product result uses the checked encoding and existing map identities.
 - [ ] Add a real local-return boundary for value-producing blocks containing
-  loops or scratch scopes. Core now has an internal boundary using ordinary
+  loops or scratch scopes. Core now has an internal boundary using
   an optional result local, gated continuations and the existing loop and scope
   semantics. Each scratch scope stages its own result and commits only after
   successful cleanup; fault exits really drop those temporary roots before
@@ -92,15 +92,20 @@ The current integration work has these concrete obligations:
   assignments invalidate the affected enclosing mathematical locals.
   The existing record/List branch proofs check, and the List's exact RAM count
   includes the result assignment and final payload match. Existing ordinary
-  scope/traversal code and bounds are unchanged. Loop/scratch combinations inside
-  value blocks still need a real consumer; the supporting root lemmas alone are
-  not a complete lowering theorem. Plain `let x : T ← do ...` blocks now reuse
+  traversal code and bounds are unchanged. Plain `let x : T ← do ...` blocks now reuse
   that same boundary and proof trace. The original structured scalar caller uses
   this form with its unchanged mathematical proof and RAM realization/invocation
   proof; shared Option normalization handles the private control values.
   The result's outer Option itself distinguishes a continuing block from a
   completed one, including `some none` when the returned value is optional.
   No separate activity flag or flag/result consistency proof is needed.
+  The existing `Scope.work` now puts its nested scratch scopes inside a plain
+  `do` value block. Visible completion contracts and actual execution frames
+  hide private result slots from its source proof; cleanup still checks the
+  full state and retains updates to older objects. Its mathematical contents
+  and physical workspace guarantees concern the changed source program, not
+  a claim that the added completion instructions are free. Local-return loops
+  and ranges still need their own consumer and invariant interface.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. The general-while consumer still supplies its record/heap
   state relation and guard/body transport explicitly. This checks composability,
@@ -114,8 +119,13 @@ The current integration work has these concrete obligations:
   Local-return blocks also need an author-facing completion/local-state view:
   compiler-private result slots must not enlarge user invariants or scratch
   tuples. Keep complete source coordinates for execution and run scope cleanup
-  before projection. The original Unit-valued scratch worker is the next concrete
-  consumer; ancestor private slots can reuse fixed-capture transport.
+  before projection. The original Unit-valued scratch worker uses generated
+  visible body/completion contracts and shared scope closure. Ancestor private
+  slots are reconstructed from the same actual execution's frame; authors do
+  not enumerate them. Loop invariants still expose private pending state.
+  Their completion rule should require invariant preservation and decrease
+  only for continuing iterations; a local result must exit through the actual
+  masked guard, without inventing a decrease after completion.
 - [ ] Compose mathematical functions and state contracts through the same
   heap-indexed representation. A pure encoding is a special case; mutable
   array contents are not preserved by arbitrary heap extension.

@@ -47,10 +47,14 @@ its consistency proof are unnecessary. An optional returned value is stored as
 The existing record/List mathematical proofs check through this boundary, and the
 List's exact RAM count includes its actual control instructions. The source
 preparer no longer rejects loops or scratch scopes just because they occur in a
-value branch; those combinations still need consumer evidence. Ordinary
+value branch. Local-return loops and ranges still need consumer evidence. Ordinary
 `let x : T ← do ...` blocks use the same boundary. The existing structured scalar
 caller uses this form and retains its mathematical and actual RAM proofs;
 private Option control is simplified by the shared backend proof rules.
+The existing nested-scratch worker also uses a plain value block. Its generated
+completion contracts expose source-visible locals and distinguish fallthrough
+from a local result. Actual execution frames reconstruct the compiler slots;
+scope cleanup still checks those full locals before returning the visible view.
 General represented `while` now retains actual assignments, effectful guards
 and early function returns through the same source loop. The array-record
 consumer supplies a mathematical-state contract, not a total pure function.
@@ -1493,8 +1497,9 @@ forever. Resizing, arbitrary `free`, GC and reference counting are not implement
 
 `with_scratch do ...` lowers to the typed core's `Stmt.scope`. It is a lexical
 control block, not a function or a value-producing return boundary. Ordinary
-fallthrough continues after it; a `return` still exits the enclosing function,
-after scope cleanup. Allocate a result outside the scratch scope when it must
+fallthrough continues after it; a `return` finishes the enclosing value block,
+or the function if there is no value-block boundary, after leaving intervening
+scratch scopes through cleanup. Allocate a result outside the scratch scope when it must
 survive that scope, and use temporary buffers inside it. This does not implicitly
 copy, move or freeze a returned buffer.
 
@@ -1526,6 +1531,17 @@ that supplies non-escape and the postcondition on this restricted final heap.
 The native `Stmt.scope_action_spec` composes the same endpoint conversion with
 the body action. Named scratch blocks expose their actual body, equation,
 continuation and safe-exit `spec`; no second evaluator determines cleanup.
+
+Inside a value block, named scratch boundaries additionally expose `Visible`,
+`body_completion_contract` and `completion_contract`. Their normal and local-return
+relations mention only visible source variables and the actual endpoint heaps.
+`completion_spec` applies such a contract to the existing action in `mvcgen`;
+`completion_contract_of_body` discharges the scratch boundary once the visible
+locals and any local result are rooted in the entry heap. Complete locals are
+reconstructed using a frame theorem about that same execution, not an assumed
+inverse of the projection. The Unit-valued worker in `Examples.Language.Scope`
+uses this interface for both nested scopes. This does not yet hide private
+completion state in loop invariants.
 
 The RAM lowering saves the actual cursor from address zero in one fresh local,
 runs the body, then stores that saved cursor back. Capture and release each
