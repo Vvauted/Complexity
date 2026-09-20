@@ -68,7 +68,7 @@ def prepareFunction (names : DeclarationNames)
       preservingRelation := some (fieldName family name "_action_rel_native_preserving") }
       else none }
   modify fun state => { state with current := some current, currentRecursive := false }
-  let ⟨raw, native, calls, returned, normal⟩ ←
+  let ⟨raw, native, calls, returned, normal, _⟩ ←
     sequence names imports result scope elements .immutable true
   let recursive := (← get).currentRecursive
   let fn : Function := {

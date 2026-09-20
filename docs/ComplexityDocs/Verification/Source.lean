@@ -65,15 +65,19 @@ including inside a typed local `do` value block. For fully modeled operations,
 the mathematical proof follows that continuation only on the continuing path;
 the source keeps one shared continuation and its actual selected heap. The
 [allocating List consumer](##Examples.Language.LinkedList) uses this form before
-folding the selected List, with the same ordinary sum equation. A loop iteration
-that can either continue or return still needs a two-outcome mathematical
-summary; this closed-block support does not supply one.
+folding the selected List, with the same ordinary sum equation. Local-result
+range iterations use a separate summary of continuation and completion.
 
 Normal finite ranges inside local value blocks retain their mathematical fold.
-Their generated proof uses the shared local-completion range theorem, which
-also describes a stored result, its final heap and the real stopped-guard step.
-Generating the two-outcome model for a range body that exits its enclosing
-value block remains open; the more general theorem alone does not enable it.
+Fully modeled simple branch/Option rounds that may exit that block instead
+have a generated `Option payload × state` summary and Lean `forIn` model.
+Correspondence relates the actual saved result and locals at their final heap;
+the payload belongs to the local block, not necessarily the function's result
+type. Only continuing rounds advance, and completion uses the real stopped guard.
+The summary introduces no second source loop or runtime allocation. General
+nested mixed-exit combinations, function-level range returns, calls to the
+enclosing recursive function from a range and full models of arbitrary heap
+mutation remain open. Mathematical correspondence does not itself give a RAM bound.
 
 The [iterative factorial](##Examples.Language.Factorial) uses one range and a
 mutable accumulator through the older `(pure)` compatibility naming. Its

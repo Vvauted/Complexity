@@ -214,6 +214,71 @@ def parameterBinding (name : TSyntax `ident) (type : NativeType) : TermElabM Bin
       rawModel := if type.isIdentity then ⟨name.raw⟩ else ⟨rawName.raw⟩
       observation := if type.isIdentity then .refl else .named relationName.getId } }
 
+/-- Proof-side coordinates at a block's completion boundary. Source slot
+identity selects the latest carried values, including shadowed declarations. -/
+structure CompletionContext where
+  carried : Array Binding
+  stateType : NativeType
+  resultType : NativeType
+
+/-- A mathematical result records both local completion and the current state.
+Its statements and call trace are proof-side summaries, not new source code. -/
+structure CompletionSummary where
+  native : Array (TSyntax `doElem)
+  calls : Array Trace
+  returned : Value
+
+/-- Capture continuing or locally returning completion using the existing
+field, option and product representations. Missing observations leave the
+source block available without claiming a mathematical summary. -/
+def CompletionContext.capture (context : CompletionContext) (scope : List Binding)
+    (returned : Option Value) : TermElabM (Option CompletionSummary) := do
+  let mut carried := #[]
+  for binding in context.carried do
+    let some latest := scope.find? (fun current => current.slot == binding.slot)
+      | return none
+    unless latest.model?.isSome do return none
+    carried := carried.push { latest with name := latest.nativeName }
+  let state ← value carried.toList (← stateValue carried) (some context.stateType)
+  let some stateModel := state.model? | return none
+  let pending : Value ← match returned with
+    | none => do
+        let absent ← `(none)
+        pure ({
+          type := .option context.resultType, raw := absent
+          model? := some {
+            native := absent, model := absent, rawModel := absent
+            observation := .none context.resultType } } : Value)
+    | some result => do
+        pure ({
+          type := .option context.resultType, raw := ← `(some $(result.raw))
+          model? := ← result.model?.mapM fun model => do
+            return ({
+              native := ← `(some $(model.native)), model := ← `(some $(model.model))
+              rawModel := ← `(some $(model.rawModel))
+              observation := .some model.observation } : ValueModel) } : Value)
+  let some pendingModel := pending.model? | return none
+  let native ← `(($(pendingModel.native), $(stateModel.native)))
+  let returned : Value := {
+    type := .prod (.option context.resultType) context.stateType
+    raw := ← `(($(pending.raw), $(state.raw)))
+    model? := some {
+      native
+      model := ← `(($(pendingModel.model), $(stateModel.model)))
+      rawModel := ← `(($(pendingModel.rawModel), $(stateModel.rawModel)))
+      observation := .pair false pendingModel.observation stateModel.observation } }
+  return some { native := #[← `(doElem| return $native)], calls := #[], returned }
+
+/-- Prefix a completion summary only when both mathematical preparation and
+its checked call trace are available. The final represented value is unchanged. -/
+def CompletionSummary.prepend? (native : Option (Array (TSyntax `doElem)))
+    (calls : Option (Array Trace)) (summary : Option CompletionSummary) :
+    Option CompletionSummary := do
+  let native ← native
+  let calls ← calls
+  let summary ← summary
+  return { summary with native := native ++ summary.native, calls := calls ++ summary.calls }
+
 
 /-- Raw statements and their normal lexical successor are independent of the
 optional mathematical body, call trace and returned-value summary. -/
@@ -223,6 +288,7 @@ structure PreparedBlock where
   calls? : Option (Array Trace)
   returned? : Option Value
   normalScope? : Option (List Binding)
+  completion? : Option CompletionSummary := none
 
 /-- Close a branch's local declarations by slot identity. Shadowing introduces
 a new slot, while the latest assignment retains the enclosing slot. -/
@@ -274,6 +340,29 @@ def choiceModel (available : Bool) (type : NativeType)
       model, rawModel := ⟨rawName.raw⟩
       observation := if type.isIdentity then .refl else .named relationName.getId } }
   return some { result, native, trace := trace yesCalls noCalls yesResult noResult result }
+
+/-- Join control-sensitive mathematical summaries with the same branch model
+and trace used for ordinary value branches. No runtime result slot is added. -/
+def completionChoice (available : Bool) (context : CompletionContext)
+    (yes no : Option CompletionSummary)
+    (choose : Bool → TSyntax `term → TSyntax `term → TermElabM (TSyntax `term))
+    (trace : Array Trace → Array Trace → Value → Value → Binding → Trace) :
+    TermElabM (Option CompletionSummary) := do
+  let some yes := yes | return none
+  let some no := no | return none
+  let asBlock (summary : CompletionSummary) : PreparedBlock := {
+    raw := #[], native? := some summary.native, calls? := some summary.calls
+    returned? := some summary.returned, normalScope? := none }
+  let type := NativeType.prod (.option context.resultType) context.stateType
+  let some choice ← choiceModel available type (asBlock yes) (asBlock no) choose trace
+    | return none
+  let returned : Value := {
+    type, raw := ⟨choice.result.rawName.raw⟩
+    model? := choice.result.model?.map fun model => {
+      toBindingModel := model, native := choice.native } }
+  return some {
+    native := #[← `(doElem| return $(choice.native))]
+    calls := #[choice.trace], returned }
 
 /-- Pack only proof-side normal results. Actual branch bodies keep their
 fallthrough and never receive a synthesized source return. -/

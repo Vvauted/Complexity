@@ -24,8 +24,9 @@ work and every remaining obligation. The outstanding work is:
 - Share resolved operations and control-flow lowering completely; retain
   `(native)` naming compatibility and the older `(pure)` preparer without
   presenting them as separate recommended languages.
-- Complete finite-range exits, locally exiting ranges, nested construct coverage
-  and recursive calls from ranges using the same actual named source loops.
+- Complete function-level range returns, general nested mixed-exit combinations
+  and calls to the enclosing recursive function from ranges, using the same
+  actual named source loops.
 - Generate mathematical-local guard/body interfaces from field representations;
   authors supply invariants, descent and genuine effect/range facts, not private
   slots, raw-environment transport or `Part` plumbing. Normal array-preserving
@@ -65,16 +66,17 @@ decrease only for continuing rounds. Cleanup still sees the full state, and all
 added control instructions belong to the changed compiled program. This does
 not finish general mathematical-local automation or range integration.
 Normal finite ranges with fully modeled bodies inside local `do` value blocks
-now retain their fold model, including allocating iterations. Their generated
-proof preserves the actual pending-controlled guard and increment, and carries
-fixed locals into the continuation. The existing List consumer retains its original replicate proof;
-range bodies that themselves exit the boundary still need a control-sensitive
-summary, and broader nested combinations remain open.
-The shared finite-range completion theorem now relates both continuing and
-locally returning rounds to Lean's `forIn`, retaining the actual pending result,
-final locals and heap. It reuses the existing completion rule, including the
-real stopped guard. The normal local-range generator consumes its always-continue
-specialization; automatic preparation of mixed-exit bodies remains open.
+retain their fold model, including allocating iterations. Fully modeled simple
+branch/Option rounds that either continue or return from that local block instead
+have a generated `Option payload × state` summary and Lean `forIn` model.
+Correspondence retains the actual result, locals and heap of the same source
+loop: only continuing rounds advance, and a completed round leaves through the
+real stopped guard. The active pending slot may change; ancestor slots and fixed
+captures remain preserved. The local payload need not have the enclosing
+function's result type. This adds neither a second source loop nor runtime
+allocation for the mathematical summary. General nested mixed-exit combinations,
+function-level range returns, enclosing recursion from a range and full models
+of arbitrary heap mutation remain open; no new RAM bound follows from the model.
 The scoped while's resource proof reuses the visible guard/body contracts through
 a shared completion-aware readiness rule, without a second termination proof or
 manual `Part`/private-slot reconstruction. The same ranges, scratch capacity and
@@ -118,7 +120,8 @@ supported scalar/structured and represented fragments. One native termination
 argument feeds correspondence; `Part.get` of the desired answer is not the
 implementation. Mixed return/continue branches retain a model when their
 continuing path reaches a modeled return, including allocating local value
-blocks. Open loop iterations still require a separate two-outcome summary.
+blocks. Simple fully modeled local-result range rounds have a separate
+continue/return summary; general nested mixed-exit combinations remain open.
 Mutual-recursion proof ergonomics, broader combinations and
 equation normalization remain work. See the
 [function-proof milestone](design/Verification.md#function-proof-milestone).

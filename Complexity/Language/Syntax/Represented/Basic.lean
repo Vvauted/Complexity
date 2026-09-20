@@ -170,6 +170,13 @@ inductive Trace where
       (noneResult someResult : Value) (result : Binding)
   /-- A proof of the original named range, not a new source call. -/
   | range (tag : Name) (arguments : Array Value) (result : Binding) (preserving : Bool)
+
+/-- A range either folds its continuing state or retains its optional local
+result together with that state. Both are proof views of the same source loop. -/
+inductive RangeModel where
+  | fold (embedding mutableStep initialMutable indices : TSyntax `term)
+  | completion (resultType : NativeType)
+
 structure RangeRegistration where
   tag : Name
   captured : Array Binding
@@ -182,10 +189,7 @@ structure RangeRegistration where
   stop : Value
   stride : Value
   result : Binding
-  embedding : TSyntax `term
-  mutableStep : TSyntax `term
-  initialMutable : TSyntax `term
-  indices : TSyntax `term
+  model : RangeModel
   site? : Option ActualRangeSite := none
 
 /-- Mathematical local types for an actual while site, independent of an

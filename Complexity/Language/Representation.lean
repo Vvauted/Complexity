@@ -126,6 +126,14 @@ def option (payload : Representation α τ) : Representation (Option α) (.optio
     (value : Value τ) (heap : Heap) :
     payload.option.Rel (some a) (some value) heap ↔ payload.Rel a value heap := Iff.rfl
 
+/-- An optional observation preserves whether a payload is present, without
+requiring the payload representation to be a pure encoding. -/
+theorem option_isSome_eq (payload : Representation α τ)
+    {abstract : Option α} {actual : Option (Value τ)} {heap : Heap}
+    (related : payload.option.Rel abstract actual heap) :
+    abstract.isSome = actual.isSome := by
+  cases abstract <;> cases actual <;> first | rfl | exact False.elim related
+
 /-- A general sum reuses the core's existing option/product layout. Exactly one
 payload is present; pairs with both or neither payload do not represent a sum. -/
 def sum (left : Representation α τ) (right : Representation β σ) :

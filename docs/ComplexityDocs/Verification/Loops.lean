@@ -142,8 +142,24 @@ typed local `do` value block. The generated proof retains the real loop's
 pending-controlled guard and increment and proves the result slot stays empty;
 authors do not expose that slot in their mathematical proof. The existing
 [List range](##Examples.Language.LinkedList) keeps its replicate equation in
-this form. This does not yet give a fold model to a range body that returns from
-its enclosing value block, or infer a RAM bound for the added control.
+this form.
+
+Fully modeled simple branch/Option rounds that may return from the local value
+block use a control-sensitive `Option payload × state` summary and Lean `forIn`
+instead of a fold. Its heap-indexed correspondence observes the same actual body
+result and final locals: the active pending slot may change, while ancestor
+slots and fixed captures remain preserved. The payload type is the local block's
+result type, independent of the enclosing function's return type. Continuing
+rounds advance the cursor; completed rounds exit through the real masked guard
+without running another body or inventing a decrease. The surrounding continuation
+runs only when no result was saved. This adds no second source loop or allocation
+for proof-side state; actual body allocations and control instructions remain
+part of the compiled program.
+
+General nested mixed-exit combinations, function-level range returns, calls to
+the enclosing recursive function from a range and full mathematical models of
+arbitrary heap mutation remain open. Neither mathematical range view infers a
+RAM bound for its body or added control.
 
 For pure finite Nat ranges, the shared
 [`while_range_encoded_invariant`](##Ram.LanguageCompiler.RealizationWP.while_range_encoded_invariant)

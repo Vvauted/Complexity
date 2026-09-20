@@ -90,8 +90,9 @@ The current integration work has these concrete obligations:
   proof composition appends it only to the normal arm, while actual source
   lowering retains the original branch and one shared continuation. The
   allocating `chooseSum` value block uses this form with its unchanged List-sum
-  proof. A still-open normal exit, as in a range iteration, is not converted into
-  a completed result or admitted by the normal-fold gate.
+  proof. A still-open normal exit is not converted into a completed result or
+  admitted by the normal-fold gate; supported mixed local-result ranges use a
+  separate continue/return summary.
   The existing `Scope.work` now puts its nested scratch scopes inside a plain
   `do` value block. Visible completion contracts and actual execution frames
   hide private result slots from its source proof; cleanup still checks the
@@ -103,8 +104,9 @@ The current integration work has these concrete obligations:
   theorem check together. A normally continuing finite range inside a local
   `do` value block now retains its mathematical fold correspondence; the existing
   allocating List consumer uses this form with its unchanged replicate proof.
-  A range body that can return from the enclosing block still needs a
-  control-sensitive mathematical summary.
+  Fully modeled simple branch/Option bodies can also return from that local
+  block: their control-sensitive summary generates a `forIn` model and checked
+  heap-indexed correspondence. General nested mixed-exit combinations remain open.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. Normal represented rounds now retain their own mathematical
   traces independently of a whole-function model. The array-record consumer uses
@@ -156,7 +158,8 @@ The current integration work has these concrete obligations:
   scoped consumer exercises the preserving specialization. Raw `Buffer`
   identity observes a handle, not its
   contents; the worker's actual update and reclamation contract is retained.
-  General mathematical-local integration and locally exiting ranges remain open.
+  General mathematical-local integration and broader locally exiting range
+  combinations remain open.
   The scoped consumer's substantive guard/body proofs now use native triples
   over mathematical locals and the real worker contract. Its older visible-local
   theorems are short compatibility consequences. The generated proof action maps
@@ -198,8 +201,9 @@ The current integration work has these concrete obligations:
   state. The linked-list consumer allocates nodes on each round and has generated
   total source correspondence. The array-record consumer now exercises general
   `while` with an explicit mathematical-state contract after each real append.
-  Finite-range exits, recursive calls to the enclosing function from a range
-  and broader nested range/branch model coverage remain open.
+  Function-level range returns, calls to the enclosing recursive function from
+  a range and broader nested mixed range/branch models remain open. The simple
+  fully modeled local-result range path is described below.
 - [x] Simplify the generated range's mathematical view to its mutable
   accumulator, closing over immutable captures. `List.foldl_hom` automatically
   connects it to the unchanged full source state. The existing List proofs use
@@ -251,29 +255,29 @@ local-completion range rule and existing fold theorem; no second loop or
 executable helper is generated.
 The allocating List consumer keeps its original replicate equation and total
 correctness proof. The added value-block control belongs to the actual compiled
-program; this does not claim an unchanged instruction count. Mixed
-normal/local-return bodies still need a control-sensitive result summary.
-Preparation requires both a normally continuing scope and a complete body model
+program; this does not claim an unchanged instruction count. The normal-fold
+path still requires both a normally continuing scope and a complete body model
 and proof trace; a normal exit being possible alone does not justify a fold.
-The remaining iteration summary must distinguish updated continuing locals from
-a stored local result, retaining the actual final locals and heap in either
-case. The shared `observe_while_completion_rel_forIn_range_step` theorem supplies
-that semantic connection to Lean's existing `forIn`: each actual body completes
-normally, and its optional saved result is observed at its actual final heap.
-Only continuing rounds advance the cursor. A completed round exits through the
-next masked false guard, by the existing `TotalWP.while_completion` rule.
-The frontend currently consumes the always-continue specialization; it still
-needs the two-outcome preparation summary to generate proofs for mixed exits.
-That summary must stop treating the active pending slot as fixed, while retaining
-ancestor slots and lexical captures. The local payload type is independent of
-the enclosing function's return type.
-Preparation should capture `Option result × state` at the return and fallthrough
-leaves, before their lexical observations are lost, using the existing product
-and Option representations. Branch composition must run the shared continuation
-only on the absent-result path and retain the completed path's own final state.
+
+Fully modeled simple branch/Option rounds with local return instead capture
+`Option payload × state` at return and fallthrough leaves, using the existing
+product and Option representations. The generated mathematical `forIn` and its
+heap-indexed correspondence distinguish updated continuing locals from the
+actual saved result. The active pending slot is not a fixed capture; ancestor
+slots and other fixed lexical coordinates are preserved. The payload is typed
+by the local value block, independently of the enclosing function's result.
+The shared `observe_while_completion_rel_forIn_range_step` theorem connects this
+summary to the same source loop and its actual endpoint heap. Only continuing
+rounds advance; completion leaves through the real masked false guard using
+`TotalWP.while_completion`. The shared continuation runs only on the absent-result
+path. No second source loop, helper traversal or allocation is added for the
+proof-side summary; real body allocation remains in the actual execution.
+General nested mixed-exit combinations, function-level range returns, calls to
+the enclosing recursive function from a range and full mathematical models of
+arbitrary heap mutation remain outside this automatic mathematical-model path.
 
 The proof preparer now follows actual branch continuations when composing
-ranges, carrying their heap relations and frames. Nested-range and Option
+ranges, carrying their heap relations and frames. Broader nested range/Option
 combinations still need consumer evidence; this does not close the complete
 integration gate. Explicit imports retain their source tables, order and written
 names, and resolved calls select those same entries. The frontend's buffer
@@ -346,8 +350,9 @@ The existing record/List mathematical proofs check through this boundary, and th
 List's exact RAM count includes its actual control instructions. The source
 preparer no longer rejects loops or scratch scopes just because they occur in a
 value branch. The local-return `while` in `Scope.make` has checked source and RAM
-proofs; normal ranges inside local value blocks have a checked List consumer,
-while locally exiting range models remain open. Ordinary
+proofs; normal ranges inside local value blocks retain their fold models,
+and fully modeled simple branch/Option local exits use the control-sensitive
+`forIn` model. Broader nested combinations remain open. Ordinary
 `let x : T ← do ...` blocks use the same boundary. The existing structured scalar
 caller uses this form and retains its mathematical and actual RAM proofs;
 private Option control is simplified by the shared backend proof rules.
@@ -358,10 +363,11 @@ scope cleanup still checks those full locals before returning the visible view.
 General represented `while` now retains actual assignments, effectful guards
 and early function returns through the same source loop. The array-record
 consumer supplies a mathematical-state contract, not a total pure function.
-Mathematical range-view coverage for exits, value-producing branches, nested
-ranges and calls to an enclosing recursive function remains part of the
-integration gate. A range view folds mutable locals and closes over fixed
-captures; its correspondence must refer to the same named source loop, without
+Mathematical range-view coverage for function-level returns, general nested
+mixed-exit combinations and calls to an enclosing recursive function remains
+part of the integration gate. A normal range view folds mutable locals and
+closes over fixed captures; a local-completion view also retains its payload.
+Its correspondence must refer to the same named source loop, without
 adding source helper calls or changing its charged execution.
 
 Statement branches, lexical shadowing, standalone Unit calls, nested product

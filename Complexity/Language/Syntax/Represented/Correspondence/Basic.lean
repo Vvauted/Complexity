@@ -23,7 +23,8 @@ open Lean.Parser.Term
 namespace Internal
 
 def normalizeAction : TermElabM (TSyntax `tactic) :=
-  `(tactic| simp only [Id.run, Id.instMonad, Bind.bind, Pure.pure, Functor.map,
+  `(tactic| simp (config := { failIfUnchanged := false }) only
+    [Id.run, Id.instMonad, Bind.bind, Pure.pure, Functor.map,
     MonadLift.monadLift, ExceptT.lift,
     ExceptT.bind, ExceptT.bindCont, ExceptT.pure, ExceptT.mk, ExceptT.run,
     StateT.bind, StateT.pure, StateT.map, Part.bind_some, Part.map_some,
@@ -171,6 +172,9 @@ structure TraceContext where
   scalarEqualities : Array (TSyntax `term)
   shape : TSyntax `term
   contents : TSyntax `term
+  /-- Selected source and mathematical branches remain available while
+  composing their common continuation and final observation. -/
+  branchRules : Array (TSyntax ``Lean.Parser.Tactic.simpLemma) := #[]
 
 abbrev TraceFinish := TraceContext → TermElabM (Array (TSyntax `tactic))
 

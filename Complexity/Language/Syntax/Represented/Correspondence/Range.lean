@@ -9,9 +9,9 @@ import Complexity.Language.Eval.Locals.Range.LocalReturn
 /-!
 # Correspondence for represented finite ranges
 
-Relate a prepared mathematical fold to its actual named source range. Lexical
-slot alignment and the existing range rule retain complete source coordinates,
-actual body control and intermediate heap observations.
+Relate a prepared mathematical fold or locally completing `forIn` to its actual
+named source range. Lexical slot alignment and the existing range rules retain
+complete source coordinates, actual body control and intermediate heap observations.
 -/
 
 namespace Complexity.Language.Syntax.Represented
@@ -94,7 +94,7 @@ def sourceTuple (fields : Array (TSyntax `term)) : TermElabM (TSyntax `term) := 
   for field in fields.reverse do result ← `(($field, $result))
   return result
 
-def RangeRegistration.select (range : RangeRegistration) (locals : TSyntax `term) :
+def RangeRegistration.selectState (range : RangeRegistration) (locals : TSyntax `term) :
     TermElabM (TSyntax `term) := do
   let site ← range.site
   let fields ← sourceFields site.scope.size locals
@@ -104,90 +104,142 @@ def RangeRegistration.select (range : RangeRegistration) (locals : TSyntax `term
     | some field => pure field
     | none => throwError "the selected range coordinate is outside its actual locals")
 
+/-- A completion view reads the actual saved result beside the actual final
+state; the mathematical result never reconstructs a source handle. -/
+def RangeRegistration.select (range : RangeRegistration) (locals : TSyntax `term) :
+    TermElabM (TSyntax `term) := do
+  let state ← range.selectState locals
+  match range.model with
+  | .fold .. => pure state
+  | .completion _ =>
+      let site ← range.site
+      let some position := site.pendingSlot?
+        | throwError "a local range result requires its actual completion coordinate"
+      let fields ← sourceFields site.scope.size locals
+      let some pending := fields[position]?
+        | throwError "the completion coordinate is outside the actual range locals"
+      `(($pending, $state))
+
 private structure RangePendingProof where
   entry : Array (TSyntax `tactic)
   current : Array (TSyntax `tactic)
   entryRules : Array (TSyntax ``Lean.Parser.Tactic.simpLemma)
   currentRules : Array (TSyntax ``Lean.Parser.Tactic.simpLemma)
 
+/-- Assemble the already prepared proof steps without one deeply nested
+quotation. The statement and tactic order are unchanged. -/
+private def rangeSummaryProof (name : TSyntax `ident) (statement : TSyntax `term)
+    (steps : Array (TSyntax `tactic)) : TermElabM (TSyntax `tactic) :=
+  `(tactic| have $name:ident : $statement := by
+    $steps:tactic*)
+
 private def rangePendingProof (site : ActualRangeSite)
-    (arguments fields : Array (TSyntax `term)) (fixedSlots : Array (SourceLocal × Nat))
-    (fixedFacts : Array (TSyntax `term)) : TermElabM RangePendingProof := do
+    (arguments fields : Array (TSyntax `term)) (running : TSyntax `ident) :
+    TermElabM RangePendingProof := do
   let some pendingSlot := site.pendingSlot? | return ⟨#[], #[], #[], #[]⟩
   let some entryPending := arguments[pendingSlot]?
     | throwError "the pending range result has no actual entry coordinate"
   let some currentPending := fields[pendingSlot]?
     | throwError "the pending range result is outside its source locals"
-  let some fixedPosition := fixedSlots.findIdx? (fun (_, slot) => slot == pendingSlot)
-    | throwError "a normal range body must retain its pending result coordinate"
   let pendingEntry := mkIdent (← mkFreshUserName `rangePendingEntry)
   let pendingCurrent := mkIdent (← mkFreshUserName `rangePendingCurrent)
   return {
     entry := #[← `(tactic| have $pendingEntry:ident : $entryPending = none := by rfl)]
     current := #[← `(tactic|
-      have $pendingCurrent:ident : $currentPending = none :=
-        Eq.trans $(fixedFacts[fixedPosition]!) $pendingEntry:ident)]
+      have $pendingCurrent:ident : $currentPending = none := $running:ident)]
     entryRules := #[← `(Lean.Parser.Tactic.simpLemma| $pendingEntry:ident)]
     currentRules := #[← `(Lean.Parser.Tactic.simpLemma| $pendingCurrent:ident)] }
 
-/-- A normal local range specializes the completion rule without changing its
-actual pending-controlled guard or body. -/
-private def normalLocalRangeProof (site : ActualRangeSite) (position fixedPosition : Nat)
-    (stateType completionCore bodyNative start stop stride initialState entry heap initial : TSyntax `term)
-    (stateRel guardRel bodyRel positive after finish executed outcome : TSyntax `ident) :
+/-- Choose the existing loop theorem by actual source completion behavior.
+Both paths consume the same generated guard and normally executing body. -/
+private def rangeLoopProof (site : ActualRangeSite)
+    (completionRep nativeStep start stop stride initialState entry heap initial : TSyntax `term)
+    (stateRel guardRel bodyRel positive control after finish executed outcome : TSyntax `ident) :
     TermElabM (Array (TSyntax `tactic)) := do
   let member (suffix : Name) := mkIdent (site.name ++ suffix)
   let view := member `View
-  let localsType := member `Locals
   let program := mkIdent (site.name.getPrefix ++ `program)
   let guard := member `Guard
   let body := member `Body
-  let stoppedGuard := member `guard_completed
-  let pendingAtom ← `(Complexity.Language.Atom.var $(← liftMacroM (Core.variableTerm position)))
-  let completionRep ← `(Complexity.Language.Representation.ofEmbedding
-    (Function.Embedding.refl (Complexity.Language.Value $completionCore)))
-  let activePending := mkIdent (← mkFreshUserName `rangePendingEmpty)
-  let locals := mkIdent (← mkFreshUserName `rangeLocals)
-  let related := mkIdent (← mkFreshUserName `rangeRelated)
-  let fields ← sourceFields site.scope.size ⟨locals.raw⟩
-  let mut fixedFact ← `(($related:ident).2.2.1)
-  for _ in [:fixedPosition] do fixedFact ← `(($fixedFact).2)
-  fixedFact ← `(($fixedFact).1)
-  let activeProof ← `(tactic|
-    have $activePending:ident : ∀ (index : Nat) (state : $stateType)
-        ($locals:ident : $localsType:ident) (current : Complexity.Language.Heap),
-        $stateRel:ident index state $locals:ident current →
-        ($pendingAtom).eval (($view:ident).symm $locals:ident) = none := by
-      intro index state $locals:ident current $related:ident
-      change $(fields[position]!) = none
-      exact Eq.trans $fixedFact (by rfl))
+  if let some position := site.pendingSlot? then
+    let stoppedGuard := member `guard_completed
+    let pendingAtom ← `(Complexity.Language.Atom.var $(← liftMacroM (Core.variableTerm position)))
+    return #[← `(tactic|
+      obtain ⟨$after:ident, $finish:ident, $executed:ident, $outcome:ident⟩ :=
+        Complexity.Language.Stmt.observe_while_completion_rel_forIn_range_step
+          $view:ident $program:ident $guard:ident $body:ident $pendingAtom $stoppedGuard:ident
+          $stop $stride $positive:ident $stateRel:ident $completionRep $nativeStep
+          $guardRel:ident $bodyRel:ident $start $initialState $entry $heap $initial (by rfl))]
   let guardAdapter ← `(by
-    intro index state locals heap related _
-    obtain ⟨after, finish, executed, retained⟩ :=
-      $guardRel:ident index state locals heap related
-    exact ⟨after, finish, executed, retained,
-      $activePending:ident index state after finish retained⟩)
+    intro index state locals heap related
+    obtain ⟨after, finish, executed, retained, _⟩ :=
+      $guardRel:ident index state locals heap related rfl
+    exact ⟨after, finish, executed, retained⟩)
   let bodyAdapter ← `(by
-    intro index state locals heap inside related _
-    obtain ⟨control, after, finish, executed, retained, normal⟩ :=
-      $bodyRel:ident index state locals heap inside related
-    cases control with
-    | normal =>
-        refine ⟨after, finish, executed, retained, ?_⟩
-        rw [$activePending:ident _ _ after finish retained]
-        exact Complexity.Language.Representation.option_none $completionRep finish
-    | returned _ => exact False.elim normal
-    | fault _ => exact False.elim normal)
+    intro index state locals heap inside related
+    obtain ⟨after, finish, executed, retained, _⟩ :=
+      $bodyRel:ident index state locals heap inside related rfl
+    exact ⟨Complexity.Language.Control.normal, after, finish, executed, retained, trivial⟩)
   let proof ← `(tactic|
-    obtain ⟨$after:ident, $finish:ident, $executed:ident, $outcome:ident⟩ :=
-      Complexity.Language.Stmt.observe_while_completion_rel_forIn_range_step
-        $view:ident $program:ident $guard:ident $body:ident $pendingAtom $stoppedGuard:ident
-        $stop $stride $positive:ident $stateRel:ident $completionRep
-        (fun index state => (none, $bodyNative index state))
-        $guardAdapter $bodyAdapter $start $initialState $entry $heap $initial (by rfl))
-  return #[activeProof, proof]
+    obtain ⟨$control:ident, $after:ident, $finish:ident, $executed:ident, $outcome:ident⟩ :=
+      Complexity.Language.Stmt.observe_while_rel_forIn_range_step
+        $view:ident $program:ident $guard:ident $body:ident
+        $stop $stride $positive:ident $stateRel:ident $completionRep $nativeStep
+        $guardAdapter $bodyAdapter $start $initialState $entry $heap $initial)
+  return #[proof]
 
-/-- Prove the original named range in its full source coordinates. The fold is
+/-- Relate the loop outcome to its prepared mathematical result. Only a normal
+fold erases the completion flag; a completion model keeps it in the result. -/
+private def rangeResultProof (range : RangeRegistration)
+    (substitutions : Array (Name × TSyntax `term))
+    (bodyNative completionCore start stop stride initialState resultModel selected finish : TSyntax `term)
+    (positive outcome observed : TSyntax `ident) :
+    TermElabM (Array (TSyntax `tactic) × Array (TSyntax `tactic)) := do
+  let type ← termOfExpr range.result.type.nativeType
+  let core ← termOfExpr (coreTypeExpr range.result.type.coreTy)
+  let representation ← termOfExpr range.result.type.representation
+  let statement ← `(($representation : Complexity.Language.Representation $type $core).Rel
+    $resultModel $selected $finish)
+  match range.model with
+  | .completion _ =>
+      return (#[← `(tactic| skip)], #[← `(tactic|
+        have $observed:ident : $statement := ⟨($outcome:ident).2, ($outcome:ident).1.1⟩)])
+  | .fold embedding mutableStep initialMutable indices =>
+      let embedding := resolveRaw embedding substitutions
+      let mutableStep := resolveRaw mutableStep substitutions
+      let initialMutable := resolveRaw initialMutable substitutions
+      let indices := resolveRaw indices substitutions
+      let equal := mkIdent (← mkFreshUserName `rangeFoldEqual)
+      let normalize := #[
+        ← `(tactic| simp only [Option.elim_none] at $outcome:ident),
+        ← `(tactic| rw [Complexity.Language.Stmt.forIn_range_step_yield_eq_foldl
+          (α := Complexity.Language.Value $completionCore) $bodyNative
+          $start $stop $stride $positive:ident $initialState] at $outcome:ident),
+        ← `(tactic| simp only [Id.run] at $outcome:ident)]
+      let proof ← `(tactic|
+        have $observed:ident : $statement := by
+          have $equal:ident : ($indices).foldl
+              (fun state index => $bodyNative index state) $initialState = $resultModel :=
+            List.foldl_hom $embedding (g₁ := $mutableStep)
+              (g₂ := fun state index => $bodyNative index state)
+              (l := $indices) (init := $initialMutable) (by intros; rfl)
+          rw [← $equal:ident]
+          exact ($outcome:ident).1.1)
+      return (normalize, #[proof])
+
+private def rangeNormalProof (site : ActualRangeSite)
+    (normal control outcome : TSyntax `ident) :
+    TermElabM (Array (TSyntax `tactic)) := do
+  if site.pendingSlot?.isSome then return #[← `(tactic| skip)]
+  return #[
+    ← `(tactic| have $normal:ident : $control:ident = .normal := by
+      cases $control:ident with
+      | normal => rfl
+      | returned _ => exact False.elim ($outcome:ident).2
+      | fault _ => exact False.elim ($outcome:ident).2),
+    ← `(tactic| subst $control:ident)]
+
+/-- Prove the original named range in its full source coordinates. Iteration is
 only a mathematical view; body calls retain their actual control and heap. -/
 def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     (heap : TSyntax `term) (relations : Array RetainedObservation)
@@ -221,38 +273,60 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let extractBody : TSyntax ``doSeq :=
     ⟨Lean.Elab.Term.Do.mkDoSeq #[extractElement.raw]⟩
   let extract ← `(tactic| run_tac $extractBody:doSeq)
-  let summary := mkIdent (← mkFreshUserName `rangeRelated)
-  let stateRel := mkIdent (← mkFreshUserName `rangeStateRel)
+  let (summary, stateRel, locals, current, related, cursorEqual, fixed, framed,
+      active, running, guardRel, bodyRel, positive, stopEqual, strideEqual, startEqual) ← do
+    let summary := mkIdent (← mkFreshUserName `rangeRelated)
+    let stateRel := mkIdent (← mkFreshUserName `rangeStateRel)
+    let locals := mkIdent (← mkFreshUserName `rangeLocals)
+    let current := mkIdent (← mkFreshUserName `rangeHeap)
+    let related := mkIdent (← mkFreshUserName `rangeStateRelated)
+    let cursorEqual := mkIdent (← mkFreshUserName `rangeCursorEqual)
+    let fixed := mkIdent (← mkFreshUserName `rangeFixed)
+    let framed := mkIdent (← mkFreshUserName `rangeFramed)
+    let active := mkIdent (← mkFreshUserName `rangeActive)
+    let running := mkIdent (← mkFreshUserName `rangeRunning)
+    let guardRel := mkIdent (← mkFreshUserName `rangeGuardRelated)
+    let bodyRel := mkIdent (← mkFreshUserName `rangeBodyRelated)
+    let positive := mkIdent (← mkFreshUserName `rangeStridePositive)
+    let stopEqual := mkIdent (← mkFreshUserName `rangeStopEqual)
+    let strideEqual := mkIdent (← mkFreshUserName `rangeStrideEqual)
+    let startEqual := mkIdent (← mkFreshUserName `rangeStartEqual)
+    pure (summary, stateRel, locals, current, related, cursorEqual, fixed, framed,
+      active, running, guardRel, bodyRel, positive, stopEqual, strideEqual, startEqual)
   let index := range.index.nativeName
   let state := range.state.name
-  let locals := mkIdent (← mkFreshUserName `rangeLocals)
-  let current := mkIdent (← mkFreshUserName `rangeHeap)
-  let related := mkIdent (← mkFreshUserName `rangeStateRelated)
   let stateObserved := range.state.relationName
-  let cursorEqual := mkIdent (← mkFreshUserName `rangeCursorEqual)
-  let fixed := mkIdent (← mkFreshUserName `rangeFixed)
-  let framed := mkIdent (← mkFreshUserName `rangeFramed)
-  let active := mkIdent (← mkFreshUserName `rangeActive)
-  let guardRel := mkIdent (← mkFreshUserName `rangeGuardRelated)
-  let bodyRel := mkIdent (← mkFreshUserName `rangeBodyRelated)
-  let positive := mkIdent (← mkFreshUserName `rangeStridePositive)
-  let stopEqual := mkIdent (← mkFreshUserName `rangeStopEqual)
-  let strideEqual := mkIdent (← mkFreshUserName `rangeStrideEqual)
-  let startEqual := mkIdent (← mkFreshUserName `rangeStartEqual)
-  let stateType ← termOfExpr range.state.type.nativeType
-  let stateCore ← termOfExpr (coreTypeExpr range.state.type.coreTy)
-  let representation ← termOfExpr range.state.type.representation
-  let resultCore ← termOfExpr (coreTypeExpr site.result)
-  let returnRep ← `(Complexity.Language.Representation.ofEmbedding
-    (Function.Embedding.refl (Complexity.Language.Value $resultCore)))
-  let completionCore ← match site.pendingSlot? with
-    | none => pure resultCore
-    | some position => do
-        let some binding := site.scope[position]?
-          | throwError "the pending range result is outside its source locals"
-        let .option payload := binding.type
-          | throwError "a local completion coordinate must have an optional result type"
-        termOfExpr (coreTypeExpr payload)
+  let (stateType, stateCore, representation, observedType, observedCore,
+      observedRepresentation, completionCore, completionType?, completionRep, pendingValue) ← do
+    let stateType ← termOfExpr range.state.type.nativeType
+    let stateCore ← termOfExpr (coreTypeExpr range.state.type.coreTy)
+    let representation ← termOfExpr range.state.type.representation
+    let observedType ← termOfExpr range.result.type.nativeType
+    let observedCore ← termOfExpr (coreTypeExpr range.result.type.coreTy)
+    let observedRepresentation ← termOfExpr range.result.type.representation
+    let resultCore ← termOfExpr (coreTypeExpr site.result)
+    let completionCore ← match site.pendingSlot? with
+      | none => pure resultCore
+      | some position => do
+          let some binding := site.scope[position]?
+            | throwError "the pending range result is outside its source locals"
+          let .option payload := binding.type
+            | throwError "a local completion coordinate must have an optional result type"
+          termOfExpr (coreTypeExpr payload)
+    let completionType? := match range.model with
+      | .fold .. => none
+      | .completion type => some type
+    let completionRep ← match completionType? with
+      | some type => termOfExpr type.representation
+      | none => `(Complexity.Language.Representation.ofEmbedding
+          (Function.Embedding.refl (Complexity.Language.Value $completionCore)))
+    let pendingValue ← match site.pendingSlot? with
+      | some position => do
+          let atom ← `(Complexity.Language.Atom.var $(← liftMacroM (Core.variableTerm position)))
+          `(fun (locals : $localsType:ident) => ($atom).eval (($view:ident).symm locals))
+      | none => `(fun (_ : $localsType:ident) => (none : Option (Complexity.Language.Value $completionCore)))
+    pure (stateType, stateCore, representation, observedType, observedCore,
+      observedRepresentation, completionCore, completionType?, completionRep, pendingValue)
   let initialModel ← initialValue.requireModel
   let resultModel ← range.result.requireModel
   let startModel ← range.start.requireModel
@@ -265,12 +339,15 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let nativeSubstitution ← range.captured.mapM fun binding => do
     return (binding.nativeName.getId, (← binding.requireModel).model)
   let bodyNative := resolveRaw range.bodyNative nativeSubstitution
-  let embedding := resolveRaw range.embedding nativeSubstitution
-  let mutableStep := resolveRaw range.mutableStep nativeSubstitution
-  let initialMutable := resolveRaw range.initialMutable nativeSubstitution
-  let indices := resolveRaw range.indices nativeSubstitution
+  let nativeStep ← if completionType?.isSome then pure bodyNative
+    else `(fun (index : Nat) (state : $stateType) =>
+      ((none : Option (Complexity.Language.Value $completionCore)), $bodyNative index state))
+  let nextIndex ← `(if ($nativeStep $index:ident $state:ident).1.isSome
+    then $index:ident else $index:ident + $(strideModel.model))
+  let nextState ← `(($nativeStep $index:ident $state:ident).2)
+  let nextCompletion ← `(($nativeStep $index:ident $state:ident).1)
   let fields ← sourceFields site.scope.size ⟨locals.raw⟩
-  let selected ← range.select ⟨locals.raw⟩
+  let selected ← range.selectState ⟨locals.raw⟩
   let some cursor := fields[site.cursorSlot]?
     | throwError "the actual range cursor is outside its full source locals"
   let some entryCursor := argumentTerms[site.cursorSlot]?
@@ -284,17 +361,17 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let mutableSlots := (range.captured.zip positions).filterMap fun (binding, position) =>
     if binding.mutable then some position else none
   let fixedSlots := site.scope.zipIdx |>.filter (fun (_, position) =>
-    position != site.cursorSlot && !mutableSlots.contains position)
+    position != site.cursorSlot && !mutableSlots.contains position &&
+      !(completionType?.isSome && site.pendingSlot? == some position))
   for (_, position) in fixedSlots.reverse do
     fixedType ← `($(fields[position]!) = $(argumentTerms[position]!) ∧ $fixedType)
   let mut fixedTail : TSyntax `term := ⟨fixed.raw⟩
   for _ in fixedSlots do
     fixedFacts := fixedFacts.push (← `(($fixedTail).1))
     fixedTail ← `(($fixedTail).2)
-  -- A value-block range is admitted only with a normal mathematical body.
-  -- Its live guard still needs the actual pending coordinate to be empty;
-  -- the marker alone supplies no such fact about an arbitrary invocation.
-  let pending ← rangePendingProof site argumentTerms fields fixedSlots fixedFacts
+  -- Running entry is separate from the completed post-state relation. In
+  -- particular, a stored local result is not a fixed empty source coordinate.
+  let pending ← rangePendingProof site argumentTerms fields running
   let heapPost ← if preserveArrays then
       `(fun finish => Complexity.Language.Heap.ShapeExtends $heap finish ∧
         Complexity.Language.Buffer.PreservesContents $heap finish)
@@ -308,17 +385,29 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let fixedSimp ← fixedFacts.mapM fun fact => `(Lean.Parser.Tactic.simpLemma| $fact:term)
   let bodyFinish : TraceFinish := fun context => do
     let returnedModel ← range.returned.requireModel
-    let rawState := resolveRaw returnedModel.rawModel context.known
+    let rawOutcome := resolveRaw returnedModel.rawModel context.known
+    let outcomeType ← actualTypeTerm range.returned.type.coreTy
+    let rawOutcome ← `(($rawOutcome : $outcomeType))
     let observed ← observationAt range.returned context.heap context.relations
+    let rawState ← if completionType?.isSome then `(($rawOutcome).2) else pure rawOutcome
+    let stateObserved ← if completionType?.isSome then `(($observed).2) else pure observed
+    let rawCompletion ← if completionType?.isSome then `(($rawOutcome).1)
+      else `((none : Option (Complexity.Language.Value $completionCore)))
+    let completionObserved ← if completionType?.isSome then `(($observed).1)
+      else `(Complexity.Language.Representation.option_none $completionRep $(context.heap))
+    let cursorNext ← if completionType?.isSome then
+        `(if ($rawCompletion).isSome then $index:ident else $index:ident + $(strideModel.model))
+      else `($index:ident + $(strideModel.model))
     let mut afterFields := fields
     for binding in range.captured, position in positions, field in [:range.captured.size] do
       if binding.mutable then
         afterFields := afterFields.set! position (← fieldProjection range.captured.size field rawState)
-    afterFields := afterFields.set! site.cursorSlot (← `($index:ident + $(strideModel.model)))
+    afterFields := afterFields.set! site.cursorSlot cursorNext
+    if completionType?.isSome then
+      let some position := site.pendingSlot?
+        | throwError "a completion range requires its actual local result slot"
+      afterFields := afterFields.set! position rawCompletion
     let after ← sourceTuple afterFields
-    let selectedAfter ← range.select after
-    let nextObserved ← `(($representation : Complexity.Language.Representation $stateType $stateCore).Rel
-      ($bodyNative $index:ident $state:ident) $selectedAfter $(context.heap))
     let nextFrame ← if preserveArrays then
         `(And.intro
           (Complexity.Language.Heap.ShapeExtends.trans $frameShape $(context.shape))
@@ -331,13 +420,22 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     let executed ← `(by first
       | rfl
       | simp only [$cursorEqual:ident, $strideEqual:ident, $fixedSimp,*,
-          $(pending.entryRules),*, $scalarFacts,*])
+          $(pending.entryRules),*, $(pending.currentRules),*, $scalarFacts,*])
     let returnedObserved ← `(by
-      change $nextObserved
-      exact $observed)
+      simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*]
+        using $stateObserved)
+    let completedObserved ← `(by
+      simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind,
+        $(pending.currentRules),*, $(context.branchRules),*] using $completionObserved)
+    let cursorObserved ← if completionType?.isSome then `(by
+        have aligned := congrArg
+          (fun (completed : Bool) => if completed then $index:ident else $index:ident + $(strideModel.model))
+          (Complexity.Language.Representation.option_isSome_eq $completionRep $completionObserved).symm
+        simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*] using aligned)
+      else `(rfl)
     return #[← `(tactic|
-      exact ⟨Complexity.Language.Control.normal, $after, $(context.heap), $executed,
-        ⟨$returnedObserved, rfl, $fixed:ident, $nextFrame⟩, trivial⟩)]
+      exact ⟨$after, $(context.heap), $executed,
+        ⟨$returnedObserved, $cursorObserved, $fixed:ident, $nextFrame⟩, $completedObserved⟩)]
   let mut bodyPrefix := #[]
   let mut bodyRelations : Array RetainedObservation := #[]
   if range.state.type.isIdentity then
@@ -361,10 +459,12 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let executed := mkIdent (← mkFreshUserName `rangeExecuted)
   let outcome := mkIdent (← mkFreshUserName `rangeOutcome)
   let normal := mkIdent (← mkFreshUserName `rangeNormal)
-  let foldEqual := mkIdent (← mkFreshUserName `rangeFoldEqual)
   let finalObserved := mkIdent (← mkFreshUserName `rangeFinalObserved)
   let finalFixed := mkIdent (← mkFreshUserName `rangeFinalFixed)
   let selectedAfter ← range.select ⟨after.raw⟩
+  let (normalizeResult, resultProof) ← rangeResultProof range nativeSubstitution
+    bodyNative completionCore startModel.model stopModel.model strideModel.model
+    initialModel.model resultModel.model selectedAfter ⟨finish.raw⟩ positive outcome finalObserved
   let afterFields ← sourceFields site.scope.size ⟨after.raw⟩
   let mut fixedAfter ← `(True)
   for (_, position) in fixedSlots.reverse do
@@ -379,16 +479,17 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     have $guardRel:ident : ∀ ($index:ident : Nat) ($state:ident : $stateType)
         ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap),
         $stateRel:ident $index:ident $state:ident $locals:ident $current:ident →
+        $pendingValue $locals:ident = none →
         ∃ after finish,
           Complexity.Language.Stmt.observe $view:ident $guard:ident $program:ident
             $locals:ident $current:ident =
             Part.some ((.returned (decide ($index:ident < $(stopModel.model))), after), finish) ∧
-          $stateRel:ident $index:ident $state:ident after finish := by
-      intro $index:ident $state:ident $locals:ident $current:ident $related:ident
+          $stateRel:ident $index:ident $state:ident after finish ∧ $pendingValue after = none := by
+      intro $index:ident $state:ident $locals:ident $current:ident $related:ident $running:ident
       obtain ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩ := $related:ident
       $(pending.current):tactic*
       refine ⟨$locals:ident, $current:ident, ?_,
-        $stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩
+        ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩, $running:ident⟩
       rw [$guardObserve:ident, $guardEquation:ident]
       simp (config := { failIfUnchanged := false }) only [$(pending.currentRules),*]
       $guardNormalize:tactic
@@ -399,88 +500,57 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
           simp only [$cursorEqual:ident, $stopEqual:ident, $fixedSimp,*]
         · simpa only [$(pending.currentRules),*] using $localsEta
       · rfl)
-  let rangeProof ← match site.pendingSlot? with
-    | none => pure #[← `(tactic|
-        obtain ⟨$control:ident, $after:ident, $finish:ident, $executed:ident, $outcome:ident⟩ :=
-          Complexity.Language.Stmt.observe_while_rel_forIn_range_step
-            $view:ident $program:ident $guard:ident $body:ident
-            $(stopModel.model) $(strideModel.model) $positive:ident $stateRel:ident $returnRep
-            (fun index state => (none, $bodyNative index state)) $guardRel:ident
-            (by simpa only [Option.isSome_none, Bool.false_eq_true, if_false] using $bodyRel:ident)
-            $(startModel.model) $(initialModel.model) $entry $heap
-            ⟨$entryObserved, $startEqual:ident, by repeat' constructor, $initialFrame⟩)]
-    | some position => do
-        let some fixedPosition := fixedSlots.findIdx? (fun (_, slot) => slot == position)
-          | throwError "a normal range body must retain its pending result coordinate"
-        let initial ← `(⟨$entryObserved, $startEqual:ident, by repeat' constructor, $initialFrame⟩)
-        normalLocalRangeProof site position fixedPosition stateType completionCore bodyNative
-          startModel.model stopModel.model strideModel.model initialModel.model entry heap initial
-          stateRel guardRel bodyRel positive after finish executed outcome
-  let normalProof ← if site.pendingSlot?.isSome then pure #[← `(tactic| skip)] else pure #[
-    ← `(tactic| have $normal:ident : $control:ident = .normal := by
-      cases $control:ident with
-      | normal => rfl
-      | returned _ => exact False.elim ($outcome:ident).2
-      | fault _ => exact False.elim ($outcome:ident).2),
-    ← `(tactic| subst $control:ident)]
-  let proof ← `(tactic|
-    have $summary:ident : ∃ ($after:ident : $localsType:ident)
+  let initial ← `(⟨$entryObserved, $startEqual:ident, by repeat' constructor, $initialFrame⟩)
+  let rangeProof ← rangeLoopProof site completionRep nativeStep startModel.model stopModel.model
+    strideModel.model initialModel.model entry heap initial
+    stateRel guardRel bodyRel positive control after finish executed outcome
+  let normalProof ← rangeNormalProof site normal control outcome
+  let statement ← `(∃ ($after:ident : $localsType:ident)
         ($finish:ident : Complexity.Language.Heap),
         $action $heap = Part.some ((Complexity.Language.Control.normal, $after:ident), $finish:ident) ∧
-        ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
+        ($observedRepresentation : Complexity.Language.Representation $observedType $observedCore).Rel
           $(resultModel.model) $selectedAfter $finish:ident ∧
-        $heapPost $finish:ident ∧ $fixedAfter := by
-      $(pending.entry):tactic*
-      have $startEqual:ident : $entryCursor = $(startModel.model) := Eq.symm $startObserved
-      have $stopEqual:ident : $frozenStop = $(stopModel.model) := Eq.symm $stopObserved
-      have $strideEqual:ident : $frozenStride = $(strideModel.model) := Eq.symm $strideObserved
-      have $positive:ident : 0 < $(strideModel.model) := by
-        simp (config := { zetaDelta := true, failIfUnchanged := false }) only [Nat.add_eq] <;> omega
-      let $stateRel:ident ($index:ident : Nat) ($state:ident : $stateType)
-          ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap) : Prop :=
-        ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
-          $state:ident $selected $current:ident ∧
-        $cursor = $index:ident ∧ $fixedType ∧ $heapPost $current:ident
-      $guardProof:tactic
-      have $bodyRel:ident : ∀ ($index:ident : Nat) ($state:ident : $stateType)
+        $heapPost $finish:ident ∧ $fixedAfter)
+  let bodyStatement ← `(∀ ($index:ident : Nat) ($state:ident : $stateType)
           ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap),
           $index:ident < $(stopModel.model) →
           $stateRel:ident $index:ident $state:ident $locals:ident $current:ident →
-          ∃ control after finish,
+          $pendingValue $locals:ident = none →
+          ∃ after finish,
             Complexity.Language.Stmt.observe $view:ident $body:ident $program:ident
-              $locals:ident $current:ident = Part.some ((control, after), finish) ∧
-            $stateRel:ident ($index:ident + $(strideModel.model))
-              ($bodyNative $index:ident $state:ident) after finish ∧
-            control.Represents $returnRep none finish := by
-        intro $index:ident $state:ident $locals:ident $current:ident $active:ident $related:ident
-        obtain ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩ := $related:ident
-        $(pending.current):tactic*
-        $bodyProof:tactic*
-      $rangeProof:tactic*
-      simp only [Option.elim_none] at $outcome:ident
-      rw [Complexity.Language.Stmt.forIn_range_step_yield_eq_foldl
-        (α := Complexity.Language.Value $completionCore) $bodyNative
-        $(startModel.model) $(stopModel.model) $(strideModel.model)
-        $positive:ident $(initialModel.model)] at $outcome:ident
-      simp only [Id.run] at $outcome:ident
-      $normalProof:tactic*
-      change Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident
-        $entry $heap = _ at $executed:ident
-      rw [$observe:ident] at $executed:ident
-      have $foldEqual:ident : ($indices).foldl
-          (fun state index => $bodyNative index state) $(initialModel.model) = $(resultModel.model) :=
-        List.foldl_hom $embedding (g₁ := $mutableStep)
-          (g₂ := fun state index => $bodyNative index state)
-          (l := $indices) (init := $initialMutable) (by intros; rfl)
-      have $finalObserved:ident :
-          ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
-            (($indices).foldl (fun state index => $bodyNative index state) $(initialModel.model))
-            $selectedAfter $finish:ident := ($outcome:ident).1.1
-      rw [$foldEqual:ident] at $finalObserved:ident
-      have $finalFixed:ident : $fixedAfter := by
-        simpa only [$(pending.entryRules),*] using ($outcome:ident).1.2.2.1
-      exact ⟨$after:ident, $finish:ident, $executed:ident, $finalObserved:ident,
-        ($outcome:ident).1.2.2.2, $finalFixed:ident⟩)
+              $locals:ident $current:ident = Part.some ((.normal, after), finish) ∧
+            $stateRel:ident $nextIndex $nextState after finish ∧
+            ($completionRep).option.Rel $nextCompletion ($pendingValue after) finish)
+  let bodySteps := #[
+    ← `(tactic| intro $index:ident $state:ident $locals:ident $current:ident
+      $active:ident $related:ident $running:ident),
+    ← `(tactic| obtain ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩ :=
+      $related:ident)] ++ pending.current ++ bodyProof
+  let bodyRelationProof ← rangeSummaryProof bodyRel bodyStatement bodySteps
+  let prepareRelations := pending.entry ++ #[
+    ← `(tactic| have $startEqual:ident : $entryCursor = $(startModel.model) := Eq.symm $startObserved),
+    ← `(tactic| have $stopEqual:ident : $frozenStop = $(stopModel.model) := Eq.symm $stopObserved),
+    ← `(tactic| have $strideEqual:ident : $frozenStride = $(strideModel.model) := Eq.symm $strideObserved),
+    ← `(tactic| have $positive:ident : 0 < $(strideModel.model) := by
+      simp (config := { zetaDelta := true, failIfUnchanged := false }) only [Nat.add_eq] <;> omega),
+    ← `(tactic| let $stateRel:ident ($index:ident : Nat) ($state:ident : $stateType)
+        ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap) : Prop :=
+      ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
+        $state:ident $selected $current:ident ∧
+      $cursor = $index:ident ∧ $fixedType ∧ $heapPost $current:ident),
+    guardProof, bodyRelationProof]
+  let exposeExecution := #[
+    ← `(tactic| change Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident
+      $entry $heap = _ at $executed:ident),
+    ← `(tactic| rw [$observe:ident] at $executed:ident)]
+  let conclude := #[
+    ← `(tactic| have $finalFixed:ident : $fixedAfter := by
+      simpa only [$(pending.entryRules),*] using ($outcome:ident).1.2.2.1),
+    ← `(tactic| exact ⟨$after:ident, $finish:ident, $executed:ident, $finalObserved:ident,
+      ($outcome:ident).1.2.2.2, $finalFixed:ident⟩)]
+  let proof ← rangeSummaryProof summary statement
+    (prepareRelations ++ rangeProof ++ normalizeResult ++ normalProof ++
+      exposeExecution ++ resultProof ++ conclude)
   return (#[extract, proof], ⟨summary.raw⟩, fixedSlots.size)
 
 end Internal

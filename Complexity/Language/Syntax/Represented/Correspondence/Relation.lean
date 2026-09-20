@@ -57,6 +57,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
   let mut currentHeap := initial.heap
   let mut preserved := initial.shape
   let mut preservedContents := initial.contents
+  let branchRules := initial.branchRules
   let actualBranches := actualBranches || finish?.isSome || trace.any Trace.containsRange
   let mut tactics := #[← normalizeAction]
   let finishChoice (arm : Value) (result : Binding)
@@ -71,13 +72,15 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
     let representation ← termOfExpr result.type.representation
     let joined := result.relationName
     let armObserved := mkIdent (← mkFreshUserName `armObserved)
+    let selected := context.branchRules ++ selected
     let mut joinTactics := #[← `(tactic|
       have $armObserved:ident : ($representation : Complexity.Language.Representation $nativeType $coreType).Rel
           $(armModel.model) $actual $(context.heap) := $observed),
       ← `(tactic|
       have $joined:ident : ($representation : Complexity.Language.Representation $nativeType $coreType).Rel
           $(resultModel.model) $actual $(context.heap) := by
-        simpa only [$selected,*] using $armObserved:ident)]
+        simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind, $selected,*]
+          using $armObserved:ident)]
     let mut next := context
     if result.type.isIdentity then
       joinTactics := joinTactics.push (← `(tactic| change $(resultModel.model) = $actual at $joined:ident))
@@ -101,7 +104,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
     if actualBranches then
       let context : TraceContext := {
         heap := currentHeap, relations, known, scalarEqualities,
-        shape := preserved, contents := preservedContents }
+        shape := preserved, contents := preservedContents, branchRules }
       let rest := trace.extract (position + 1) trace.size
       match instruction with
       | .conditional condition yes no yesResult noResult result =>
@@ -115,9 +118,11 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           let yesRules := #[← `(Lean.Parser.Tactic.simpLemma| if_pos $selected:ident)]
           let noRules := #[← `(Lean.Parser.Tactic.simpLemma| if_neg $selected:ident)]
           let yesProof ← relationTrace yes yesResult currentHeap relations known preserveArrays ranges
-            (some (finishChoice yesResult result yesRules rest)) (some context) true
+            (some (finishChoice yesResult result yesRules rest))
+            (some { context with branchRules := branchRules ++ yesRules }) true
           let noProof ← relationTrace no noResult currentHeap relations known preserveArrays ranges
-            (some (finishChoice noResult result noRules rest)) (some context) true
+            (some (finishChoice noResult result noRules rest))
+            (some { context with branchRules := branchRules ++ noRules }) true
           return tactics ++ #[
             ← `(tactic| have $equality:ident : $(condition.model) = $raw := $observation),
             ← `(tactic| simp (config := { failIfUnchanged := false }) only [← $equality:ident]),
@@ -143,11 +148,22 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           let nativeCase := mkIdent (← mkFreshUserName `nativeCase)
           let impossible := mkIdent (← mkFreshUserName `impossiblePayload)
           let payloadObserved := payload.relationName
+          let selectedObservation ← `(Eq.mp
+            (congrArg₂
+              (fun native actual => ($representation :
+                Complexity.Language.Representation $nativeType $coreType).Rel
+                  native actual $currentHeap)
+              $nativeCase:ident $rawCase:ident)
+            $observed:ident)
+          let normalizeCases ← `(tactic|
+            dsimp (config := { failIfUnchanged := false }) only
+              [Id.run, Id.instMonad, Pure.pure, Bind.bind] at $rawCase:ident $nativeCase:ident)
           let rules := #[
             ← `(Lean.Parser.Tactic.simpLemma| $rawCase:ident),
             ← `(Lean.Parser.Tactic.simpLemma| $nativeCase:ident),
             ← `(Lean.Parser.Tactic.simpLemma| Option.elim_none),
             ← `(Lean.Parser.Tactic.simpLemma| Option.elim_some)]
+          let context := { context with branchRules := branchRules ++ rules }
           let noneProof ← relationTrace absent noneResult currentHeap relations known preserveArrays ranges
             (some (finishChoice noneResult result rules rest)) (some context) true
           let mut someContext := context
@@ -173,22 +189,23 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
             | none =>
                 cases $nativeCase:ident : $(discriminantModel.model):term with
                 | none =>
+                    $normalizeCases:tactic
                     simp (config := { failIfUnchanged := false }) only [$rules,*]
                     $noneProof:tactic*
                 | some $impossible:ident =>
-                    simp only [Complexity.Language.Representation.option, $rawCase:ident,
-                      $nativeCase:ident] at $observed:ident
+                    $normalizeCases:tactic
+                    exact False.elim $selectedObservation
             | some $(payload.rawName):ident =>
                 cases $nativeCase:ident : $(discriminantModel.model):term with
                 | none =>
-                    simp only [Complexity.Language.Representation.option, $rawCase:ident,
-                      $nativeCase:ident] at $observed:ident
+                    $normalizeCases:tactic
+                    exact False.elim $selectedObservation
                 | some $(payload.nativeName):ident =>
+                    $normalizeCases:tactic
                     have $payloadObserved:ident : ($payloadRepresentation :
                         Complexity.Language.Representation $payloadType $payloadCore).Rel
-                        $(payload.nativeName):ident $(payload.rawName):ident $currentHeap := by
-                      simpa only [Complexity.Language.Representation.option, $rawCase:ident,
-                        $nativeCase:ident] using $observed:ident
+                        $(payload.nativeName):ident $(payload.rawName):ident $currentHeap :=
+                      $selectedObservation
                     simp (config := { failIfUnchanged := false }) only [$rules,*]
                     $someProof:tactic*)]
       | _ => pure ()
@@ -424,10 +441,16 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
   if let some finish := finish? then
     return tactics ++ (← finish {
       heap := currentHeap, relations, known, scalarEqualities,
-      shape := preserved, contents := preservedContents })
+      shape := preserved, contents := preservedContents, branchRules })
   let observed ← observationAt returnedValue currentHeap relations
   let returnedModel ← returnedValue.requireModel
   let result := resolveRaw returnedModel.rawModel known
+  let nativeType ← termOfExpr returnedValue.type.nativeType
+  let coreType ← termOfExpr (coreTypeExpr returnedValue.type.coreTy)
+  let representation ← termOfExpr returnedValue.type.representation
+  let observed ← `(show ($representation :
+      Complexity.Language.Representation $nativeType $coreType).Rel
+      $(returnedModel.model) $result $currentHeap from $observed)
   let heapPost ← if preserveArrays then `(And.intro $preserved $preservedContents) else pure preserved
   -- Argument rewrites also affect scalar fields retained in a mixed raw state.
   -- Keep their actual projection equalities, without replacing its heap-backed
@@ -435,6 +458,8 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
   let scalarFacts ← scalarEqualities.mapM fun equality =>
     `(Lean.Parser.Tactic.simpLemma| $equality:term)
   let executed ← `(by first | rfl | simp only [$scalarFacts,*])
+  let observed ← `(by
+    simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind, $branchRules,*] using $observed)
   tactics := tactics.push (← `(tactic|
     exact ⟨$result, $currentHeap, $executed, $observed, $heapPost⟩))
   return tactics
