@@ -313,10 +313,12 @@ source_program (native) RangeNative where
     return result
 
   def prependRange (count : Nat) (head : Nat) (tail : List Nat) : List Nat := do
-    let mut result := tail
-    for _ in [:count] do
-      result := head :: result
-    return result
+    let output : List Nat ← do
+      let mut result := tail
+      for _ in [:count] do
+        result := head :: result
+      return result
+    return output
 
 /-- A statement branch updates the represented mutable local only on its
 selected path; the mathematical result uses the ordinary List constructor. -/

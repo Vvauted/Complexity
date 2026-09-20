@@ -93,7 +93,11 @@ The current integration work has these concrete obligations:
   a claim that the added completion instructions are free. The existing
   `Scope.make` also has a reachable local return from a `while`
   inside its value block. Its visible loop contract and actual RAM workspace
-  theorem check together; local-return ranges still need consumer coverage.
+  theorem check together. A normally continuing finite range inside a local
+  `do` value block now retains its mathematical fold correspondence; the existing
+  allocating List consumer uses this form with its unchanged replicate proof.
+  A range body that can return from the enclosing block still needs a
+  control-sensitive mathematical summary.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. Normal represented rounds now retain their own mathematical
   traces independently of a whole-function model. The array-record consumer uses
@@ -145,7 +149,7 @@ The current integration work has these concrete obligations:
   scoped consumer exercises the preserving specialization. Raw `Buffer`
   identity observes a handle, not its
   contents; the worker's actual update and reclamation contract is retained.
-  General mathematical-local integration and local-return ranges remain open.
+  General mathematical-local integration and locally exiting ranges remain open.
   The scoped consumer's substantive guard/body proofs now use native triples
   over mathematical locals and the real worker contract. Its older visible-local
   theorems are short compatibility consequences. The generated proof action maps
@@ -188,7 +192,7 @@ The current integration work has these concrete obligations:
   total source correspondence. The array-record consumer now exercises general
   `while` with an explicit mathematical-state contract after each real append.
   Finite-range exits, recursive calls to the enclosing function from a range
-  and mathematical range views inside value-producing branches remain open.
+  and broader nested range/branch model coverage remain open.
 - [x] Simplify the generated range's mathematical view to its mutable
   accumulator, closing over immutable captures. `List.foldl_hom` automatically
   connects it to the unchanged full source state. The existing List proofs use
@@ -232,15 +236,17 @@ replicate equation and total correspondence check. The original traversal also
 retains `Implementation.boundedMap_loop1` and its RAM cost proof, including the
 same stable buffer-length bound without an extra temporary capture.
 
-One concrete missing combination is a normal finite range inside a local-result
-`do` block. Preparation currently discards its mathematical model whenever the
-enclosing block has a local-return boundary, even if the range body never exits
-that boundary. Core already emits the actual pending-controlled guard and
-increment. The next connection must retain those coordinates and prove that
-pending remains empty before reusing a normal fold rule; removing the guard in
-the proof view would describe another loop. Mixed normal/local-return bodies
-also need a control-sensitive result summary. A normal exit being possible is
-not evidence that a local return is impossible.
+A normal finite range inside a local-result `do` block now uses the same actual
+pending-controlled guard and increment. Its correspondence proves that the
+active result slot stays empty, retaining every fixed source coordinate for the
+continuation, including enclosing private slots. It reuses the existing related
+range rule and fold theorem; no second loop or executable helper is generated.
+The allocating List consumer keeps its original replicate equation and total
+correctness proof. The added value-block control belongs to the actual compiled
+program; this does not claim an unchanged instruction count. Mixed
+normal/local-return bodies still need a control-sensitive result summary.
+Preparation requires both a normally continuing scope and a complete body model
+and proof trace; a normal exit being possible alone does not justify a fold.
 
 The proof preparer now follows actual branch continuations when composing
 ranges, carrying their heap relations and frames. Nested-range and Option

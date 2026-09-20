@@ -192,6 +192,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
                     simp (config := { failIfUnchanged := false }) only [$rules,*]
                     $someProof:tactic*)]
       | _ => pure ()
+    let mut rangeFixedCount : Option Nat := none
     let (result, relationProof) ← match instruction with
       | .call invocation => do
           let models ← invocation.arguments.mapM Value.requireModel
@@ -225,10 +226,12 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
             | throwError "the proof trace has no matching prepared range"
           let some initial := arguments[0]?
             | throwError "a range observation requires its entry state"
-          let (setup, proof) ← rangeRelationProof range initial currentHeap relations known preserveArrays
-            (fun body returned heap observations known strong finish =>
-              relationTrace body returned heap observations known strong ranges (some finish))
+          let (setup, proof, fixedCount) ←
+            rangeRelationProof range initial currentHeap relations known preserveArrays
+              (fun body returned heap observations known strong finish =>
+                relationTrace body returned heap observations known strong ranges (some finish))
           tactics := tactics ++ setup
+          rangeFixedCount := some fixedCount
           pure (result, proof)
       | .conditional condition yes no yesResult noResult result => do
           let observed ← observationAt condition currentHeap relations
@@ -358,6 +361,15 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
     tactics := tactics.push (← `(tactic|
       obtain ⟨$returned:ident, $finish:ident, $executed:ident, $observed:ident, $extended:ident⟩ :=
         $relationProof))
+    let mut rangeFixedFacts : Array (TSyntax `term) := #[]
+    if let some fixedCount := rangeFixedCount then
+      let fixed := mkIdent (← mkFreshUserName `rangeFixedLocals)
+      tactics := tactics.push (← `(tactic| obtain ⟨$extended:ident, $fixed:ident⟩ := $extended:ident))
+      let mut remaining : TSyntax `term := ⟨fixed.raw⟩
+      for _ in [:fixedCount] do
+        rangeFixedFacts := rangeFixedFacts.push (← `(($remaining).1))
+        remaining ← `(($remaining).2)
+      scalarEqualities := scalarEqualities ++ rangeFixedFacts
     if preserveArrays then
       tactics := tactics.push (← `(tactic|
         obtain ⟨$extended:ident, $contents:ident⟩ := $extended:ident))
@@ -382,6 +394,11 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
         StateT.bind, StateT.pure, Part.bind_some] at $executed:ident))
     tactics := tactics.push (← `(tactic| rw [$executed:ident]))
     tactics := tactics.push (← normalizeAction)
+    unless rangeFixedFacts.isEmpty do
+      let rules ← rangeFixedFacts.mapM fun fact => `(Lean.Parser.Tactic.simpLemma| $fact:term)
+      tactics := tactics.push (← `(tactic|
+        simp (config := { failIfUnchanged := false }) only [$rules,*]))
+      tactics := tactics.push (← normalizeAction)
     if range?.isSome && result.type.isIdentity then
       tactics := tactics.push (← `(tactic|
         simp (config := { failIfUnchanged := false }) only [← $observed:ident]))

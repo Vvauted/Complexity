@@ -24,7 +24,7 @@ work and every remaining obligation. The outstanding work is:
 - Share resolved operations and control-flow lowering completely; retain
   `(native)` naming compatibility and the older `(pure)` preparer without
   presenting them as separate recommended languages.
-- Complete finite-range exits, local-result ranges, nested construct coverage
+- Complete finite-range exits, locally exiting ranges, nested construct coverage
   and recursive calls from ranges using the same actual named source loops.
 - Generate mathematical-local guard/body interfaces from field representations;
   authors supply invariants, descent and genuine effect/range facts, not private
@@ -64,9 +64,15 @@ been checked together. The shared rule requires invariant preservation and
 decrease only for continuing rounds. Cleanup still sees the full state, and all
 added control instructions belong to the changed compiled program. This does
 not finish general mathematical-local automation or range integration.
-Its resource proof now reuses the visible guard/body contracts through a shared
-completion-aware readiness rule, without a second termination proof or manual
-`Part`/private-slot reconstruction. The same ranges, scratch capacity and
+Normal finite ranges with fully modeled bodies inside local `do` value blocks
+now retain their fold model, including allocating iterations. Their generated
+proof preserves the actual pending-controlled guard and increment, and carries
+fixed locals into the continuation. The existing List consumer retains its original replicate proof;
+range bodies that themselves exit the boundary still need a control-sensitive
+summary, and broader nested combinations remain open.
+The scoped while's resource proof reuses the visible guard/body contracts through
+a shared completion-aware readiness rule, without a second termination proof or
+manual `Part`/private-slot reconstruction. The same ranges, scratch capacity and
 physical workspace bound remain explicit. A named-loop entry selects the checked
 completion coordinates and frames. Its mathematical entry now reuses the same
 guard/body model contracts, rather than restating their state/effect relations;

@@ -242,6 +242,9 @@ def programDeclarations (family : TSyntax `ident)
       let some cursorSlot := site.scope.findIdx? fun binding =>
           binding.proofName.getId == range.cursor.getId
         | Macro.throwErrorAt site.name "the finite range cursor has no source coordinate"
+      let pendingSlot? ← site.localReturn.mapM fun target => do
+        let (_, index) ← lookupProofBinding site.scope target.pending
+        return index
       ranges := ranges.push {
         tag := request.tag, name := site.name.getId
         entryScope := request.entryScope.toArray.map fun binding => {
@@ -256,7 +259,7 @@ def programDeclarations (family : TSyntax `ident)
         proofBody := request.proofBody
         loopProofBody := ← loopProofBody site
         bodyProofBody := range.body, bodyFallsThrough := range.fallsThrough
-        localReturn := range.localReturn }
+        localReturn := range.localReturn, pendingSlot? }
     if let some tag := site.whileRequest then
       whiles := whiles.push {
         tag, name := site.name.getId

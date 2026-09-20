@@ -88,9 +88,12 @@ structure ActualRangeSite where
   /-- The actual iteration, including index binding and cursor advancement. -/
   bodyProofBody : Array (TSyntax `doElem)
   bodyFallsThrough : Bool
-  /-- The guard and increment are controlled by an enclosing pending local result,
-  so this site does not have the ordinary always-active range correspondence. -/
+  /-- The guard and increment are controlled by an enclosing pending local result.
+  A normal range correspondence must prove that this slot remains empty. -/
   localReturn : Bool := false
+  /-- The active local-result slot, selected by lexical identity rather than by
+  the position of any enclosing private slot. -/
+  pendingSlot? : Option Nat := none
 
 /-- The actual named loop selected by a proof-side while tag. Its coordinates
 refer to the emitted source loop, not a separately lowered mathematical model.

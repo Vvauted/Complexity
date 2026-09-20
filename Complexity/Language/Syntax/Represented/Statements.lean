@@ -267,9 +267,9 @@ partial def sequence (names : DeclarationNames)
         let continued ← sequence names imports resultType (invalidateObservations scope true)
           rest .immutable allowFallthrough localReturn
         return { continued with raw := #[raw] ++ continued.raw, native? := none, calls? := none }
-      -- The actual Core guard and increment are live-controlled in a local
-      -- return boundary. Its normal fold theorem describes a different loop.
-      if localReturn then return ← sourceOnly
+      -- These three checks require a fully modeled, normally continuing body.
+      -- Within a local-return boundary the correspondence also proves that the
+      -- actual pending-controlled guard and increment remain active.
       let some normalScope := preparedBody.normalScope? | return ← sourceOnly
       let some native := preparedBody.native? | return ← sourceOnly
       let some calls := preparedBody.calls? | return ← sourceOnly

@@ -136,6 +136,15 @@ General Array/List observations retain their heap-indexed relational contracts.
 
 ## Finite ranges and resource rules
 
+Represented finite ranges with normally continuing, fully modeled bodies have
+an ordinary `List.foldl` view, including allocating List iterations inside a
+typed local `do` value block. The generated proof retains the real loop's
+pending-controlled guard and increment and proves the result slot stays empty;
+authors do not expose that slot in their mathematical proof. The existing
+[List range](##Examples.Language.LinkedList) keeps its replicate equation in
+this form. This does not yet give a fold model to a range body that returns from
+its enclosing value block, or infer a RAM bound for the added control.
+
 For pure finite Nat ranges, the shared
 [`while_range_encoded_invariant`](##Ram.LanguageCompiler.RealizationWP.while_range_encoded_invariant)
 rule reuses generated native correspondence and retains the supplied mathematical

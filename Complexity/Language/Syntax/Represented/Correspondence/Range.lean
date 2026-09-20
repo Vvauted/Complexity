@@ -53,10 +53,7 @@ private def bindActualRangeArguments (action : Name) (names : Array Name) :
 
 def RangeRegistration.site (range : RangeRegistration) : TermElabM ActualRangeSite :=
   match range.site? with
-  | some site => do
-      if site.localReturn then
-        throwError "a live-controlled source range cannot use a normal range-fold correspondence"
-      pure site
+  | some site => pure site
   | none => throwError "the prepared range has no checked actual source site"
 
 /-- Align source declarations by lexical occurrence, not by a name lookup.
@@ -106,12 +103,40 @@ def RangeRegistration.select (range : RangeRegistration) (locals : TSyntax `term
     match fields[index]? with
     | some field => pure field
     | none => throwError "the selected range coordinate is outside its actual locals")
+
+private structure RangePendingProof where
+  entry : Array (TSyntax `tactic)
+  current : Array (TSyntax `tactic)
+  entryRules : Array (TSyntax ``Lean.Parser.Tactic.simpLemma)
+  currentRules : Array (TSyntax ``Lean.Parser.Tactic.simpLemma)
+
+private def rangePendingProof (site : ActualRangeSite)
+    (arguments fields : Array (TSyntax `term)) (fixedSlots : Array (SourceLocal × Nat))
+    (fixedFacts : Array (TSyntax `term)) : TermElabM RangePendingProof := do
+  let some pendingSlot := site.pendingSlot? | return ⟨#[], #[], #[], #[]⟩
+  let some entryPending := arguments[pendingSlot]?
+    | throwError "the pending range result has no actual entry coordinate"
+  let some currentPending := fields[pendingSlot]?
+    | throwError "the pending range result is outside its source locals"
+  let some fixedPosition := fixedSlots.findIdx? (fun (_, slot) => slot == pendingSlot)
+    | throwError "a normal range body must retain its pending result coordinate"
+  let pendingEntry := mkIdent (← mkFreshUserName `rangePendingEntry)
+  let pendingCurrent := mkIdent (← mkFreshUserName `rangePendingCurrent)
+  return {
+    entry := #[← `(tactic| have $pendingEntry:ident : $entryPending = none := by rfl)]
+    current := #[← `(tactic|
+      have $pendingCurrent:ident : $currentPending = none :=
+        Eq.trans $(fixedFacts[fixedPosition]!) $pendingEntry:ident)]
+    entryRules := #[← `(Lean.Parser.Tactic.simpLemma| $pendingEntry:ident)]
+    currentRules := #[← `(Lean.Parser.Tactic.simpLemma| $pendingCurrent:ident)] }
+
 /-- Prove the original named range in its full source coordinates. The fold is
 only a mathematical view; body calls retain their actual control and heap. -/
 def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     (heap : TSyntax `term) (relations : Array RetainedObservation)
     (known : Array (Name × TSyntax `term)) (preserveArrays : Bool)
-    (proveBody : RangeBodyProof) : TermElabM (Array (TSyntax `tactic) × TSyntax `term) := do
+    (proveBody : RangeBodyProof) :
+    TermElabM (Array (TSyntax `tactic) × TSyntax `term × Nat) := do
   let site ← range.site
   let positions ← range.slots
   let member (suffix : Name) := mkIdent (site.name ++ suffix)
@@ -201,6 +226,10 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   for _ in fixedSlots do
     fixedFacts := fixedFacts.push (← `(($fixedTail).1))
     fixedTail ← `(($fixedTail).2)
+  -- A value-block range is admitted only with a normal mathematical body.
+  -- Its live guard still needs the actual pending coordinate to be empty;
+  -- the marker alone supplies no such fact about an arbitrary invocation.
+  let pending ← rangePendingProof site argumentTerms fields fixedSlots fixedFacts
   let heapPost ← if preserveArrays then
       `(fun finish => Complexity.Language.Heap.ShapeExtends $heap finish ∧
         Complexity.Language.Buffer.PreservesContents $heap finish)
@@ -236,7 +265,8 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
       `(Lean.Parser.Tactic.simpLemma| $equality:term)
     let executed ← `(by first
       | rfl
-      | simp only [$cursorEqual:ident, $strideEqual:ident, $fixedSimp,*, $scalarFacts,*])
+      | simp only [$cursorEqual:ident, $strideEqual:ident, $fixedSimp,*,
+          $(pending.entryRules),*, $scalarFacts,*])
     let returnedObserved ← `(by
       change $nextObserved
       exact $observed)
@@ -256,7 +286,8 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let bodyKnown := known.push (range.state.rawName.getId, selected)
   let bodyProof : Array (TSyntax `tactic) := bodyPrefix ++ #[
       ← `(tactic| rw [$bodyObserve:ident, $bodyEquation:ident]),
-      ← `(tactic| simp (config := { failIfUnchanged := false }) only [$cursorEqual:ident])] ++
+      ← `(tactic| simp (config := { failIfUnchanged := false }) only
+        [$cursorEqual:ident, $(pending.currentRules),*])] ++
     (← proveBody range.body range.returned ⟨current.raw⟩ bodyRelations
       bodyKnown preserveArrays bodyFinish)
   let after := mkIdent (← mkFreshUserName `rangeAfter)
@@ -267,16 +298,50 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let normal := mkIdent (← mkFreshUserName `rangeNormal)
   let foldEqual := mkIdent (← mkFreshUserName `rangeFoldEqual)
   let finalObserved := mkIdent (← mkFreshUserName `rangeFinalObserved)
+  let finalFixed := mkIdent (← mkFreshUserName `rangeFinalFixed)
   let selectedAfter ← range.select ⟨after.raw⟩
+  let afterFields ← sourceFields site.scope.size ⟨after.raw⟩
+  let mut fixedAfter ← `(True)
+  for (_, position) in fixedSlots.reverse do
+    let expected ← if site.pendingSlot? == some position then `(none)
+      else pure argumentTerms[position]!
+    fixedAfter ← `($(afterFields[position]!) = $expected ∧ $fixedAfter)
   let guardNormalize ← normalizeAction
   let mut localsEta ← `(Subsingleton.elim _ _)
   for _ in site.scope do localsEta ← `(Prod.ext rfl $localsEta)
+  localsEta ← `(show $(← sourceTuple fields) = $locals:ident from $localsEta)
+  let guardProof ← `(tactic|
+    have $guardRel:ident : ∀ ($index:ident : Nat) ($state:ident : $stateType)
+        ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap),
+        $stateRel:ident $index:ident $state:ident $locals:ident $current:ident →
+        ∃ after finish,
+          Complexity.Language.Stmt.observe $view:ident $guard:ident $program:ident
+            $locals:ident $current:ident =
+            Part.some ((.returned (decide ($index:ident < $(stopModel.model))), after), finish) ∧
+          $stateRel:ident $index:ident $state:ident after finish := by
+      intro $index:ident $state:ident $locals:ident $current:ident $related:ident
+      obtain ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩ := $related:ident
+      $(pending.current):tactic*
+      refine ⟨$locals:ident, $current:ident, ?_,
+        $stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩
+      rw [$guardObserve:ident, $guardEquation:ident]
+      simp (config := { failIfUnchanged := false }) only [$(pending.currentRules),*]
+      $guardNormalize:tactic
+      apply congrArg Part.some
+      apply Prod.ext
+      · apply Prod.ext
+        · apply congrArg Complexity.Language.Control.returned
+          simp only [$cursorEqual:ident, $stopEqual:ident, $fixedSimp,*]
+        · simpa only [$(pending.currentRules),*] using $localsEta
+      · rfl)
   let proof ← `(tactic|
     have $summary:ident : ∃ ($after:ident : $localsType:ident)
         ($finish:ident : Complexity.Language.Heap),
         $action $heap = Part.some ((Complexity.Language.Control.normal, $after:ident), $finish:ident) ∧
         ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
-          $(resultModel.model) $selectedAfter $finish:ident ∧ $heapPost $finish:ident := by
+          $(resultModel.model) $selectedAfter $finish:ident ∧
+        $heapPost $finish:ident ∧ $fixedAfter := by
+      $(pending.entry):tactic*
       have $startEqual:ident : $entryCursor = $(startModel.model) := Eq.symm $startObserved
       have $stopEqual:ident : $frozenStop = $(stopModel.model) := Eq.symm $stopObserved
       have $strideEqual:ident : $frozenStride = $(strideModel.model) := Eq.symm $strideObserved
@@ -287,27 +352,7 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
         ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
           $state:ident $selected $current:ident ∧
         $cursor = $index:ident ∧ $fixedType ∧ $heapPost $current:ident
-      have $guardRel:ident : ∀ ($index:ident : Nat) ($state:ident : $stateType)
-          ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap),
-          $stateRel:ident $index:ident $state:ident $locals:ident $current:ident →
-          ∃ after finish,
-            Complexity.Language.Stmt.observe $view:ident $guard:ident $program:ident
-              $locals:ident $current:ident =
-              Part.some ((.returned (decide ($index:ident < $(stopModel.model))), after), finish) ∧
-            $stateRel:ident $index:ident $state:ident after finish := by
-        intro $index:ident $state:ident $locals:ident $current:ident $related:ident
-        obtain ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩ := $related:ident
-        refine ⟨$locals:ident, $current:ident, ?_,
-          $stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩
-        rw [$guardObserve:ident, $guardEquation:ident]
-        $guardNormalize:tactic
-        apply congrArg Part.some
-        apply Prod.ext
-        · apply Prod.ext
-          · apply congrArg Complexity.Language.Control.returned
-            simp only [$cursorEqual:ident, $stopEqual:ident, $fixedSimp,*]
-          · exact $localsEta
-        · rfl
+      $guardProof:tactic
       have $bodyRel:ident : ∀ ($index:ident : Nat) ($state:ident : $stateType)
           ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap),
           $index:ident < $(stopModel.model) →
@@ -320,6 +365,7 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
             control.Represents $returnRep none finish := by
         intro $index:ident $state:ident $locals:ident $current:ident $active:ident $related:ident
         obtain ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩ := $related:ident
+        $(pending.current):tactic*
         $bodyProof:tactic*
       obtain ⟨$control:ident, $after:ident, $finish:ident, $executed:ident, $outcome:ident⟩ :=
         Complexity.Language.Stmt.observe_while_rel_forIn_range_step
@@ -354,9 +400,11 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
             (($indices).foldl (fun state index => $bodyNative index state) $(initialModel.model))
             $selectedAfter $finish:ident := ($outcome:ident).1.1
       rw [$foldEqual:ident] at $finalObserved:ident
+      have $finalFixed:ident : $fixedAfter := by
+        simpa only [$(pending.entryRules),*] using ($outcome:ident).1.2.2.1
       exact ⟨$after:ident, $finish:ident, $executed:ident, $finalObserved:ident,
-        ($outcome:ident).1.2.2.2⟩)
-  return (#[extract, proof], ⟨summary.raw⟩)
+        ($outcome:ident).1.2.2.2, $finalFixed:ident⟩)
+  return (#[extract, proof], ⟨summary.raw⟩, fixedSlots.size)
 
 end Internal
 
