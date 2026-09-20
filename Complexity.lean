@@ -93,6 +93,7 @@ import Complexity.Computability.Ram.Compiler.Language.ArrayFunction.Input
 import Complexity.Computability.Ram.Compiler.Language.Arena.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Basic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Call
+import Complexity.Computability.Ram.Compiler.Language.Arena.CallSequence
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Call
@@ -160,6 +161,7 @@ import Complexity.Computability.Ram.Compiler.Language.CostDeterministic
 import Complexity.Computability.Ram.Compiler.Language.CostExecution
 import Complexity.Computability.Ram.Compiler.Language.DepthBound
 import Complexity.Computability.Ram.Compiler.Language.DepthTactic
+import Complexity.Computability.Ram.Compiler.Language.FragmentTactic
 import Complexity.Computability.Ram.Compiler.Language.Effects
 import Complexity.Computability.Ram.Compiler.Language.Encoding
 import Complexity.Computability.Ram.Compiler.Language.Execution

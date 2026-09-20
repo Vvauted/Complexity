@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Examples.Language.ScopeCompiledWork
 import Complexity.Computability.Ram.Compiler.Language.LoopTactic
+import Complexity.Computability.Ram.Compiler.Language.FragmentTactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.Realization.LocalReturn
 import Complexity.Computability.Ram.Compiler.Language.Tactic
@@ -38,9 +39,7 @@ theorem guard_realizable {w depth : Nat} (hw : 0 < w)
       ⟨Implementation.Source.make_loop1.View.symm
         (Implementation.Source.make_loop1.entry (remaining, out, count, n, value, ())), heap⟩ := by
   have booleanFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
-  dsimp only [Implementation.Source.make_loop1.entry]
-  rw [Implementation.Source.make_loop1.view_symm_apply]
-  ram_source_realize_step
+  ram_source_fragment_realize
   all_goals first | omega | split <;> omega
 
 /-- Realize the exact successful guard execution already used by source
@@ -54,10 +53,8 @@ theorem guard_ready {w limit depth cursor : Nat} (hw : 0 < w)
         (Implementation.Source.make_loop1.entry (remaining, out, count, n, value, ())), heap⟩
       finish (.returned decision)) :
     ArenaReady execution w limit depth cursor cursor := by
-  obtain ⟨actualFinish, actualControl, actual, _⟩ :=
-    guard_realizable hw remaining out count n value heap remainingFits
-  obtain ⟨rfl, rfl⟩ := execution.deterministic actual.erase
-  exact actual.arenaReady limit cursor
+  exact (guard_realizable hw remaining out count n value heap remainingFits).arenaReady
+    execution limit cursor
 
 /-- The body calls the actual reclaiming worker and decrements the saved count.
 The caller and callee share one cursor; returning from the worker restores its
@@ -75,34 +72,11 @@ theorem body_ready {w limit cursor : Nat} (hw : 0 < w)
       finish control) (successful : ControlFits w control) :
     ArenaReady execution w limit 1 cursor cursor := by
   have oneFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
-  dsimp only [Implementation.Source.make_loop1.entry] at execution
-  rw [Implementation.Source.make_loop1.view_symm_apply] at execution
-  have arguments : EnvFits w
-      (Env.cons (τ := .buffer .nat) out
-        (Env.cons (τ := .nat) n (Env.cons (τ := .nat) value Env.empty))) := by
-    simp only [EnvFits.cons_buffer_iff, EnvFits.cons_nat_iff, EnvFits.empty,
-      outFits, nFits, valueFits, and_self]
-  cases execution with
-  | seqNormal called assigned =>
-      have actualCall := called
-      cases called with
-      | @callReturn _ _ _ _ _ _ calleeFinish returned _ _ callee continuation =>
-          cases returned
-          cases continuation with
-          | skip =>
-              apply ArenaReady.seqNormal (head := actualCall) (tail := assigned)
-                (middleCursor := cursor)
-                (.callReturn (callee := callee) (fun {τ} => arguments (τ := τ))
-                  (work_ready out n value heap hw outRooted outFits nFits valueFits capacity callee)
-                  (.skip _))
-              refine RealizationWP.arenaReady
-                (normal := fun _ => True) (returned := fun _ _ => True) ?_ assigned limit cursor
-              ram_source_realize_step
-              all_goals omega
-  | seqReturn called =>
-      cases called with
-      | callReturn callee continuation => cases continuation
-  | seqFault called => exact False.elim successful
+  ram_source_fragment_arena_call using (by
+    intro finish returned called
+    cases returned
+    exact work_ready out n value heap hw outRooted outFits nFits valueFits capacity called)
+  all_goals omega
 
 /-- Every finite source loop reuses the same scratch capacity. The original
 mathematical invariant and body contract supply preservation; the additional

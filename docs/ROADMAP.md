@@ -43,6 +43,11 @@ work and every remaining obligation. The outstanding work is:
   readiness proofs without hiding an equally long private adapter.
   Do not assign a pure transition to arbitrary mutation or mistake a retained
   buffer handle for unchanged contents.
+  For non-identity fields, retain actual local witnesses and their heap-indexed
+  relations: a mathematical array does not determine its handle or aliases.
+  The missing automation is transporting these observations through actual
+  effects and completion, using operation frames. Merely expanding `BlockSpec`
+  into another relational WP does not supply that automation.
 - Compose function equations and state contracts through the same heap-indexed
   representation, including actual aliases and intermediate heaps.
 - Migrate the remaining existing consumers, retaining their original mathematical
@@ -63,6 +68,11 @@ physical workspace bound remain explicit. A named-loop entry selects the checked
 completion coordinates and frames. Its mathematical entry now reuses the same
 guard/body model contracts, rather than restating their state/effect relations;
 word ranges, fragment readiness and capacity remain explicit.
+Named fragment entries normalize guard/body coordinates and compose an actual
+standalone call with its scalar continuation. The scoped consumer no longer
+assembles argument environments or splits call/sequence executions by hand;
+it supplies the worker's existing certificate and ordinary range facts.
+General allocating continuations still use the underlying readiness rule.
 The source proof uses `model_completion_contract` to compose its mathematical
 guard/body contracts with the invariant, progress and result facts. Their native
 proof entries map the original actions through a proved identity-coordinate

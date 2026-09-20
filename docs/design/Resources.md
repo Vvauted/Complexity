@@ -160,6 +160,16 @@ or infer an inverse for general heap-indexed representations. The author still
 supplies actual word ranges, call nesting, scratch capacity and saved-result
 readiness, but does not reconstruct source preservation in the resource proof.
 
+`ArenaReady.call_seq_of_exec` composes a standalone call with its next statement
+on the same finite execution. The next statement sees the callee's actual final
+heap and restored caller locals; initial, callee-final and final arena cursors
+may differ. The named fragment entry `ram_source_fragment_arena_call` uses this
+rule for a fixed-placement continuation, normalizing argument ranges and source
+coordinates before the existing realization pass. The scoped consumer supplies
+its worker certificate without destructing call/sequence executions or building
+argument environments. Allocating continuations remain explicit uses of the
+general rule; neither interface supplies a time bound.
+
 Uniform structural budgets are inferred through the existing checked cost rules.
 Traversal's guard/body witnesses are chosen before arbitrary locals and heaps,
 and its function wrapper is inferred around the supplied loop bound. Direct,

@@ -119,15 +119,15 @@ after allocation; it does not identify list handles with mathematical lists.
 
 This is not arbitrary Lean compilation or a complete persistent-array API.
 The same linked-list example repeatedly appends to an array-valued record with
-an actual `while` loop. Its `repeatAppend_correct` proof uses the named relational
-loop contract, a mathematical invariant and well-founded descent. Each append
-uses its real intermediate heap; the proof establishes successful termination
-and the complete output record without generating a total pure `while` model.
-This is checked contract composition, not yet an invariant-only proof interface:
-the author still supplies the relation to the represented state. Automatic
-mathematical views for nested ranges and further control-flow combinations remain
-integration work. Program selection checks the fixed input and output
-representations.
+an actual `while` loop. Its `repeatAppend_correct` proof uses generated named
+mathematical locals and `model_spec`, supplying a mathematical invariant and
+well-founded descent. Generated correspondence tracks the represented fields
+at each actual intermediate heap, without an author-written loop-state relation
+or a total pure `while` model. The published postcondition states the resulting
+copy count; it does not state an equation for the final array contents.
+Non-identity observations combined with effects and local completion, nested
+ranges and further control-flow combinations remain integration work. Program
+selection checks the fixed input and output representations.
 Source correctness alone does not supply the independent whole-program time
 bound, including any added packing and call instructions.
 

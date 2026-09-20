@@ -218,6 +218,27 @@ return without evaluating the original test; `.arenaReady` then applies this
 fact to the same finite execution. The scoped consumer needs no private proof
 about the compiler's payload slot for this branch.
 
+For the actual named `Guard` or `Body`, `ram_source_fragment_realize` normalizes
+registered source coordinates and runs the existing structural realization pass.
+For a standalone call followed by a fixed-placement continuation, use:
+
+```lean
+ram_source_fragment_arena_call using (by
+  intro finish returned called
+  cases returned
+  exact work_ready out n value heap hw outRooted outFits nFits valueFits capacity called)
+all_goals omega
+```
+
+This is the scoped consumer's actual worker certificate; the `cases` only
+eliminates its `Unit` result, not an execution tree. The shared
+[`ArenaReady.call_seq_of_exec`](##Ram.LanguageCompiler.ArenaReady.call_seq_of_exec)
+handles the call and sequence, keeping the callee's real final heap and restoring
+caller locals. Argument ranges are normalized into ordinary goals. The tactic
+retains the callee's arena cursor through the continuation; allocating
+continuations use the general rule directly. It does not infer callee contracts,
+capacity, loop invariants or time bounds.
+
 ## Reuse a traversal invariant
 
 The [read/helper/branch/write traversal](##Examples.Language.Traversal) writes

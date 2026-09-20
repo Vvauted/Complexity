@@ -103,6 +103,10 @@ still owns loop semantics and execution frames.
 it adds fragment range/capacity obligations, not another invariant-preservation
 or termination proof. `LoopTactic` selects the actual named loop's coordinates
 and removes entry transport only when a proved identity correspondence exists.
+`Arena/CallSequence` composes readiness across an actual standalone call without
+frontend metadata. `FragmentTactic` selects registered guard/body coordinates
+and reuses that rule and the existing realization pass for fixed-placement
+continuations; it does not own call semantics or callee proofs.
 
 ## Documentation
 
