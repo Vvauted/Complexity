@@ -64,7 +64,72 @@ partial def sequence (names : DeclarationNames)
       (available : Bool)
       (choose : Bool → TSyntax `term → TSyntax `term → TermElabM (TSyntax `term))
       (trace : Array Trace → Array Trace → Value → Value → Binding → Trace)
+      (branchCompletion : Option CompletionContext)
+      (assigned : Array Name)
       (rest : List (TSyntax `doElem)) : PrepareM PreparedBlock := do
+    let mixedNormal (block : PreparedBlock) :=
+      block.normalScope?.isSome && !(block.native?.isSome && block.calls?.isSome)
+    if mixedNormal yes || mixedNormal no then
+      let joined ← match branchCompletion with
+        | none => pure none
+        | some context =>
+            completionChoice available context yes.completion? no.completion? choose trace
+      if let some summary := joined then
+        let some context := branchCompletion
+          | throwError "a completion summary must retain its lexical coordinates"
+        let (snapshot, after, nativePrefix) ← CompletionSummary.openView context scope assigned summary
+        let pending ← value [snapshot] (← `($(snapshot.name):ident.1))
+        let payloadName := mkIdent (← mkFreshUserName `completedValue)
+        let payload ← parameterBinding payloadName resultType
+        let payload := { payload with model? := payload.model?.map fun model =>
+          { model with rawModel := ⟨payload.rawName.raw⟩ } }
+        let payloadValue ← value [payload] ⟨payloadName.raw⟩ (some resultType)
+        let payloadType ← termOfExpr resultType.nativeType
+        let choosePending (mathematical : Bool) (absent present : TSyntax `term) := do
+          let pending ← pending.requireModel
+          let discriminant := if mathematical then pending.model else pending.native
+          let selected ← `(Option.elim $discriminant $absent
+            (fun ($payloadName:ident : $payloadType) => $present))
+          if mathematical then shareCompletionModel summary selected else pure selected
+        -- A nested mixed arm contributes its current state, not a fictitious
+        -- normal trace. The common suffix is prepared once and only the empty
+        -- completion branch consumes its calls.
+        let continued ← sequence names imports resultType after rest
+          .immutable allowFallthrough localReturn completion
+        let returnedBlock : PreparedBlock := {
+          raw := #[], native? := some #[← `(doElem| return $payloadName:ident)]
+          calls? := some #[], returned? := some payloadValue, normalScope? := none }
+        let choice ← if continued.normalScope?.isNone then
+            choiceModel true resultType continued returnedBlock choosePending
+              (Trace.optionMatch pending payload)
+          else pure none
+        let native ← choice.mapM fun choice => do
+          return nativePrefix ++ #[← `(doElem| return $(choice.native))]
+        let returned := choice.map fun choice => ({
+          type := resultType, raw := ⟨choice.result.rawName.raw⟩
+          model? := choice.result.model?.map fun model => {
+            toBindingModel := model, native := choice.native } } : Value)
+        let completionSummary ← match completion with
+          | none => pure none
+          | some target => do
+              let completed ← target.capture after (some payloadValue)
+              let selected ← completionChoice true target continued.completion? completed
+                choosePending (Trace.optionMatch pending payload)
+              pure (CompletionSummary.prepend? (some nativePrefix) (some summary.calls) selected)
+        return {
+          raw := #[raw] ++ continued.raw, native? := native
+          calls? := choice.map fun choice => summary.calls ++ #[choice.trace]
+          returned? := returned, normalScope? := continued.normalScope?
+          completion? := completionSummary }
+    -- Simple choices keep their existing mathematical shape. Their local
+    -- completion snapshots are projected to the caller's lexical coordinates.
+    let project (block : PreparedBlock) : TermElabM PreparedBlock := do
+      let summary ← match branchCompletion, completion with
+        | some source, some target => CompletionSummary.project? source target scope block.completion?
+        | _, _ => pure none
+      return { block with completion? := summary }
+    let yes ← project yes
+    let no ← project no
     if yes.normalScope?.isSome && no.normalScope?.isSome then
       let mutable := (visibleBindings scope).filter (·.mutable)
       let stateType ← resolveType (← stateType mutable.toList)
@@ -504,8 +569,15 @@ partial def sequence (names : DeclarationNames)
     if let some (condition, yes, no) := statementConditional? then
       let condition ← value scope condition
       expect element (← resolveType (← `(Bool))) condition.type
-      let yes ← sequence names imports resultType scope (getDoElems yes).toList .immutable true localReturn completion
-      let no ← sequence names imports resultType scope (getDoElems no).toList .immutable true localReturn completion
+      let branchCompletion ← if localReturn then
+          some <$> CompletionContext.ofScope scope resultType
+        else pure completion
+      let firstAssignment := (← get).assignedSlots.size
+      let yes ← sequence names imports resultType scope (getDoElems yes).toList
+        .immutable true localReturn branchCompletion
+      let no ← sequence names imports resultType scope (getDoElems no).toList
+        .immutable true localReturn branchCompletion
+      let assigned := (← get).assignedSlots.extract firstAssignment (← get).assignedSlots.size
       let yesBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (yes.raw.map (·.raw))⟩
       let noBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (no.raw.map (·.raw))⟩
       let raw ← `(doElem| if $(condition.raw) then $yesBody:doSeq else $noBody:doSeq)
@@ -514,7 +586,7 @@ partial def sequence (names : DeclarationNames)
         let condition := if mathematical then model.model else model.native
         `(if $condition then $yes else $no)
       return ← continueChoice raw yes no condition.model?.isSome choose
-        (Trace.conditional condition) rest
+        (Trace.conditional condition) branchCompletion assigned rest
     if let `(doElem| match $matched:term with
         | $first:term => $firstBody:doSeq
         | $second:term => $secondBody:doSeq) := element then
@@ -564,9 +636,15 @@ partial def sequence (names : DeclarationNames)
         model? := discriminant.model?.map fun _ => {
           model := ⟨payloadNative.raw⟩, rawModel := ⟨payloadRaw.raw⟩
           observation := if payloadType.isIdentity then .refl else .named payloadRelation.getId } }
-      let absent ← sequence names imports resultType scope (getDoElems noneBody).toList .immutable true localReturn completion
+      let branchCompletion ← if localReturn then
+          some <$> CompletionContext.ofScope scope resultType
+        else pure completion
+      let firstAssignment := (← get).assignedSlots.size
+      let absent ← sequence names imports resultType scope (getDoElems noneBody).toList
+        .immutable true localReturn branchCompletion
       let present ← sequence names imports resultType (payload :: scope)
-        (payloadBindings ++ getDoElems someBody).toList .immutable true localReturn completion
+        (payloadBindings ++ getDoElems someBody).toList .immutable true localReturn branchCompletion
+      let assigned := (← get).assignedSlots.extract firstAssignment (← get).assignedSlots.size
       let noneBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (absent.raw.map (·.raw))⟩
       let someBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (present.raw.map (·.raw))⟩
       let raw ← `(doElem| match $(discriminant.raw):term with
@@ -578,7 +656,7 @@ partial def sequence (names : DeclarationNames)
         let type ← termOfExpr payloadType.nativeType
         `(Option.elim $discriminant $absent (fun ($payloadNative:ident : $type) => $present))
       return ← continueChoice raw absent present discriminant.model?.isSome choose
-        (Trace.optionMatch discriminant payload) rest
+        (Trace.optionMatch discriminant payload) branchCompletion assigned rest
     if rest.isEmpty then
       let terminal? ← match element with
         | `(doElem| return $expression:term) =>

@@ -60,22 +60,26 @@ branches when their result has a heap-independent encoding. A general mutable
 contract need not promise an unchanged heap, and a missing exact equation does
 not reject its source program.
 
-A branch may return early while the other path continues to a later return,
-including inside a typed local `do` value block. For fully modeled operations,
-the mathematical proof follows that continuation only on the continuing path;
-the source keeps one shared continuation and its actual selected heap. The
+Fully modeled `if`/`Option` branches may mix local return and continuation,
+including nested choices inside a typed local `do` value block. Their summary
+retains the selected payload and current state; following statements run only
+on continuation. The source keeps its original branch and one shared suffix,
+with the actual selected heap. Branch summaries carry mutable locals by lexical
+slot, keeping shadowed bindings distinct; immutable observations are transported
+by proved heap preservation. The
 [allocating List consumer](##Examples.Language.LinkedList) uses this form before
 folding the selected List, with the same ordinary sum equation. Local-result
 range iterations use a separate summary of continuation and completion.
 
 Normal finite ranges inside local value blocks retain their mathematical fold.
-Fully modeled simple branch/Option rounds that may exit that block instead
-have a generated `Option payload × state` summary and Lean `forIn` model.
+Fully modeled `if`/`Option` rounds that may exit that block, including nested
+mixed-return branches, have an `Option payload × state` summary and Lean `forIn`
+model.
 Correspondence relates the actual saved result and locals at their final heap;
 the payload belongs to the local block, not necessarily the function's result
 type. Only continuing rounds advance, and completion uses the real stopped guard.
 The summary introduces no second source loop or runtime allocation. General
-nested mixed-exit combinations, function-level range returns, calls to the
+nested loops and their mixed exits, function-level range returns, calls to the
 enclosing recursive function from a range and full models of arbitrary heap
 mutation remain open. Mathematical correspondence does not itself give a RAM bound.
 

@@ -24,9 +24,9 @@ work and every remaining obligation. The outstanding work is:
 - Share resolved operations and control-flow lowering completely; retain
   `(native)` naming compatibility and the older `(pure)` preparer without
   presenting them as separate recommended languages.
-- Complete function-level range returns, general nested mixed-exit combinations
-  and calls to the enclosing recursive function from ranges, using the same
-  actual named source loops.
+- Complete function-level range returns, general nested loops and their
+  mixed-exit combinations, and calls to the enclosing recursive function from
+  ranges, using the same actual named source loops.
 - Generate mathematical-local guard/body interfaces from field representations;
   authors supply invariants, descent and genuine effect/range facts, not private
   slots, raw-environment transport or `Part` plumbing. Normal array-preserving
@@ -66,17 +66,17 @@ decrease only for continuing rounds. Cleanup still sees the full state, and all
 added control instructions belong to the changed compiled program. This does
 not finish general mathematical-local automation or range integration.
 Normal finite ranges with fully modeled bodies inside local `do` value blocks
-retain their fold model, including allocating iterations. Fully modeled simple
-branch/Option rounds that either continue or return from that local block instead
-have a generated `Option payload × state` summary and Lean `forIn` model.
+retain their fold model, including allocating iterations. Fully modeled
+`if`/`Option` rounds, including nested mixed return/continue branches, instead
+have an `Option payload × state` summary and Lean `forIn` model for local completion.
 Correspondence retains the actual result, locals and heap of the same source
 loop: only continuing rounds advance, and a completed round leaves through the
 real stopped guard. The active pending slot may change; ancestor slots and fixed
 captures remain preserved. The local payload need not have the enclosing
 function's result type. This adds neither a second source loop nor runtime
-allocation for the mathematical summary. General nested mixed-exit combinations,
-function-level range returns, enclosing recursion from a range and full models
-of arbitrary heap mutation remain open; no new RAM bound follows from the model.
+allocation for the mathematical summary. General nested loops and their mixed
+exits, function-level range returns, enclosing recursion from a range and full
+models of arbitrary heap mutation remain open; no new RAM bound follows from the model.
 The scoped while's resource proof reuses the visible guard/body contracts through
 a shared completion-aware readiness rule, without a second termination proof or
 manual `Part`/private-slot reconstruction. The same ranges, scratch capacity and
@@ -118,10 +118,10 @@ assigns mathematical obligations to authors and routine lowering to the library.
 Generated ordinary functions and checked total-source correspondence work for
 supported scalar/structured and represented fragments. One native termination
 argument feeds correspondence; `Part.get` of the desired answer is not the
-implementation. Mixed return/continue branches retain a model when their
-continuing path reaches a modeled return, including allocating local value
-blocks. Simple fully modeled local-result range rounds have a separate
-continue/return summary; general nested mixed-exit combinations remain open.
+implementation. Fully modeled mixed return/continue `if`/`Option` branches,
+including nested branches, compose inside local value blocks and their finite
+ranges. A completion summary retains the selected payload and state; following
+statements run only on continuation. General nested-loop combinations remain open.
 Mutual-recursion proof ergonomics, broader combinations and
 equation normalization remain work. See the
 [function-proof milestone](design/Verification.md#function-proof-milestone).
@@ -234,10 +234,13 @@ environment encodings or repeating source facts in a second resource proof.
    proof. A shorter public theorem must not hide an equally long private
    connection proof.
 2. Preserve native finite-range correspondence and inferred uniform budgets.
-   Improve generated mathematical equations so ordinary fold/product proofs
-   need less local-tuple projection; extend construct combinations only with
-   matching real consumers. Dependent bounds, recursion descent and algorithmic
-   potentials remain mathematical obligations, not guessed annotations.
+   The mixed-exit mathematical `forIn` still carries its cursor and complete
+   captured state, even though branch summaries carry only mutable lexical slots.
+   Next generate a view over mutable accumulators, closing over immutable captures
+   and erasing the cursor through a proved iteration relation and fixed-field
+   preservation, using existing iteration/fold lemmas. Extend construct combinations
+   only with matching real consumers. Dependent bounds, recursion descent and
+   algorithmic potentials remain mathematical obligations, not guessed annotations.
 3. Extend the represented native frontend from its checked scalar, List and
    recursive product/option result joins. These compose their heap-indexed
    relations across allocation, with real slot initialization and field copies.

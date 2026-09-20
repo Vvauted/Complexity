@@ -221,6 +221,15 @@ structure CompletionContext where
   stateType : NativeType
   resultType : NativeType
 
+/-- Retain mutable lexical slots, including declarations hidden by a newer name.
+Assignments contribute their latest observation without changing slot order;
+immutable bindings remain available in the surrounding scope. -/
+def CompletionContext.ofScope (scope : List Binding) (resultType : NativeType) :
+    TermElabM CompletionContext := do
+  let carried := (lexicalBindings scope).filter (·.mutable)
+  let stateType ← resolveType (← Internal.stateType carried.toList)
+  return { carried, stateType, resultType }
+
 /-- A mathematical result records both local completion and the current state.
 Its statements and call trace are proof-side summaries, not new source code. -/
 structure CompletionSummary where
@@ -278,6 +287,91 @@ def CompletionSummary.prepend? (native : Option (Array (TSyntax `doElem)))
   let calls ← calls
   let summary ← summary
   return { summary with native := native ++ summary.native, calls := calls ++ summary.calls }
+
+private def completionSnapshot (summary : CompletionSummary) :
+    TermElabM (Binding × TSyntax `doElem) := do
+  let name := mkIdent (← mkFreshUserName `completionView)
+  let rawName := mkIdent (← mkFreshUserName `completionSource)
+  let relationName := mkIdent (← mkFreshUserName `completionObserved)
+  let snapshot : Binding := {
+    name, type := summary.returned.type, rawName, relationName
+    model? := summary.returned.model?.map (·.toBindingModel) }
+  let body ← doTerm summary.native
+  let type ← termOfExpr snapshot.type.nativeType
+  return (snapshot, ← `(doElem| let $name:ident : $type := Id.run $body:term))
+
+/-- Share a completed mathematical state inside one closed proof-side term.
+Only exact occurrences of this summary are replaced, and the fresh binder stays
+outside any payload binders. Unfolding the let recovers the original term. -/
+def shareCompletionModel (summary : CompletionSummary) (term : TSyntax `term) :
+    TermElabM (TSyntax `term) := do
+  let model ← summary.returned.requireModel
+  let name := mkIdent (← mkFreshUserName `completionModel)
+  let body : TSyntax `term := ⟨term.raw.rewriteBottomUp fun stx =>
+    if stx == model.model.raw then name.raw else stx⟩
+  let type ← termOfExpr summary.returned.type.nativeType
+  `(let $name:ident : $type := $(model.model); $body)
+
+/-- Name a mathematical completion and expose its carried state in the current
+lexical scope. The snapshot reuses the original heap-indexed observation; its
+fresh names do not introduce another source value or an observation premise.
+Unassigned locals retain an existing observation, whose current-heap validity
+is still checked by the call trace's preservation rules. -/
+def CompletionSummary.openView (context : CompletionContext) (scope : List Binding)
+    (assigned : Array Name) (summary : CompletionSummary) :
+    TermElabM (Binding × List Binding × Array (TSyntax `doElem)) := do
+  let (snapshot, native) ← completionSnapshot summary
+  let state ← `(Prod.snd $(snapshot.name):ident)
+  let mut after := scope
+  let mut nativePrefix := #[native]
+  for binding in context.carried, index in [:context.carried.size] do
+    let previous := scope.find? (fun current => current.slot == binding.slot)
+    if !assigned.contains binding.slot && previous.any (·.model?.isSome) then
+      continue
+    let projection ← fieldProjection context.carried.size index state
+    let projected ← value [snapshot] projection (some binding.type)
+    let nativeName := mkIdent (← mkFreshUserName (binding.name.getId.appendAfter "_native"))
+    after := after.map fun current =>
+      if current.slot == binding.slot then
+        { current with nativeName, model? := projected.model?.map (·.toBindingModel) }
+      else current
+    let type ← termOfExpr binding.type.nativeType
+    nativePrefix := nativePrefix.push (← `(doElem| let $nativeName:ident : $type := $projection))
+  return (snapshot, after, nativePrefix)
+
+/-- Rebuild the slots carried by an enclosing boundary. Mutable fields come
+from the completion; omitted immutable fields retain their entry observations,
+whose validity in the final heap is still checked through the same call trace.
+Neither case reconstructs heap handles or emits source projections. -/
+def CompletionSummary.project? (origin target : CompletionContext)
+    (scope : List Binding)
+    (summary : Option CompletionSummary) : TermElabM (Option CompletionSummary) := do
+  let some summary := summary | return none
+  if origin.carried.map (·.slot) == target.carried.map (·.slot) then
+    return some summary
+  let (snapshot, native) ← completionSnapshot summary
+  let state ← `(Prod.snd $(snapshot.name):ident)
+  let mut fields := #[]
+  let mut observations := [snapshot]
+  for binding in target.carried do
+    if let some index := origin.carried.findIdx? (fun candidate => candidate.slot == binding.slot) then
+      fields := fields.push (← fieldProjection origin.carried.size index state)
+    else
+      if binding.mutable then return none
+      let some retained := scope.find? (fun candidate => candidate.slot == binding.slot)
+        | return none
+      if retained.mutable || retained.model?.isNone then return none
+      observations := { retained with name := retained.nativeName } :: observations
+      fields := fields.push ⟨retained.nativeName.raw⟩
+  let selected ← fieldsTerm fields.toList
+  let projected ← value observations (← `((Prod.fst $(snapshot.name):ident, $selected)))
+    (some (.prod (.option target.resultType) target.stateType))
+  let some model := projected.model? | return none
+  let shared ← shareCompletionModel summary model.model
+  let projected := { projected with model? := some { model with model := shared } }
+  return some {
+    native := #[native, ← `(doElem| return $(model.native))]
+    calls := summary.calls, returned := projected }
 
 
 /-- Raw statements and their normal lexical successor are independent of the

@@ -144,20 +144,24 @@ authors do not expose that slot in their mathematical proof. The existing
 [List range](##Examples.Language.LinkedList) keeps its replicate equation in
 this form.
 
-Fully modeled simple branch/Option rounds that may return from the local value
-block use a control-sensitive `Option payload × state` summary and Lean `forIn`
-instead of a fold. Its heap-indexed correspondence observes the same actual body
-result and final locals: the active pending slot may change, while ancestor
+Fully modeled `if`/`Option` rounds that may return from the local value block,
+including nested mixed return/continue branches, use a control-sensitive
+`Option payload × state` summary and Lean `forIn` instead of a fold. Its
+heap-indexed correspondence observes the same actual body result and final locals:
+the active pending slot may change, while ancestor
 slots and fixed captures remain preserved. The payload type is the local block's
 result type, independent of the enclosing function's return type. Continuing
 rounds advance the cursor; completed rounds exit through the real masked guard
 without running another body or inventing a decrease. The surrounding continuation
 runs only when no result was saved. This adds no second source loop or allocation
 for proof-side state; actual body allocations and control instructions remain
-part of the compiled program.
+part of the compiled program. Branch summaries carry only mutable lexical slots,
+including shadowed bindings; immutable observations use proved heap preservation.
+The range's mathematical `forIn` still carries its cursor and complete captures;
+a smaller accumulator-only proof view remains follow-up work.
 
-General nested mixed-exit combinations, function-level range returns, calls to
-the enclosing recursive function from a range and full mathematical models of
+General nested loops and their mixed-exit combinations, function-level range
+returns, calls to the enclosing recursive function from a range and full models of
 arbitrary heap mutation remain open. Neither mathematical range view infers a
 RAM bound for its body or added control.
 

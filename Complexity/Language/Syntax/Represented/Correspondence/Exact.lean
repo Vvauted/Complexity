@@ -30,12 +30,16 @@ def encodedValue (type : NativeType) (value : TSyntax `term) :
 callee, and mathematical records are returned through their checked encoding. -/
 partial def exactTrace (trace : Array Trace) (returnedValue : Value)
     (heap : TSyntax `term) (initialRelations : Array RetainedObservation)
-    (initialKnown : Array (Name × TSyntax `term) := #[]) :
+    (initialKnown : Array (Name × TSyntax `term) := #[])
+    (branchRules : Array (TSyntax ``Lean.Parser.Tactic.simpLemma) := #[]) :
     TermElabM (Array (TSyntax `tactic)) := do
   let mut relations := initialRelations
   let mut known := initialKnown
   let mut scalarEqualities : Array (TSyntax `term) := #[]
   let mut tactics := #[← normalizeAction]
+  unless branchRules.isEmpty do
+    tactics := tactics.push (← `(tactic|
+      simp (config := { failIfUnchanged := false }) only [$branchRules,*]))
   for instruction in trace do
     let (result, equation) ← match instruction with
       | .call invocation => do
@@ -71,6 +75,8 @@ partial def exactTrace (trace : Array Trace) (returnedValue : Value)
           let equality := mkIdent (← mkFreshUserName `conditionEqual)
           tactics := tactics.push (← `(tactic|
             have $equality:ident : $(condition.model) = $rawCondition := $observed))
+          tactics := tactics.push (← `(tactic|
+            dsimp (config := { failIfUnchanged := false }) only at $equality:ident))
           scalarEqualities := scalarEqualities.push ⟨equality.raw⟩
           tactics := tactics.push (← `(tactic|
             simp (config := { failIfUnchanged := false }) only [← $equality:ident]))
@@ -78,8 +84,10 @@ partial def exactTrace (trace : Array Trace) (returnedValue : Value)
           let noAction ← traceAction no.toList noResult known
           let summary := mkIdent (← mkFreshUserName `branchExact)
           let test := mkIdent (← mkFreshUserName `branchSelected)
-          let yesProof ← exactTrace yes yesResult heap relations known
-          let noProof ← exactTrace no noResult heap relations known
+          let yesRules := branchRules.push (← `(Lean.Parser.Tactic.simpLemma| if_pos $test:ident))
+          let noRules := branchRules.push (← `(Lean.Parser.Tactic.simpLemma| if_neg $test:ident))
+          let yesProof ← exactTrace yes yesResult heap relations known yesRules
+          let noProof ← exactTrace no noResult heap relations known noRules
           tactics := tactics.push (← `(tactic|
             have $summary:ident :
                 (if $(condition.model) then $yesAction else $noAction) $heap =
@@ -112,7 +120,12 @@ partial def exactTrace (trace : Array Trace) (returnedValue : Value)
           let impossible := mkIdent (← mkFreshUserName `impossiblePayload)
           let payloadObserved := payload.relationName
           let observation ← observationAt discriminant heap relations
-          let noneProof ← exactTrace absent noneResult heap relations known
+          let rules := branchRules ++ #[
+            ← `(Lean.Parser.Tactic.simpLemma| $rawCase:ident),
+            ← `(Lean.Parser.Tactic.simpLemma| $nativeCase:ident),
+            ← `(Lean.Parser.Tactic.simpLemma| Option.elim_none),
+            ← `(Lean.Parser.Tactic.simpLemma| Option.elim_some)]
+          let noneProof ← exactTrace absent noneResult heap relations known rules
           let mut someRelations := relations
           let mut someKnown := known
           let mut somePrefix := #[]
@@ -125,7 +138,7 @@ partial def exactTrace (trace : Array Trace) (returnedValue : Value)
             someRelations := someRelations.push ⟨payloadObserved.getId, payload.type,
               ⟨payloadObserved.raw⟩⟩
           let someProof := somePrefix ++
-            (← exactTrace present someResult heap someRelations someKnown)
+            (← exactTrace present someResult heap someRelations someKnown rules)
           tactics := tactics.push (← `(tactic|
             have $summary:ident :
                 (Option.elim $raw $noneAction:term
@@ -165,13 +178,14 @@ partial def exactTrace (trace : Array Trace) (returnedValue : Value)
     let executed := mkIdent (← mkFreshUserName `callExecuted)
     let scalarFacts ← scalarEqualities.mapM fun equality =>
       `(Lean.Parser.Tactic.simpLemma| ← $equality:term)
+    let executionRules := scalarFacts ++ branchRules
     tactics := tactics.push (← `(tactic| have $executed:ident := $equation))
     tactics := tactics.push (← `(tactic|
       simp (config := { failIfUnchanged := false }) only [Id.run, Id.instMonad, Bind.bind, Pure.pure,
         Functor.map, MonadLift.monadLift, ExceptT.lift,
         ExceptT.bind, ExceptT.bindCont, ExceptT.pure, ExceptT.mk, ExceptT.run,
         StateT.bind, StateT.pure, StateT.map, Part.bind_some, Part.map_some,
-        $scalarFacts,*] at $executed:ident))
+        $executionRules,*] at $executed:ident))
     tactics := tactics.push (← `(tactic| rw [$executed:ident]))
     tactics := tactics.push (← normalizeAction)
     let model ← result.requireModel
@@ -192,6 +206,7 @@ partial def exactTrace (trace : Array Trace) (returnedValue : Value)
   let type ← actualTypeTerm returnedValue.type.coreTy
   let scalarFacts ← scalarEqualities.mapM fun equality =>
     `(Lean.Parser.Tactic.simpLemma| ← $equality:term)
+  let resultRules := scalarFacts ++ branchRules
   let proof ← `(congrArg (fun (value : $type) =>
     Part.some ((Except.ok value : Except Complexity.Language.Fault $type), $heap))
     (show $value = $raw from $equality).symm)
@@ -199,7 +214,7 @@ partial def exactTrace (trace : Array Trace) (returnedValue : Value)
     first
     | rfl
     | exact $proof
-    | simpa only [$scalarFacts,*] using $proof))
+    | simpa only [$resultRules,*] using $proof))
   tactics.mapM fun tactic => `(tactic| all_goals $tactic:tactic)
 
 end Internal

@@ -389,6 +389,15 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     let outcomeType ← actualTypeTerm range.returned.type.coreTy
     let rawOutcome ← `(($rawOutcome : $outcomeType))
     let observed ← observationAt range.returned context.heap context.relations
+    let nativeType ← termOfExpr range.returned.type.nativeType
+    let coreType ← termOfExpr (coreTypeExpr range.returned.type.coreTy)
+    let representation ← termOfExpr range.returned.type.representation
+    let observedName := mkIdent (← mkFreshUserName `rangeOutcomeObserved)
+    let observationProof ← `(tactic|
+      have $observedName:ident : ($representation :
+          Complexity.Language.Representation $nativeType $coreType).Rel
+          $(returnedModel.model) $rawOutcome $(context.heap) := $observed)
+    let observed : TSyntax `term := ⟨observedName.raw⟩
     let rawState ← if completionType?.isSome then `(($rawOutcome).2) else pure rawOutcome
     let stateObserved ← if completionType?.isSome then `(($observed).2) else pure observed
     let rawCompletion ← if completionType?.isSome then `(($rawOutcome).1)
@@ -417,15 +426,23 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
       else `(Complexity.Language.Heap.ShapeExtends.trans $frameShape $(context.shape))
     let scalarFacts ← context.scalarEqualities.mapM fun equality =>
       `(Lean.Parser.Tactic.simpLemma| $equality:term)
+    let executionRules := #[
+      ← `(Lean.Parser.Tactic.simpLemma| $cursorEqual:ident),
+      ← `(Lean.Parser.Tactic.simpLemma| $strideEqual:ident),
+      ← `(Lean.Parser.Tactic.simpLemma| Option.isSome_none),
+      ← `(Lean.Parser.Tactic.simpLemma| Option.isSome_some),
+      ← `(Lean.Parser.Tactic.simpLemma| Bool.false_eq_true),
+      ← `(Lean.Parser.Tactic.simpLemma| ↓reduceIte)] ++
+      fixedSimp ++ pending.entryRules ++ pending.currentRules ++ scalarFacts ++ context.branchRules
     let executed ← `(by first
       | rfl
-      | simp only [$cursorEqual:ident, $strideEqual:ident, $fixedSimp,*,
-          $(pending.entryRules),*, $(pending.currentRules),*, $scalarFacts,*])
+      | simp only [$executionRules,*])
     let returnedObserved ← `(by
-      simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*]
+      simpa (config := { implicitDefEqProofs := false }) only
+        [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*]
         using $stateObserved)
     let completedObserved ← `(by
-      simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind,
+      simpa (config := { implicitDefEqProofs := false }) only [Id.run, Id.instMonad, Pure.pure, Bind.bind,
         $(pending.currentRules),*, $(context.branchRules),*] using $completionObserved)
     let cursorObserved ← if completionType?.isSome then `(by
         have aligned := congrArg
@@ -433,7 +450,7 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
           (Complexity.Language.Representation.option_isSome_eq $completionRep $completionObserved).symm
         simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*] using aligned)
       else `(rfl)
-    return #[← `(tactic|
+    return #[observationProof, ← `(tactic|
       exact ⟨$after, $(context.heap), $executed,
         ⟨$returnedObserved, $cursorObserved, $fixed:ident, $nextFrame⟩, $completedObserved⟩)]
   let mut bodyPrefix := #[]

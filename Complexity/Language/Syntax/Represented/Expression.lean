@@ -42,10 +42,15 @@ def fieldProjection (count index : Nat) (receiver : TSyntax `term) :
   for _ in [:index] do result ← `(Prod.snd $result)
   if index + 1 < count then `(Prod.fst $result) else pure result
 
+private def projectObservation (purePair first : Bool) (pair : Observation) : Observation :=
+  match pair with
+  | .pair _ left right => if first then left else right
+  | _ => .projection purePair first pair
+
 private def fieldObservation (count index : Nat) (receiver : Observation) : Observation := Id.run do
   let mut result := receiver
-  for _ in [:index] do result := .projection false false result
-  if index + 1 < count then return .projection false true result else return result
+  for _ in [:index] do result := projectObservation false false result
+  if index + 1 < count then return projectObservation false true result else return result
 
 partial def value (scope : List Binding) (stx : TSyntax `term)
     (expected : Option NativeType := none) :
@@ -70,7 +75,8 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
         return {
           native := ← nativeBuild left.native right.native
           model := ← nativeBuild left.model right.model
-          rawModel := ← nativeBuild left.rawModel right.rawModel
+          rawModel := ← nativeBuild (← `(($(left.rawModel) : $inputSyntax)))
+            (← `(($(right.rawModel) : $inputSyntax)))
           observation := .binary operation left.observation right.observation } } : Value)
   let comparison (left right : TSyntax `term)
       (build : TSyntax `term → TSyntax `term → TermElabM (TSyntax `term)) := do
@@ -88,13 +94,17 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
       | _ => throwError "projection requires a product"
     let projection := if first then ``Prod.fst else ``Prod.snd
     let apply (term : TSyntax `term) := Lean.Syntax.mkCApp projection #[term]
+    let nativeType ← termOfExpr pair.type.nativeType
+    let rawType ← actualTypeTerm pair.type.coreTy
     return ({
       type := if first then left else right,
       raw := apply pair.raw
-      model? := pair.model?.map fun model => {
-        native := apply model.native
-        model := apply model.model, rawModel := apply model.rawModel
-        observation := .projection pair.type.isIdentity first model.observation } } : Value)
+      model? := ← pair.model?.mapM fun model => do
+        return {
+          native := apply (← `(($(model.native) : $nativeType)))
+          model := apply (← `(($(model.model) : $nativeType)))
+          rawModel := apply (← `(($(model.rawModel) : $rawType)))
+          observation := projectObservation pair.type.isIdentity first model.observation } } : Value)
   let projectRecord (expression : TSyntax `term) (fieldName : Name) := do
     let record ← value scope expression
     if let .raw (.buffer _) := record.type then
