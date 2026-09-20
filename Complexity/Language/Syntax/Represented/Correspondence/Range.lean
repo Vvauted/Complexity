@@ -9,8 +9,9 @@ import Complexity.Language.Eval.Locals.Range.LocalReturn
 /-!
 # Correspondence for represented finite ranges
 
-Relate a prepared mathematical fold or locally completing `forIn` to its actual
-named source range. Lexical slot alignment and the existing range rules retain
+Relate a prepared mathematical fold or completing `forIn` to its actual named
+source range, retaining local completion or a genuine function return.
+Lexical slot alignment and the existing range rules retain
 complete source coordinates, actual body control and intermediate heap observations.
 -/
 
@@ -104,17 +105,26 @@ def RangeRegistration.selectState (range : RangeRegistration) (locals : TSyntax 
     | some field => pure field
     | none => throwError "the selected range coordinate is outside its actual locals")
 
-/-- A completion view reads the actual saved result beside the actual final
-state; the mathematical result never reconstructs a source handle. -/
-def RangeRegistration.select (range : RangeRegistration) (locals : TSyntax `term) :
+/-- A function return is actual source control, not a saved local-result slot. -/
+def RangeRegistration.returnsFromFunction (range : RangeRegistration) : TermElabM Bool := do
+  match range.model with
+  | .fold .. => return false
+  | .completion .. => return (← range.site).pendingSlot?.isNone
+
+/-- Read the actual saved or returned result beside the actual final state;
+the mathematical result never reconstructs a source handle. -/
+def RangeRegistration.select (range : RangeRegistration) (locals : TSyntax `term)
+    (returned? : Option (TSyntax `term) := none) :
     TermElabM (TSyntax `term) := do
   let state ← range.selectState locals
   match range.model with
   | .fold .. => pure state
   | .completion .. =>
       let site ← range.site
-      let some position := site.pendingSlot?
-        | throwError "a local range result requires its actual completion coordinate"
+      let some position := site.pendingSlot? | do
+        let some returned := returned?
+          | throwError "a returning range requires its actual source result"
+        return ← `(($returned, $state))
       let fields ← sourceFields site.scope.size locals
       let some pending := fields[position]?
         | throwError "the completion coordinate is outside the actual range locals"
@@ -136,7 +146,8 @@ private def rangeSummaryProof (name : TSyntax `ident) (statement : TSyntax `term
 private def rangePendingProof (site : ActualRangeSite)
     (arguments fields : Array (TSyntax `term)) (running : TSyntax `ident) :
     TermElabM RangePendingProof := do
-  let some pendingSlot := site.pendingSlot? | return ⟨#[], #[], #[], #[]⟩
+  let some pendingSlot := site.pendingSlot?
+    | return ⟨#[], #[← `(tactic| skip)], #[], #[]⟩
   let some entryPending := arguments[pendingSlot]?
     | throwError "the pending range result has no actual entry coordinate"
   let some currentPending := fields[pendingSlot]?
@@ -151,8 +162,8 @@ private def rangePendingProof (site : ActualRangeSite)
     currentRules := #[← `(Lean.Parser.Tactic.simpLemma| $pendingCurrent:ident)] }
 
 /-- Choose the existing loop theorem by actual source completion behavior.
-Both paths consume the same generated guard and normally executing body. -/
-private def rangeLoopProof (site : ActualRangeSite)
+Both paths consume the generated guard and body with their actual control. -/
+private def rangeLoopProof (site : ActualRangeSite) (returnsFromFunction : Bool)
     (completionRep nativeStep start stop stride initialState entry heap initial : TSyntax `term)
     (stateRel guardRel bodyRel positive control after finish executed outcome : TSyntax `ident) :
     TermElabM (Array (TSyntax `tactic)) := do
@@ -175,11 +186,14 @@ private def rangeLoopProof (site : ActualRangeSite)
     obtain ⟨after, finish, executed, retained, _⟩ :=
       $guardRel:ident index state locals heap related rfl
     exact ⟨after, finish, executed, retained⟩)
-  let bodyAdapter ← `(by
-    intro index state locals heap inside related
-    obtain ⟨after, finish, executed, retained, _⟩ :=
-      $bodyRel:ident index state locals heap inside related rfl
-    exact ⟨Complexity.Language.Control.normal, after, finish, executed, retained, trivial⟩)
+  let bodyAdapter ← if returnsFromFunction then `(by
+      intro index state locals heap inside related
+      exact $bodyRel:ident index state locals heap inside related rfl)
+    else `(by
+      intro index state locals heap inside related
+      obtain ⟨after, finish, executed, retained, _⟩ :=
+        $bodyRel:ident index state locals heap inside related rfl
+      exact ⟨Complexity.Language.Control.normal, after, finish, executed, retained, trivial⟩)
   let proof ← `(tactic|
     obtain ⟨$control:ident, $after:ident, $finish:ident, $executed:ident, $outcome:ident⟩ :=
       Complexity.Language.Stmt.observe_while_rel_forIn_range_step
@@ -270,6 +284,93 @@ private def rangeNormalProof (site : ActualRangeSite)
       | fault _ => exact False.elim ($outcome:ident).2),
     ← `(tactic| subst $control:ident)]
 
+private def rangeBodyFinish (range : RangeRegistration) (site : ActualRangeSite)
+    (returnsFromFunction hasCompletion : Bool)
+    (fields : Array (TSyntax `term)) (positions : Array Nat)
+    (index cursorEqual strideEqual fixed : TSyntax `ident) (strideModel : ValueModel)
+    (completionCore completionRep frameShape frameContents : TSyntax `term)
+    (preserveArrays : Bool) (fixedSimp : Array (TSyntax ``Lean.Parser.Tactic.simpLemma))
+    (pending : RangePendingProof) : TraceFinish := fun context => do
+  let returnedModel ← range.returned.requireModel
+  let rawOutcome := resolveRaw returnedModel.rawModel context.known
+  let outcomeType ← actualTypeTerm range.returned.type.coreTy
+  let rawOutcome ← `(($rawOutcome : $outcomeType))
+  let observed ← observationAt range.returned context.heap context.relations
+  let nativeType ← termOfExpr range.returned.type.nativeType
+  let coreType ← termOfExpr (coreTypeExpr range.returned.type.coreTy)
+  let representation ← termOfExpr range.returned.type.representation
+  let observedName := mkIdent (← mkFreshUserName `rangeOutcomeObserved)
+  let observationProof ← `(tactic|
+    have $observedName:ident : ($representation :
+        Complexity.Language.Representation $nativeType $coreType).Rel
+        $(returnedModel.model) $rawOutcome $(context.heap) := $observed)
+  let observed : TSyntax `term := ⟨observedName.raw⟩
+  let rawState ← if hasCompletion then `(($rawOutcome).2) else pure rawOutcome
+  let stateObserved ← if hasCompletion then `(($observed).2) else pure observed
+  let rawCompletion ← if hasCompletion then `(($rawOutcome).1)
+    else `((none : Option (Complexity.Language.Value $completionCore)))
+  let completionObserved ← if hasCompletion then `(($observed).1)
+    else `(Complexity.Language.Representation.option_none $completionRep $(context.heap))
+  let cursorNext ← if hasCompletion then
+      `(if ($rawCompletion).isSome then $index:ident else $index:ident + $(strideModel.model))
+    else `($index:ident + $(strideModel.model))
+  let mut afterFields := fields
+  for binding in range.captured, position in positions, field in [:range.captured.size] do
+    if binding.mutable then
+      afterFields := afterFields.set! position (← fieldProjection range.captured.size field rawState)
+  afterFields := afterFields.set! site.cursorSlot cursorNext
+  if hasCompletion then
+    if let some position := site.pendingSlot? then
+      afterFields := afterFields.set! position rawCompletion
+  let after ← sourceTuple afterFields
+  let nextFrame ← if preserveArrays then
+      `(And.intro
+        (Complexity.Language.Heap.ShapeExtends.trans $frameShape $(context.shape))
+        (fun {kind} buffer values observed =>
+          $(context.contents) (kind := kind) buffer values
+            ($frameContents (kind := kind) buffer values observed)))
+    else `(Complexity.Language.Heap.ShapeExtends.trans $frameShape $(context.shape))
+  let scalarFacts ← context.scalarEqualities.mapM fun equality =>
+    `(Lean.Parser.Tactic.simpLemma| $equality:term)
+  let executionRules := #[
+    ← `(Lean.Parser.Tactic.simpLemma| $cursorEqual:ident),
+    ← `(Lean.Parser.Tactic.simpLemma| $strideEqual:ident),
+    ← `(Lean.Parser.Tactic.simpLemma| Option.isSome_none),
+    ← `(Lean.Parser.Tactic.simpLemma| Option.isSome_some),
+    ← `(Lean.Parser.Tactic.simpLemma| Bool.false_eq_true),
+    ← `(Lean.Parser.Tactic.simpLemma| ↓reduceIte)] ++
+    fixedSimp ++ pending.entryRules ++ pending.currentRules ++ scalarFacts ++ context.branchRules
+  let executed ← `(by first
+    | rfl
+    | simp only [$executionRules,*] <;> rfl)
+  let returnedObserved ← `(by
+    simpa (config := { implicitDefEqProofs := false }) only
+      [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*]
+      using $stateObserved)
+  let completionRules := pending.currentRules ++ context.branchRules
+  let completedObserved ← `(by
+    simpa (config := { implicitDefEqProofs := false }) only
+      [Id.run, Id.instMonad, Pure.pure, Bind.bind, $completionRules,*] using $completionObserved)
+  let cursorObserved ← if hasCompletion then `(by
+      have aligned := congrArg
+        (fun (completed : Bool) => if completed then $index:ident else $index:ident + $(strideModel.model))
+        (Complexity.Language.Representation.option_isSome_eq $completionRep $completionObserved).symm
+      simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*] using aligned)
+    else `(rfl)
+  if returnsFromFunction then
+    let control ← `(($rawCompletion).elim
+      Complexity.Language.Control.normal Complexity.Language.Control.returned)
+    let relatedControl ← `(by
+      apply (Complexity.Language.Control.represents_iff_exists
+        $control $completionRep _ $(context.heap)).mpr
+      exact ⟨$rawCompletion, rfl, $completedObserved⟩)
+    return #[observationProof, ← `(tactic|
+      exact ⟨$control, $after, $(context.heap), $executed,
+        ⟨$returnedObserved, $cursorObserved, $fixed:ident, $nextFrame⟩, $relatedControl⟩)]
+  return #[observationProof, ← `(tactic|
+    exact ⟨$after, $(context.heap), $executed,
+      ⟨$returnedObserved, $cursorObserved, $fixed:ident, $nextFrame⟩, $completedObserved⟩)]
+
 /-- Prove the original named range in its full source coordinates. Iteration is
 only a mathematical view; body calls retain their actual control and heap. -/
 def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
@@ -278,6 +379,7 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     (proveBody : RangeBodyProof) :
     TermElabM (Array (TSyntax `tactic) × TSyntax `term × Nat) := do
   let site ← range.site
+  let returnsFromFunction ← range.returnsFromFunction
   let positions ← range.slots
   let member (suffix : Name) := mkIdent (site.name ++ suffix)
   let localsType := member `Locals
@@ -348,7 +450,10 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
       | .fold .. => none
       | .completion type .. => some type
     let completionRep ← match completionType? with
-      | some type => termOfExpr type.representation
+      | some type => do
+          let native ← termOfExpr type.nativeType
+          let representation ← termOfExpr type.representation
+          `(($representation : Complexity.Language.Representation $native $completionCore))
       | none => `(Complexity.Language.Representation.ofEmbedding
           (Function.Embedding.refl (Complexity.Language.Value $completionCore)))
     let pendingValue ← match site.pendingSlot? with
@@ -414,76 +519,9 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let frameShape ← if preserveArrays then `(($framed:ident).1) else `($framed:ident)
   let frameContents ← if preserveArrays then `(($framed:ident).2) else `(True.intro)
   let fixedSimp ← fixedFacts.mapM fun fact => `(Lean.Parser.Tactic.simpLemma| $fact:term)
-  let bodyFinish : TraceFinish := fun context => do
-    let returnedModel ← range.returned.requireModel
-    let rawOutcome := resolveRaw returnedModel.rawModel context.known
-    let outcomeType ← actualTypeTerm range.returned.type.coreTy
-    let rawOutcome ← `(($rawOutcome : $outcomeType))
-    let observed ← observationAt range.returned context.heap context.relations
-    let nativeType ← termOfExpr range.returned.type.nativeType
-    let coreType ← termOfExpr (coreTypeExpr range.returned.type.coreTy)
-    let representation ← termOfExpr range.returned.type.representation
-    let observedName := mkIdent (← mkFreshUserName `rangeOutcomeObserved)
-    let observationProof ← `(tactic|
-      have $observedName:ident : ($representation :
-          Complexity.Language.Representation $nativeType $coreType).Rel
-          $(returnedModel.model) $rawOutcome $(context.heap) := $observed)
-    let observed : TSyntax `term := ⟨observedName.raw⟩
-    let rawState ← if completionType?.isSome then `(($rawOutcome).2) else pure rawOutcome
-    let stateObserved ← if completionType?.isSome then `(($observed).2) else pure observed
-    let rawCompletion ← if completionType?.isSome then `(($rawOutcome).1)
-      else `((none : Option (Complexity.Language.Value $completionCore)))
-    let completionObserved ← if completionType?.isSome then `(($observed).1)
-      else `(Complexity.Language.Representation.option_none $completionRep $(context.heap))
-    let cursorNext ← if completionType?.isSome then
-        `(if ($rawCompletion).isSome then $index:ident else $index:ident + $(strideModel.model))
-      else `($index:ident + $(strideModel.model))
-    let mut afterFields := fields
-    for binding in range.captured, position in positions, field in [:range.captured.size] do
-      if binding.mutable then
-        afterFields := afterFields.set! position (← fieldProjection range.captured.size field rawState)
-    afterFields := afterFields.set! site.cursorSlot cursorNext
-    if completionType?.isSome then
-      let some position := site.pendingSlot?
-        | throwError "a completion range requires its actual local result slot"
-      afterFields := afterFields.set! position rawCompletion
-    let after ← sourceTuple afterFields
-    let nextFrame ← if preserveArrays then
-        `(And.intro
-          (Complexity.Language.Heap.ShapeExtends.trans $frameShape $(context.shape))
-          (fun {kind} buffer values observed =>
-            $(context.contents) (kind := kind) buffer values
-              ($frameContents (kind := kind) buffer values observed)))
-      else `(Complexity.Language.Heap.ShapeExtends.trans $frameShape $(context.shape))
-    let scalarFacts ← context.scalarEqualities.mapM fun equality =>
-      `(Lean.Parser.Tactic.simpLemma| $equality:term)
-    let executionRules := #[
-      ← `(Lean.Parser.Tactic.simpLemma| $cursorEqual:ident),
-      ← `(Lean.Parser.Tactic.simpLemma| $strideEqual:ident),
-      ← `(Lean.Parser.Tactic.simpLemma| Option.isSome_none),
-      ← `(Lean.Parser.Tactic.simpLemma| Option.isSome_some),
-      ← `(Lean.Parser.Tactic.simpLemma| Bool.false_eq_true),
-      ← `(Lean.Parser.Tactic.simpLemma| ↓reduceIte)] ++
-      fixedSimp ++ pending.entryRules ++ pending.currentRules ++ scalarFacts ++ context.branchRules
-    let executed ← `(by first
-      | rfl
-      | simp only [$executionRules,*])
-    let returnedObserved ← `(by
-      simpa (config := { implicitDefEqProofs := false }) only
-        [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*]
-        using $stateObserved)
-    let completedObserved ← `(by
-      simpa (config := { implicitDefEqProofs := false }) only [Id.run, Id.instMonad, Pure.pure, Bind.bind,
-        $(pending.currentRules),*, $(context.branchRules),*] using $completionObserved)
-    let cursorObserved ← if completionType?.isSome then `(by
-        have aligned := congrArg
-          (fun (completed : Bool) => if completed then $index:ident else $index:ident + $(strideModel.model))
-          (Complexity.Language.Representation.option_isSome_eq $completionRep $completionObserved).symm
-        simpa only [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*] using aligned)
-      else `(rfl)
-    return #[observationProof, ← `(tactic|
-      exact ⟨$after, $(context.heap), $executed,
-        ⟨$returnedObserved, $cursorObserved, $fixed:ident, $nextFrame⟩, $completedObserved⟩)]
+  let bodyFinish := rangeBodyFinish range site returnsFromFunction completionType?.isSome
+    fields positions index cursorEqual strideEqual fixed strideModel
+    completionCore completionRep frameShape frameContents preserveArrays fixedSimp pending
   let mut bodyPrefix := #[]
   let mut bodyRelations : Array RetainedObservation := #[]
   if range.state.type.isIdentity then
@@ -509,7 +547,10 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let normal := mkIdent (← mkFreshUserName `rangeNormal)
   let finalObserved := mkIdent (← mkFreshUserName `rangeFinalObserved)
   let finalFixed := mkIdent (← mkFreshUserName `rangeFinalFixed)
-  let selectedAfter ← range.select ⟨after.raw⟩
+  let actualResult := mkIdent (← mkFreshUserName `rangeReturned)
+  let actualResult? := if returnsFromFunction then some (⟨actualResult.raw⟩ : TSyntax `term)
+    else none
+  let selectedAfter ← range.select ⟨after.raw⟩ actualResult?
   let (normalizeResult, resultProof) ← rangeResultProof range nativeSubstitution
     bodyNative completionCore startModel.model stopModel.model strideModel.model
     initialModel.model resultModel.model selectedAfter ⟨finish.raw⟩ positive outcome finalObserved
@@ -549,26 +590,48 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
         · simpa only [$(pending.currentRules),*] using $localsEta
       · rfl)
   let initial ← `(⟨$entryObserved, $startEqual:ident, by repeat' constructor, $initialFrame⟩)
-  let rangeProof ← rangeLoopProof site completionRep nativeStep startModel.model stopModel.model
+  let rangeProof ← rangeLoopProof site returnsFromFunction completionRep nativeStep startModel.model stopModel.model
     strideModel.model initialModel.model entry heap initial
     stateRel guardRel bodyRel positive control after finish executed outcome
-  let normalProof ← rangeNormalProof site normal control outcome
+  let normalProof ← if returnsFromFunction then do
+      let equal := mkIdent (← mkFreshUserName `rangeControlEqual)
+      let related := mkIdent (← mkFreshUserName `rangeReturnRelated)
+      pure #[← `(tactic|
+        obtain ⟨$actualResult:ident, $equal:ident, $related:ident⟩ :=
+          (Complexity.Language.Control.represents_iff_exists $control:ident $completionRep
+            _ $finish:ident).mp ($outcome:ident).2),
+        ← `(tactic| rw [$equal:ident] at $executed:ident),
+        ← `(tactic| have $outcome:ident := And.intro ($outcome:ident).1 $related:ident)]
+    else rangeNormalProof site normal control outcome
+  let finalControl ← if returnsFromFunction then
+      `(($actualResult:ident).elim Complexity.Language.Control.normal Complexity.Language.Control.returned)
+    else `(Complexity.Language.Control.normal)
   let statement ← `(∃ ($after:ident : $localsType:ident)
         ($finish:ident : Complexity.Language.Heap),
-        $action $heap = Part.some ((Complexity.Language.Control.normal, $after:ident), $finish:ident) ∧
+        $action $heap = Part.some (($finalControl, $after:ident), $finish:ident) ∧
         ($observedRepresentation : Complexity.Language.Representation $observedType $observedCore).Rel
           $(resultModel.model) $selectedAfter $finish:ident ∧
         $heapPost $finish:ident ∧ $fixedAfter)
+  let statement ← if returnsFromFunction then
+      `(∃ ($actualResult:ident : Option (Complexity.Language.Value $completionCore)), $statement)
+    else pure statement
+  let bodyConclusion ← if returnsFromFunction then
+      `(∃ control after finish,
+        Complexity.Language.Stmt.observe $view:ident $body:ident $program:ident
+          $locals:ident $current:ident = Part.some ((control, after), finish) ∧
+        $stateRel:ident $nextIndex $nextState after finish ∧
+        Complexity.Language.Control.Represents control $completionRep $nextCompletion finish)
+    else `(∃ after finish,
+        Complexity.Language.Stmt.observe $view:ident $body:ident $program:ident
+          $locals:ident $current:ident = Part.some ((.normal, after), finish) ∧
+        $stateRel:ident $nextIndex $nextState after finish ∧
+        ($completionRep).option.Rel $nextCompletion ($pendingValue after) finish)
   let bodyStatement ← `(∀ ($index:ident : Nat) ($state:ident : $stateType)
           ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap),
           $index:ident < $(stopModel.model) →
           $stateRel:ident $index:ident $state:ident $locals:ident $current:ident →
           $pendingValue $locals:ident = none →
-          ∃ after finish,
-            Complexity.Language.Stmt.observe $view:ident $body:ident $program:ident
-              $locals:ident $current:ident = Part.some ((.normal, after), finish) ∧
-            $stateRel:ident $nextIndex $nextState after finish ∧
-            ($completionRep).option.Rel $nextCompletion ($pendingValue after) finish)
+          $bodyConclusion)
   let bodySteps := #[
     ← `(tactic| intro $index:ident $state:ident $locals:ident $current:ident
       $active:ident $related:ident $running:ident),
@@ -591,11 +654,14 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     ← `(tactic| change Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident
       $entry $heap = _ at $executed:ident),
     ← `(tactic| rw [$observe:ident] at $executed:ident)]
+  let witnesses ← `(⟨$after:ident, $finish:ident, $executed:ident, $finalObserved:ident,
+    ($outcome:ident).1.2.2.2, $finalFixed:ident⟩)
+  let witnesses ← if returnsFromFunction then `(⟨$actualResult:ident, $witnesses⟩)
+    else pure witnesses
   let conclude := #[
     ← `(tactic| have $finalFixed:ident : $fixedAfter := by
       simpa only [$(pending.entryRules),*] using ($outcome:ident).1.2.2.1),
-    ← `(tactic| exact ⟨$after:ident, $finish:ident, $executed:ident, $finalObserved:ident,
-      ($outcome:ident).1.2.2.2, $finalFixed:ident⟩)]
+    ← `(tactic| exact $witnesses)]
   let proof ← rangeSummaryProof summary statement
     (prepareRelations ++ rangeProof ++ normalizeResult ++ normalProof ++
       exposeExecution ++ resultProof ++ conclude)

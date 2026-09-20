@@ -319,6 +319,15 @@ The iterative consumer covers one range with an accumulator; it does not yet
 establish consumer coverage for nested ranges, early returns or recursive calls
 inside a pure range.
 
+The default represented frontend separately supports fully modeled `if`/`Option`
+finite-range bodies with mixed continuation and direct function returns. Their
+generated mathematical model and heap-indexed correspondence retain the actual
+returned payload and final heap; the ordinary List equation has been checked
+without changing its statement. This path adds no local value block or pending
+slot and leaves raw lowering unchanged. General nested loops, recursive calls
+from a range and full models of arbitrary heap mutation remain open; this source
+correspondence does not itself prove a RAM complexity bound.
+
 All source declarations expose ordinary-parameter `f_contract`, `f_args` and
 `f_onArgs` interfaces. They reuse the existing source contract and argument
 environment, not another semantics or a cost inferred from an extensional

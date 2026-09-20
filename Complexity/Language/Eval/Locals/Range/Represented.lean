@@ -38,6 +38,30 @@ def Represents {α : Type} {result : Ty} (control : Control result)
   | .returned actual, some expected => representation.Rel expected actual heap
   | _, _ => False
 
+/-- Successful control exposes its actual optional payload with the same
+heap-indexed observation. The witness is taken from the control, not recovered
+from the mathematical value; a fault has no such successful witness. -/
+theorem represents_iff_exists {α : Type} {result : Ty}
+    (control : Control result) (representation : Representation α result)
+    (value : Option α) (heap : Heap) :
+    control.Represents representation value heap ↔
+      ∃ actual : Option (Value result),
+        control = actual.elim Control.normal Control.returned ∧
+          representation.option.Rel value actual heap := by
+  constructor
+  · intro related
+    cases control with
+    | normal =>
+        refine ⟨none, rfl, ?_⟩
+        cases value <;> exact related
+    | returned actual =>
+        refine ⟨some actual, rfl, ?_⟩
+        cases value <;> exact related
+    | fault error =>
+        cases value <;> exact False.elim related
+  · rintro ⟨actual, rfl, related⟩
+    cases actual <;> cases value <;> exact related
+
 /-- For a pure embedding, relational control correspondence is exactly equality
 with the encoded native control. This includes registered scalar records, not
 only identity-encoded natural numbers. -/

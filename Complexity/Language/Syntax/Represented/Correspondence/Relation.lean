@@ -423,9 +423,19 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
     let executed := mkIdent (← mkFreshUserName `callExecuted)
     let extended := mkIdent (← mkFreshUserName `callExtended)
     let contents := mkIdent (← mkFreshUserName `contentsPreserved)
-    tactics := tactics.push (← `(tactic|
-      obtain ⟨$returned:ident, $finish:ident, $executed:ident, $observed:ident, $extended:ident⟩ :=
-        $relationProof))
+    let range? : Option RangeRegistration := match instruction with
+      | .range tag _ _ _ => ranges.find? (fun range => range.tag == tag)
+      | _ => none
+    let returnsFromFunction ← match range? with
+      | some range => range.returnsFromFunction
+      | none => pure false
+    let actualResult := mkIdent (← mkFreshUserName `rangeReturned)
+    tactics := tactics.push (← if returnsFromFunction then `(tactic|
+        obtain ⟨$actualResult:ident, $returned:ident, $finish:ident, $executed:ident,
+            $observed:ident, $extended:ident⟩ := $relationProof)
+      else `(tactic|
+        obtain ⟨$returned:ident, $finish:ident, $executed:ident, $observed:ident, $extended:ident⟩ :=
+          $relationProof))
     let mut rangeFixedFacts : Array (TSyntax `term) := #[]
     if let some fixedCount := rangeFixedCount then
       let fixed := mkIdent (← mkFreshUserName `rangeFixedLocals)
@@ -438,11 +448,10 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
     if preserveArrays then
       tactics := tactics.push (← `(tactic|
         obtain ⟨$extended:ident, $contents:ident⟩ := $extended:ident))
-    let range? : Option RangeRegistration := match instruction with
-      | .range tag _ _ _ => ranges.find? (fun range => range.tag == tag)
-      | _ => none
     if let some range := range? then
-      let selected ← range.select ⟨returned.raw⟩
+      let actualResult? := if returnsFromFunction then some (⟨actualResult.raw⟩ : TSyntax `term)
+        else none
+      let selected ← range.select ⟨returned.raw⟩ actualResult?
       known := known.push (result.rawName.getId, selected)
       if result.type.isIdentity then
         let model ← result.requireModel
@@ -506,7 +515,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
   let scalarFacts ← scalarEqualities.mapM fun equality =>
     `(Lean.Parser.Tactic.simpLemma| $equality:term)
   let executionRules := scalarFacts ++ branchRules
-  let executed ← `(by first | rfl | simp only [$executionRules,*])
+  let executed ← `(by first | rfl | simp only [$executionRules,*] <;> rfl)
   let observed ← `(by
     simpa (config := { implicitDefEqProofs := false }) only
       [Id.run, Id.instMonad, Pure.pure, Bind.bind, $branchRules,*] using $observed)

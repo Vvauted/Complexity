@@ -24,9 +24,9 @@ work and every remaining obligation. The outstanding work is:
 - Share resolved operations and control-flow lowering completely; retain
   `(native)` naming compatibility and the older `(pure)` preparer without
   presenting them as separate recommended languages.
-- Complete function-level range returns, general nested loops and their
-  mixed-exit combinations, and calls to the enclosing recursive function from
-  ranges, using the same actual named source loops.
+- Complete general nested loops and their mixed-exit combinations, and calls
+  to the enclosing recursive function from ranges, using the same actual named
+  source loops.
 - Generate mathematical-local guard/body interfaces from field representations;
   authors supply invariants, descent and genuine effect/range facts, not private
   slots, raw-environment transport or `Part` plumbing. Normal array-preserving
@@ -74,9 +74,11 @@ loop: only continuing rounds advance, and a completed round leaves through the
 real stopped guard. The active pending slot may change; ancestor slots and fixed
 captures remain preserved. The local payload need not have the enclosing
 function's result type. This adds neither a second source loop nor runtime
-allocation for the mathematical summary. General nested loops and their mixed
-exits, function-level range returns, enclosing recursion from a range and full
-models of arbitrary heap mutation remain open; no new RAM bound follows from the model.
+allocation for the mathematical summary. Fully modeled function-level finite-range
+returns also have checked mathematical correspondence through actual return
+control, without local-completion slots. General nested loops and their mixed
+exits, enclosing recursion from a range and full models of arbitrary heap mutation
+remain open; no new RAM bound follows from the model.
 The scoped while's resource proof reuses the visible guard/body contracts through
 a shared completion-aware readiness rule, without a second termination proof or
 manual `Part`/private-slot reconstruction. The same ranges, scratch capacity and
@@ -252,10 +254,13 @@ environment encodings or repeating source facts in a second resource proof.
    The checked List proof uses this equation and its original mathematical
    induction without per-field callback transport; nested branches are also
    checked. This does not promise a simplest normal form for arbitrary callbacks.
-   Next connect function-level finite-range returns to generated mathematical
-   models through the existing return-aware range observation rule. Preserve the
-   actual `.returned`/`whileReturn` payload and heap without introducing a local
-   value block or changing executable control and cost.
+   Fully modeled `if`/`Option` finite-range bodies now also have checked
+   function-level return correspondence through the existing return-aware range
+   observation rule. The actual `Control.returned`/`whileReturn` path retains its
+   payload and heap, without a local value block or pending slot. A returned
+   round neither advances the cursor nor adds a false-guard iteration; raw
+   lowering is unchanged. General nested-loop combinations and calls to the
+   enclosing recursive function from a range remain follow-up work.
    Dependent bounds, recursion descent and algorithmic potentials remain
    mathematical obligations, not guessed annotations; no new RAM bound follows.
 3. Extend the represented native frontend from its checked scalar, List and

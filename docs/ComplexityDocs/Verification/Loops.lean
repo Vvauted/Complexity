@@ -174,10 +174,18 @@ its mathematical induction; nested branches are also checked. It does not
 promise a simplest normal form for arbitrary callbacks. The same source loop,
 actual heap and body trace remain the basis of correspondence and resource proofs.
 
-General nested loops and their mixed-exit combinations, function-level range
-returns, calls to the enclosing recursive function from a range and full models of
-arbitrary heap mutation remain open. Neither mathematical range view infers a
-RAM bound for its body or added control.
+The default represented frontend also gives fully modeled finite-range bodies
+with mixed `if`/`Option` branches a mathematical model and checked correspondence
+for direct function returns. This uses the actual `Control.returned`/`whileReturn`
+path, not an added local value block or pending-result slot. A returned (`some`)
+round keeps the real payload and endpoint heap without advancing the cursor or
+running an extra false guard. Raw lowering is unchanged; the mathematical model
+does not select another returned value or executable loop.
+
+General nested loops and their mixed-exit combinations, calls to the enclosing
+recursive function from a range and full models of arbitrary heap mutation remain
+open. None of these mathematical range views infers a RAM bound for its body or
+control.
 
 For pure finite Nat ranges, the shared
 [`while_range_encoded_invariant`](##Ram.LanguageCompiler.RealizationWP.while_range_encoded_invariant)

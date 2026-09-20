@@ -403,9 +403,10 @@ partial def sequence (names : DeclarationNames)
       let sourceBodyScope := match pattern with
         | `($_:ident) => indexBinding :: bodyScope.toList
         | _ => bodyScope.toList
-      let bodyCompletion := if localReturn then some ({
+      -- The optional mathematical result also describes a real function return.
+      -- Keep the source boundary unchanged: Core still receives localReturn.
+      let bodyCompletion := some ({
         carried := bodyScope, stateType := stateNativeType, resultType } : CompletionContext)
-        else none
       let preparedBody ← sequence names imports resultType sourceBodyScope
         (getDoElems body).toList .immutable true localReturn bodyCompletion
       let rawBody : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (preparedBody.raw.map (·.raw))⟩
@@ -419,7 +420,6 @@ partial def sequence (names : DeclarationNames)
           raw := #[raw] ++ continued.raw, native? := none, calls? := none
           completion? := none }
       let completing : PrepareM PreparedBlock := do
-        unless localReturn do return ← sourceOnly
         let some summary := preparedBody.completion? | return ← sourceOnly
         let some startModel := start.model? | return ← sourceOnly
         let some stopModel := stop.model? | return ← sourceOnly
@@ -479,8 +479,9 @@ partial def sequence (names : DeclarationNames)
           let discriminant := if mathematical then model.model else model.native
           `(Option.elim $discriminant $absent
             (fun ($payloadName:ident : $returnedType) => $present))
-        -- The pending-gated source continuation is prepared only once. Its
-        -- mathematical branch runs precisely when the range did not return.
+        -- Prepare the actual source continuation only once. Its mathematical
+        -- branch runs only on none, whether some records a local completion
+        -- or a real function return propagated by Core.
         let continued ← sequence names imports resultType after rest
           .immutable allowFallthrough localReturn completion
         let returnedBlock : PreparedBlock := {
@@ -590,7 +591,7 @@ partial def sequence (names : DeclarationNames)
     if let some (condition, yes, no) := statementConditional? then
       let condition ← value scope condition
       expect element (← resolveType (← `(Bool))) condition.type
-      let branchCompletion ← if localReturn then
+      let branchCompletion ← if localReturn || completion.isSome then
           some <$> CompletionContext.ofScope scope resultType
         else pure completion
       let firstAssignment := (← get).assignedSlots.size
@@ -657,7 +658,7 @@ partial def sequence (names : DeclarationNames)
         model? := discriminant.model?.map fun _ => {
           model := ⟨payloadNative.raw⟩, rawModel := ⟨payloadRaw.raw⟩
           observation := if payloadType.isIdentity then .refl else .named payloadRelation.getId } }
-      let branchCompletion ← if localReturn then
+      let branchCompletion ← if localReturn || completion.isSome then
           some <$> CompletionContext.ofScope scope resultType
         else pure completion
       let firstAssignment := (← get).assignedSlots.size

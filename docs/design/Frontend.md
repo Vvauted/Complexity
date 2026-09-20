@@ -126,6 +126,15 @@ positivity, including a dynamic `k + 1`; a general proof-bearing stride
 parameter, `break` and `continue` remain open. The checked mutable traversal uses
 the same generated loop-contract interface.
 
+The default represented frontend also generates a mathematical `forIn` model
+and checked correspondence for fully modeled `if`/`Option` finite-range bodies
+with mixed continuation and function-return branches. These use the actual
+`Control.returned`/`whileReturn`, not an added local value block or pending slot.
+A returned (`some`) round retains its actual payload and final heap without a
+cursor increment or an extra false guard. Raw lowering is unchanged; no new RAM
+cost bound follows. General nested loops, enclosing recursion from a range and
+full models of arbitrary heap mutation remain open.
+
 In the retained `(pure)` compatibility API, finite ranges generate a native total
 iteration over the same normalized body. A shared finite-iteration theorem connects it to the
 existing source while semantics; generated totality retains every initial heap.

@@ -204,9 +204,10 @@ The current integration work has these concrete obligations:
   state. The linked-list consumer allocates nodes on each round and has generated
   total source correspondence. The array-record consumer now exercises general
   `while` with an explicit mathematical-state contract after each real append.
-  Function-level range returns, calls to the enclosing recursive function from
-  a range and general nested-loop models remain open. The fully modeled
-  local-result range path, including nested `if`/`Option` branches, is described below.
+  Fully modeled `if`/`Option` range bodies also support function-level return
+  correspondence. Calls to the enclosing recursive function from a range and
+  general nested-loop models remain open. The distinct local-result and
+  function-return paths are described below.
 - [x] Simplify the generated range's mathematical view to its mutable
   accumulator, closing over immutable captures. `List.foldl_hom` automatically
   connects it to the unchanged full source state. The existing List proofs use
@@ -295,9 +296,18 @@ without a per-field callback connection proof; nested `if`/`Option` consumers
 are also checked. Arbitrary callbacks are not promised a simplest normal form.
 The actual source/raw loop, heap and body trace are unchanged; this mathematical
 simplification supplies no new RAM bound.
-General nested loops and their mixed-exit combinations, function-level range
-returns, calls to the enclosing recursive function from a range and full models of
-arbitrary heap mutation remain outside this automatic mathematical-model path.
+
+Fully modeled finite-range bodies with mixed `if`/`Option` branches also have
+checked mathematical correspondence for direct function returns. They retain
+the actual `Control.returned`/`whileReturn` path, without adding a local value
+block or pending-result slot. A returned (`some`) round keeps its actual payload
+and endpoint heap; it neither advances the cursor nor runs an additional false
+guard. The control relation retains the actual raw payload, rather than choosing
+one from the mathematical result. Raw lowering is unchanged, and this source
+correspondence supplies no additional RAM cost bound.
+General nested loops and their mixed-exit combinations, calls to the enclosing
+recursive function from a range and full models of arbitrary heap mutation
+remain outside this automatic mathematical-model path.
 
 The proof preparer now follows actual branch continuations when composing
 ranges, carrying their heap relations and frames. Combinations involving nested
@@ -387,12 +397,13 @@ scope cleanup still checks those full locals before returning the visible view.
 General represented `while` now retains actual assignments, effectful guards
 and early function returns through the same source loop. The array-record
 consumer supplies a mathematical-state contract, not a total pure function.
-Mathematical range-view coverage for function-level returns, general nested
-loops and their mixed exits, and calls to an enclosing recursive function remains
+Mathematical range-view coverage for general nested loops and their mixed exits,
+and calls to an enclosing recursive function remains
 part of the integration gate. A normal range view folds mutable locals and
 closes over fixed captures; a local-completion view also retains its payload.
-Its correspondence must refer to the same named source loop, without
-adding source helper calls or changing its charged execution.
+The function-return view instead retains the real returned control and heap.
+Each correspondence refers to the same named source loop, without adding source
+helper calls or changing its charged execution.
 
 Statement branches, lexical shadowing, standalone Unit calls, nested product
 patterns and scratch scopes now pass through the same represented preparation.

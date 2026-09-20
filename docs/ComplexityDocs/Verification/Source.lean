@@ -89,9 +89,16 @@ The checked List proof uses the equation before ordinary mathematical induction,
 without a per-field callback connection proof. Algorithmic equalities still need
 their mathematical proofs.
 The actual source loop and heap/body trace are unchanged: the summary introduces
-no second source loop or runtime allocation. General nested loops and their mixed
-exits, function-level range returns, calls to the enclosing recursive function
-from a range and full models of arbitrary heap mutation remain open.
+no second source loop or runtime allocation.
+
+The default represented frontend also supports fully modeled `if`/`Option`
+finite-range bodies with mixed continuation and direct function returns.
+Their generated mathematical model and correspondence retain the actual
+`Control.returned` payload and final heap through `whileReturn`, without adding
+a local value block or pending-result slot. A returned (`some`) round neither
+advances the cursor nor runs an extra false guard. Raw lowering is unchanged.
+General nested loops and their mixed exits, calls to the enclosing recursive
+function from a range and full models of arbitrary heap mutation remain open.
 Mathematical correspondence does not itself give a RAM bound.
 
 The [iterative factorial](##Examples.Language.Factorial) uses one range and a
