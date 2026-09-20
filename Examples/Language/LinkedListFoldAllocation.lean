@@ -67,6 +67,7 @@ theorem push_ready_cost {w heapLimit cursor : Nat}
       ⟨ListReducer.Source.push_args accumulator head, heap⟩ cursor := by
     ram_source_arena_call exact using originalCost
       via ListReducer.Source.imports.ListReducer.Operations.consNat.embedding
+    exact ⟨rfl, rfl, rfl⟩
   obtain ⟨_, _, _, _, execution, ready, cost, rfl, rfl, rfl, rfl⟩ := measured
   exact ⟨execution, ready, cost⟩
 
@@ -211,7 +212,6 @@ theorem reverseAppend_measured {w heapLimit cursor : Nat}
     (ValueFits.option_node positive tail) headFits capacity observed
   ram_source_arena_call measured using folded
     via NativeLists.Source.imports.NativeLists.Operations.fold0.embedding
-  refine ⟨_, rfl, ?_⟩
   simp only [Ram.LanguageCompiler.List.Fold.accumulated_const,
     Nat.mul_comm values.length 3] at *
   omega
@@ -353,7 +353,6 @@ theorem reverse_measured {w heapLimit cursor : Nat}
       (Representation.list_nil .nat heap) headFits space
   ram_source_arena_step
   ram_source_arena_call measured using reversed
-  exact ⟨_, rfl, by assumption⟩
 
 /-- Execute the actual native `reverse` around the already measured
 reverse/append call. The real result, final heap and cursor are available to a

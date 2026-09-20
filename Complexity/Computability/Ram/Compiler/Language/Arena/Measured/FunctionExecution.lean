@@ -14,6 +14,8 @@ A measured body, its structural cost bound and an independent source contract
 describe the same invocation. `ArenaMeasured.execute_le` publishes its actual
 typed RAM outcome, transports the body's heap/value/cursor observations, and
 adds the existing initialization, outer-call and halt costs exactly once.
+`ArenaMeasured.execute_eq` retains a measured exact count instead of replacing
+it with an upper bound.
 
 Mathematical specifications continue to use `FunctionTotal`. In particular,
 an instantiated `RepresentedFunction.Total` or `RepresentedFunction.Refines`
@@ -24,6 +26,43 @@ retains all existing final memory and placement fields for a later invocation.
 namespace Ram.LanguageCompiler.ArenaMeasured
 
 open Complexity.Language
+
+/-- Publish a measured exact count together with the independently specified
+mathematical result. All retained observations concern the same final heap,
+value and cursor; initialization, the outer call and halt are counted once. -/
+theorem execute_eq {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {fn : Fin signatures.length}
+    {w heapLimit depth cursor coreSteps : Nat}
+    {args : Env (signatures[fn.val]'fn.isLt).params} {heap : Heap}
+    {placement : Nat → Word w} {entry : Source.State w}
+    {P : Heap → Value (signatures[fn.val]'fn.isLt).result → Nat → Prop}
+    {pre : Env (signatures[fn.val]'fn.isLt).params → Heap → Prop}
+    {post : Env (signatures[fn.val]'fn.isLt).params → Heap →
+      Value (signatures[fn.val]'fn.isLt).result → Heap → Prop}
+    (measured : ArenaMeasured program w heapLimit depth (program.body fn)
+      (fun finish control finalCursor steps =>
+        ∃ value, control = .returned value ∧
+          P finish.heap value finalCursor ∧ steps = coreSteps)
+      ⟨args, heap⟩ cursor)
+    (specification : FunctionTotal program fn pre post)
+    (launch : FunctionArenaLaunch program fn depth heapLimit placement args heap cursor entry)
+    (hpre : pre args heap) :
+    ∃ outcome : FunctionArenaExecution program fn depth heapLimit placement args heap entry,
+      P outcome.heap outcome.value outcome.cursor ∧
+      post args heap outcome.value outcome.heap ∧
+      heap.ShapeExtends outcome.heap ∧
+      outcome.bodySteps = coreSteps + 2 ∧
+      outcome.result.steps =
+        LocalCompiler.Function.callSteps (programControl program) (lowerFunc program fn)
+          (coreSteps + 2) + 1 := by
+  obtain ⟨finish, value, finalCursor, steps, execution, ready, cost, observed, rfl⟩ :=
+    exists_returned_iff.mp measured
+  obtain ⟨outcome, valueEq, heapEq, cursorEq, bodyEq⟩ := cost.execute launch
+  refine ⟨outcome, ?_, outcome.post specification hpre, ?_, bodyEq, ?_⟩
+  · simpa only [valueEq, heapEq, cursorEq] using observed
+  · rw [heapEq]
+    exact execution.heap_shapeExtends
+  · rw [outcome.steps_eq, bodyEq]
 
 /-- Retain the actual returning execution and its observations while applying
 an independent structural bound to that same cost witness. -/

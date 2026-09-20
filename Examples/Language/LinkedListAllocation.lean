@@ -83,6 +83,7 @@ theorem prepend_ready_cost {w heapLimit cursor : Nat}
     ram_source_arena_step
     ram_source_arena_call exact using originalCost via
       NativeConstruction.Source.imports.NativeConstruction.Operations.consNat.embedding
+    exact ⟨rfl, rfl, rfl⟩
   obtain ⟨finish, control, finalCursor, steps, execution, ready, cost,
       rfl, rfl, rfl, rfl⟩ := measured
   exact ⟨execution, ready, cost⟩
@@ -177,7 +178,6 @@ theorem prependPair_execute {w heapLimit cursor : Nat} {placement : Nat → Ram.
   have firstSpace : cursor + 3 ≤ heapLimit := by omega
   have nextSpace : (cursor + 3) + 3 ≤ heapLimit := by omega
   let middle := heap.cons second tail
-  let allocated := middle.2.cons first (some middle.1)
   obtain ⟨secondExecution, secondReady, secondCost⟩ :=
     prepend_ready_cost second tail heap positive secondFits firstSpace
   obtain ⟨firstExecution, firstReady, firstCost⟩ :=
@@ -185,29 +185,24 @@ theorem prependPair_execute {w heapLimit cursor : Nat} {placement : Nat → Ram.
   have measured : ArenaMeasured NativeConstruction.Source.program w heapLimit 2
       (NativeConstruction.Source.program.body NativeConstruction.Source.prependPairId)
       (fun _ control finalCursor steps =>
-        control = .returned (some allocated.1) ∧ finalCursor = cursor + 6 ∧
+        ∃ value, control = .returned value ∧ finalCursor = cursor + 6 ∧
           steps = prependPairBodySteps)
       ⟨NativeConstruction.Source.prependPair_args first second tail, heap⟩ cursor := by
     ram_source_arena_step
     ram_source_arena_call exact using secondCost
     ram_source_arena_call exact using firstCost
-  obtain ⟨finish, control, finalCursor, steps, execution, ready, cost, rfl, rfl, rfl⟩ := measured
-  obtain ⟨outcome, _, heapEq, cursorEq, bodyEq⟩ :=
-    cost.execute (fn := NativeConstruction.Source.prependPairId) launch
-  have represented := outcome.post
-    (NativeConstruction.prependPair_refines (first, second, values) trivial)
-    ⟨rfl, rfl, observed⟩
+    rfl
+  obtain ⟨outcome, cursorEq, represented, shape, bodyEq, stepsEq⟩ :=
+    measured.execute_eq (P := fun _ _ finalCursor => finalCursor = cursor + 6)
+      (NativeConstruction.prependPair_refines (first, second, values) trivial)
+      launch ⟨rfl, rfl, observed⟩
   have result : (Representation.list .nat).Rel (first :: second :: values)
       outcome.value outcome.heap := by
     change (Representation.list .nat).Rel (NativeConstruction.prependPair first second values)
       outcome.value outcome.heap at represented
     simpa only [prependPair_eq] using represented
-  have shape : heap.ShapeExtends outcome.heap := by
-    rw [heapEq]
-    exact execution.heap_shapeExtends
-  refine ⟨outcome, result, Representation.list_mono observed shape, shape, cursorEq, bodyEq, ?_⟩
-  rw [outcome.steps_eq, bodyEq]
-  rfl
+  exact ⟨outcome, result, Representation.list_mono observed shape, shape, cursorEq,
+    bodyEq, stepsEq⟩
 
 /-- Only the chosen branch allocates: three nodes on the true path and two on
 the false path, including the common continuation's final constructor call. -/
@@ -289,10 +284,11 @@ theorem choosePrepend_execute {w heapLimit cursor : Nat} {placement : Nat → Ra
           NativeBranches.Source.imports.NativeConstruction.embedding
         ram_source_arena_call exact using lastCost via
           NativeBranches.Source.imports.NativeConstruction.embedding
-        refine ⟨_, rfl, rfl, ?_⟩
-        simp only [choosePrependBodySteps, Bool.false_eq_true, ↓reduceIte,
+        simp only [choosePrependBodySteps, choosePrependReserve, Bool.false_eq_true, ↓reduceIte,
+          true_and,
           callCost_embeds NativeBranches.Source.imports.NativeConstruction.embedding
-            NativeConstruction.Source.prependId] <;> rfl
+            NativeConstruction.Source.prependId]
+        rfl
     | true =>
         change cursor + 9 ≤ heapLimit at space
         have firstSpace : cursor + 3 ≤ heapLimit := by omega
@@ -313,19 +309,17 @@ theorem choosePrepend_execute {w heapLimit cursor : Nat} {placement : Nat → Ra
           NativeBranches.Source.imports.NativeConstruction.embedding
         ram_source_arena_call exact using lastCost via
           NativeBranches.Source.imports.NativeConstruction.embedding
-        refine ⟨_, rfl, rfl, ?_⟩
-        simp only [choosePrependBodySteps, ↓reduceIte,
+        simp only [choosePrependBodySteps, choosePrependReserve, ↓reduceIte, true_and,
           callCost_embeds NativeBranches.Source.imports.NativeConstruction.embedding
             NativeConstruction.Source.prependId,
           callCost_embeds NativeBranches.Source.imports.NativeBranches.Operations.consNat.embedding
-            NativeBranches.Operations.consNat.consId] <;> rfl
-  obtain ⟨finish, value, _, _, execution, ready, cost, rfl, rfl⟩ :=
-    ArenaMeasured.exists_returned_iff.mp measured
-  obtain ⟨outcome, _, heapEq, cursorEq, bodyEq⟩ :=
-    cost.execute (fn := NativeBranches.Source.choosePrependId) launch
-  have represented := outcome.post
-    (NativeBranches.choosePrepend_refines (flag, head, leftValues, rightValues) trivial)
-    ⟨rfl, rfl, leftObserved, rightObserved⟩
+            NativeBranches.Operations.consNat.consId]
+        rfl
+  obtain ⟨outcome, cursorEq, represented, shape, bodyEq, stepsEq⟩ :=
+    measured.execute_eq
+      (P := fun _ _ finalCursor => finalCursor = cursor + choosePrependReserve flag)
+      (NativeBranches.choosePrepend_refines (flag, head, leftValues, rightValues) trivial)
+      launch ⟨rfl, rfl, leftObserved, rightObserved⟩
   have result : (Representation.list .nat).Rel
       (head :: head :: (if flag then head :: leftValues else rightValues))
       outcome.value outcome.heap := by
@@ -333,13 +327,8 @@ theorem choosePrepend_execute {w heapLimit cursor : Nat} {placement : Nat → Ra
       (NativeBranches.choosePrepend flag head leftValues rightValues)
       outcome.value outcome.heap at represented
     simpa only [choosePrepend_eq] using represented
-  have shape : heap.ShapeExtends outcome.heap := by
-    rw [heapEq]
-    exact execution.heap_shapeExtends
-  refine ⟨outcome, result, Representation.list_mono leftObserved shape,
-    Representation.list_mono rightObserved shape, shape, cursorEq, bodyEq, ?_⟩
-  rw [outcome.steps_eq, bodyEq]
-  rfl
+  exact ⟨outcome, result, Representation.list_mono leftObserved shape,
+    Representation.list_mono rightObserved shape, shape, cursorEq, bodyEq, stepsEq⟩
 
 /-- Infer the wrapper's uniform structural bound from its actual body and the
 two callee certificates. No call-table index or field-copy formula is supplied. -/
@@ -406,7 +395,6 @@ theorem replaceHead_execute_le {w heapLimit cursor : Nat} {placement : Nat → R
     all_goals
       ram_source_arena_call exact using prependCost via
         NativeViews.Source.imports.NativeConstruction.embedding
-    all_goals exact ⟨_, rfl⟩
   obtain ⟨outcome, cursorEq, ⟨_, result, rfl⟩, shape, bodyBound, stepsBound⟩ :=
     measured.execute_le (P := fun _ _ finalCursor => finalCursor = cursor + 3)
       (replaceHeadCost.property w heapLimit _)

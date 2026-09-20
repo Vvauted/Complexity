@@ -243,6 +243,13 @@ combines a measured body and its structural bound with an independent
 and adds initialization, outer call and halt once. The mathematical specification
 does not acquire a time-budget premise or select a different execution.
 
+When the measured body supplies an exact count, use
+[`ArenaMeasured.execute_eq`](##Ram.LanguageCompiler.ArenaMeasured.execute_eq)
+instead. It publishes the same independent specification and retained observations,
+with exact body and whole-invocation counts. `prependPair_execute` and
+`choosePrepend_execute` use this interface without unpacking execution witnesses;
+the branch-dependent cost still follows the branch actually taken.
+
 The [typed-join RAM consumer](##Examples.Language.LinkedListViewsCompiled) uses
 this rule for both scalar and compound results. `headOr_execute_le` returns
 `values.head?.getD fallback` and leaves the heap and cursor unchanged.
@@ -325,6 +332,9 @@ ram_source_arena_call exact using firstCost
 
 The constructor wrappers themselves use `exact using originalCost via embedding`;
 they do not hide hand-written argument environments below this short proof.
+For a known returned control, the pass also removes the existential packaging of
+that actual value. Remaining cursor and cost comparisons stay mathematical goals;
+it does not guess a result or unfold arbitrary cost definitions to close them.
 The fold wrapper gets its actual execution and cursor bound from the
 [composable fold entry](##Ram.LanguageCompiler.List.Fold.arenaMeasured_of_ready).
 It supplies mathematical accumulator/list observations, callback correctness

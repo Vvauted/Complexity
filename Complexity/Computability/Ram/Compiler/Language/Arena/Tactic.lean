@@ -79,6 +79,7 @@ private def normalizeLeaves : TacticM Unit := do
         Complexity.Language.State.locals_cons, Complexity.Language.State.heap_cons,
         Complexity.Language.State.locals_tail, Complexity.Language.State.heap_tail,
         Complexity.Language.State.tail_cons,
+        Complexity.Language.Control.returned.injEq, exists_eq_left', exists_eq', Nat.add_zero,
         Ram.LanguageCompiler.EnvFits.cons_iff, Ram.LanguageCompiler.EnvFits.empty,
         Ram.LanguageCompiler.ValueFits.option_node, and_true, true_and] at * <;>
       try assumption))
@@ -98,7 +99,7 @@ private def normalizeLeaves : TacticM Unit := do
             | assumption
             | exact Nat.two_pow_pos _
             | exact Nat.one_lt_two_pow (Nat.ne_of_gt (by assumption))
-            | rfl
+            | with_reducible rfl
             | skip))
         Ram.LanguageCompiler.Tactic.onGoals closeConjunct) fun _ => pure ()
 

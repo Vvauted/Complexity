@@ -159,7 +159,7 @@ theorem reverseSum_measured {w heapLimit cursor : Nat}
   rename_i finalFinish finalValue finalCursor finalSteps foldProperty finalFits
   have cursorBound := foldProperty
   simp only [List.Fold.accumulated_const, Nat.mul_zero, Nat.add_zero] at cursorBound
-  exact ⟨_, rfl, by omega⟩
+  omega
 
 /-- Compose the actual allocating reverse with the scalar fold at its actual
 returned heap and cursor. The second traversal reserves no additional words. -/

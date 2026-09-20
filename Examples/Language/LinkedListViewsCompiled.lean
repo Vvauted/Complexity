@@ -53,8 +53,6 @@ theorem isEmpty_measured {w heapLimit cursor : Nat}
     (heapLimit := heapLimit) (depth := 0) (cursor := cursor) positive
   ram_source_arena_call measured using checked
     via NativeViews.Source.imports.NativeViews.Operations.isEmptyNat.embedding
-  refine ⟨_, rfl, ?_⟩
-  ram_source_arena_step
 
 /-- Ordinary native List emptiness and its constant instruction bound hold for
 the same halted RAM call. The heap and cursor stay unchanged, and input loading
@@ -123,9 +121,6 @@ theorem headOr_execute_le {w heapLimit cursor : Nat} {placement : Nat → Ram.Wo
     ram_source_arena_step
     ram_source_arena_call measured using read via
       NativeViews.Source.imports.NativeViews.Operations.unconsNat.embedding
-    all_goals
-      refine ⟨_, rfl, ?_⟩
-      ram_source_arena_step
   obtain ⟨outcome, ⟨heapEq, cursorEq⟩, ⟨answer, represented, answerEq⟩,
       _shape, bodyBound, stepsBound⟩ :=
     measured.execute_le (P := fun finalHeap _ finalCursor =>
@@ -178,7 +173,6 @@ theorem inspectAndPrepend_measured {w heapLimit cursor : Nat}
       (cursor := readCursor) (by simpa only [readPost.2.1] using space)
   ram_source_arena_call exact using prependCost via
     NativeViews.Source.imports.NativeConstruction.embedding
-  refine ⟨_, rfl, ?_⟩
   omega
 
 /-- Reading and prepending share the actual intermediate heap. Three fresh words
@@ -250,14 +244,11 @@ theorem inspectOrPrepend_execute_le {w heapLimit cursor : Nat}
     cases flag with
     | false =>
         ram_source_arena_step
-        exact ⟨_, rfl, rfl⟩
     | true =>
         have inspected := inspectAndPrepend_measured head values root heap positive headFits
             launch.arena.heapRep observed space
         ram_source_arena_step
         ram_source_arena_call measured using inspected
-        refine ⟨_, rfl, ?_⟩
-        assumption
   obtain ⟨outcome, cursorEq, ⟨_, result, rfl⟩, shape, bodyBound, stepsBound⟩ :=
     measured.execute_le (P := fun _ _ finalCursor =>
       finalCursor = cursor + (if flag then 3 else 0))

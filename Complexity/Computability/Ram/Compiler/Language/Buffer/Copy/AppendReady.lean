@@ -121,7 +121,8 @@ theorem append_arenaMeasured {w heapLimit cursor : Nat} (positive : 0 < w)
       have secondCursorEq := secondObserved.1
       subst secondCursor
       ram_source_arena_step
-      exact ⟨_, rfl, by dsimp only [totalSize]; omega⟩
+      dsimp only [totalSize]
+      omega
   exact measured.with_spec (append_total leftValues rightValues) ⟨observedLeft, observedRight⟩
 
 end Ram.LanguageCompiler.BufferCopy

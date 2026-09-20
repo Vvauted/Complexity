@@ -99,6 +99,10 @@ bound and an independent `FunctionTotal` specification in one halted outcome,
 transporting heap/value/cursor observations and adding invocation overhead once.
 Mathematical correctness does not acquire a cost premise. Actual callee readiness,
 word ranges, capacity and certificate selection remain supplied.
+`ArenaMeasured.execute_eq` instead retains a measured exact count, publishing the
+same specification and observations with exact body and invocation accounting.
+The existing `prependPair` and selected-branch `choosePrepend` consumers use it
+without unpacking execution witnesses or repeating final-heap transport.
 
 The [indexed arena call rules](../../Complexity/Computability/Ram/Compiler/Language/Arena/CostBound/Call.lean)
 select an existing callee bound at a mathematical input index, checking its actual
@@ -274,6 +278,9 @@ a returning `ArenaMeasured` directly; the indexed contract form consumes
 independent source totality, resource and cost contracts. All accept
 `via embedding` for imports. The actual arguments and continuation come from
 the statement, and imported function identity comes from its table map.
+For a known returned control, Lean's equality elimination removes the matching
+existential result packaging. Unresolved mathematical cursor/cost comparisons
+remain explicit; automatic reflexivity does not unfold arbitrary cost formulas.
 
 The measured form can pause before the continuation with
 `as finish value cursor steps observed fits`, before an optional `via embedding`.
