@@ -521,6 +521,7 @@ import Complexity.Language.Syntax.Represented.Declarations
 import Complexity.Language.Syntax.Represented.Elab
 import Complexity.Language.Syntax.Represented.Expression
 import Complexity.Language.Syntax.Represented.Imports
+import Complexity.Language.Syntax.Represented.ModelEquation
 import Complexity.Language.Syntax.Represented.OperationDeclarations
 import Complexity.Language.Syntax.Represented.Preparation
 import Complexity.Language.Syntax.Represented.Statements

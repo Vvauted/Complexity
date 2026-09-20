@@ -163,12 +163,16 @@ The prepared completion-range mathematical `forIn` carries
 the cursor is erased from the accumulator and immutable captures are closed over.
 `Stmt.forIn_range_step_completion_eq` reuses `forIn_range_hom` twice to connect
 this view to the full state, requiring fixed-field preservation on both continuing
-and completing rounds. Its step still
-computes the full mathematical body result and then projects mutable coordinates;
-projections through unknown `Option.elim`/`if` expressions are not normalized
-automatically. A smaller accumulator therefore need not be definitionally equal
-to the simplest handwritten callback. The same source loop, actual heap and body
-trace remain the basis of correspondence and resource proofs.
+and completing rounds. Its step still projects the full mathematical body result.
+For functions whose trace contains a completion range, `Family.f_model_eq` exposes
+a locally reduced body of `Family.f_model`, or `Family.f` in `(native)` mode.
+Use the equation explicitly; it is not registered as a global simp rule.
+It moves `Prod.map` through `Option.elim`/`if` using `Option.elim_comp` and
+`apply_ite`, and reduces `Id` pure/bind and concrete tuples. This removes the
+per-field callback connection proof in the checked List consumer while retaining
+its mathematical induction; nested branches are also checked. It does not
+promise a simplest normal form for arbitrary callbacks. The same source loop,
+actual heap and body trace remain the basis of correspondence and resource proofs.
 
 General nested loops and their mixed-exit combinations, function-level range
 returns, calls to the enclosing recursive function from a range and full models of

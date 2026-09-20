@@ -284,12 +284,17 @@ body result on both continuing and completing rounds. Immutable observations
 still require actual heap preservation; a fixed handle alone is not enough.
 The reduced-state list proof and nested completion consumer have been checked
 on 0v0, retaining their mathematical statements and generated correspondence.
-The step still evaluates the full
-mathematical body result before projecting its mutable coordinates. There is no
-normalizer that pushes these projections through unknown `Option.elim`/`if`
-expressions, so reduced state does not yet imply the simplest callback by
-definitional equality. The actual source/raw loop, heap and body trace are unchanged;
-this mathematical simplification supplies no new RAM bound.
+The step still projects the full mathematical body result. Functions whose trace
+contains a completion range receive `Family.f_model_eq`, exposing a locally
+reduced body of `Family.f_model`, or `Family.f` in `(native)` mode. The equation
+is used explicitly, not registered as a global simp rule. Its reductions are
+limited to `Prod.map` through `Option.elim`/`if`, using `Option.elim_comp` and
+`apply_ite`, plus `Id` pure/bind and concrete tuples. The checked List proof now
+rewrites this equation before using its original mathematical induction,
+without a per-field callback connection proof; nested `if`/`Option` consumers
+are also checked. Arbitrary callbacks are not promised a simplest normal form.
+The actual source/raw loop, heap and body trace are unchanged; this mathematical
+simplification supplies no new RAM bound.
 General nested loops and their mixed-exit combinations, function-level range
 returns, calls to the enclosing recursive function from a range and full models of
 arbitrary heap mutation remain outside this automatic mathematical-model path.

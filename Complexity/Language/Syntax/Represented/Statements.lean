@@ -28,14 +28,14 @@ private def completionRangeModel (captured : Array Binding)
   let mutableType ← stateType (captured.filter (·.mutable)).toList
   let mutableName := mkIdent (← mkFreshUserName `mutableState)
   let stepIndex := mkIdent (← mkFreshUserName `index)
-  let iteration := mkIdent (← mkFreshUserName `rangeIteration)
+  let nextState := mkIdent (← mkFreshUserName `nextState)
   let packedMutable ← packMutableState captured initialModel.native ⟨mutableName.raw⟩
   let embedding ← `(fun ($mutableName:ident : $mutableType) => $packedMutable)
-  let nextMutable ← mutableState captured (← `($iteration:ident.2))
+  let nextMutable ← mutableState captured ⟨nextState.raw⟩
   let mutableStep ← `(fun ($stepIndex:ident : Nat) ($mutableName:ident : $mutableType) =>
-    let $iteration:ident : Option $returnedType × $stateSyntax :=
-      $bodyNative $stepIndex:ident $packedMutable
-    ($iteration:ident.1, $nextMutable))
+    Prod.map (id : Option $returnedType → Option $returnedType)
+      (fun ($nextState:ident : $stateSyntax) => $nextMutable)
+      ($bodyNative $stepIndex:ident $packedMutable))
   let initialMutable ← mutableState captured initialModel.native
   let nativeRange ← `(({
     start := $(startModel.native), stop := $(stopModel.native)

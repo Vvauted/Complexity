@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Language.Syntax.Represented.Preparation
 import Complexity.Language.Syntax.Represented.OperationDeclarations
 import Complexity.Language.Syntax.Represented.Declarations
+import Complexity.Language.Syntax.Represented.ModelEquation
 import Complexity.Language.Syntax.Represented.Correspondence.While
 import Complexity.Language.Syntax.Represented.Correspondence.While.Completion
 
@@ -160,6 +161,12 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
     let some model := fn.model?
       | throwError "a source-only function entered mathematical declaration emission"
     elabCommand (← liftTermElabM (nativeDeclaration names fn model))
+    if let some equation ← liftTermElabM (modelEquationDeclaration? names fn model ranges) then
+      elabCommand equation
+      let equationName ← resolveGlobalConstNoOverload
+        (fieldName names.publicFamily fn.name "_model_eq")
+      addDocStringCore equationName
+        "A mathematical model equation simplifying completion-range state maps through pure branches."
     if fn.hasExactEquation then
       elabCommand (← liftTermElabM (equationDeclaration names fn model))
       if let some declaration ← liftTermElabM (totalDeclaration? names fn) then

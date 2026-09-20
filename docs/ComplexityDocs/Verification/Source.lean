@@ -80,10 +80,14 @@ the payload belongs to the local block, not necessarily the function's result
 type. Only continuing rounds advance, and completion uses the real stopped guard.
 The prepared mathematical view carries only `Option Result × Mutable`, erasing
 the cursor from its accumulator and closing over immutable captures through a
-state-reconstruction proof. Its step
-still projects the full body model's result; projections through unknown
-`Option.elim`/`if` expressions are not normalized automatically. Smaller state
-therefore need not give the simplest handwritten callback by definitional equality.
+state-reconstruction proof. Functions whose trace contains a completion range
+receive `Family.f_model_eq`: explicitly rewrite this equation to expose a locally
+reduced body of `Family.f_model`, or `Family.f` in `(native)` mode. It is not a
+global simp rule. The reductions cover `Prod.map` through `Option.elim`/`if`,
+`Id` pure/bind and concrete tuples, not arbitrary callback normalization.
+The checked List proof uses the equation before ordinary mathematical induction,
+without a per-field callback connection proof. Algorithmic equalities still need
+their mathematical proofs.
 The actual source loop and heap/body trace are unchanged: the summary introduces
 no second source loop or runtime allocation. General nested loops and their mixed
 exits, function-level range returns, calls to the enclosing recursive function

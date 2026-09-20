@@ -230,6 +230,9 @@ environment encodings or repeating source facts in a second resource proof.
    `TotalWP.of_blockSpec` through shared tactics, with no private adapter.
    Its proof leaves still contain mathematical mutable-coordinate patterns;
    general potential and allocating-loop setup are separate follow-up work.
+   The two length-indexed List fold cost certificates still unpack an execution
+   just to strengthen a precondition and rewrite its budget. Factor this
+   consequence rule into `FunctionArenaCostBound` and reuse the existing certificates.
    Reuse source totality and actual heaps without another per-program termination
    proof. A shorter public theorem must not hide an equally long private
    connection proof.
@@ -240,14 +243,15 @@ environment encodings or repeating source facts in a second resource proof.
    requiring reconstruction of the full state after every round, including early
    completion. The reduced-state list proof and nested completion consumer have
    been checked on 0v0; source execution and its heap/body trace are unchanged.
-   Its step still projects the full body model's
-   result: projections through unknown `Option.elim`/`if` expressions are not yet
-   normalized, so a smaller state does not guarantee definitional equality with
-   the simplest handwritten callback. Next remove this single-step proof burden
-   or address a demonstrated construct gap, guided by real consumer proofs.
-   First try a checked high-level step equation using `Option.elim_comp` and
-   `apply_ite` locally, before introducing a separate syntax normalizer. Project
-   the whole small state together, avoiding repeated branch expansion per field.
+   Functions whose trace contains a completion range now receive `Family.f_model_eq`
+   for explicit rewriting of their mathematical body. Local reductions move
+   `Prod.map` through `Option.elim`/`if` using `Option.elim_comp` and `apply_ite`,
+   and reduce `Id` pure/bind and concrete tuples; no global simp rules are added.
+   The checked List proof uses this equation and its original mathematical
+   induction without per-field callback transport; nested branches are also
+   checked. This does not promise a simplest normal form for arbitrary callbacks.
+   Next address a concrete operation, control-flow or resource-connection gap
+   exposed by a consumer proof, retaining these checked equations and statements.
    Dependent bounds, recursion descent and algorithmic potentials remain
    mathematical obligations, not guessed annotations; no new RAM bound follows.
 3. Extend the represented native frontend from its checked scalar, List and
