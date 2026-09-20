@@ -58,7 +58,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
   let mut preserved := initial.shape
   let mut preservedContents := initial.contents
   let branchRules := initial.branchRules
-  let actualBranches := actualBranches || finish?.isSome || trace.any Trace.containsRange
+  let actualBranches := actualBranches || finish?.isSome || trace.any Trace.requiresContinuation
   let mut tactics := #[← normalizeAction]
   unless branchRules.isEmpty do
     tactics := tactics.push (← `(tactic|
@@ -111,6 +111,11 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
         shape := preserved, contents := preservedContents, branchRules }
       let rest := trace.extract (position + 1) trace.size
       match instruction with
+      | .valueBlock body returned result =>
+          let bodyProof ← relationTrace body returned currentHeap relations known
+            preserveArrays ranges (some (finishChoice returned result #[] rest))
+            (some context) true
+          return tactics ++ bodyProof
       | .conditional condition yes no yesResult noResult result =>
           let observation ← observationAt condition currentHeap relations
           let condition ← condition.requireModel
@@ -273,6 +278,8 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           tactics := tactics ++ setup
           rangeFixedCount := some fixedCount
           pure (result, proof)
+      | .valueBlock .. =>
+          throwError "a local value block must be handled by its actual continuation"
       | .conditional condition yes no yesResult noResult result => do
           let observed ← observationAt condition currentHeap relations
           let condition ← condition.requireModel

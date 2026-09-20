@@ -175,6 +175,8 @@ partial def exactTrace (trace : Array Trace) (returnedValue : Value)
                       $someProof:tactic*))
           pure (result, (⟨summary.raw⟩ : TSyntax `term))
       | .range .. => throwError "range execution has no generated unchanged-heap equation"
+      | .valueBlock .. =>
+          throwError "local value blocks require actual continuation correspondence"
     let executed := mkIdent (← mkFreshUserName `callExecuted)
     let scalarFacts ← scalarEqualities.mapM fun equality =>
       `(Lean.Parser.Tactic.simpLemma| ← $equality:term)

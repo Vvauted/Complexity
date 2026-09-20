@@ -75,6 +75,7 @@ private partial def hasCompletionRange (ranges : Array RangeRegistration)
   match call with
   | .conditional _ yes no .. | .optionMatch _ _ yes no .. =>
       hasCompletionRange ranges yes || hasCompletionRange ranges no
+  | .valueBlock body _ _ => hasCompletionRange ranges body
   | .range tag .. =>
       match ranges.find? (·.tag == tag) with
       | some { model := .completion .., .. } => true

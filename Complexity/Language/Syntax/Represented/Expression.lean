@@ -281,6 +281,8 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
             model := ← `(($(left.model), $(right.model)))
             rawModel := ← `(($(left.rawModel), $(right.rawModel)))
             observation := .pair type.isIdentity left.observation right.observation } }
+  | `(($first, $second, $rest:term,*)) =>
+      value scope (← fieldsTerm (first :: second :: rest.getElems.toList)) expected
   | `($left + $right) => binary left right (← `(Nat)) (← `(Nat)) fun a b => `($a + $b)
   | `($left * $right) => binary left right (← `(Nat)) (← `(Nat)) fun a b => `($a * $b)
   | `($left - $right) => binary left right (← `(Nat)) (← `(Nat)) fun a b => `($a - $b)

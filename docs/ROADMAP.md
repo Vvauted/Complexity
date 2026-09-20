@@ -125,7 +125,12 @@ argument feeds correspondence; `Part.get` of the desired answer is not the
 implementation. Fully modeled mixed return/continue `if`/`Option` branches,
 including nested branches, compose inside local value blocks and their finite
 ranges. A completion summary retains the selected payload and state; following
-statements run only on continuation. General nested-loop combinations remain open.
+statements inside the block run only on continuation. Typed `do` value blocks in
+the supported finite-range/Option fragment also carry final outer mutable bindings
+across their join. Their generated correspondence is heap-indexed, not an
+unchanged-heap exact equation; standalone typed `← if`/`← match` bindings with
+outer updates do not yet retain this mathematical model. General nested-loop
+combinations remain open.
 Mutual-recursion proof ergonomics, broader combinations and
 equation normalization remain work. See the
 [function-proof milestone](design/Verification.md#function-proof-milestone).

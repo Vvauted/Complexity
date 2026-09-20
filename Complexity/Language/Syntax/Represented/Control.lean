@@ -237,6 +237,29 @@ structure CompletionSummary where
   calls : Array Trace
   returned : Value
 
+/-- Observe a value-block return together with the latest enclosing mutable
+coordinates. This is a proof-side product; the source still returns only its
+written payload. No optional result is unwrapped or supplied a default. -/
+def CompletionContext.returnedValue? (context : CompletionContext)
+    (scope : List Binding) (result : Value) : TermElabM (Option Value) := do
+  let some resultModel := result.model? | return none
+  let mut carried := #[]
+  for binding in context.carried do
+    let some latest := scope.find? (fun current => current.slot == binding.slot)
+      | return none
+    unless latest.model?.isSome do return none
+    carried := carried.push { latest with name := latest.nativeName }
+  let state ← value carried.toList (← stateValue carried) (some context.stateType)
+  let some stateModel := state.model? | return none
+  return some {
+    type := .prod result.type context.stateType
+    raw := ← `(($(result.raw), $(state.raw)))
+    model? := some {
+      native := ← `(($(resultModel.native), $(stateModel.native)))
+      model := ← `(($(resultModel.model), $(stateModel.model)))
+      rawModel := ← `(($(resultModel.rawModel), $(stateModel.rawModel)))
+      observation := .pair false resultModel.observation stateModel.observation } }
+
 /-- Capture continuing or locally returning completion using the existing
 field, option and product representations. Missing observations leave the
 source block available without claiming a mathematical summary. -/

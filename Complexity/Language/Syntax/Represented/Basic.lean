@@ -170,6 +170,9 @@ inductive Trace where
       (noneResult someResult : Value) (result : Binding)
   /-- A proof of the original named range, not a new source call. -/
   | range (tag : Name) (arguments : Array Value) (result : Binding) (preserving : Bool)
+  /-- Observe a local value block's payload and final mathematical state before
+  its enclosing continuation. The pair is not a new source return value. -/
+  | valueBlock (body : Array Trace) (returned : Value) (result : Binding)
 
 /-- A range either folds its continuing state or retains its optional local
 result together with that state. Both are proof views of the same source loop. -/
@@ -234,7 +237,7 @@ partial def Trace.hasExactEquation : Trace → Bool
       yes.all Trace.hasExactEquation && no.all Trace.hasExactEquation
   | .optionMatch _ _ absent present _ _ result => PureImport.hasEncoding result.type &&
       absent.all Trace.hasExactEquation && present.all Trace.hasExactEquation
-  | .range .. => false
+  | .range .. | .valueBlock .. => false
 
 def Function.hasExactEquation (fn : Function) : Bool :=
   match fn.model? with
@@ -248,12 +251,24 @@ partial def Trace.preservesArrays : Trace → Bool
   | .optionMatch _ _ absent present _ _ _ =>
       absent.all Trace.preservesArrays && present.all Trace.preservesArrays
   | .range _ _ _ preserving => preserving
+  | .valueBlock body _ _ => body.all Trace.preservesArrays
 
 partial def Trace.containsRange : Trace → Bool
   | .range .. => true
   | .conditional _ yes no _ _ _ => yes.any Trace.containsRange || no.any Trace.containsRange
   | .optionMatch _ _ absent present _ _ _ =>
       absent.any Trace.containsRange || present.any Trace.containsRange
+  | .valueBlock body _ _ => body.any Trace.containsRange
+  | .call _ => false
+
+/-- These proof boundaries retain actual control and locals rather than
+reconstructing a value-returning source action from the mathematical trace. -/
+partial def Trace.requiresContinuation : Trace → Bool
+  | .range .. | .valueBlock .. => true
+  | .conditional _ yes no _ _ _ =>
+      yes.any Trace.requiresContinuation || no.any Trace.requiresContinuation
+  | .optionMatch _ _ absent present _ _ _ =>
+      absent.any Trace.requiresContinuation || present.any Trace.requiresContinuation
   | .call _ => false
 
 def Function.preservesArrays (fn : Function) : Bool :=

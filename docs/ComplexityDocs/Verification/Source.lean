@@ -71,6 +71,13 @@ by proved heap preservation. The
 folding the selected List, with the same ordinary sum equation. Local-result
 range iterations use a separate summary of continuation and completion.
 
+Typed `let x : T ← do ...` blocks in the supported finite-range/Option fragment
+can also update outer mutable bindings that the following code reads. Their
+mathematical observer returns the payload with those bindings' final state;
+generated correspondence relates both at the actual final heap, not through an
+unchanged-heap exact equation. Raw return and `localJoin` are unchanged.
+Standalone typed `← if`/`← match` bindings with outer updates still omit this model.
+
 Normal finite ranges inside local value blocks retain their mathematical fold.
 Fully modeled `if`/`Option` rounds that may exit that block, including nested
 mixed-return branches, have an `Option payload × state` summary and Lean `forIn`

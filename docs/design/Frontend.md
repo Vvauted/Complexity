@@ -59,6 +59,7 @@ the backend's word representation does not change source Nat arithmetic to modul
 Constructors, `.1`/`.2` projections and option matching use the same left-to-right
 normalization as arithmetic. The selected `some` branch binds its payload once;
 leaving that binding retains changes to outer locals and the actual heap.
+Ordinary tuple syntax `(a, b, c)` normalizes to Lean's right-associated `(a, (b, c))`.
 `none` requires an expected Option type or an explicit type annotation. Pure
 mode permits recursively heap-handle-free products/options; hiding a borrowed
 buffer or node reference inside either constructor does not make a function pure.
@@ -114,6 +115,14 @@ Statement `if condition then ...` may omit `else`: the false branch skips the
 body and continues with the current locals and heap. This does not add general
 value-level `if` expressions or arbitrary named calls inside expressions;
 the existing explicit call forms remain in use.
+
+Typed `let x : T ← do ...` blocks can retain a mathematical model while updating
+outer mutable bindings in the supported finite-range/Option local-return fragment.
+The model carries the returned payload and final mutable state into the outer
+continuation, related at the actual final heap; raw return and `localJoin` are
+unchanged. This is not a generated unchanged-heap exact equation. Standalone
+typed `← if`/`← match` bindings that update outer state still omit their model.
+The boundary does not supply models for arbitrary mutation or general `while`.
 
 Effectful `for i in [:stop]` and `for i in [start:stop]` use half-open ranges
 and unit steps, with an immutable iteration index. Endpoints retain their

@@ -99,6 +99,7 @@ private partial def modelDependencies (ranges : Array RangeRegistration)
         modelDependencies ranges yes ++ modelDependencies ranges no
     | .optionMatch _ _ absent present _ _ _ =>
         modelDependencies ranges absent ++ modelDependencies ranges present
+    | .valueBlock body _ _ => modelDependencies ranges body
     | .range tag _ _ _ =>
         match ranges.find? (fun range => range.tag == tag) with
         | some range => modelDependencies ranges range.body
@@ -145,6 +146,11 @@ private partial def resolveModelTrace (names : DeclarationNames) (current : Name
         let some present := present | return (none, ranges)
         resolved := resolved.push
           (.optionMatch discriminant payload absent present noneResult someResult result)
+    | .valueBlock body returned result =>
+        let (body, updated) ← resolveModelTrace names current completed ranges body
+        ranges := updated
+        let some body := body | return (none, ranges)
+        resolved := resolved.push (.valueBlock body returned result)
     | .range tag arguments result _ =>
         let some range := ranges.find? (fun range => range.tag == tag)
           | throwError "a mathematical range dependency has no prepared source site"
@@ -163,6 +169,7 @@ private partial def modelRangeTags (ranges : Array RangeRegistration)
     | .conditional _ yes no _ _ _ => modelRangeTags ranges yes ++ modelRangeTags ranges no
     | .optionMatch _ _ absent present _ _ _ =>
         modelRangeTags ranges absent ++ modelRangeTags ranges present
+    | .valueBlock body _ _ => modelRangeTags ranges body
     | .range tag _ _ _ =>
         tag :: match ranges.find? (fun range => range.tag == tag) with
           | some range => modelRangeTags ranges range.body

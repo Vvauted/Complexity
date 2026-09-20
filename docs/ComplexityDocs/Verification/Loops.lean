@@ -152,11 +152,15 @@ the active pending slot may change, while ancestor
 slots and fixed captures remain preserved. The payload type is the local block's
 result type, independent of the enclosing function's return type. Continuing
 rounds advance the cursor; completed rounds exit through the real masked guard
-without running another body or inventing a decrease. The surrounding continuation
-runs only when no result was saved. This adds no second source loop or allocation
-for proof-side state; actual body allocations and control instructions remain
+without running another body or inventing a decrease. The remaining statements
+inside the local block run only when no result was saved. This adds no second
+source loop or allocation for proof-side state; actual body allocations and control instructions remain
 part of the compiled program. Branch summaries carry only mutable lexical slots,
 including shadowed bindings; immutable observations use proved heap preservation.
+At a typed `do` boundary, the supported finite-range/Option model can also carry
+updated outer mutable bindings alongside its terminal payload. The code after
+the block consumes both through their actual heap-indexed relation; this is not
+a generated unchanged-heap exact equation or a new general `while` model.
 
 The prepared completion-range mathematical `forIn` carries
 `Option Result × Mutable`: the iteration index remains a callback argument, but

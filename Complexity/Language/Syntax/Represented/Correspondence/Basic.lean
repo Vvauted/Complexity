@@ -226,6 +226,8 @@ partial def traceAction (trace : List Trace) (returned : Value)
           $next:term)
     | .range _ _ _ _ :: _ =>
         throwError "actual ranges are proved in their enclosing Control/Locals continuation"
+    | .valueBlock _ _ _ :: _ =>
+        throwError "local value blocks are proved through their actual enclosing continuation"
   let type ← actualTypeTerm returned.type.coreTy
   `(($action : ExceptT Complexity.Language.Fault
     (StateT Complexity.Language.Heap Part) $type))
@@ -233,7 +235,8 @@ partial def traceAction (trace : List Trace) (returned : Value)
 The proof-only trace neither inserts a call nor changes its charged body. -/
 def compositionTactics (header : CorrespondenceHeader) (model : FunctionModel) :
     TermElabM (Array (TSyntax `tactic)) := do
-  if !model.calls.any Trace.containsRange && model.calls.any (fun | .call _ => false | _ => true) then
+  if !model.calls.any Trace.requiresContinuation &&
+      model.calls.any (fun | .call _ => false | _ => true) then
     let action ← traceAction model.calls.toList model.returned
     let canonical := mkIdent (← mkFreshUserName `sourceComposition)
     return #[← `(tactic|

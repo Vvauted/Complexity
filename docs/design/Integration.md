@@ -75,7 +75,8 @@ The current integration work has these concrete obligations:
   checking the parent scope. The represented conditional/Option value-block
   preparer now uses this boundary instead of recursively replacing returns by
   assignments. Actual return-control checking is separate from optional models;
-  assignments invalidate the affected enclosing mathematical locals.
+  assignments without a modeled state-carrying boundary invalidate the affected
+  enclosing mathematical locals.
   The existing record/List branch proofs check, and the List's exact RAM count
   includes the result assignment and final payload match. Existing ordinary
   traversal code and bounds are unchanged. Plain `let x : T ← do ...` blocks now reuse
@@ -397,6 +398,17 @@ combinations remain open. Ordinary
 `let x : T ← do ...` blocks use the same boundary. The existing structured scalar
 caller uses this form and retains its mathematical and actual RAM proofs;
 private Option control is simplified by the shared backend proof rules.
+For typed `do` blocks in the supported finite-range/Option fragment, generated
+models and action correspondence also retain updated outer mutable bindings.
+The `returnState` mathematical observer records a terminal return as its payload
+and final carried state; existing lexical slots and representations track both.
+The proof-only `Trace.valueBlock` boundary composes the body and outer continuation
+once. The raw body still returns its declared payload through the same `localJoin`;
+no partial Option extraction, default value or `Part.get` supplies a result. This path
+uses a heap-indexed relation, not a generated unchanged-heap exact equation.
+Standalone typed `← if`/`← match` bindings with outer updates still omit their
+mathematical model. This does not supply general `while` models, arbitrary
+mutation or undeclared frames, and gives no new RAM cost bound.
 The existing nested-scratch worker also uses a plain value block. Its generated
 completion contracts expose source-visible locals and distinguish fallthrough
 from a local result. Actual execution frames reconstruct the compiler slots;
