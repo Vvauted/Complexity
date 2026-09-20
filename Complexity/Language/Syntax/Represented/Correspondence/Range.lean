@@ -61,25 +61,29 @@ def RangeRegistration.site (range : RangeRegistration) : TermElabM ActualRangeSi
 
 /-- Align source declarations by lexical occurrence, not by a name lookup.
 Anonymous Core coordinates remain in the full source scope. -/
-def RangeRegistration.slots (range : RangeRegistration) : TermElabM (Array Nat) := do
-  let site ← range.site
+def sourceBindingSlots (bindings : Array Binding)
+    (entryScope scope : Array SourceLocal) : TermElabM (Array Nat) := do
   let mut used : NameSet := {}
   let mut positions := #[]
-  for binding in range.captured do
-    let some entry := site.entryScope.find? fun entry =>
+  for binding in bindings do
+    let some entry := entryScope.find? fun entry =>
         entry.name == some binding.name.getId && !used.contains entry.proofName.getId
-      | throwError "the prepared range contains an unmatched lexical slot"
+      | throwError "the prepared block contains an unmatched lexical slot"
     unless entry.type == binding.type.coreTy do
-      throwError "the source range's lexical entry does not match its prepared slots"
-    let some position := site.scope.findIdx? fun actual =>
+      throwError "the source block's lexical entry does not match its prepared slots"
+    let some position := scope.findIdx? fun actual =>
         actual.proofName.getId == entry.proofName.getId
-      | throwError "the source range dropped an entry coordinate"
+      | throwError "the source block dropped an entry coordinate"
     positions := positions.push position
     used := used.insert entry.proofName.getId
   return positions
 
+def RangeRegistration.slots (range : RangeRegistration) : TermElabM (Array Nat) := do
+  let site ← range.site
+  sourceBindingSlots range.captured site.entryScope site.scope
+
 /-- Source locals use Core's product spine, including its final Unit. -/
-private def sourceFields (count : Nat) (locals : TSyntax `term) :
+def sourceFields (count : Nat) (locals : TSyntax `term) :
     TermElabM (Array (TSyntax `term)) := do
   let mut remaining := locals
   let mut fields := #[]
@@ -88,7 +92,7 @@ private def sourceFields (count : Nat) (locals : TSyntax `term) :
     remaining ← `(($remaining).2)
   return fields
 
-private def sourceTuple (fields : Array (TSyntax `term)) : TermElabM (TSyntax `term) := do
+def sourceTuple (fields : Array (TSyntax `term)) : TermElabM (TSyntax `term) := do
   let mut result ← `(())
   for field in fields.reverse do result ← `(($field, $result))
   return result

@@ -30,7 +30,7 @@ def programDeclarations (family : TSyntax `ident)
     (sources : Array (TSyntax `sourceFunction)) (imports : Array ImportedProgram)
     (pureMode : Bool) (nativeViews : Array NativeView := #[]) :
     MacroM (Syntax × Array FunctionInfo × Array LoopCoordinateRegistration ×
-      Array ActualRangeSite) := do
+      ActualBlockSites) := do
   let mut functions : Array Function := #[]
   for source in sources do
     let fn ← parseFunction source
@@ -233,6 +233,7 @@ def programDeclarations (family : TSyntax `ident)
           declarations := declarations ++ (← nativeRefinementDeclarations family programName fn view)
   let mut coordinates : Array LoopCoordinateRegistration := #[]
   let mut ranges : Array ActualRangeSite := #[]
+  let mut whiles : Array ActualWhileSite := #[]
   for site in loopSites do
     if let some request := site.rangeRequest then
       let some range := site.finiteRange
@@ -253,6 +254,13 @@ def programDeclarations (family : TSyntax `ident)
         loopProofBody := ← loopProofBody site
         bodyProofBody := range.body, bodyFallsThrough := range.fallsThrough
         localReturn := range.localReturn }
+    if let some tag := site.whileRequest then
+      whiles := whiles.push {
+        tag, name := site.name.getId
+        scope := site.scope.toArray.map fun binding => {
+          name := binding.name, proofName := binding.proofName,
+          type := binding.type, isMutable := binding.isMutable }
+        result := site.result, localReturn := site.localReturn.isSome }
     if site.guard.isSome then
       let mut rules := #["view_apply", "view_symm_apply", "captureView_apply",
         "captureView_symm_apply", "regroup_apply", "regroup_symm_apply"].map
@@ -284,7 +292,8 @@ def programDeclarations (family : TSyntax `ident)
     params := fn.params.map (fun param => (param.name.getId, param.type))
     result := fn.result
     pure := pureMode
-    nativeHeader := fn.nativeView.map (·.header) } : FunctionInfo)), coordinates, ranges)
+    nativeHeader := fn.nativeView.map (·.header) } : FunctionInfo)), coordinates,
+    { ranges, whiles })
 
 end Core
 

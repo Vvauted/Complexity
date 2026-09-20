@@ -28,7 +28,9 @@ work and every remaining obligation. The outstanding work is:
   and recursive calls from ranges using the same actual named source loops.
 - Generate mathematical-local guard/body interfaces from field representations;
   authors supply invariants, descent and genuine effect/range facts, not private
-  slots, raw-environment transport or `Part` plumbing.
+  slots, raw-environment transport or `Part` plumbing. Normal array-preserving
+  rounds now have generated named mathematical locals and correspondence, used
+  by the array-record while consumer. General effect/completion interfaces remain open.
 - Compose function equations and state contracts through the same heap-indexed
   representation, including actual aliases and intermediate heaps.
 - Migrate the remaining existing consumers, retaining their original mathematical
@@ -131,7 +133,10 @@ environment encodings or repeating source facts in a second resource proof.
    constructor, fold and typed-join consumers. Uniform wrapper budgets follow
    from `StmtArenaCostBound` and supplied callee certificates; the two straight-line
    constructor wrappers retain their exact counts. `ArenaMeasured.execute_le`
-   shares publication with independent mathematical specifications. Indexed calls
+   shares publication with independent mathematical specifications; `execute_eq`
+   retains exact body and invocation counts in the constructor-pair and selected-branch
+   consumers. Known returned values no longer need existential witness packaging
+   in the structural pass. Indexed calls
    now compose supplied mathematical-input bounds, and the shared ghost-indexed
    arena loop rule is used by the actual-only fold cost proof. `push` and
    `reverseAppend` use inferred wrapper costs, preserving their published bounds.

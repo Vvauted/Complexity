@@ -51,7 +51,7 @@ language interface.
 | `Expression`, `Calls`, `Control`, `Statements` | Prepare the actual source and an optional mathematical proof view |
 | `Preparation` | Complete function preparation and order optional models by call dependencies |
 | `OperationDeclarations` | Emit the real container-operation declarations used by the frontend |
-| `Correspondence/Basic`, `Range`, `Relation`, `Exact` | Proof composition, actual range relations, heap-indexed correspondence and justified exact equations |
+| `Correspondence/Basic`, `Range`, `Relation`, `Exact`, `While` | Proof composition, actual range relations, heap-indexed correspondence, justified exact equations and mathematical while rounds |
 | `Declarations`, `Elab` | Generate proof declarations and orchestrate source emission, proofs and registration |
 
 Preparation and correspondence share explicit data in

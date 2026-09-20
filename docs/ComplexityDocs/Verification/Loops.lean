@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity
 import Examples.Language.Factorial
 import Examples.Language.FactorialCompiled
+import Examples.Language.LinkedList
 import Examples.Language.ScalarCompiled
 import Examples.Language.Traversal
 import Examples.Language.TraversalCompiled
@@ -52,6 +53,35 @@ frames; preserving a buffer descriptor does not preserve its contents.
 The older `variant_spec` and `wellFounded_spec` rules remain available for direct
 native round proofs, as used by the scoped-allocation consumer. None of these
 source rules asks for fuel or an instruction budget.
+
+### Mathematical locals for represented rounds
+
+When a normal loop round has checked mathematical operation contracts, the
+frontend also generates `Model`, `modelGuard`, `modelStep`, `model_contract`
+and `model_spec` under the same named source loop. `mkModel` accepts source-variable
+parameter names; `model_<name>` reads a mathematical local. The representation
+of that local at the actual heap is available through `<name>_representation`
+and `model_rel_<name>`. Complete source coordinates remain in the connection
+proof, not in the author's invariant.
+
+The [array-record loop](##Examples.Language.LinkedList) uses, for example,
+
+```lean
+let invariant : Model → Prop := fun model =>
+  (model_state model).copies + model_remaining model = initialValue.copies + count
+```
+
+The author proves preservation under `modelStep`, descent when `modelGuard` is
+true, and the desired result when it is false. `model_spec` then supplies the
+actual loop contract to `mvcgen`. The generated round proofs compose existing
+operation correspondence and preservation contracts at the actual intermediate
+heaps; no `Part.bind` or raw environment transport is supplied by this consumer.
+
+This interface describes normal rounds with justified preservation of captured
+array observations. It needs no pure model of the complete loop, adds no source
+helper calls and does not infer a RAM bound. General aliased in-place mutation,
+effectful guard assignments and early/local-return rounds still use their source
+contracts; they are not assigned an unproved pure transition.
 
 ## Finite ranges and resource rules
 

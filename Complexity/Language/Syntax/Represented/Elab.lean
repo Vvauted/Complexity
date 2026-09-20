@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Language.Syntax.Represented.Preparation
 import Complexity.Language.Syntax.Represented.OperationDeclarations
 import Complexity.Language.Syntax.Represented.Declarations
+import Complexity.Language.Syntax.Represented.Correspondence.While
 
 /-!
 # Elaboration of represented source programs
@@ -124,10 +125,10 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
   let operationFamilies := prepared.folds.map (·.operation.family) ++
     prepared.constructors.map (·.operation.family) ++ prepared.deconstructors.map (·.operation.family) ++
     prepared.emptinessTests.map (·.operation.family) ++ prepared.calledFamilies
-  let actualRanges ← Complexity.Language.Syntax.elaborateSourceProgramWithSites
+  let actualSites ← Complexity.Language.Syntax.elaborateSourceProgramWithBlockSites
     rawFamily rawFunctions libraries false operationFamilies
   let ranges ← prepared.ranges.mapM fun range => do
-    let some site := actualRanges.find? (fun site => site.tag == range.tag)
+    let some site := actualSites.ranges.find? (fun site => site.tag == range.tag)
       | throwError "the source emitter did not return the prepared range site"
     pure { range with site? := some site }
   let signatures := mkIdentFrom family (family.getId ++ `signatures)
@@ -162,6 +163,10 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
       elabCommand (← liftTermElabM (relationDeclaration names fn model true ranges))
     elabCommand (← liftTermElabM (relationDeclaration names fn model false ranges))
     if fn.exposed then elabCommand (← liftTermElabM (refinementDeclaration names fn))
+  for loop in prepared.whiles do
+    let some site := actualSites.whiles.find? (fun site => site.tag == loop.tag)
+      | throwError "the source emitter did not return the prepared while site"
+    emitDeclarations (← liftTermElabM (whileDeclarations { loop with site? := some site } ranges))
   registerNativeProgram names prepared.functions totals
 
 /-- Prepare one actual source program and optional mathematical functions.

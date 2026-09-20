@@ -73,6 +73,22 @@ structure ActualRangeSite where
   so this site does not have the ordinary always-active range correspondence. -/
   localReturn : Bool := false
 
+/-- The actual named loop selected by a proof-side while tag. Its coordinates
+refer to the emitted source loop, not a separately lowered mathematical model.
+A locally returning loop needs a completion-aware contract. -/
+structure ActualWhileSite where
+  tag : Name
+  name : Name
+  scope : Array SourceLocal
+  result : Ty
+  localReturn : Bool := false
+
+/-- Actual source blocks requested by the proof pass. Tags select emitted
+declarations without adding statements, locals or function calls. -/
+structure ActualBlockSites where
+  ranges : Array ActualRangeSite
+  whiles : Array ActualWhileSite
+
 private initialize loopCoordinatesExt :
     SimplePersistentEnvExtension (Name × LoopCoordinates) (NameMap LoopCoordinates) ←
   registerSimplePersistentEnvExtension {
@@ -176,6 +192,10 @@ syntax (name := sourceFiniteRange)
 -- This marker introduces no source statement, local, function or loop number.
 syntax (name := sourceRangeSite)
   "source_range_site% " ident " (" term "," term ")" " do " doSeq : doElem
+
+-- Associate a proof view with the loop produced by ordinary while lowering.
+syntax (name := sourceWhileSite)
+  "source_while_site% " ident " (" term ")" " do " doSeq : doElem
 
 /-- Internal local-return boundary using an already declared mutable optional
 result. It lowers through ordinary source assignments and option branches. -/

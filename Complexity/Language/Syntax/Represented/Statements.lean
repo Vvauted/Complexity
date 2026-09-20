@@ -161,17 +161,60 @@ partial def sequence (names : DeclarationNames)
         returned? := if body.normalScope?.isSome then continued.returned? else none
         normalScope? := if body.normalScope?.isSome then continued.normalScope? else none }
     if let `(doElem| while $condition:term do $body:doSeq) := element then
-      let loopScope := invalidateObservations scope true
+      -- Each round receives fresh mathematical observations at its actual heap;
+      -- the optional whole-function model remains unavailable for general while.
+      let captured := lexicalBindings scope
+      let stateSyntax ← stateType captured.toList
+      let stateNativeType ← resolveType stateSyntax
+      let initial := mkIdent (← mkFreshUserName `whileState)
+      let stateBinding ← parameterBinding initial stateNativeType
+      let mut loopScope := #[]
+      let mut nativePrefix := #[]
+      for binding in captured, position in [:captured.size] do
+        let field ← fieldProjection captured.size position ⟨initial.raw⟩
+        let projected ← value [stateBinding] field
+        let nativeName := mkIdent (← mkFreshUserName (binding.name.getId.appendAfter "_native"))
+        loopScope := loopScope.push { binding with
+          nativeName, model? := projected.model?.map (·.toBindingModel) }
+        let type ← termOfExpr binding.type.nativeType
+        nativePrefix := nativePrefix.push (← `(doElem| let $nativeName:ident : $type := $field))
       let boolType ← resolveType (← `(Bool))
       let guardElements ← returnElements condition
-      let ⟨guardRaw, _, _, _, _⟩ ← sequence names imports boolType loopScope guardElements.toList
-      let ⟨bodyRaw, _, _, _, _⟩ ← sequence names imports resultType loopScope
+      let firstGuardAssignment := (← get).assignedSlots.size
+      let guardBlock ← sequence names imports boolType loopScope.toList guardElements.toList
+      let guardAssigned := (← get).assignedSlots.extract firstGuardAssignment (← get).assignedSlots.size
+      let bodyBlock ← sequence names imports resultType loopScope.toList
         (getDoElems body).toList .immutable true localReturn
-      let ⟨rawRest, _, _, returned, normal⟩ ← sequence names imports resultType loopScope
+      let ⟨rawRest, _, _, returned, normal⟩ ← sequence names imports resultType
+        (invalidateObservations scope true)
         rest .immutable allowFallthrough localReturn
-      let guard ← doTerm guardRaw
-      let body : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (bodyRaw.map (·.raw))⟩
-      return ⟨#[← `(doElem| while $guard:term do $body:doSeq)] ++ rawRest, none, none, returned, normal⟩
+      let tag := mkIdent (← mkFreshUserName `whileSite)
+      let guard ← doTerm guardBlock.raw
+      let body : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (bodyBlock.raw.map (·.raw))⟩
+      let raw ← `(doElem| source_while_site% $tag:ident ($guard:term) do $body:doSeq)
+      let fallback : PreparedBlock := ⟨#[raw] ++ rawRest, none, none, returned, normal⟩
+      if localReturn || guardAssigned.any (fun slot => captured.any (·.slot == slot)) then
+        return fallback
+      let some guardNative := guardBlock.native? | return fallback
+      let some guardCalls := guardBlock.calls? | return fallback
+      let some guardResult := guardBlock.returned? | return fallback
+      let some normalScope := bodyBlock.normalScope? | return fallback
+      let some bodyNative := bodyBlock.native? | return fallback
+      let some bodyCalls := bodyBlock.calls? | return fallback
+      let closed := closeScope loopScope.toList normalScope
+      let post := closed.map fun binding => { binding with name := binding.nativeName }
+      let bodyReturned ← value post (← stateValue post.toArray) (some stateNativeType)
+      let some returnedModel := bodyReturned.model? | return fallback
+      let guardTerm ← doTerm (nativePrefix ++ guardNative)
+      let bodyTerm ← doTerm (nativePrefix ++ bodyNative ++
+        #[← `(doElem| return $(returnedModel.native))])
+      let guardNative ← `(fun ($initial:ident : $stateSyntax) => Id.run $guardTerm)
+      let bodyNative ← `(fun ($initial:ident : $stateSyntax) => Id.run $bodyTerm)
+      modify fun state => { state with whiles := state.whiles.push {
+        tag := tag.getId, captured, state := stateBinding
+        guard := guardCalls, guardResult, guardNative
+        body := bodyCalls, returned := bodyReturned, bodyNative } }
+      return fallback
     if let `(doElem| for $pattern:term in $collection:term do $body:doSeq) := element then
       let index ← match pattern with
         | `($name:ident) => pure name

@@ -137,6 +137,58 @@ theorem observe_while_rel_contract {Model : Type u} {signatures : List Signature
   apply Part.TotalCorrectness.stateT_triple_of_eq executed
   cases control <;> exact property
 
+/-- Lift a guard and a normal body round described by ordinary mathematical
+functions to the actual source loop. Their contracts preserve the heap-indexed
+representation at the actual intermediate heaps; preserving a handle alone is
+not enough. The author supplies only invariant preservation and well-founded
+progress for the mathematical step. -/
+theorem observe_while_model_contract {Model : Type u} {signatures : List Signature}
+    {Γ : List Ty} {result : Ty} {Locals : Type}
+    (view : Env Γ ≃ Locals) (program : Program signatures)
+    (guard : Stmt signatures Γ .bool) (body : Stmt signatures Γ result)
+    (stateRel : Model → Locals → Heap → Prop) (test : Model → Bool) (next : Model → Model)
+    (guardSpec : ∀ model,
+      BlockSpec (fun locals => observe view guard program locals) (stateRel model)
+        (fun _ _ _ _ => False)
+        (fun _ _ again output finish => again = test model ∧ stateRel model output finish))
+    (bodySpec : ∀ model, test model = true →
+      BlockSpec (fun locals => observe view body program locals) (stateRel model)
+        (fun _ _ output finish => stateRel (next model) output finish)
+        (fun _ _ _ _ _ => False))
+    (invariant : Model → Prop) {relation : Model → Model → Prop}
+    (wellFounded : WellFounded relation)
+    (preserved : ∀ model, invariant model → test model = true → invariant (next model))
+    (decreases : ∀ model, invariant model → test model = true → relation (next model) model)
+    (model : Model) (initial : invariant model) :
+    BlockSpec (fun locals => observe view (.while guard body) program locals)
+      (stateRel model)
+      (fun _ _ output finish => ∃ finalModel,
+        stateRel finalModel output finish ∧ invariant finalModel ∧ test finalModel = false)
+      (fun _ _ _ _ _ => False) := by
+  apply observe_while_rel_contract view program guard body stateRel invariant wellFounded
+    (fun current _ _ output finish => test current = true ∧ stateRel current output finish)
+    (fun output finish => ∃ finalModel,
+      stateRel finalModel output finish ∧ invariant finalModel ∧ test finalModel = false)
+    (fun _ _ _ => False) ?_ ?_ model initial
+  · intro current valid
+    apply (guardSpec current).mono (fun _ _ related => related)
+    · intro _ _ _ _ _ impossible
+      exact impossible
+    · rintro _ _ again output finish _ ⟨same, related⟩
+      cases again with
+      | false => exact ⟨current, related, valid, same.symm⟩
+      | true => exact ⟨same.symm, related⟩
+  · rintro current _ _ valid _ locals heap ⟨active, related⟩
+    exact ((bodySpec current active).mono
+      (pre' := stateRel current)
+      (normal' := fun _ _ output finish => ∃ nextModel,
+        invariant nextModel ∧ stateRel nextModel output finish ∧ relation nextModel current)
+      (returned' := fun _ _ _ _ _ => False)
+      (fun _ _ property => property)
+      (fun _ _ _ _ _ updated =>
+        ⟨next current, preserved current valid active, updated, decreases current valid active⟩)
+      (fun _ _ _ _ _ _ impossible => impossible)) locals heap related
+
 end Stmt
 
 end Complexity.Language

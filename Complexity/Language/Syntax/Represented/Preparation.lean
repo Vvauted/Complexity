@@ -204,10 +204,25 @@ def completeModels (names : DeclarationNames) (prepared : Preparation) :
     let some resolved := completed.find? (fun resolved => resolved.name.getId == fn.name.getId)
       | throwError "the source function is missing its mathematical dependency result"
     pure resolved
-  let retained := functions.toList.flatMap fun fn =>
+  -- Local while observations are independent of a whole-function model. Resolve
+  -- their calls only after all function interfaces have been completed; in
+  -- particular, a recursive while does not acquire an assumed recursive model.
+  let mut whiles := #[]
+  for loop in prepared.whiles do
+    let (guard, updated) ← resolveModelTrace names Name.anonymous completed ranges loop.guard
+    ranges := updated
+    let (body, updated) ← resolveModelTrace names Name.anonymous completed ranges loop.body
+    ranges := updated
+    if let some guard := guard then
+      if let some body := body then
+        if guard.all Trace.preservesArrays && body.all Trace.preservesArrays then
+          whiles := whiles.push { loop with guard, body }
+  let retained := (functions.toList.flatMap fun fn =>
     fn.model?.map (fun model => modelRangeTags ranges model.calls) |>.getD []
+    ) ++ whiles.toList.flatMap (fun loop =>
+      modelRangeTags ranges loop.guard ++ modelRangeTags ranges loop.body)
   ranges := ranges.filter (fun range => retained.contains range.tag)
-  return ({ prepared with functions, ranges },
+  return ({ prepared with functions, ranges, whiles },
     completed.filterMap fun fn => fn.model?.map (fun _ => fn.name.getId))
 
 end Internal

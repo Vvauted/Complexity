@@ -124,14 +124,14 @@ end Core
 open Core
 
 /-- Elaborate the shared typed source and return the actual sites requested by
-proof-side range tags. Explicit imports retain their order and written names;
+proof-side block tags. Explicit imports retain their order and written names;
 additional operation families are linked only when not already imported.
-Names are resolved only after their source declarations have checked; no range
+Names are resolved only after their source declarations have checked; no block
 tag affects the emitted program or its instruction costs. -/
-def elaborateSourceProgramWithSites (family : TSyntax `ident)
+def elaborateSourceProgramWithBlockSites (family : TSyntax `ident)
     (functions : Array (TSyntax `sourceFunction)) (libraries : Array (TSyntax `ident))
     (pureMode : Bool := false) (additionalLibraries : Array (TSyntax `ident) := #[]) :
-    Lean.Elab.Command.CommandElabM (Array ActualRangeSite) := do
+    Lean.Elab.Command.CommandElabM ActualBlockSites := do
   let mut imports : Array ImportedProgram := #[]
   for library in libraries do
     let (name, functions) ← getProgramInfo library
@@ -153,14 +153,28 @@ def elaborateSourceProgramWithSites (family : TSyntax `ident)
         Lean.throwErrorAt fn.termination "pure source functions must terminate; partial fixed points are not supported"
     else if hints.isNotNone then
       Lean.throwErrorAt fn.termination "termination hints are checked by 'source_program (pure)'"
-  let (declarations, information, coordinates, ranges) ←
+  let (declarations, information, coordinates, sites) ←
     Lean.Elab.liftMacroM (programDeclarations family functions imports pureMode nativeViews)
   Lean.Elab.Command.elabCommand declarations
   registerProgramInfo family information
   registerLoopCoordinates coordinates
-  ranges.mapM fun site => do
+  let ranges ← sites.ranges.mapM fun site => do
     let name ← Lean.resolveGlobalConstNoOverload (mkIdentFrom family site.name)
     return { site with name }
+  let whiles ← sites.whiles.mapM fun site => do
+    let name ← Lean.resolveGlobalConstNoOverload (mkIdentFrom family site.name)
+    return { site with name }
+  return { ranges, whiles }
+
+/-- Elaborate the shared typed source and return its requested finite-range
+sites. This range-only entry retains the same linking and checked emission as
+`elaborateSourceProgramWithBlockSites`. -/
+def elaborateSourceProgramWithSites (family : TSyntax `ident)
+    (functions : Array (TSyntax `sourceFunction)) (libraries : Array (TSyntax `ident))
+    (pureMode : Bool := false) (additionalLibraries : Array (TSyntax `ident) := #[]) :
+    Lean.Elab.Command.CommandElabM (Array ActualRangeSite) := do
+  return (← elaborateSourceProgramWithBlockSites family functions libraries pureMode
+    additionalLibraries).ranges
 
 /-- Elaborate a family through the shared typed-source lowering and declaration
 generator. Higher-level proof views call this entry directly: they do not

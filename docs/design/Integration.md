@@ -95,15 +95,17 @@ The current integration work has these concrete obligations:
   inside its value block. Its visible loop contract and actual RAM workspace
   theorem check together; local-return ranges still need consumer coverage.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
-  representations. The general-while consumer still supplies its record/heap
-  state relation and guard/body transport explicitly. This checks composability,
-  but is not yet the intended invariant-only proof experience.
-  Generate local guard/body mathematical transitions where their operation
-  contracts justify them, then apply the existing named loop rule. Authors keep
-  the algorithm's invariant, decrease argument and exit result; they should not
-  construct raw tuples or unfold `Part`. Fixed captured handles do not by
+  representations. Normal represented rounds now retain their own mathematical
+  traces independently of a whole-function model. The array-record consumer uses
+  generated named mathematical locals, guard/body correspondence and `model_spec`;
+  its proof supplies the invariant, decrease and exit result without raw environment
+  transport or `Part` unfolding. The mathematical views select the same actual
+  named source loop, adding no helper calls. Extend this interface to general
+  effect contracts and completion-aware rounds. Fixed captured handles do not by
   themselves preserve captured contents, and no total model of the complete
-  while is required.
+  while is required. The normal-round interface currently requires checked
+  array-preserving operations and no guard assignment to retained locals; it
+  does not invent a transition for arbitrary aliased mutation.
   Local-return blocks also need an author-facing completion/local-state view:
   compiler-private result slots must not enlarge user invariants or scratch
   tuples. Keep complete source coordinates for execution and run scope cleanup

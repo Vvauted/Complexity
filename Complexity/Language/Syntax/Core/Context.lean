@@ -135,6 +135,8 @@ structure BlockSite where
   finiteRange : Option FiniteRange
   nativeResult : Option NativeCoordinate := none
   rangeRequest : Option RangeRequest := none
+  /-- A proof-side tag selecting this actual ordinary while loop. -/
+  whileRequest : Option Name := none
   /-- The completion slot actually updated inside this named block. -/
   localReturn : Option LocalReturnTarget := none
 

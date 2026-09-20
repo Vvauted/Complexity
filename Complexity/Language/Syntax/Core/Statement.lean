@@ -73,6 +73,15 @@ private def statementCode (family : TSyntax `ident) (functions : Array Callee)
     return { lowered with
       sites := lowered.sites.pop.push { site with rangeRequest := some {
         tag := tag.getId, entryScope := scope, proofBody := lowered.proofBody } } }
+  if let `(doElem| source_while_site% $tag:ident ($condition:term) do $body:doSeq) := element then
+    let source ← `(doElem| while $condition:term do $body:doSeq)
+    let lowered ← recurse scope result [source] nextIndex localReturn
+    -- Ordinary while lowering appends its own loop after its nested sites.
+    -- The marker selects that same loop and leaves its term and order intact.
+    let some site := lowered.sites.back?
+      | Macro.throwErrorAt tag "the tagged while did not emit its source loop"
+    return { lowered with
+      sites := lowered.sites.pop.push { site with whileRequest := some tag.getId } }
   if let some (value, first, firstBody, second, secondBody) := optionMatch? element then
     let (noneBody, payload, someBody) ←
       if nonePattern first then

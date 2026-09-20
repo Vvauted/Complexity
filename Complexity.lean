@@ -505,6 +505,7 @@ import Complexity.Language.Syntax.Represented.Correspondence.Basic
 import Complexity.Language.Syntax.Represented.Correspondence.Exact
 import Complexity.Language.Syntax.Represented.Correspondence.Range
 import Complexity.Language.Syntax.Represented.Correspondence.Relation
+import Complexity.Language.Syntax.Represented.Correspondence.While
 import Complexity.Language.Syntax.Represented.Declarations
 import Complexity.Language.Syntax.Represented.Elab
 import Complexity.Language.Syntax.Represented.Expression

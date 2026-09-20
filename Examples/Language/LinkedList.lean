@@ -376,65 +376,10 @@ source_program (native) ArrayRangeNative where
       remaining := remaining - 1
     return state
 
-private def payloadRel (model : Payload) (state : Buffer .nat × Nat) (heap : Heap) : Prop :=
-  state.1.Contents heap model.values ∧ model.copies = state.2
+private abbrev payloadRel :=
+  ArrayRangeNative.Source.repeatAppend_loop1.state_representation.Rel
 
-private def appendStateRel (chunk : Buffer .nat) (chunkValues : Array Nat)
-    (model : Nat × Payload) (remaining : Nat) (state : Buffer .nat × Nat) (heap : Heap) : Prop :=
-  remaining = model.1 ∧ payloadRel model.2 state heap ∧ chunk.Contents heap chunkValues
-
-private theorem repeatAppend_loop_contract (count : Nat) (chunk : Buffer .nat)
-    (initial : Buffer .nat × Nat) (chunkValues : Array Nat) (initialValue : Payload) :
-    ArrayRangeNative.Source.repeatAppend_loop1.contract count chunk initial
-      (appendStateRel chunk chunkValues (count, initialValue))
-      (fun _ _ _ _ state heap => ∃ output, payloadRel output state heap ∧
-        output.copies = initialValue.copies + count)
-      (fun _ _ _ _ _ _ _ => False) := by
-  refine ArrayRangeNative.Source.repeatAppend_loop1.rel_contract count chunk initial
-    (appendStateRel chunk chunkValues)
-    (fun model => model.2.copies + model.1 = initialValue.copies + count)
-    (measure fun model : Nat × Payload => model.1).wf
-    (fun model _ _ _ remaining state heap =>
-      appendStateRel chunk chunkValues model remaining state heap ∧ 0 < remaining)
-    (fun _ state heap => ∃ output, payloadRel output state heap ∧
-      output.copies = initialValue.copies + count)
-    (fun _ _ _ _ => False) ?_ ?_ (count, initialValue) rfl
-  · intro model valid
-    rw [ArrayRangeNative.Source.repeatAppend_loop1.guard_contract_iff]
-    intro remaining state heap represented
-    rw [ArrayRangeNative.Source.repeatAppend_loop1.guard_eq]
-    apply Std.Do.Triple.pure
-    intro finish same
-    subst finish
-    by_cases active : 0 < remaining
-    · simp only [active, decide_true, ↓reduceIte]
-      exact ⟨represented, True.intro⟩
-    · simp only [active, decide_false, Bool.false_eq_true, ↓reduceIte]
-      refine ⟨model.2, represented.2.1, ?_⟩
-      have empty : model.1 = 0 := by have := represented.1; omega
-      simpa only [empty, Nat.add_zero] using valid
-  · intro model _ _ _ valid _
-    rw [ArrayRangeNative.Source.repeatAppend_loop1.body_contract_iff]
-    rintro remaining state heap ⟨represented, active⟩
-    obtain ⟨appended, finish, evaluated, contents, _, preserved⟩ :=
-      Buffer.Copy.append_eval_exists_preserving model.2.values chunkValues
-        state.1 chunk heap represented.2.1.1 represented.2.2
-    refine Part.TotalCorrectness.stateT_triple_of_eq (finish := finish)
-      (value := (.normal, remaining - 1, (appended, state.2 + 1), count, chunk, initial, ())) ?_ ?_
-    · rw [ArrayRangeNative.Source.repeatAppend_loop1.body_eq]
-      simp only [Bind.bind, Pure.pure, StateT.bind, StateT.pure, ExceptT.run,
-        evaluated, Part.bind_some]
-    · refine ⟨(remaining - 1, Payload.mk (model.2.values ++ chunkValues) (state.2 + 1)),
-        ?_, ?_, ?_⟩
-      · dsimp only
-        have := represented.1
-        have := represented.2.1.2
-        omega
-      · exact ⟨rfl, ⟨contents, rfl⟩, preserved chunk chunkValues represented.2.2⟩
-      · change remaining - 1 < model.1
-        have := represented.1
-        omega
-
+open ArrayRangeNative.Source.repeatAppend_loop1 in
 /-- The general while has a budget-free source contract. Its mathematical
 state tracks the complete payload and the number of remaining copies, while
 the shared append contract retains the actual arrays at successive heaps. -/
@@ -444,21 +389,52 @@ theorem repeatAppend_copies (count : Nat) (chunkValues : Array Nat) (initialValu
         chunk.Contents heap chunkValues ∧ payloadRel initialValue initial heap)
       (fun _ _ _ _ result finish => ∃ output, payloadRel output result finish ∧
         output.copies = initialValue.copies + count) := by
+  let invariant : Model → Prop := fun model =>
+    (model_state model).copies + model_remaining model = initialValue.copies + count
+  have preserved : ∀ model, invariant model → modelGuard model = true →
+      invariant (modelStep model) := by
+    intro model valid active
+    change (model_state model).copies + model_remaining model =
+      initialValue.copies + count at valid
+    change decide (0 < model_remaining model) = true at active
+    have positive : 0 < model_remaining model := of_decide_eq_true active
+    change ((model_state model).copies + 1) + (model_remaining model - 1) =
+      initialValue.copies + count
+    omega
+  have decreases : ∀ model, invariant model → modelGuard model = true →
+      model_remaining (modelStep model) < model_remaining model := by
+    intro model _ active
+    change decide (0 < model_remaining model) = true at active
+    have positive : 0 < model_remaining model := of_decide_eq_true active
+    change model_remaining model - 1 < model_remaining model
+    omega
+  have loopSpec := model_spec invariant (measure model_remaining).wf
+    preserved decreases
+    (mkModel (remaining := count) (state := initialValue) (initial := initialValue)
+      (chunk := chunkValues) (count := count)) rfl
   apply (ArrayRangeNative.Source.repeatAppend_total_iff _ _).mpr
   rintro actualCount chunk initial heap ⟨sameCount, chunkObserved, initialObserved⟩
   subst actualCount
   have specification :
-      ⦃fun current => ⌜appendStateRel chunk chunkValues (count, initialValue)
-        count initial current⌝⦄ ArrayRangeNative.Source.repeatAppend count chunk initial
+      ⦃fun current => ⌜chunk.Contents current chunkValues ∧
+        payloadRel initialValue initial current⌝⦄
+      ArrayRangeNative.Source.repeatAppend count chunk initial
       ⦃⇓ result finish => ⌜∃ output, payloadRel output result finish ∧
         output.copies = initialValue.copies + count⌝⦄ := by
-    have loopSpec := ArrayRangeNative.Source.repeatAppend_loop1.spec count chunk initial
-      (repeatAppend_loop_contract count chunk initial chunkValues initialValue)
     rw [ArrayRangeNative.Source.repeatAppend_eq]
     mvcgen [loopSpec]
-    all_goals simp_all
+    refine ⟨by simp_all [modelRel, mkModel, payloadRel], ?_⟩
+    intro finalModel output finish represented valid stopped
+    have observed := model_rel_state represented
+    have empty : model_remaining finalModel = 0 := by
+      change decide (0 < model_remaining finalModel) = false at stopped
+      have : ¬0 < model_remaining finalModel := of_decide_eq_false stopped
+      omega
+    mvcgen
+    refine ⟨model_state finalModel, observed, ?_⟩
+    simpa only [invariant, empty, Nat.add_zero] using valid
   exact (triple_iff_eval _ _ _).mp specification heap
-    ⟨rfl, initialObserved, chunkObserved⟩
+    ⟨chunkObserved, initialObserved⟩
 
 /-- The source contract observes the entire returned record, including
 its actual final array. The supplied mathematical postcondition tracks its count;
