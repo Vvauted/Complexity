@@ -46,12 +46,16 @@ source_program (native) Implementation where
     return result
 
   def make (count : Nat) (n : Nat) (value : Nat) : Buffer Nat := do
-    let out ← Buffer.alloc 1 0
-    let mut remaining := count
-    while 0 < remaining do
-      work out n value
-      remaining := remaining - 1
-    return out
+    let result : Buffer Nat ← do
+      let out ← Buffer.alloc 1 0
+      let mut remaining := count
+      while 0 < remaining do
+        work out n value
+        remaining := remaining - 1
+        if remaining == 0 then
+          return out
+      return out
+    return result
 
 /-- The ordinary mathematical contents expected after all calls. -/
 def resultContents (count n value : Nat) : Array Nat :=
@@ -252,10 +256,14 @@ theorem invariant_done (out : Buffer .nat) (count n value : Nat)
 /-- The loop's actual guard preserves its full lexical state and decides the
 ordinary positivity test used by the termination argument. -/
 theorem guard_eval (remaining : Nat) (out : Buffer .nat) (count n value : Nat) :
-    Implementation.Source.make_loop1.guard remaining out count n value =
-      (pure (.returned (decide (0 < remaining)), remaining, out, count, n, value, ()) :
-        StateT Heap Part (Control .bool × Implementation.Source.make_loop1.Locals)) :=
-  Implementation.Source.make_loop1.guard_eq remaining out count n value
+    Implementation.Source.make_loop1.guard_completion_contract
+      (fun locals _ => locals = (remaining, out, count, n, value, ()))
+      (fun _ heap again locals finish => again = decide (0 < remaining) ∧
+        locals = (remaining, out, count, n, value, ()) ∧ finish = heap) := by
+  rintro _ heap rfl
+  dsimp only
+  rw [Implementation.Source.make_loop1.guard_eq]
+  mvcgen
 
 /-- A real loop body calls the scoped worker and decreases only the remaining
 count. Its contents contract and complete local update also serve the separate
@@ -263,14 +271,17 @@ resource proof; neither needs to re-prove the worker's behavior. -/
 theorem body_spec (out : Buffer .nat) (count n value : Nat)
     {remaining : Nat} {heap : Heap}
     (current : invariant out count n value remaining heap) (active : 0 < remaining) :
-    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
-      (Implementation.Source.make_loop1.body remaining out count n value)
-      (fun entry => ⟨entry = heap⟩)
-      (fun outcome finish =>
-        ⟨outcome = (.normal, remaining - 1, out, count, n, value, ()) ∧
-          invariant out count n value (remaining - 1) finish⟩, ⟨⟩) := by
+    Implementation.Source.make_loop1.body_completion_contract
+      (fun locals entry => locals = (remaining, out, count, n, value, ()) ∧ entry = heap)
+      (fun _ _ locals finish => locals = (remaining - 1, out, count, n, value, ()) ∧
+        invariant out count n value (remaining - 1) finish)
+      (fun _ _ returned locals finish => returned = out ∧
+        locals = (0, out, count, n, value, ()) ∧
+          out.Contents finish (resultContents count n value)) := by
+  rintro _ entry ⟨rfl, rfl⟩
   have workerSpec := Implementation.Source.work_spec
     (work_total (if remaining < count ∧ 0 < n then value else 0))
+  dsimp only
   rw [Implementation.Source.make_loop1.body_eq]
   mvcgen [workerSpec]
   rename_i entry same
@@ -279,39 +290,60 @@ theorem body_spec (out : Buffer .nat) (count n value : Nat)
   intro returned finish updated
   cases returned
   mvcgen
-  simpa using invariant_step out count n value current active updated
+  all_goals
+    have advanced := invariant_step out count n value current active updated
+  · rename_i finished
+    have zero : remaining - 1 = 0 := by simpa using finished
+    refine ⟨trivial, ?_, invariant_done out count n value advanced (by omega)⟩
+    simp only [zero]
+  · exact ⟨trivial, advanced⟩
 
 /-- Lean's existing well-founded measure proves termination of the actual
 source loop. The relation concerns mathematical progress, not a machine budget;
 its body contract carries the current heap through every real call. -/
 theorem loop_spec (out : Buffer .nat) (count n value remaining : Nat) :
-    Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
-      (Implementation.Source.make_loop1 remaining out count n value)
-      (fun heap => ⟨invariant out count n value remaining heap⟩)
-      (fun outcome finish => ⟨match outcome.1 with
-        | .normal => out.Contents finish (resultContents count n value)
-        | .returned _ => False
-        | .fault _ => False⟩, ⟨⟩) := by
-  refine Implementation.Source.make_loop1.wellFounded_spec out count n value
-    (invariant out count n value)
-    (measure fun state : Implementation.Source.make_loop1.Mutable × Heap => state.1.1).rel
-    (measure fun state : Implementation.Source.make_loop1.Mutable × Heap => state.1.1).wf
-    (fun _ finish => out.Contents finish (resultContents count n value))
-    (fun _ _ _ => False) ?_ remaining
-  intro left heap current
-  rw [guard_eval]
-  apply Std.Do.Triple.pure
-  intro entry same
-  subst entry
-  by_cases active : 0 < left
-  · simp only [decide_eq_true_eq, if_pos active]
-    refine (body_spec out count n value current active).mono (fun _ same => same) ?_
-    constructor
-    · rintro outcome finish ⟨rfl, updated⟩
-      exact ⟨updated, by change left - 1 < left; omega⟩
-    · trivial
-  · simp only [decide_eq_true_eq, if_neg active]
-    exact invariant_done out count n value current active
+    Implementation.Source.make_loop1.completion_contract
+      (fun locals heap => locals = (remaining, out, count, n, value, ()) ∧
+        invariant out count n value remaining heap)
+      (fun _ _ locals finish => ∃ left,
+        locals = (left, out, count, n, value, ()) ∧
+          out.Contents finish (resultContents count n value))
+      (fun _ _ returned locals finish => returned = out ∧
+        locals = (0, out, count, n, value, ()) ∧
+          out.Contents finish (resultContents count n value)) := by
+  refine Implementation.Source.make_loop1.completion_rel_contract
+    (fun left locals heap => locals = (left, out, count, n, value, ()) ∧
+      invariant out count n value left heap)
+    (fun _ : Nat => True) (measure id).wf
+    (fun left _ heap locals finish =>
+      locals = (left, out, count, n, value, ()) ∧ finish = heap ∧ 0 < left)
+    (fun locals finish => ∃ left, locals = (left, out, count, n, value, ()) ∧
+      out.Contents finish (resultContents count n value))
+    (fun returned locals finish => returned = out ∧
+      locals = (0, out, count, n, value, ()) ∧
+        out.Contents finish (resultContents count n value)) ?_ ?_ remaining trivial
+  · intro left _
+    refine (guard_eval left out count n value).mono (fun _ _ initial => initial.1)
+      (fun _ _ _ _ _ impossible => impossible) ?_
+    rintro _ heap _ _ _ ⟨_, current⟩ ⟨rfl, same, rfl⟩
+    rw [same]
+    by_cases active : 0 < left
+    · simp only [decide_eq_true_eq, if_pos active]
+      exact ⟨trivial, trivial, active⟩
+    · simp only [decide_eq_true_eq, if_neg active]
+      exact ⟨left, rfl, invariant_done out count n value current active⟩
+  · rintro left _ heap _ ⟨rfl, current⟩ _ _ ⟨rfl, rfl, active⟩
+    refine (Implementation.Source.make_loop1.body_completion_spec_at
+      (body_spec out count n value current active) (left, out, count, n, value, ()) _).mono ?_
+        (Std.Do.PostCond.entails.refl _)
+    rintro _ rfl
+    refine ⟨⟨rfl, rfl⟩, ?_, ?_⟩
+    · rintro _ finish ⟨rfl, updated⟩
+      refine ⟨left - 1, trivial, ⟨rfl, updated⟩, ?_⟩
+      change left - 1 < left
+      omega
+    · rintro returned locals finish completed
+      exact completed
 
 /-- One source declaration allocates the surviving result and repeatedly uses
 the same nested scratch scopes. Its successful result has the ordinary array
@@ -323,14 +355,21 @@ theorem make_spec (count n value : Nat) :
       (fun out finish => ⟨out.Contents finish (resultContents count n value)⟩,
         (fun _ _ => ⟨False⟩, ⟨⟩)) := by
   have loopSpec := fun (out : Buffer .nat) (remaining : Nat) =>
-    loop_spec out count n value remaining
+    Implementation.Source.make_loop1.completion_spec
+      (loop_spec out count n value remaining) remaining out count n value
   rw [Implementation.Source.make_eq]
   mvcgen [loopSpec]
   intro out finish allocated initialized growth fresh
   mvcgen [loopSpec]
-  all_goals
-    simp_all only [invariant, Nat.le_refl, Nat.lt_irrefl, false_and,
-      if_false, true_and, Array.replicate_one]
+  refine ⟨⟨trivial, invariant_initial out count n value (by
+    simpa only [Array.replicate_one] using initialized)⟩, ?_, ?_⟩
+  · rintro locals heap ⟨left, same, observed⟩
+    subst locals
+    mvcgen
+  · rintro returned locals heap sameReturned sameLocals observed
+    subst returned
+    subst locals
+    mvcgen
 
 /-- The mathematical contract supplies actual finite source evaluation and
 the retained output contents without a separate termination or budget proof. -/

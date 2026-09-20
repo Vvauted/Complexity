@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.Values
+import Complexity.Computability.Ram.Compiler.Language.Values.Basic
 import Complexity.Language.Semantics
 
 /-!

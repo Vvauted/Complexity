@@ -368,4 +368,21 @@ theorem arenaReady {signatures : List Signature}
   | callReturn arguments callee body ihCallee ihBody => exact .callReturn arguments ihCallee ihBody
 
 end RealizedExec
+
+/-- Transfer fixed-placement realization to the supplied execution of the same
+statement and entry. Determinism retains its actual final heap and control;
+only the arena cursor is unchanged. -/
+theorem RealizationWP.arenaReady {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w depth : Nat}
+    {Γ : List Ty} {result : Ty} {stmt : Complexity.Language.Stmt signatures Γ result}
+    {normal : Complexity.Language.State Γ → Prop}
+    {returned : Value result → Complexity.Language.State Γ → Prop}
+    {entry finish : Complexity.Language.State Γ} {control : Control result}
+    (realizable : RealizationWP program w depth stmt normal returned entry)
+    (execution : Complexity.Language.Exec program stmt entry finish control)
+    (heapLimit cursor : Nat) : ArenaReady execution w heapLimit depth cursor cursor := by
+  obtain ⟨actualFinish, actualControl, actual, _⟩ := realizable
+  obtain ⟨rfl, rfl⟩ := execution.deterministic actual.erase
+  exact actual.arenaReady heapLimit cursor
+
 end Ram.LanguageCompiler

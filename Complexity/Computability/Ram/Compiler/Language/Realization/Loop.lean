@@ -3,15 +3,16 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.Realization
+import Complexity.Computability.Ram.Compiler.Language.Realization.WP
 import Complexity.Language.Eval.Locals.Specification
 
 /-!
-# Realizing a loop whose source termination is already proved
+# Realizing source loops
 
-The rules below reuse an existing finite source execution or total correctness
-proof. A closed round invariant supplies the operation ranges and call nesting
-for each actual guard and body. Its preservation may come from the existing
+The structural rules prove loop realization by well-founded descent. The
+execution-reuse rules instead lift an existing finite source execution or total
+correctness proof. A closed round invariant supplies the operation ranges and
+call nesting for each actual guard and body. Its preservation may come from the existing
 source proof, without proving descent or the mathematical result again.
 
 The guard's actual final state starts its body or false exit. A normal body
@@ -24,6 +25,102 @@ target execution or alternate interpreter is used.
 namespace Ram.LanguageCompiler
 
 open Complexity.Language
+
+namespace RealizationWP
+
+variable {signatures : List Signature} {Γ : List Ty} {result : Ty}
+variable {program : Complexity.Language.Program signatures} {w depth : Nat}
+variable {normal : Complexity.Language.State Γ → Prop}
+variable {returned : Value result → Complexity.Language.State Γ → Prop}
+variable {entry : Complexity.Language.State Γ}
+
+/-- Unfold one actual loop round. The guard must return a Boolean, and its final
+state feeds either the exit postcondition or the body. A normal body continues
+the same loop from its own final state; a returned value exits the enclosing
+function. This equation is not a simplification rule for recursive unfolding. -/
+theorem while_iff (guard : Complexity.Language.Stmt signatures Γ .bool)
+    (body : Complexity.Language.Stmt signatures Γ result) :
+    RealizationWP program w depth (.while guard body) normal returned entry ↔
+      RealizationWP program w depth guard (fun _ => False)
+        (fun test afterGuard => if test then
+          RealizationWP program w depth body
+            (RealizationWP program w depth (.while guard body) normal returned)
+            returned afterGuard
+          else normal afterGuard) entry := by
+  constructor
+  · rintro ⟨finish, control, execution, post⟩
+    cases execution with
+    | whileFalse test => exact ⟨finish, .returned false, test, post⟩
+    | whileTrue test iteration rest =>
+        exact ⟨_, .returned true, test, _, .normal, iteration, finish, control, rest, post⟩
+    | whileReturn test iteration =>
+        exact ⟨_, .returned true, test, finish, _, iteration, post⟩
+  · rintro ⟨afterGuard, guardControl, test, post⟩
+    cases guardControl with
+    | normal => exact False.elim post
+    | fault error => exact False.elim post
+    | returned decision =>
+        cases decision with
+        | false => exact ⟨afterGuard, .normal, .whileFalse test, post⟩
+        | true =>
+            obtain ⟨afterBody, bodyControl, iteration, post⟩ := post
+            cases bodyControl with
+            | normal =>
+                obtain ⟨finish, control, rest, post⟩ := post
+                exact ⟨finish, control, .whileTrue test iteration rest, post⟩
+            | returned value => exact ⟨afterBody, .returned value, .whileReturn test iteration, post⟩
+            | fault error => exact False.elim post
+
+/-- Prove realizability and termination by descent across complete guard/body
+rounds. The invariant holds at the next guard entry, not necessarily after an
+effectful guard. False guards and early returns need no descent. The relation is
+mathematical termination evidence, separate from instruction costs and nesting. -/
+theorem while_wellFounded {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    {invariant : Complexity.Language.State Γ → Prop}
+    {r : Complexity.Language.State Γ → Complexity.Language.State Γ → Prop}
+    (wf : WellFounded r)
+    (step : ∀ current, invariant current →
+      RealizationWP program w depth guard (fun _ => False)
+        (fun test afterGuard => if test then
+          RealizationWP program w depth body
+            (fun afterBody => invariant afterBody ∧ r afterBody current)
+            returned afterGuard
+          else normal afterGuard) current)
+    (initial : invariant entry) :
+    RealizationWP program w depth (.while guard body) normal returned entry := by
+  revert initial
+  induction entry using wf.induction with
+  | h current ih =>
+      intro initial
+      apply (while_iff guard body).mpr
+      refine (step current initial).mono_post (fun _ impossible => impossible) ?_
+      intro test afterGuard post
+      cases test with
+      | false => exact post
+      | true =>
+          exact post.mono_post (fun afterBody property => ih afterBody property.2 property.1)
+            (fun _ _ property => property)
+
+/-- A natural-valued variant is a special case of mathematical round descent,
+not an instruction budget or execution fuel. Operation ranges and the shared
+call-nesting capacity remain in the same realization judgment. -/
+theorem while_variant {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    {invariant : Complexity.Language.State Γ → Prop}
+    (variant : Complexity.Language.State Γ → Nat)
+    (step : ∀ current, invariant current →
+      RealizationWP program w depth guard (fun _ => False)
+        (fun test afterGuard => if test then
+          RealizationWP program w depth body
+            (fun afterBody => invariant afterBody ∧ variant afterBody < variant current)
+            returned afterGuard
+          else normal afterGuard) current)
+    (initial : invariant entry) :
+    RealizationWP program w depth (.while guard body) normal returned entry :=
+  while_wellFounded (measure variant).wf step initial
+
+end RealizationWP
 
 private theorem realized_of_exec
     {signatures : List Signature} {program : Complexity.Language.Program signatures}
