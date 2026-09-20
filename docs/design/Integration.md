@@ -1,0 +1,355 @@
+# Frontend integration
+
+This is the detailed acceptance checklist for the common declaration. Checked pieces do
+not close the remaining integration obligations.
+
+[Design overview](../HIGH_LEVEL_LANGUAGE.md) · [Roadmap](../ROADMAP.md)
+
+## Active integration gate
+
+The public target is one program declaration, not a choice between three
+languages. `pure` and `effectful` describe semantic properties; a native function
+is a mathematical proof view. They must not determine whether a program can
+combine records, arrays, calls, finite loops and recursion. The existing typed
+source and RAM backend remain shared; another wrapper around disconnected
+frontends does not complete this gate.
+
+The current integration work has these concrete obligations:
+
+- [x] Parse one shared source declaration and register one set of function
+  headers. Actual source identity, mathematical observations and optional model
+  proofs are distinct fields; the separate native-function registry is removed.
+- [ ] Share resolved types, operations and control-flow lowering, with existing
+  entry modes retained only as compatibility or explicit proof-view choices.
+  The default `source_program` now uses represented preparation and the shared
+  source emitter; `(native)` retains its earlier naming convention through that
+  same entry. The specialized `(pure)` preparer remains a compatibility path,
+  not the recommended way to select language features.
+- [x] Separate mandatory source/type preparation from optional mathematical
+  models in the represented preparation pass. Expressions and calls propagate
+  the absence of a model explicitly; actual function IDs and representation
+  interfaces do not depend on generating a pure function. A promised
+  correspondence proof failing is still an error, not silent model removal.
+  General loops use source contracts instead of inventing a total pure model.
+- [x] Lower general `while` with represented array/record locals through the
+  existing source loop. Assignments update actual mutable locals across rounds;
+  guards execute again at each actual heap. Raw buffer/node types keep their
+  identity representation, not an inferred array/list contents observation.
+  The existing array-record consumer uses a mathematical loop state and the
+  shared named contract; its original represented correctness statement is
+  retained. The default entry now accepts this same preparation path; its
+  existing borrowed-buffer traversal, recursive splay and imported-buffer
+  consumers retain their source contracts.
+- [x] Reuse Core's actual call/primitive typing and operand normalization for
+  raw buffer allocation, reads, writes and slices, and node construction/reads.
+  All local source signatures are prepared before bodies, so a forward call
+  needs no already-proved mathematical model. The existing allocating `make`
+  now passes through represented preparation with its original Array contract;
+  its fixed `Program` interface does not require a pure model.
+- [x] Complete optional mathematical models for acyclic forward calls using
+  resolved local-call dependencies. Mathematical candidates are completed and
+  proved callee-first, independently of the written source function order,
+  operation identities and import tables. A missing callee model removes its
+  dependent mathematical candidates, not the source program. The existing
+  record-append caller now precedes its helper; its original mathematical
+  equation, `program_correct` and same-program RAM `TimeO` proof check unchanged.
+  Mutual recursion still needs its own total contract, not an inferred
+  termination claim.
+- [x] Preserve actual statement branches, standalone calls, scratch scopes and lexical slots.
+  Mathematical joins and hygienic local versions are proof-side only. The
+  original linked-list `unconsBody` identity and compiled consumers still check;
+  assignments and shadowing no longer require different source lowering.
+  The original nested-scratch program retains its scope owners, early returns,
+  cleanup contract and physical workspace bound. Reclaimed contents do not
+  acquire an automatic total-function model.
+- [x] Reuse shared nested binding patterns for represented calls and Option
+  branches. Right-hand sides are evaluated once and only used projections are
+  emitted. The original optional-buffer import chain retains its mathematical
+  update/frame statements and compiler-derived body bounds. Its imported pure
+  Option/product result uses the checked encoding and existing map identities.
+- [ ] Finish local-return block integration and its construct coverage.
+  Value-producing blocks have a real boundary for loops and scratch scopes. Core now has an internal boundary using
+  an optional result local, gated continuations and the existing loop and scope
+  semantics. Each scratch scope stages its own result and commits only after
+  successful cleanup; fault exits really drop those temporary roots before
+  checking the parent scope. The represented conditional/Option value-block
+  preparer now uses this boundary instead of recursively replacing returns by
+  assignments. Actual return-control checking is separate from optional models;
+  assignments invalidate the affected enclosing mathematical locals.
+  The existing record/List branch proofs check, and the List's exact RAM count
+  includes the result assignment and final payload match. Existing ordinary
+  traversal code and bounds are unchanged. Plain `let x : T ← do ...` blocks now reuse
+  that same boundary and proof trace. The original structured scalar caller uses
+  this form with its unchanged mathematical proof and RAM realization/invocation
+  proof; shared Option normalization handles the private control values.
+  The result's outer Option itself distinguishes a continuing block from a
+  completed one, including `some none` when the returned value is optional.
+  No separate activity flag or flag/result consistency proof is needed.
+  The existing `Scope.work` now puts its nested scratch scopes inside a plain
+  `do` value block. Visible completion contracts and actual execution frames
+  hide private result slots from its source proof; cleanup still checks the
+  full state and retains updates to older objects. Its mathematical contents
+  and physical workspace guarantees concern the changed source program, not
+  a claim that the added completion instructions are free. The existing
+  `Scope.make` also has a reachable local return from a `while`
+  inside its value block. Its visible loop contract and actual RAM workspace
+  theorem check together; local-return ranges still need consumer coverage.
+- [ ] Generate mathematical-local loop interfaces from the resolved field
+  representations. The general-while consumer still supplies its record/heap
+  state relation and guard/body transport explicitly. This checks composability,
+  but is not yet the intended invariant-only proof experience.
+  Generate local guard/body mathematical transitions where their operation
+  contracts justify them, then apply the existing named loop rule. Authors keep
+  the algorithm's invariant, decrease argument and exit result; they should not
+  construct raw tuples or unfold `Part`. Fixed captured handles do not by
+  themselves preserve captured contents, and no total model of the complete
+  while is required.
+  Local-return blocks also need an author-facing completion/local-state view:
+  compiler-private result slots must not enlarge user invariants or scratch
+  tuples. Keep complete source coordinates for execution and run scope cleanup
+  before projection. The original Unit-valued scratch worker uses generated
+  visible body/completion contracts and shared scope closure. Ancestor private
+  slots are reconstructed from the same actual execution's frame; authors do
+  not enumerate them. Local-return `while` now exposes visible guard/body and
+  completion contracts: the shared well-founded rule requires invariant
+  preservation and decrease only for continuing iterations. A local result exits
+  through the actual masked guard, with no invented decrease after completion.
+  `Scope.make` exercises this path. Its proof still supplies visible tuples and
+  the mathematical state relation; generating fully mathematical-local interfaces
+  and extending this experience to local-return ranges remain open.
+- [ ] Compose mathematical functions and state contracts through the same
+  heap-indexed representation. A pure encoding is a special case; mutable
+  array contents are not preserved by arbitrary heap extension.
+- [x] Generate exact unchanged-heap equations and curried total contracts for
+  supported default scalar and registered-record programs. Checked callee
+  equations compose through conditionals and Option branches, with results
+  encoded using the existing representation. The original scalar and record
+  consumers now use the default declaration and retain their short mathematical
+  and contract proofs. The checked raw-input reconstruction covers identity
+  values and registered direct scalar/scalar-product records; it does not
+  invent an inverse for Array/List observations or promise every composite
+  parameter layout. Ranges and recursion retain their existing correspondence
+  paths rather than receiving an unproved unchanged-heap equation.
+  A result refinement or preservation of old array contents does not imply
+  equality of the complete final heap.
+- [x] Share well-founded while reasoning over a related mathematical state.
+  Normal iterations supply the next model; guard/body heaps and early returns
+  remain actual source outcomes. Existing local-value contracts are the
+  equality specialization, exercised by the original mutable traversal.
+  Named `rel_contract` additionally hides fixed captures through the actual
+  guard/body frames; its mathematical model need not encode source pointers.
+- [x] Permit array-valued records at branch joins without a fabricated default
+  handle. The existing typed-program consumer selects a real record in one
+  branch, then executes one common append call; its `Program.Correct` checks.
+- [x] Integrate direct pure-source imports and represented self-recursion at
+  actual intermediate heaps. The record consumer imports a scalar helper;
+  the linked-list consumer allocates before recursively calling itself.
+  Ordinary mathematical equations give their total source correctness.
+- [x] Integrate normal finite ranges and mutable local bindings with represented
+  state. The linked-list consumer allocates nodes on each round and has generated
+  total source correspondence. The array-record consumer now exercises general
+  `while` with an explicit mathematical-state contract after each real append.
+  Finite-range exits, recursive calls to the enclosing function from a range
+  and mathematical range views inside value-producing branches remain open.
+- [x] Simplify the generated range's mathematical view to its mutable
+  accumulator, closing over immutable captures. `List.foldl_hom` automatically
+  connects it to the unchanged full source state. The existing List proofs use
+  only their ordinary accumulators; the compiled linked-list consumer remains
+  checked.
+- [x] Publish `Program.TimeO` at input-dependent call depth. A supplied uniform
+  polynomial depth envelope now gives code/stack capacity under the existing
+  width policy; actual values, allocation and execution still require proofs.
+- [x] Compose the actual generated entry and call-wrapper resource proofs from
+  supplied operation certificates, using the existing structural rules rather
+  than per-function ABI adapters or guessed operation prices. The original
+  record append's full uniform `TimeO` proof now uses these shared passes.
+  Result-dependent continuations still require their own source contracts;
+  the passes do not infer mathematical invariants or data-dependent prices.
+- [x] Select code independently of correctness: `program%` also selects an
+  effectful raw entry when it matches the fixed input/output layout. Proofs
+  are prepared by `program_correct`, not by selecting the candidate. The
+  original allocating `make` consumer proves its ordinary `Array.replicate`
+  result through `Correct.of_triple` and its existing standard state contract,
+  without generating a total pure model first.
+  `program_correct` also accepts an explicit represented total contract when
+  the selected header has no model. The same packing bridge carries that
+  contract to the fixed interface; no pure model or private ABI proof is needed.
+  Matching raw layouts now select the original entry whether or not a model
+  exists. Mathematical type/observation compatibility is checked when that
+  model is used for correctness, not as a condition for selecting code.
+  Direct represented models use their registered refinement; the existing
+  bounded-increment `Program` now exercises this branch through the migrated
+  default declaration and its unchanged ordinary minimum equation, alongside
+  the contract-only and genuinely packed record consumers.
+- [ ] Migrate existing consumers to the common entry and verify their ordinary
+  correctness statements and same-program RAM bounds on 0v0. Update the manual
+  and remove obsolete capability claims when those consumers actually pass.
+
+Finite ranges now use the original in-place source lowering independently of
+model availability. The emitter exposes the actual named loop, complete lexical
+slots, entry bindings and body observations. The allocating List range's
+mathematical fold is proved through that loop's actual `Control`/locals outcome;
+there are no generated range-body or range-fold source calls. Its original
+replicate equation and total correspondence check. The original traversal also
+retains `Implementation.boundedMap_loop1` and its RAM cost proof, including the
+same stable buffer-length bound without an extra temporary capture.
+
+The proof preparer now follows actual branch continuations when composing
+ranges, carrying their heap relations and frames. Nested-range and Option
+combinations still need consumer evidence; this does not close the complete
+integration gate. Explicit imports retain their source tables, order and written
+names, and resolved calls select those same entries. The frontend's buffer
+operations use the internal emitter to avoid an import cycle. Existing exact
+body identities and compiled consumers remain the compatibility requirements,
+not names that can be restored with aliases.
+
+This gate does not claim arbitrary Lean compilation, infer algorithmic invariants
+or turn every mutable computation into a pure total function. It requires that
+the already implemented capabilities work together without author-maintained
+representation, environment or machine bridges.
+
+The shared declaration must distinguish three pieces of information: its actual
+source function and action; its mathematical types and heap-indexed observations;
+and an optional proved total-function view. Absence of the last must not prevent
+lowering a loop or an effectful call. In particular, two array parameters can
+alias: their entry contents alone need not determine the result of a mutation
+followed by a read through the other handle. Such a program needs a state
+contract, not an invented contents-only pure function. Control-flow lowering
+must be shared before the public entry modes are collapsed; trying several
+frontends until one accepts the program is not this design.
+
+## Current declaration and proof-view behavior
+
+The intended interface is one program declaration. Arrays, records, calls,
+mutation, loops and recursion are language features that must compose; authors
+should not choose a frontend before combining them. Correctness can use an
+ordinary Lean function equation or a mathematical state contract, depending on
+the program. These are proof views of the same implementation, not different
+languages or execution models.
+
+**Current status: the default entry is connected; control-flow integration is
+incomplete.** New programs should use `source_program P where`. `P.f` is the
+actual source action, and `P.f_model` is its mathematical view when a checked
+total model is available. The common entry has been exercised by the buffer,
+recursive splay, imported optional-buffer and original traversal consumers,
+including the traversal's RAM bound. The allocating List range now has its
+ordinary mathematical proof through the original named loop. General
+control-flow and nested-range mathematical-model coverage remain incomplete.
+The [active integration gate](../ROADMAP.md#active-integration-gate) lists the
+remaining work.
+
+Ordinary local calls no longer need to be written after their helpers to obtain
+a mathematical model. Source bodies and imports retain their written order;
+only mathematical definitions and correspondence proofs are completed
+callee-first. The existing record-append caller is written before its helper
+and retains its original correctness and RAM time-bound proofs. An unavailable
+callee model removes dependent mathematical views, not the underlying source
+calls. This does not infer totality for mutually recursive families.
+
+Existing `(native)` examples retain a compatibility naming layout for the same
+preparation pass. `(pure)` remains the older scalar compatibility API with its
+own preparer; it is not yet just a naming alias. These examples are evidence for
+particular interfaces, not a recommendation to split an algorithm across three
+source languages.
+
+Integration now also connects represented records/arrays to scalar expressions,
+direct pure-source imports and self-recursion, including actual allocation before
+the recursive call. `Syntax.elaborateSourceProgramWithSites` supplies the
+existing typed-source emitter; proof views must not re-enter public command
+dispatch to select another frontend. Existing consumers exercise mutable local
+bindings, allocating List ranges and array records. Their correspondence must
+retain the same actual source calls and intermediate heaps through integration.
+Conditional and Option value branches now use a real local-return boundary:
+returning stores the result and stops that block's remaining control flow. The
+optional result slot also records completion, so a separate activity flag and
+its consistency proof are unnecessary. An optional returned value is stored as
+`some value`, distinct from the initially empty slot even when `value = none`.
+The existing record/List mathematical proofs check through this boundary, and the
+List's exact RAM count includes its actual control instructions. The source
+preparer no longer rejects loops or scratch scopes just because they occur in a
+value branch. The local-return `while` in `Scope.make` has checked source and RAM
+proofs; local-return ranges still need consumer evidence. Ordinary
+`let x : T ← do ...` blocks use the same boundary. The existing structured scalar
+caller uses this form and retains its mathematical and actual RAM proofs;
+private Option control is simplified by the shared backend proof rules.
+The existing nested-scratch worker also uses a plain value block. Its generated
+completion contracts expose source-visible locals and distinguish fallthrough
+from a local result. Actual execution frames reconstruct the compiler slots;
+scope cleanup still checks those full locals before returning the visible view.
+General represented `while` now retains actual assignments, effectful guards
+and early function returns through the same source loop. The array-record
+consumer supplies a mathematical-state contract, not a total pure function.
+Mathematical range-view coverage for exits, value-producing branches, nested
+ranges and calls to an enclosing recursive function remains part of the
+integration gate. A range view folds mutable locals and closes over fixed
+captures; its correspondence must refer to the same named source loop, without
+adding source helper calls or changing its charged execution.
+
+Statement branches, lexical shadowing, standalone Unit calls, nested product
+patterns and scratch scopes now pass through the same represented preparation.
+Their actual source control remains distinct from proof-only result joins and
+local versions. The original linked-list body identity, optional-buffer import
+chain and nested-scratch consumers retain their correctness and compiled
+resource statements as integration requirements. Scoped cleanup does not preserve
+observations of reclaimed storage. The default entry uses the common preparer;
+the allocating range and original traversal now retain their corresponding
+mathematical and RAM proofs. Further combinations remain in the integration gate.
+
+The [cross-prover research report](../DESIGN_RESEARCH.md) supplies the rationale
+for a common mathematical contract layer with complementary function-equation
+and state-invariant proofs. A model can describe mathematical Arrays or Lists
+even when their implementation allocates. Conversely, arbitrary mutation of
+aliased inputs need not have a total function of their entry-time contents;
+its correctness remains a state contract. Generating a total model must not be
+a prerequisite for accepting the underlying source program.
+
+The independent scalar core now has
+source correctness rules, generic whole-function lowering and proof transfer to
+the existing executable RAM runner. Return-flag lowering avoids continuation
+duplication and has exact static code-size formulas. A separate cost observation
+of realized scalar executions now transfers source bounds to the actual runner,
+including internal calls and the outer invocation overhead. The Lean-like
+scalar `source_program` surface, independent `Part` observations, compositional
+evaluation equations and a scoped strict Std.Do interpretation are now present.
+Generated one-step function equations support ordinary mathematical correctness
+proofs; shared structural rules compose separate cost bounds. Default declarations
+expose semantic actions as `P.f` and optional checked mathematical functions as
+`P.f_model`. Function equations and state contracts concern those same source
+actions; the legacy `(pure)` API retains its original mathematical naming.
+Generated contract equivalences hide argument-environment packing, and named
+specification rules apply supplied contracts in native `mvcgen` proofs;
+focused scalar tactics compose realization and uniform structural cost rules.
+Source execution and function contracts carry typed locals and a shared heap;
+their native monadic view retains the final heap on success and failure.
+Borrowed-buffer length, reads, writes and slices now have source syntax and
+semantics and checked whole-compiler behavior/cost connections. Mutable local
+bindings and assignments use the same source state, native equations and lowering.
+The typed core now includes effectful-guard loops and well-founded source rules.
+The surface accepts `while` and generates named guard/body/loop equations,
+normal-continuation proofs and termination rules over mutable locals and the heap.
+The complete buffer traversal proof now gives its ordinary `Array.map` result,
+preservation of disjoint views, termination, compiled invocation and independent
+linear instruction bound.
+A finite-range factorial also uses a generated native function: one accumulator
+loop is proved equal to `Nat.factorial n` with ordinary fold/product identities.
+Its total source contract follows from generated correspondence, not a second
+termination or implementation proof. Factorial and the direct/composed/imported
+compiled traversal modules exercise the finite-range and inferred-budget
+interfaces. Their existing contracts and bounds remain integration requirements;
+the updated entry must also pass the complete library, Examples and manual build.
+A self-recursive factorial proof uses ordinary induction and mathlib's
+`Nat.factorial`; its compiled invocation now has a separate linear instruction
+bound, subject to word-range and code/stack-capacity conditions. The
+[roadmap](../ROADMAP.md) records these boundaries and defines completion gates.
+Typed program embeddings now preserve complete source observations, including
+divergence and finite faults. Linking the existing traversal and recursive
+factorial tables reuses their original native proofs without unfolding either
+algorithm. The frontend now accepts `source_program P importing Library, Other where`
+and qualified calls into those libraries. Added bodies use the combined table;
+generated caller equations expose original library actions through proved
+embeddings. An imported program can itself contain imports. Separate connection-layer
+theorems now preserve realizability and exact compiled body counts through these
+embeddings, including the actual callee frame and call overhead. Source action
+equality alone is not the justification for those resource results.
+Program sketches and proposed interfaces in the [design overview](../HIGH_LEVEL_LANGUAGE.md)
+are schematic, not a claim that the complete language/API is available.

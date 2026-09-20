@@ -17,6 +17,14 @@ Follow mathlib's [style](https://leanprover-community.github.io/contribute/style
   Prefer readable proofs over brittle unfolding or large search calls.
 - Include a module summary and document public definitions and important results.
   Explain assumptions and meaning, not the history of the implementation.
+- Split modules at semantic or proof responsibilities, not arbitrary line counts.
+  Keep mutually recursive passes and a single induction together when splitting
+  would obscure their invariants. See the [module guide](docs/STRUCTURE.md).
+- An aggregate import may preserve a stable entry point; implementation modules
+  import their dependencies directly, never their own aggregate. Keep internal
+  elaborator helpers in the implementation namespace and local helpers private.
+  Moving declarations must preserve generated names, registration order and
+  executable bodies, not merely make existing imports compile.
 - Keep functional correctness and termination separate from time bounds.
   Costs must describe the same execution and follow from the compiler.
 - Preserve theorem statements when simplifying proofs. No `sorry`, new axioms,

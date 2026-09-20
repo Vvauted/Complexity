@@ -17,12 +17,14 @@ measured execution, with conditional source bounds and outer-call accounting.
 Borrowed buffers, mutable locals and typed effectful-guard loops have source
 rules and compiler connections. The semantic Std.Do adapter reuses strict Part
 and native state transformers. Named while syntax and ordinary-local variant
-rules exist; complete loop-proof automation, native total-function generation,
-richer data and allocation remain unfinished.
+rules exist. Native total functions for supported programs, represented data
+contracts and scoped allocation are implemented; uniform control-flow integration,
+invariant-only loop proofs, broader container operations and general lifetimes
+remain open. The roadmap records the precise boundaries.
 
 The sections below document the existing implementation and the semantic
 boundaries that its reuse must preserve. Here, `Source` means the current
-register-based `Stmt/Func` language, not the proposed high-level core.
+register-based `Stmt/Func` language, not the independently interpreted high-level core.
 The [backend manual](https://vvauted.github.io/Complexity/ComplexityDocs/Backend.html)
 describes the current machine and compiler interfaces.
 

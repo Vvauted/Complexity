@@ -10,8 +10,8 @@ import Examples
 # Understanding the backend
 
 The word-RAM gives an execution meaning to the source language and its resource contracts.
-Algorithm proofs should normally use the [verification](##ComplexityDocs.Verification) and
-[data-model](##ComplexityDocs.Models) interfaces. This chapter explains what those proofs
+Algorithm proofs should normally use the [verification](ComplexityDocs/Verification.html) and
+[data-model](ComplexityDocs/Models.html) interfaces. This chapter explains what those proofs
 ultimately guarantee, and which machine assumptions remain visible.
 
 ## What counts as one step?

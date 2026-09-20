@@ -35,9 +35,14 @@ cost model still needs mathematical review.
 Complexity/
   Analysis/Asymptotics/   Growth bounds over ordinary functions
   Analysis/Amortized.lean Potential inequalities over finite histories
+  Language/              Independent typed semantics and mathematical contracts
+    Syntax/Core/         Typed lowering, coordinates and proof/declaration emission
+    Syntax/Represented/  Represented preparation and checked correspondence
+  Program/               Fixed mathematical input/output and resource interfaces
   Computability/
     Recurrence/          Numerical recurrence comparison and asymptotics
     Ram/                 Source programs, execution, compilation and program proofs
+      Compiler/Language/ Connection from the independent source semantics
   Data/                  Supporting Nat and List lemmas
   LinearAlgebra/         Supporting matrix lemmas
   Tactic/Ram/            Proof automation
@@ -54,6 +59,12 @@ For example, `Complexity.Computability.Ram.Basic` defines `Ram.State`, while
 `Complexity.LinearAlgebra.Matrix.Update` extends `Matrix`.
 The `Ram` namespace is not a separate package.
 
+The [module guide](https://github.com/Vvauted/Complexity/blob/main/docs/STRUCTURE.md)
+describes the frontend passes and backend proof layers. Aggregate modules retain stable imports;
+their implementation modules depend on the necessary lower layers, not on the aggregate itself.
+Keep a complete mutually recursive pass or induction together. Split different responsibilities,
+such as statement preparation and correspondence generation, into separate modules.
+
 ## Writing documentation
 
 Follow mathlib's [documentation conventions](https://leanprover-community.github.io/contribute/doc.html):
@@ -68,6 +79,9 @@ Import the modules referenced by `##Module.Name` links in that manual page.
 For example, pages linking to program examples import `Examples`; this dependency
 belongs to the manual, not to the reusable library. An unimported module can otherwise
 fall back to a declaration search instead of linking to its module page.
+For navigation to a parent or sibling manual page, use its site-relative output path,
+such as `ComplexityDocs/Verification.html`. Doc-gen4 supplies the site root; do not add
+a cyclic import merely to resolve navigation or use filesystem-relative `../` links.
 
 The manual entry point is `docs/ComplexityDocs.lean`. Its modules have a distinct name because
 mathlib already owns `docs.*`; they use the same module-comment format and generator.

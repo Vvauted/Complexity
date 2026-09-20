@@ -20,17 +20,29 @@ to browse a topic.
 
 ## Start here
 
-1. [Getting started](##ComplexityDocs.GettingStarted): define and run a function,
+1. [Getting started](ComplexityDocs/GettingStarted.html): define and run a function,
    then prove a mathematical property of its result.
-2. [Proving correctness](##ComplexityDocs.Verification): specifications, total correctness,
+2. [Proving correctness](ComplexityDocs/Verification.html): specifications, total correctness,
    calls, loops and reuse of ordinary Lean proofs.
-3. [Working with data](##ComplexityDocs.Models): arrays, mathematical views and memory frames.
-4. [Proving complexity](##ComplexityDocs.Complexity): separate cost proofs, mathematical bounds
+3. [Working with data](ComplexityDocs/Models.html): arrays, mathematical views and memory frames.
+4. [Proving complexity](ComplexityDocs/Complexity.html): separate cost proofs, mathematical bounds
    and complete executable certificates.
 
+For a fixed mathematical input/output task, see
+[program specifications](ComplexityDocs/GettingStarted/Programs.html). The correctness guide
+has separate chapters on [source proof views](ComplexityDocs/Verification/Source.html),
+[represented data](ComplexityDocs/Verification/Representations.html),
+[mutable contracts](ComplexityDocs/Verification/State.html),
+[loops and recursion](ComplexityDocs/Verification/Loops.html), and
+[the RAM connection](ComplexityDocs/Verification/Compilation.html).
+The direct word-RAM interface has its own
+[programming guide](ComplexityDocs/GettingStarted/WordRam.html),
+[execution guide](ComplexityDocs/GettingStarted/Execution.html), and
+[contract reference](ComplexityDocs/Verification/Ram/Contracts.html).
+
 For machine assumptions and compiler details, see
-[the execution backend](##ComplexityDocs.Backend). For builds, module layout and contributing
-documentation, see [development](##ComplexityDocs.Development).
+[the execution backend](ComplexityDocs/Backend.html). For builds, module layout and contributing
+documentation, see [development](ComplexityDocs/Development.html).
 
 ## What is available
 
@@ -39,11 +51,13 @@ and an [independent typed source language](##Complexity.Language.Basic) are avai
 shared compilation proofs connect source contracts to the same actual RAM code.
 This does not compile arbitrary Lean functions or require per-program register proofs.
 
-`source_program (pure)` generates native total scalar functions and checked
-source correspondence. [Factorial](##Examples.Language.Factorial) uses ordinary
-mathematical induction and one native termination argument; Scalar and Remainder
-use the same interface. This pure subset supports self-recursion and acyclic calls,
-not pure `while`, mutual recursion or buffers.
+The recommended declaration is `source_program P where`. It exposes the actual
+source action and, when available, a checked total mathematical model.
+[Scalar](##Examples.Language.Scalar) uses ordinary equations about that model;
+[Factorial](##Examples.Language.Factorial) retains the `(pure)` compatibility
+interface and uses mathematical induction with one native termination argument.
+General mutable programs use state contracts, not an invented pure total model.
+The [source proof guide](ComplexityDocs/Verification/Source.html) explains this boundary.
 
 The effectful surface supports mutable locals, shared buffers, loops, calls and
 `Buffer.alloc` and `with_scratch` scopes. Source correctness uses mathematical
@@ -59,8 +73,8 @@ writes to older objects while reclaiming temporary allocations; longer-lived
 outputs must remain outside the reclaimed region. The source checks escaping
 handles, and the compiled success guarantee requires proved-safe exits.
 The [scoped source consumer](##Examples.Language.Scope) proves nested/called
-cleanup and a retained result, using Lean's `measure` through its named
-`wellFounded_spec` to prove the actual loop terminates.
+cleanup and a retained result. Its visible completion contracts hide private
+result slots, and its loop uses Lean's `measure` only for continuing iterations.
 Its [compiled workspace theorem](##Examples.Language.ScopeCompiled) bounds all
 actual accesses independently of repetition count, including both call frames.
 The [source-frame rule](##Complexity.Language.Effects.Heap) preserves existing contents

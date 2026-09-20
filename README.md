@@ -6,9 +6,15 @@ Our goal is to write a program once and prove both its correctness and
 complexity using ordinary mathematical reasoning. Verified compilation connects
 these proofs to execution, while reusable interfaces handle machine details.
 
-The library currently provides a verified word-RAM backend, program and array
-proof interfaces, and tools for asymptotic, recurrence and amortized analysis.
-Work on the higher-level programming and proof interface is ongoing.
+The library provides an independently interpreted source language, a verified
+word-RAM backend, and tools for asymptotic, recurrence and amortized analysis.
+Source programs have mathematical proof views and contracts for shared arrays,
+linked lists and scoped storage. Correctness and termination are separate from
+resource bounds, which concern the same compiled implementation.
+
+The high-level interface is still under development. It does not compile
+arbitrary Lean programs or infer algorithmic invariants. The
+[roadmap](docs/ROADMAP.md) distinguishes checked capabilities from open work.
 
 ## Documentation
 
@@ -16,6 +22,17 @@ Work on the higher-level programming and proof interface is ongoing.
 - [User manual](https://vvauted.github.io/Complexity/ComplexityDocs.html)
 - [API reference](https://vvauted.github.io/Complexity/)
 - [Roadmap](docs/ROADMAP.md) and [contributing](CONTRIBUTING.md)
+
+## Library organization
+
+- `Complexity/Language/`: source semantics, data contracts and frontend.
+- `Complexity/Program/`: mathematical input/output and resource interfaces.
+- `Complexity/Computability/Ram/`: machine model and verified compiler.
+- `Complexity/Analysis/` and `Complexity/Computability/Recurrence/`: reusable mathematics.
+- `Examples/` and `docs/ComplexityDocs/`: checked consumers and the doc-gen4 manual.
+
+Use focused imports when developing library code. The
+[module guide](docs/STRUCTURE.md) explains the frontend passes and dependency boundaries.
 
 ## AIGC
 
