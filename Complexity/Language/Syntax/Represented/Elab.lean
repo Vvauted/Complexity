@@ -7,6 +7,7 @@ import Complexity.Language.Syntax.Represented.Preparation
 import Complexity.Language.Syntax.Represented.OperationDeclarations
 import Complexity.Language.Syntax.Represented.Declarations
 import Complexity.Language.Syntax.Represented.Correspondence.While
+import Complexity.Language.Syntax.Represented.Correspondence.While.Completion
 
 /-!
 # Elaboration of represented source programs
@@ -131,6 +132,11 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
     let some site := actualSites.ranges.find? (fun site => site.tag == range.tag)
       | throwError "the source emitter did not return the prepared range site"
     pure { range with site? := some site }
+  let completionWhiles ← prepared.completionWhiles.mapM fun loop => do
+    let some site := actualSites.whiles.find? (fun site => site.tag == loop.tag)
+      | throwError "the source emitter did not return the prepared completion while site"
+    pure { loop with site? := some site }
+  let prepared := { prepared with completionWhiles }
   let signatures := mkIdentFrom family (family.getId ++ `signatures)
   let program := mkIdentFrom family (family.getId ++ `program)
   let rawSignatures := mkIdentFrom family (rawFamily.getId ++ `signatures)
@@ -167,6 +173,8 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
     let some site := actualSites.whiles.find? (fun site => site.tag == loop.tag)
       | throwError "the source emitter did not return the prepared while site"
     emitDeclarations (← liftTermElabM (whileDeclarations { loop with site? := some site } ranges))
+  for loop in prepared.completionWhiles do
+    emitDeclarations (← liftTermElabM (completionWhileDeclarations loop))
   registerNativeProgram names prepared.functions totals
 
 /-- Prepare one actual source program and optional mathematical functions.

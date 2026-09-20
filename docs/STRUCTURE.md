@@ -52,6 +52,8 @@ language interface.
 | `Preparation` | Complete function preparation and order optional models by call dependencies |
 | `OperationDeclarations` | Emit the real container-operation declarations used by the frontend |
 | `Correspondence/Basic`, `Range`, `Relation`, `Exact`, `While` | Proof composition, actual range relations, heap-indexed correspondence, justified exact equations and mathematical while rounds |
+| `Correspondence/While/Models` | Source-field mathematical observations shared by normal and completion rounds, independent of pure operation traces |
+| `Correspondence/While/Completion` | Mathematical local-return contracts composed from actual guard/body effects and the existing completion rule |
 | `Declarations`, `Elab` | Generate proof declarations and orchestrate source emission, proofs and registration |
 
 Preparation and correspondence share explicit data in
@@ -81,6 +83,8 @@ the other. Heap-operation dependencies belong to the buffer branch.
 - `Realization/WP`: structural weakest-precondition rules.
 - `Realization/Loop`: well-founded loops and reuse of existing finite executions.
 - `Realization/Function`: function contracts and call composition.
+- `Realization/LocalReturn`: the actual stopped guard, retaining the saved
+  result's word-range requirement without evaluating the original test.
 
 `Realization/Finite` and `Range` remain separate consumers. Importing them back
 into the aggregate would obscure, and can cycle through, execution-cost
@@ -91,6 +95,9 @@ solely to meet a line limit.
 `Arena/Loop/Completion` connects visible local-return contracts to readiness of
 the same finite loop execution. Source completion contracts stay under
 `Language/Eval/Locals/LocalReturn`; this RAM module adds only resource composition.
+`Language/Eval/Locals/LocalReturn/Models` supplies consequence rules for
+heap-indexed mathematical round contracts. The existing visible completion rule
+still owns loop semantics and execution frames.
 
 ## Documentation
 

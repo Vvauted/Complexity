@@ -6,6 +6,7 @@ Authors: vvauted
 import Examples.Language.ScopeCompiledWork
 import Complexity.Computability.Ram.Compiler.Language.LoopTactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution
+import Complexity.Computability.Ram.Compiler.Language.Realization.LocalReturn
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
 /-!
@@ -57,25 +58,6 @@ theorem guard_ready {w limit depth cursor : Nat} (hw : 0 < w)
     guard_realizable hw remaining out count n value heap remainingFits
   obtain ⟨rfl, rfl⟩ := execution.deterministic actual.erase
   exact actual.arenaReady limit cursor
-
-/-- A completed local block takes the existing guard's false branch. Only
-the stored result's range is needed; the original numeric test is not run. -/
-private theorem completed_guard_ready {w limit depth cursor : Nat} (hw : 0 < w)
-    (state : State _) (out : Buffer .nat) {finish : State _} {decision : Bool}
-    (outFits : out.length < 2 ^ w)
-    (stopped : Implementation.Source.make_loop1.pending
-      (Implementation.Source.make_loop1.View state.locals) = some out)
-    (execution : Exec Implementation.Source.program Implementation.Source.make_loop1.Guard
-      state finish (.returned decision)) :
-    ArenaReady execution w limit depth cursor cursor := by
-  have oneFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
-  dsimp only [Implementation.Source.make_loop1.pending,
-    Implementation.Source.make_loop1.view_apply] at stopped
-  refine RealizationWP.arenaReady
-    (normal := fun _ => False) (returned := fun _ _ => True) ?_ execution limit cursor
-  ram_source_realize_step
-  all_goals simp_all only [Option.some.injEq, reduceCtorEq]
-  all_goals first | assumption | trivial | omega
 
 /-- The body calls the actual reclaiming worker and decrements the saved count.
 The caller and callee share one cursor; returning from the worker restores its
@@ -169,8 +151,13 @@ theorem loop_ready {w limit cursor : Nat} (hw : 0 < w)
       (lt_of_le_of_lt valid.1 countFits) nFits valueFits capacity iterated fits
   · rintro state returned stopped ⟨rfl, contents⟩ finish decision tested
     have length : returned.length = 1 := by simpa [resultContents] using contents.size_eq.symm
-    exact completed_guard_ready hw state returned
-      (by rw [length]; exact Nat.one_lt_two_pow (Nat.ne_of_gt hw)) stopped tested
+    apply RealizationWP.arenaReady (execution := tested) (heapLimit := limit) (cursor := cursor)
+    apply RealizationWP.localReturn_guard_some (value := returned)
+    · simpa only [← Implementation.Source.make_loop1.pending_eval,
+        Equiv.symm_apply_apply] using stopped
+    · change returned.length < 2 ^ w
+      rw [length]
+      exact Nat.one_lt_two_pow (Nat.ne_of_gt hw)
   · exact ⟨rfl, current⟩
   · exact successful
 

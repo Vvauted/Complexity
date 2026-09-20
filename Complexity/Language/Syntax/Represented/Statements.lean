@@ -193,7 +193,12 @@ partial def sequence (names : DeclarationNames)
       let body : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (bodyBlock.raw.map (·.raw))⟩
       let raw ← `(doElem| source_while_site% $tag:ident ($guard:term) do $body:doSeq)
       let fallback : PreparedBlock := ⟨#[raw] ++ rawRest, none, none, returned, normal⟩
-      if localReturn || guardAssigned.any (fun slot => captured.any (·.slot == slot)) then
+      if localReturn then
+        modify fun preparation => { preparation with
+          completionWhiles := preparation.completionWhiles.push {
+            tag := tag.getId, captured, state := stateBinding } }
+        return fallback
+      if guardAssigned.any (fun slot => captured.any (·.slot == slot)) then
         return fallback
       let some guardNative := guardBlock.native? | return fallback
       let some guardCalls := guardBlock.calls? | return fallback

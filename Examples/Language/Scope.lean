@@ -298,6 +298,7 @@ theorem body_spec (out : Buffer .nat) (count n value : Nat)
     simp only [zero]
   · exact ⟨trivial, advanced⟩
 
+open Implementation.Source.make_loop1 in
 /-- Lean's existing well-founded measure proves termination of the actual
 source loop. The relation concerns mathematical progress, not a machine budget;
 its body contract carries the current heap through every real call. -/
@@ -311,39 +312,32 @@ theorem loop_spec (out : Buffer .nat) (count n value remaining : Nat) :
       (fun _ _ returned locals finish => returned = out ∧
         locals = (0, out, count, n, value, ()) ∧
           out.Contents finish (resultContents count n value)) := by
-  refine Implementation.Source.make_loop1.completion_rel_contract
-    (fun left locals heap => locals = (left, out, count, n, value, ()) ∧
-      invariant out count n value left heap)
-    (fun _ : Nat => True) (measure id).wf
-    (fun left _ heap locals finish =>
-      locals = (left, out, count, n, value, ()) ∧ finish = heap ∧ 0 < left)
-    (fun locals finish => ∃ left, locals = (left, out, count, n, value, ()) ∧
+  let encode : Nat → Model := fun left =>
+    mkModel (remaining := left) (out := out) (count := count) (n := n) (value := value)
+  have specification := model_completion_contract encode (fun left => decide (0 < left))
+    (invariant out count n value) (fun left next => next = left - 1) (measure id).wf
+    (fun _ finish => out.Contents finish (resultContents count n value))
+    (fun returned left finish => returned = out ∧ left = 0 ∧
       out.Contents finish (resultContents count n value))
-    (fun returned locals finish => returned = out ∧
-      locals = (0, out, count, n, value, ()) ∧
-        out.Contents finish (resultContents count n value)) ?_ ?_ remaining trivial
-  · intro left _
-    refine (guard_eval left out count n value).mono (fun _ _ initial => initial.1)
-      (fun _ _ _ _ _ impossible => impossible) ?_
-    rintro _ heap _ _ _ ⟨_, current⟩ ⟨rfl, same, rfl⟩
-    rw [same]
-    by_cases active : 0 < left
-    · simp only [decide_eq_true_eq, if_pos active]
-      exact ⟨trivial, trivial, active⟩
-    · simp only [decide_eq_true_eq, if_neg active]
-      exact ⟨left, rfl, invariant_done out count n value current active⟩
-  · rintro left _ heap _ ⟨rfl, current⟩ _ _ ⟨rfl, rfl, active⟩
-    refine (Implementation.Source.make_loop1.body_completion_spec_at
-      (body_spec out count n value current active) (left, out, count, n, value, ()) _).mono ?_
-        (Std.Do.PostCond.entails.refl _)
-    rintro _ rfl
-    refine ⟨⟨rfl, rfl⟩, ?_, ?_⟩
-    · rintro _ finish ⟨rfl, updated⟩
-      refine ⟨left - 1, trivial, ⟨rfl, updated⟩, ?_⟩
+    (by
+      intro left heap _
+      simp only [guard_model_contract, encode, visibleModelRel_mkModel_iff]
+      refine Stmt.BlockSpec.mono_pre ?_ (fun _ _ initial => initial.1)
+      simpa [guard_completion_contract, visible, and_assoc, and_left_comm, and_comm] using
+        guard_eval left out count n value)
+    (by
+      intro left heap current active
+      simpa [body_model_contract, encode, and_assoc, and_left_comm, and_comm] using
+        body_spec out count n value current (of_decide_eq_true active))
+    (by
+      rintro left next heap _ active rfl
+      have positive : 0 < left := of_decide_eq_true active
       change left - 1 < left
-      omega
-    · rintro returned locals finish completed
-      exact completed
+      omega)
+    (by
+      intro left heap current stopped
+      exact invariant_done out count n value current (of_decide_eq_false stopped)) remaining
+  simpa [encode, and_assoc, and_left_comm, and_comm] using specification
 
 /-- One source declaration allocates the surviving result and repeatedly uses
 the same nested scratch scopes. Its successful result has the ordinary array

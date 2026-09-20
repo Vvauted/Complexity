@@ -3,7 +3,7 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Language.Syntax.Represented.Correspondence.Relation
+import Complexity.Language.Syntax.Represented.Correspondence.While.Models
 import Complexity.Language.Eval.Locals.While.Represented
 
 /-!
@@ -27,30 +27,18 @@ open Lean.Parser.Term
 
 namespace Internal
 
-/-- Actual sites have already been resolved. A declaration must not append the
-current namespace to that absolute name a second time. -/
-private def declarationName (name : TSyntax `ident) : TSyntax `ident :=
-  mkIdentFrom name (`_root_ ++ name.getId)
-
 def WhileRegistration.site (loop : WhileRegistration) : TermElabM ActualWhileSite := do
-  let some site := loop.site?
-    | throwError "the prepared while has no actual source site"
+  let site ← loop.toWhileLocalRegistration.site
   if site.localReturn then
     throwError "a locally completed while cannot use a normal-round model contract"
   return site
 
-private def WhileRegistration.slots (loop : WhileRegistration) : TermElabM (Array Nat) := do
-  let site ← loop.site
-  sourceBindingSlots loop.captured site.scope site.scope
+private def WhileRegistration.slots (loop : WhileRegistration) : TermElabM (Array Nat) :=
+  loop.toWhileLocalRegistration.slots
 
 private def WhileRegistration.select (loop : WhileRegistration) (locals : TSyntax `term) :
-    TermElabM (TSyntax `term) := do
-  let fields ← sourceFields (← loop.site).scope.size locals
-  let slots ← loop.slots
-  fieldsTerm (← slots.toList.mapM fun slot =>
-    match fields[slot]? with
-    | some field => pure field
-    | none => throwError "the selected while coordinate is outside its actual locals")
+    TermElabM (TSyntax `term) :=
+  loop.toWhileLocalRegistration.select locals
 
 /-- Prove one actual guard or body observation. Complete source coordinates
 remain in the execution equation; only the mathematical relation projects them. -/
@@ -156,7 +144,7 @@ private def whileRoundDeclaration (loop : WhileRegistration) (guardRound : Bool)
     else `($finalRelated:ident)
   return (← `(command|
     /-- The mathematical round describes the actual named source block and its final heap. -/
-    theorem $(declarationName name):ident ($model:ident : $modelType:ident) :
+    theorem $(whileDeclarationName name):ident ($model:ident : $modelType:ident) :
         Complexity.Language.Stmt.BlockSpec
           (fun locals => Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident locals)
           ($modelRel:ident $model:ident) $normal $returned := by
@@ -177,87 +165,15 @@ def whileDeclarations (loop : WhileRegistration)
   let modelGuard := member `modelGuard
   let modelStep := member `modelStep
   let localsType := member `Locals
-  let stateType ← termOfExpr loop.state.type.nativeType
-  let stateCore ← termOfExpr (coreTypeExpr loop.state.type.coreTy)
-  let representation ← termOfExpr loop.state.type.representation
   let model := loop.state.name
-  let locals := mkIdent (← mkFreshUserName `locals)
-  let heap := mkIdent (← mkFreshUserName `heap)
-  let related := loop.state.relationName
-  let selected ← loop.select ⟨locals.raw⟩
-  let mut declarations := #[
-    (← `(command|
-      /-- Ordinary mathematical values of the loop's lexical source bindings. -/
-      abbrev $(declarationName modelType):ident := $stateType)).raw,
-    (← `(command|
-      /-- Observe the selected actual locals at the current heap, retaining their real aliases. -/
-      def $(declarationName modelRel):ident ($model:ident : $modelType:ident) ($locals:ident : $localsType:ident)
-          ($heap:ident : Complexity.Language.Heap) : Prop :=
-        ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
-          $model:ident $selected $heap:ident)).raw,
+  let mut declarations ← whileModelDeclarations loop.toWhileLocalRegistration
+  declarations := declarations ++ #[
     (← `(command|
       /-- The mathematical guard of a single actual loop round. -/
-      def $(declarationName modelGuard):ident : $modelType:ident → Bool := $(loop.guardNative))).raw,
+      def $(whileDeclarationName modelGuard):ident : $modelType:ident → Bool := $(loop.guardNative))).raw,
     (← `(command|
       /-- The mathematical local update of a normal actual loop round. -/
-      def $(declarationName modelStep):ident : $modelType:ident → $modelType:ident := $(loop.bodyNative))).raw]
-  let fields ← sourceFields site.scope.size ⟨locals.raw⟩
-  let positions ← loop.slots
-  let makeModel := member `mkModel
-  let mut modelParameters : Array (TSyntax ``Lean.Parser.Term.bracketedBinder) := #[]
-  let mut modelFields : Array (TSyntax `term) := #[]
-  let mut parameterNames : NameSet := {}
-  for binding in loop.captured do
-    let userName := binding.name.getId.eraseMacroScopes
-    let name ← if parameterNames.contains userName then
-        pure (mkIdent (← mkFreshUserName userName))
-      else pure (mkIdent userName)
-    parameterNames := parameterNames.insert userName
-    let type ← termOfExpr binding.type.nativeType
-    modelParameters := modelParameters.push (← `(bracketedBinder| ($name:ident : $type)))
-    modelFields := modelFields.push ⟨name.raw⟩
-  declarations := declarations.push (← `(command|
-    /-- Assemble the mathematical local state using source-variable parameter names. -/
-    def $(declarationName makeModel):ident $modelParameters:bracketedBinder* : $modelType:ident :=
-      $(← fieldsTerm modelFields.toList))).raw
-  let mut used : NameSet := {}
-  for binding in loop.captured, position in positions, index in [:loop.captured.size] do
-    let fieldName := binding.name.getId.eraseMacroScopes
-    unless used.contains fieldName do
-      used := used.insert fieldName
-      let name := member (Name.mkSimple ("model_rel_" ++ fieldName.toString))
-      let projectionName := member (Name.mkSimple ("model_" ++ fieldName.toString))
-      let representationName := member (Name.mkSimple (fieldName.toString ++ "_representation"))
-      let projection ← fieldProjection loop.captured.size index ⟨model.raw⟩
-      let projected ← value [loop.state] projection
-      let representation ← termOfExpr binding.type.representation
-      let nativeType ← termOfExpr binding.type.nativeType
-      let coreType ← termOfExpr (coreTypeExpr binding.type.coreTy)
-      let actual := fields[position]!
-      declarations := declarations ++ #[
-        (← `(command|
-          /-- The source-named mathematical value of this local. -/
-          def $(declarationName projectionName):ident ($model:ident : $modelType:ident) : $nativeType :=
-            $projection)).raw,
-        (← `(command|
-          /-- The checked representation of this field at its current heap. -/
-          abbrev $(declarationName representationName):ident : Complexity.Language.Representation $nativeType $coreType :=
-            $representation)).raw]
-      let proof ← if loop.state.type.isIdentity then
-          `(by
-            change $model:ident = $selected at $related:ident
-            subst $model:ident
-            rfl)
-        else
-          observationAt projected ⟨heap.raw⟩
-            #[⟨related.getId, loop.state.type, ⟨related.raw⟩⟩]
-      declarations := declarations.push (← `(command|
-        /-- Extract this field's mathematical observation without exposing source-coordinate transport. -/
-        theorem $(declarationName name):ident {$model:ident : $modelType:ident} {$locals:ident : $localsType:ident}
-            {$heap:ident : Complexity.Language.Heap}
-            ($related:ident : $modelRel:ident $model:ident $locals:ident $heap:ident) :
-            ($representation : Complexity.Language.Representation $nativeType $coreType).Rel
-              $projection $actual $heap:ident := $proof)).raw
+      def $(whileDeclarationName modelStep):ident : $modelType:ident → $modelType:ident := $(loop.bodyNative))).raw]
   declarations := declarations.push (← whileRoundDeclaration loop true ranges)
   declarations := declarations.push (← whileRoundDeclaration loop false ranges)
   let contract := member `model_contract
@@ -287,7 +203,7 @@ def whileDeclarations (loop : WhileRegistration)
     ← `(bracketedBinder| ($initial:ident : $invariant:ident $model:ident))]
   declarations := declarations.push (← `(command|
     /-- Mathematical invariant preservation and descent prove the original named loop. -/
-    theorem $(declarationName contract):ident $parameters:bracketedBinder* :
+    theorem $(whileDeclarationName contract):ident $parameters:bracketedBinder* :
         Complexity.Language.Stmt.BlockSpec
           (fun locals => Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident locals)
           ($modelRel:ident $model:ident)
@@ -314,7 +230,7 @@ def whileDeclarations (loop : WhileRegistration)
   declarations := declarations.push (← `(command|
     open scoped Part.TotalCorrectness in
     /-- Use the mathematical loop contract with the actual source continuation. -/
-    theorem $(declarationName spec):ident $parameters:bracketedBinder* $arguments:bracketedBinder*
+    theorem $(whileDeclarationName spec):ident $parameters:bracketedBinder* $arguments:bracketedBinder*
         ($post:ident : Std.Do.PostCond
           (Complexity.Language.Control $resultType × $localsType:ident)
           (.arg Complexity.Language.Heap .pure)) :

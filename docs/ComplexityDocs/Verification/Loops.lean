@@ -51,7 +51,7 @@ Generated `guard_spec`, `body_spec` and `spec` apply a chosen contract to a nati
 continuation. Immutable captures are restored internally from proved execution
 frames; preserving a buffer descriptor does not preserve its contents.
 The older `variant_spec` and `wellFounded_spec` rules remain available for direct
-native round proofs, as used by the scoped-allocation consumer. None of these
+native round proofs. None of these
 source rules asks for fuel or an instruction budget.
 
 ### Mathematical locals for represented rounds
@@ -77,11 +77,31 @@ actual loop contract to `mvcgen`. The generated round proofs compose existing
 operation correspondence and preservation contracts at the actual intermediate
 heaps; no `Part.bind` or raw environment transport is supplied by this consumer.
 
-This interface describes normal rounds with justified preservation of captured
-array observations. It needs no pure model of the complete loop, adds no source
-helper calls and does not infer a RAM bound. General aliased in-place mutation,
-effectful guard assignments and early/local-return rounds still use their source
-contracts; they are not assigned an unproved pure transition.
+This pure-round interface requires justified preservation of captured array
+observations. It needs no pure model of the complete loop, adds no source helper
+calls and does not infer a RAM bound.
+
+For local-return rounds, the same source-field representations generate `Model`,
+`mkModel` and field observations without requiring a pure round trace.
+`guard_model_contract` and `body_model_contract` lift supplied source contracts
+to mathematical locals at the actual heaps. An author chooses a mathematical
+index and `encode : Index → Model`; captures can remain ordinary parameters.
+`model_completion_contract` then combines the guard/body contracts, a
+heap-dependent invariant, a mathematical progress relation and its well-founded
+decrease, and the normal/completed result predicates.
+
+The [scoped worker loop](##Examples.Language.Scope) uses its remaining count as
+the index and `mkModel`'s source-variable names to select its state. Its proof
+reuses the worker's real contents contract and ordinary invariant lemmas,
+without tuple, `Part` or hidden-entry transport. A completed body needs no next
+invariant or decrease. The rule requires the supplied guard contract to preserve
+the mathematical index and actual heap; it may use the current invariant to
+justify its accesses. No heap-preservation restriction is imposed on the body.
+More general guards still use `completion_rel_contract`. A raw
+`Buffer` field observes its handle, not unchanged contents, and this interface
+does not turn aliased mutation into an assumed pure transition. The completed
+result remains the actual source return value; its contents are proved by the
+result predicate, not automatically converted into a mathematical Array or List.
 
 ## Finite ranges and resource rules
 
@@ -160,6 +180,11 @@ remain obligations. The scoped-workspace consumer reuses its existing source
 contracts here; it does not reconstruct private completion slots or prove loop
 termination again. The rule preserves the same arena boundary between rounds,
 not arbitrary growing allocation, and does not infer a time budget.
+For the final stopped guard, `RealizationWP.localReturn_guard_some` uses the
+saved result's actual word-range proof. It follows the option match and false
+return without evaluating the original test; `.arenaReady` then applies this
+fact to the same finite execution. The scoped consumer needs no private proof
+about the compiler's payload slot for this branch.
 
 ## Reuse a traversal invariant
 

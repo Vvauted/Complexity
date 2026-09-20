@@ -44,11 +44,14 @@ source-visible variables. `completion_spec` applies these contracts in `mvcgen`.
 and any local result against its entry heap. The full compiler state is restored
 by an execution frame before cleanup; projecting the proof view cannot discard
 an escaping root. The [nested worker](##Examples.Language.Scope) uses these
-contracts. Its local-return loop uses `completion_rel_contract`: continuing
-iterations preserve the invariant and decrease; a local result exits through
-the actual masked guard without requiring another decrease. The proof view
-hides private result slots, but mathematical source-state relations remain
-explicit rather than being inferred automatically.
+contracts. Its local-return loop uses `model_completion_contract`, built on
+`completion_rel_contract`: source-named mathematical locals and existing effect
+contracts feed the invariant, progress and result arguments. Continuing iterations
+preserve the invariant and decrease; a local result exits through the actual
+masked guard without requiring another decrease. The proof view hides private
+result slots and entry transport. Invariants and genuine contents effects remain
+explicit; the model interface requires a guard preserving its model and heap,
+while the underlying relational rule also supports effectful guards.
 
 The separate resource proof can reuse these same visible guard/body contracts
 through

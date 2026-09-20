@@ -65,6 +65,8 @@ structure SourceLocal where
   proofName : TSyntax `ident
   type : Ty
   isMutable : Bool
+  /-- A compiler completion slot, absent from the block's visible source locals. -/
+  privatePending : Bool := false
 
 /-- The actual named loop selected by a proof-side range tag. These coordinates
 describe already emitted source declarations; the tag neither changes execution

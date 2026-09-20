@@ -217,6 +217,7 @@ import Complexity.Computability.Ram.Compiler.Language.Realization
 import Complexity.Computability.Ram.Compiler.Language.Realization.Basic
 import Complexity.Computability.Ram.Compiler.Language.Realization.Finite
 import Complexity.Computability.Ram.Compiler.Language.Realization.Function
+import Complexity.Computability.Ram.Compiler.Language.Realization.LocalReturn
 import Complexity.Computability.Ram.Compiler.Language.Realization.Loop
 import Complexity.Computability.Ram.Compiler.Language.Realization.Range
 import Complexity.Computability.Ram.Compiler.Language.Realization.WP
@@ -428,6 +429,7 @@ import Complexity.Language.Eval.Locals.Composition
 import Complexity.Language.Eval.Locals.Continuation
 import Complexity.Language.Eval.Locals.Effects
 import Complexity.Language.Eval.Locals.LocalReturn
+import Complexity.Language.Eval.Locals.LocalReturn.Models
 import Complexity.Language.Eval.Locals.LocalReturn.While
 import Complexity.Language.Eval.Locals.Range
 import Complexity.Language.Eval.Locals.Range.Represented
@@ -507,6 +509,8 @@ import Complexity.Language.Syntax.Represented.Correspondence.Exact
 import Complexity.Language.Syntax.Represented.Correspondence.Range
 import Complexity.Language.Syntax.Represented.Correspondence.Relation
 import Complexity.Language.Syntax.Represented.Correspondence.While
+import Complexity.Language.Syntax.Represented.Correspondence.While.Completion
+import Complexity.Language.Syntax.Represented.Correspondence.While.Models
 import Complexity.Language.Syntax.Represented.Declarations
 import Complexity.Language.Syntax.Represented.Elab
 import Complexity.Language.Syntax.Represented.Expression

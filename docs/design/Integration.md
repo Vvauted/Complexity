@@ -100,8 +100,12 @@ The current integration work has these concrete obligations:
   generated named mathematical locals, guard/body correspondence and `model_spec`;
   its proof supplies the invariant, decrease and exit result without raw environment
   transport or `Part` unfolding. The mathematical views select the same actual
-  named source loop, adding no helper calls. Extend this interface to general
-  effect contracts and completion-aware rounds. Fixed captured handles do not by
+  named source loop, adding no helper calls. Completion-aware rounds retain
+  their local type/representation metadata independently of pure operation
+  traces and reuse the same mathematical state generator. Their supplied
+  guard/body contracts relate observations at the actual heaps; they do not
+  require or generate a pure body transition. Extend this interface to broader
+  effectful guards and construct combinations. Fixed captured handles do not by
   themselves preserve captured contents, and no total model of the complete
   while is required. The normal-round interface currently requires checked
   array-preserving operations and no guard assignment to retained locals; it
@@ -118,13 +122,20 @@ The current integration work has these concrete obligations:
   through the actual masked guard, with no invented decrease after completion.
   `Scope.make` exercises this path. Its separate arena proof reuses these source
   contracts through shared completion-aware loop lifting; the named-loop tactic
-  supplies checked private coordinates and frames. Its proof still supplies
-  visible tuples and the mathematical state relation. The next mathematical-local
-  interface should compose source effect contracts, so `Scope.loop_spec` can
-  retain its genuine invariant, descent and result arguments without tuple or
-  entry transport. Raw `Buffer` identity observes a handle, not its contents;
-  the worker's update and reclamation contract cannot become an assumed pure
-  mathematical step. This interface and local-return ranges remain open.
+  supplies checked private coordinates and frames. Its resource proof still
+  supplies visible tuples and the mathematical state relation. The source
+  `Scope.loop_spec` now uses `model_completion_contract`: a source-named `mkModel`
+  selects the mathematical locals, and shared consequence rules compose its
+  existing guard/body contracts with its genuine invariant, descent and result
+  arguments. There is no private `mono`/entry adapter or source tuple transport
+  in this loop proof. This interface requires an explicitly proved
+  model-and-heap-preserving guard; the older `completion_rel_contract` still
+  supports effectful guards. Raw `Buffer` identity observes a handle, not its
+  contents; the worker's actual update and reclamation contract is retained.
+  General mathematical-local integration and local-return ranges remain open.
+  The original guard/body leaf contracts and resource invariant still use
+  visible tuples. Migrating those author-facing proofs is a separate remaining
+  obligation; shortening `loop_spec` alone does not finish the complete workflow.
 - [ ] Compose mathematical functions and state contracts through the same
   heap-indexed representation. A pure encoding is a special case; mutable
   array contents are not preserved by arbitrary heap extension.

@@ -30,10 +30,15 @@ work and every remaining obligation. The outstanding work is:
   authors supply invariants, descent and genuine effect/range facts, not private
   slots, raw-environment transport or `Part` plumbing. Normal array-preserving
   rounds now have generated named mathematical locals and correspondence, used
-  by the array-record while consumer. Next, connect completion-aware mathematical
-  locals through source effect contracts and remove the visible-tuple transport
-  from `Scope.loop_spec`. Do not assign a pure transition to arbitrary mutation
-  or mistake a retained buffer handle for unchanged contents.
+  by the array-record while consumer. Completion-aware rounds reuse the same
+  field representations through supplied effect contracts; `Scope.loop_spec`
+  selects its mathematical state by source-variable names, without manual
+  visible-tuple or entry transport. This contract interface currently requires
+  a guard that preserves the model and heap; its body may change the heap.
+  Next migrate the remaining guard/body proof leaves and resource relations to
+  these mathematical locals, then extend effectful guards and construct combinations.
+  Do not assign a pure transition to arbitrary mutation or mistake a retained
+  buffer handle for unchanged contents.
 - Compose function equations and state contracts through the same heap-indexed
   representation, including actual aliases and intermediate heaps.
 - Migrate the remaining existing consumers, retaining their original mathematical
@@ -53,6 +58,12 @@ completion-aware readiness rule, without a second termination proof or manual
 physical workspace bound remain explicit. A named-loop entry selects the checked
 completion coordinates and frames; the mathematical state/effect relations are
 still supplied by the author.
+The source proof uses `model_completion_contract` to compose its existing guard
+and worker contracts with the invariant, mathematical progress and result facts.
+Local-state representations survive without a pure body model; the raw buffer
+field observes only the handle, with contents still proved by the worker contract.
+The final stopped guard also has a shared realization rule, retaining the saved
+result's range condition rather than a private payload-slot proof.
 
 ## M0 — Decisions and questions to settle
 

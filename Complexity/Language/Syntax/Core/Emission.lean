@@ -245,10 +245,12 @@ def programDeclarations (family : TSyntax `ident)
         tag := request.tag, name := site.name.getId
         entryScope := request.entryScope.toArray.map fun binding => {
           name := binding.name, proofName := binding.proofName,
-          type := binding.type, isMutable := binding.isMutable }
+          type := binding.type, isMutable := binding.isMutable,
+          privatePending := binding.privatePending }
         scope := site.scope.toArray.map fun binding => {
           name := binding.name, proofName := binding.proofName,
-          type := binding.type, isMutable := binding.isMutable }
+          type := binding.type, isMutable := binding.isMutable,
+          privatePending := binding.privatePending }
         result := site.result, cursorSlot, stop := range.stop, stride := range.stride
         proofBody := request.proofBody
         loopProofBody := ← loopProofBody site
@@ -259,7 +261,8 @@ def programDeclarations (family : TSyntax `ident)
         tag, name := site.name.getId
         scope := site.scope.toArray.map fun binding => {
           name := binding.name, proofName := binding.proofName,
-          type := binding.type, isMutable := binding.isMutable }
+          type := binding.type, isMutable := binding.isMutable,
+          privatePending := binding.privatePending }
         result := site.result, localReturn := site.localReturn.isSome }
     if site.guard.isSome then
       let mut rules := #["view_apply", "view_symm_apply", "captureView_apply",

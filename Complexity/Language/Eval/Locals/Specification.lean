@@ -48,6 +48,12 @@ variable {pre pre' : Input → Heap → Prop}
 variable {normal normal' : Input → Heap → Output → Heap → Prop}
 variable {returned returned' : Input → Heap → Value result → Output → Heap → Prop}
 
+/-- Strengthen only a block's precondition, retaining both actual outcome relations. -/
+theorem mono_pre (specification : BlockSpec action pre normal returned)
+    (precondition : ∀ start heap, pre' start heap → pre start heap) :
+    BlockSpec action pre' normal returned :=
+  fun start heap initial => specification start heap (precondition start heap initial)
+
 /-- Apply a block contract at its actual initial input and heap. -/
 theorem «at» (specification : BlockSpec action pre normal returned)
     (start : Input) (startHeap : Heap) (initial : pre start startHeap) :

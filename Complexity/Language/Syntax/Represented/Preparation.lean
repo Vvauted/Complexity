@@ -222,6 +222,8 @@ def completeModels (names : DeclarationNames) (prepared : Preparation) :
     ) ++ whiles.toList.flatMap (fun loop =>
       modelRangeTags ranges loop.guard ++ modelRangeTags ranges loop.body)
   ranges := ranges.filter (fun range => retained.contains range.tag)
+  -- Completion local types survive unchanged: they do not depend on resolved
+  -- pure calls or array-preserving round traces.
   return ({ prepared with functions, ranges, whiles },
     completed.filterMap fun fn => fn.model?.map (fun _ => fn.name.getId))
 

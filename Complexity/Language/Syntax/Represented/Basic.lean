@@ -188,20 +188,24 @@ structure RangeRegistration where
   indices : TSyntax `term
   site? : Option ActualRangeSite := none
 
-/-- A single while round can have mathematical observations even when the
-complete loop has no total-function model. These are proofs of the existing
-guard and normal body, not separately emitted source functions. -/
-structure WhileRegistration where
+/-- Mathematical local types for an actual while site, independent of an
+optional pure guard/body model or an array-preservation summary. -/
+structure WhileLocalRegistration where
   tag : Name
   captured : Array Binding
   state : Binding
+  site? : Option ActualWhileSite := none
+
+/-- A single while round can have mathematical observations even when the
+complete loop has no total-function model. These are proofs of the existing
+guard and normal body, not separately emitted source functions. -/
+structure WhileRegistration extends WhileLocalRegistration where
   guard : Array Trace
   guardResult : Value
   guardNative : TSyntax `term
   body : Array Trace
   returned : Value
   bodyNative : TSyntax `term
-  site? : Option ActualWhileSite := none
 
 structure FunctionModel where
   nativeBody : TSyntax `term
@@ -266,6 +270,8 @@ structure Preparation where
   functions : Array Function := #[]
   ranges : Array RangeRegistration := #[]
   whiles : Array WhileRegistration := #[]
+  /-- Completion-aware local interfaces do not require a pure round trace. -/
+  completionWhiles : Array WhileLocalRegistration := #[]
   localHeaders : Array LocalHeader := #[]
   calledFamilies : Array (TSyntax `ident) := #[]
   current : Option Operation := none
