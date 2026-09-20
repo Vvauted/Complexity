@@ -54,6 +54,19 @@ The older `variant_spec` and `wellFounded_spec` rules remain available for direc
 native round proofs. None of these
 source rules asks for fuel or an instruction budget.
 
+For a traversal with a natural count increasing by one, `count_frame_contract`
+composes the existing guard/body contracts with a transitive heap relation.
+Supply the count, its fixed upper bound, the invariant, the per-step frame and
+the exit consequence. The shared rule proves descent by the remaining count
+and accumulates the frame from the supplied initial heap, which need not be the
+current loop-entry heap. The guard contract must preserve the count and heap
+and establish the invariant at its actual output; other mutable locals may
+change. The body contract must exclude early returns. The
+[borrowed traversal](##Examples.Language.Traversal) and
+[buffer copy](##Complexity.Language.Buffer.Copy) use this entry without manual
+guard/body consequence rules. Array updates, bounds and disjointness remain
+their mathematical obligations; no effects or cost bounds are inferred.
+
 ### Mathematical locals for represented rounds
 
 When a normal loop round has checked mathematical operation contracts, the

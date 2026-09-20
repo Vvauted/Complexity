@@ -176,33 +176,12 @@ theorem loop_contract (xs : Buffer .nat) (limit : Nat) (contents : Array Nat)
       (fun _ _ _ heap => xs.Contents heap (contents.map fun x => min (x + 1) limit) ∧
         xs.PreservesOutside initial heap)
       (fun _ _ _ _ _ => False) := by
-  refine Implementation.boundedMap_loop1.variant_contract xs limit
-    (fun i heap => invariant xs limit contents i heap ∧ xs.PreservesOutside initial heap)
-    (fun i _ => contents.size - i)
-    (fun i heap j finish => j = i ∧ finish = heap ∧ j < contents.size)
-    (fun _ heap => xs.Contents heap (contents.map fun x => min (x + 1) limit) ∧
-      xs.PreservesOutside initial heap) (fun _ _ _ => False) ?_ ?_
-  · apply Stmt.BlockSpec.mono (guard_contract xs limit contents)
-    · intro _ _ current; exact current.1
-    · intro _ _ _ _ _ impossible; exact impossible
-    · intro start heap again finish finalHeap current tested
-      rcases tested with ⟨sameIndex, rfl, prefixState, available⟩
-      by_cases active : again = true
-      · simp only [if_pos active]
-        exact ⟨sameIndex, trivial, available.mp active⟩
-      · simp only [if_neg active]
-        exact ⟨invariant_done xs limit contents prefixState
-          (Nat.le_of_not_gt (fun bound => active (available.mpr bound))), current.2⟩
-  · intro i heap current
-    apply Stmt.BlockSpec.mono (body_contract xs limit contents)
-    · rintro start afterGuard ⟨sameIndex, rfl, active⟩
-      exact ⟨by simpa only [sameIndex] using current.1, active⟩
-    · rintro start afterGuard finish finalHeap ⟨sameIndex, rfl, available⟩
-        ⟨next, updated, preserved⟩
-      exact ⟨⟨updated, Buffer.PreservesOutside.trans current.2 preserved⟩, by
-        dsimp only
-        omega⟩
-    · intro _ _ _ _ _ _ impossible; exact impossible
+  exact Implementation.boundedMap_loop1.count_frame_contract xs limit
+    (fun i => i) contents.size (invariant xs limit contents)
+    xs.PreservesOutside Buffer.PreservesOutside.trans
+    (fun heap => xs.Contents heap (contents.map fun x => min (x + 1) limit))
+    (guard_contract xs limit contents) (body_contract xs limit contents)
+    (fun _ _ current finished => invariant_done xs limit contents current finished) initial
 
 /-- The traversal's ordinary array result and its outside-buffer frame hold at
 the same actual final heap. This includes disjoint slices of the same object. -/

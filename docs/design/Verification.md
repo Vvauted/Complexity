@@ -373,6 +373,15 @@ facts inside cost and realization proofs. Their shared implementation extracts
 actual postconditions and preserves fixed captures. No nested round contract,
 per-example execution adapter or repeated termination proof is required.
 
+The named `count_frame_contract` also composes the traversal and copy loops'
+existing guard/body contracts. It proves the remaining-count decrease and
+accumulates their supplied transitive heap frame; the consumer retains its
+array invariant, update proof and exit consequence. The frame starts at the
+caller's supplied heap, not necessarily the current loop entry. This rule
+requires a count-and-heap-preserving guard and count increments by one, with no
+successful early return. It does not infer a mutable operation's effects,
+strengthen slice disjointness to distinct objects, or supply a resource bound.
+
 The [named-loop resource tactics](../../Complexity/Computability/Ram/Compiler/Language/LoopTactic.lean)
 now remove view/frame selection and contract-to-totality setup from the compiled
 traversal. They read the actual registered `Code` and supplied block contracts;

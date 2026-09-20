@@ -10,8 +10,8 @@ import Complexity.Language.Eval.Locals.Verification
 # Generated loop contracts and termination rules
 
 Constructs raw/native loop contracts, independent guard/body rules, related mathematical-state
-contracts and well-founded or natural-variant wrappers. The author still supplies invariants and
-progress; these builders only compose the existing source semantic rules.
+contracts and well-founded, natural-variant or counted-frame wrappers. The author still supplies
+invariants and step contracts; these builders only compose the existing source semantic rules.
 -/
 
 namespace Complexity.Language.Syntax
@@ -434,6 +434,104 @@ def loopIndependentContractDeclaration (program : TSyntax `ident) (site : BlockS
   return (← `(command|
     /-- Prove a named loop from independent mathematical guard and body contracts.
     Actual guard effects and early body returns are retained; only normal iterations decrease. -/
+    theorem $name:ident : $type := $proof)).raw
+
+/-- Specialize the existing loop rule to a counted traversal and a transitive
+heap frame. Source contracts, not the syntax of the body, justify each step. -/
+def loopCountFrameContractDeclaration (program : TSyntax `ident) (site : BlockSite) :
+    MacroM Syntax := do
+  let name := loopMember site "count_frame_contract"
+  let mutableScope := site.scope.filter (·.isMutable)
+  let capturedScope := site.scope.filter (! ·.isMutable)
+  let afterScope := (← freshMutableScope site "after_").filter (·.isMutable)
+  let count ← freshProofName site.name `count
+  let limit ← freshProofName site.name `limit
+  let invariant ← freshProofName site.name `invariant
+  let frame ← freshProofName site.name `frame
+  let frameTrans ← freshProofName site.name `frameTrans
+  let normal ← freshProofName site.name `normal
+  let guardSpec ← freshProofName site.name `guardSpec
+  let bodySpec ← freshProofName site.name `bodySpec
+  let exit ← freshProofName site.name `exit
+  let initial ← freshProofName site.name `initial
+  let before ← freshProofName site.name `before
+  let heap ← freshProofName site.name `heap
+  let finish ← freshProofName site.name `finish
+  let again ← freshProofName site.name `again
+  let captures ← scopeTuple capturedScope
+  let capturedValues := capturedScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+  let beforeValues := mutableScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+  let afterValues := afterScope.toArray.map fun b => (⟨b.proofName.raw⟩ : TSyntax `term)
+  let app (function : TSyntax `ident) (arguments : Array (TSyntax `term)) :=
+    Lean.Syntax.mkApp ⟨function.raw⟩ arguments
+  let contract (suffix : String) (pre normal returned : TSyntax `term) :=
+    app (loopMember site suffix) (capturedValues ++ #[pre, normal, returned])
+  let ignoreStart (body : TSyntax `term) : MacroM (TSyntax `term) := do
+    let mut result ← `(fun _ => $body)
+    for _ in mutableScope do result ← `(fun _ => $result)
+    return result
+  let countType ← quantifyScope mutableScope (← `(Nat))
+  let predicateType ← quantifyScope mutableScope (← `(Complexity.Language.Heap → Prop))
+  let falseNormal ← ignoreStart
+    (← curryScope afterScope (← `(fun (_ : Complexity.Language.Heap) => False)))
+  let falseReturned ← ignoreStart (← `(fun _ =>
+    $(← curryScope afterScope (← `(fun (_ : Complexity.Language.Heap) => False)))))
+  let guardReturned ← curryScope mutableScope
+    (← `(fun ($heap:ident : Complexity.Language.Heap) ($again:ident : Bool) =>
+      $(← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+        $(app count afterValues) = $(app count beforeValues) ∧
+        $finish:ident = $heap:ident ∧
+        $(app invariant (afterValues.push ⟨finish.raw⟩)) ∧
+        ($again:ident = true ↔ $(app count afterValues) < $limit:ident))))))
+  let bodyPre ← curryScope mutableScope (← `(fun ($heap:ident : Complexity.Language.Heap) =>
+    $(app invariant (beforeValues.push ⟨heap.raw⟩)) ∧
+      $(app count beforeValues) < $limit:ident))
+  let bodyNormal ← curryScope mutableScope (← `(fun ($heap:ident : Complexity.Language.Heap) =>
+    $(← curryScope afterScope (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+      $(app count afterValues) = $(app count beforeValues) + 1 ∧
+      $(app invariant (afterValues.push ⟨finish.raw⟩)) ∧
+      $frame:ident $heap:ident $finish:ident)))))
+  let pre ← curryScope mutableScope (← `(fun ($heap:ident : Complexity.Language.Heap) =>
+    $(app invariant (beforeValues.push ⟨heap.raw⟩)) ∧ $frame:ident $initial:ident $heap:ident))
+  let finalNormal ← ignoreStart (← curryScope afterScope
+    (← `(fun ($finish:ident : Complexity.Language.Heap) =>
+      $normal:ident $finish:ident ∧ $frame:ident $initial:ident $finish:ident)))
+  let exitType ← quantifyScope mutableScope (← `(∀ ($heap:ident : Complexity.Language.Heap),
+    $(app invariant (beforeValues.push ⟨heap.raw⟩)) →
+      $limit:ident ≤ $(app count beforeValues) → $normal:ident $heap:ident))
+  let type ← quantifyScope capturedScope (← `(∀ ($count:ident : $countType)
+    ($limit:ident : Nat) ($invariant:ident : $predicateType)
+    ($frame:ident : Complexity.Language.Heap → Complexity.Language.Heap → Prop)
+    ($frameTrans:ident : ∀ {a b c}, $frame:ident a b → $frame:ident b c → $frame:ident a c)
+    ($normal:ident : Complexity.Language.Heap → Prop)
+    ($guardSpec:ident : $(contract "guard_contract" ⟨invariant.raw⟩ falseNormal guardReturned))
+    ($bodySpec:ident : $(contract "body_contract" bodyPre bodyNormal falseReturned))
+    ($exit:ident : $exitType) ($initial:ident : Complexity.Language.Heap),
+    $(contract "contract" pre finalNormal falseReturned)))
+  let mutableType := loopMember site "Mutable"
+  let beforeFields ← tupleFields mutableScope ⟨before.raw⟩
+  let rawCount ← `(fun ($before:ident : $mutableType:ident) => $(app count beforeFields))
+  let rawInvariant ← `(fun ($before:ident : $mutableType:ident)
+    ($heap:ident : Complexity.Language.Heap) =>
+      $(app invariant (beforeFields.push ⟨heap.raw⟩)))
+  let rawExit ← `(fun ($before:ident : $mutableType:ident) => $(app exit beforeFields))
+  let view := loopMember site "CaptureView"
+  let guard := loopMember site "Guard"
+  let body := loopMember site "Body"
+  let guardFrame := loopMember site "guard_preservesCaptures"
+  let bodyFrame := loopMember site "body_preservesCaptures"
+  let proof ← curryScope capturedScope (← `(fun $count:ident $limit:ident $invariant:ident
+    $frame:ident $frameTrans:ident $normal:ident $guardSpec:ident $bodySpec:ident
+    $exit:ident $initial:ident =>
+      Complexity.Language.Stmt.observe_while_fixed_count_frame_contract
+        $view:ident $program:ident $guard:ident $body:ident $guardFrame:ident $bodyFrame:ident
+        $captures $rawCount $limit:ident $rawInvariant $frame:ident $frameTrans:ident
+        $normal:ident $guardSpec:ident $bodySpec:ident $rawExit $initial:ident))
+  return (← `(command|
+    /-- Compose an increasing count and a transitive heap frame from the actual
+    guard and body contracts. The guard preserves the count and heap; normal
+    body steps increase the count by one. Array effects and the exit consequence
+    remain supplied mathematical facts, without a runtime budget. -/
     theorem $name:ident : $type := $proof)).raw
 
 /-- Expose a related mathematical loop state with named mutable arguments.

@@ -27,6 +27,9 @@ guard and body contracts while keeping these same checked capture frames.
 Their predicates need only the mutable values and actual endpoint heaps.
 `observe_while_fixed_rel_contract` instead keeps its invariant and progress on
 a heap-indexed mathematical model, without requiring a lossless model encoding.
+`observe_while_fixed_count_frame_contract` specializes the same variant rule
+to a count advancing by one and a supplied transitive heap frame. It composes
+existing step contracts without inferring their contents effects.
 -/
 
 namespace Complexity.Language.Stmt
@@ -417,5 +420,72 @@ theorem observe_while_fixed_variant_contract {Mutable Captured : Type}
     (measure fun current : Mutable × Heap => variant current.1 current.2).rel
     (measure fun current : Mutable × Heap => variant current.1 current.2).wf
     ready normal returned guardSpec bodySpec
+
+/-- Compose a bounded counting loop with a transitive heap frame. The supplied
+guard contract preserves the observed count and heap, and establishes the
+invariant on its actual updated locals. Each normal body step advances that
+count by one and supplies its actual heap frame. The invariant and exit fact
+remain mathematical obligations, while capture transport and accumulated
+frames are handled by the existing variant rule. No successful early return is
+admitted by these contracts. -/
+theorem observe_while_fixed_count_frame_contract {Mutable Captured : Type}
+    (view : Env Γ ≃ Mutable × Captured) (program : Program signatures)
+    (guard : Stmt signatures Γ .bool) (body : Stmt signatures Γ result)
+    (guardFrame : ∀ {entry finish : State Γ} {control : Control .bool},
+      Exec program guard entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (bodyFrame : ∀ {entry finish : State Γ} {control : Control result},
+      Exec program body entry finish control →
+        (view finish.locals).2 = (view entry.locals).2)
+    (captures : Captured) (count : Mutable → Nat) (limit : Nat)
+    (invariant : Mutable → Heap → Prop)
+    (frame : Heap → Heap → Prop)
+    (frameTrans : ∀ {initial middle finish},
+      frame initial middle → frame middle finish → frame initial finish)
+    (normal : Heap → Prop)
+    (guardSpec : BlockSpec (fun index => observe view guard program (index, captures))
+      invariant (fun _ _ _ _ => False)
+      (fun start heap again next finish => count next.1 = count start ∧ finish = heap ∧
+        invariant next.1 finish ∧ (again = true ↔ count next.1 < limit)))
+    (bodySpec : BlockSpec (fun index => observe view body program (index, captures))
+      (fun start heap => invariant start heap ∧ count start < limit)
+      (fun start heap next finish => count next.1 = count start + 1 ∧
+        invariant next.1 finish ∧ frame heap finish)
+      (fun _ _ _ _ _ => False))
+    (exit : ∀ start heap, invariant start heap → limit ≤ count start → normal heap)
+    (initial : Heap) :
+    BlockSpec (fun index => observe view (.while guard body) program (index, captures))
+      (fun index heap => invariant index heap ∧ frame initial heap)
+      (fun _ _ _ finish => normal finish ∧ frame initial finish)
+      (fun _ _ _ _ _ => False) := by
+  refine observe_while_fixed_variant_contract view program guard body guardFrame bodyFrame captures
+    (fun index heap => invariant index heap ∧ frame initial heap)
+    (fun start _ => limit - count start)
+    (fun start heap next finish => count next = count start ∧ finish = heap ∧
+      invariant next finish ∧ count next < limit)
+    (fun _ finish => normal finish ∧ frame initial finish) (fun _ _ _ => False) ?_ ?_
+  · apply guardSpec.mono
+    · intro _ _ current
+      exact current.1
+    · intro _ _ _ _ _ impossible
+      exact impossible
+    · intro index heap again next finish current tested
+      rcases tested with ⟨sameIndex, sameHeap, nextInvariant, available⟩
+      subst finish
+      by_cases active : again = true
+      · simp only [if_pos active]
+        exact ⟨sameIndex, trivial, nextInvariant, available.mp active⟩
+      · simp only [if_neg active]
+        exact ⟨exit next.1 heap nextInvariant
+          (Nat.le_of_not_gt (fun bound => active (available.mpr bound))), current.2⟩
+  · intro index heap current
+    apply bodySpec.mono
+    · rintro start afterGuard ⟨_, _, nextInvariant, active⟩
+      exact ⟨nextInvariant, active⟩
+    · rintro start afterGuard next finish ⟨sameIndex, rfl, _, available⟩
+        ⟨advanced, nextInvariant, preserved⟩
+      exact ⟨⟨nextInvariant, frameTrans current.2 preserved⟩, by dsimp only; omega⟩
+    · intro _ _ _ _ _ _ impossible
+      exact impossible
 
 end Complexity.Language.Stmt

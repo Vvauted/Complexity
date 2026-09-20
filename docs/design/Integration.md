@@ -232,6 +232,16 @@ replicate equation and total correspondence check. The original traversal also
 retains `Implementation.boundedMap_loop1` and its RAM cost proof, including the
 same stable buffer-length bound without an extra temporary capture.
 
+One concrete missing combination is a normal finite range inside a local-result
+`do` block. Preparation currently discards its mathematical model whenever the
+enclosing block has a local-return boundary, even if the range body never exits
+that boundary. Core already emits the actual pending-controlled guard and
+increment. The next connection must retain those coordinates and prove that
+pending remains empty before reusing a normal fold rule; removing the guard in
+the proof view would describe another loop. Mixed normal/local-return bodies
+also need a control-sensitive result summary. A normal exit being possible is
+not evidence that a local return is impossible.
+
 The proof preparer now follows actual branch continuations when composing
 ranges, carrying their heap relations and frames. Nested-range and Option
 combinations still need consumer evidence; this does not close the complete

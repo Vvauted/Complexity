@@ -112,8 +112,10 @@ equation normalization remain work. See the
 ## M2 — Mutable algorithms with mathematical data contracts
 
 Traversal, disjoint slices and imported/multiple calls reuse mathematical contents
-and actual frames. Shared loop rules and tactics remove part of the lexical and
-execution transport. General mathematical-local interfaces, potential/allocation
+and actual frames. Traversal and copy compose their counted loops through one
+shared rule for descent and transitive frames, retaining their existing array
+invariants and update/exit proofs. Shared loop rules and tactics remove part of
+the lexical and execution transport. General mathematical-local interfaces, potential/allocation
 setup and routine witness packaging remain open. See the
 [mutable-contract milestone](design/Verification.md#mutable-contract-milestone).
 

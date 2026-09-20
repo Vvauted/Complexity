@@ -204,35 +204,15 @@ theorem copy_loop (source target : Buffer .nat) (offset : Nat)
         target.Contents heap (copied input output offset input.size) ∧
         target.PreservesOutside initial heap)
       (fun _ _ _ _ _ => False) := by
-  refine Copy.copyInto_loop1.variant_contract source target offset
-    (fun index heap => copyInvariant source target offset input output index heap ∧
-      target.PreservesOutside initial heap)
-    (fun index _ => input.size - index)
-    (fun index heap next finish => next = index ∧ finish = heap ∧ next < input.size)
-    (fun _ heap => source.Contents heap input ∧
-      target.Contents heap (copied input output offset input.size) ∧
-      target.PreservesOutside initial heap) (fun _ _ _ => False) ?_ ?_
-  · apply Stmt.BlockSpec.mono (copy_guard source target offset input output)
-    · intro _ _ current; exact current.1
-    · intro _ _ _ _ _ impossible; exact impossible
-    · intro start heap again finish finalHeap current tested
-      rcases tested with ⟨sameIndex, rfl, prefixState, available⟩
-      by_cases active : again = true
-      · simp only [if_pos active]
-        exact ⟨sameIndex, trivial, available.mp active⟩
-      · simp only [if_neg active]
-        have complete := copyInvariant_done source target offset input output prefixState
-          (Nat.le_of_not_gt (fun bound => active (available.mpr bound)))
-        exact ⟨complete.1, complete.2, current.2⟩
-  · intro index heap current
-    apply Stmt.BlockSpec.mono (copy_body source target offset input output separated extent)
-    · rintro start afterGuard ⟨sameIndex, rfl, active⟩
-      exact ⟨by simpa only [sameIndex] using current.1, active⟩
-    · rintro start afterGuard finish finalHeap ⟨sameIndex, rfl, available⟩
-        ⟨next, updated, preserved⟩
-      exact ⟨⟨updated, Buffer.PreservesOutside.trans current.2 preserved⟩,
-        by dsimp only; omega⟩
-    · intro _ _ _ _ _ _ impossible; exact impossible
+  simpa only [and_assoc] using Copy.copyInto_loop1.count_frame_contract source target offset
+    (fun index => index) input.size (copyInvariant source target offset input output)
+    target.PreservesOutside Buffer.PreservesOutside.trans
+    (fun heap => source.Contents heap input ∧
+      target.Contents heap (copied input output offset input.size))
+    (copy_guard source target offset input output)
+    (copy_body source target offset input output separated extent)
+    (fun _ _ current finished =>
+      copyInvariant_done source target offset input output current finished) initial
 
 /-- Copy the source into the specified target interval. The source and all
 views disjoint from the target retain their actual contents. -/
