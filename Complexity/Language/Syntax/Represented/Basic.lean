@@ -176,6 +176,7 @@ result together with that state. Both are proof views of the same source loop. -
 inductive RangeModel where
   | fold (embedding mutableStep initialMutable indices : TSyntax `term)
   | completion (resultType : NativeType)
+      (embedding mutableStep initialMutable : TSyntax `term)
 
 structure RangeRegistration where
   tag : Name

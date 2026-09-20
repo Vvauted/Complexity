@@ -111,7 +111,7 @@ def RangeRegistration.select (range : RangeRegistration) (locals : TSyntax `term
   let state ← range.selectState locals
   match range.model with
   | .fold .. => pure state
-  | .completion _ =>
+  | .completion .. =>
       let site ← range.site
       let some position := site.pendingSlot?
         | throwError "a local range result requires its actual completion coordinate"
@@ -201,9 +201,40 @@ private def rangeResultProof (range : RangeRegistration)
   let statement ← `(($representation : Complexity.Language.Representation $type $core).Rel
     $resultModel $selected $finish)
   match range.model with
-  | .completion _ =>
-      return (#[← `(tactic| skip)], #[← `(tactic|
-        have $observed:ident : $statement := ⟨($outcome:ident).2, ($outcome:ident).1.1⟩)])
+  | .completion resultType embedding mutableStep initialMutable =>
+      let embedding := resolveRaw embedding substitutions
+      let mutableStep := resolveRaw mutableStep substitutions
+      let initialMutable := resolveRaw initialMutable substitutions
+      let returnedType ← termOfExpr resultType.nativeType
+      let stateType ← termOfExpr range.state.type.nativeType
+      let equal := mkIdent (← mkFreshUserName `rangeCompletionEqual)
+      let nativeRange ← `(({
+        start := $start, stop := $stop
+        step := $stride, step_pos := $positive:ident } : Std.Legacy.Range))
+      let fullResult ← `(let outcome := Id.run (forIn (m := Id)
+          $nativeRange
+          ((none, ($start, $initialState)) : Option $returnedType × (Nat × $stateType))
+          (fun index running =>
+            let iteration := $bodyNative index running.2.2
+            Option.elim iteration.1
+              (pure (ForInStep.yield (none, (index + $stride, iteration.2))))
+              (fun returned => pure (ForInStep.done (some returned, (index, iteration.2))))))
+        (outcome.1, outcome.2.2))
+      let proof ← `(tactic|
+        have $observed:ident : $statement := by
+          have $equal:ident : $fullResult = $resultModel :=
+            Complexity.Language.Stmt.forIn_range_step_completion_eq
+              $bodyNative $mutableStep $embedding
+              (by
+                intro index mutable
+                first
+                | rfl
+                | dsimp only [Id.run, Id.instMonad, Pure.pure, Bind.bind, Option.elim]
+                  repeat' first | rfl | split)
+              $start $stop $stride $positive:ident $initialMutable
+          rw [← $equal:ident]
+          exact ⟨($outcome:ident).2, ($outcome:ident).1.1⟩)
+      return (#[← `(tactic| skip)], #[proof])
   | .fold embedding mutableStep initialMutable indices =>
       let embedding := resolveRaw embedding substitutions
       let mutableStep := resolveRaw mutableStep substitutions
@@ -315,7 +346,7 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
           termOfExpr (coreTypeExpr payload)
     let completionType? := match range.model with
       | .fold .. => none
-      | .completion type => some type
+      | .completion type .. => some type
     let completionRep ← match completionType? with
       | some type => termOfExpr type.representation
       | none => `(Complexity.Language.Representation.ofEmbedding

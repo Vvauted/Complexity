@@ -157,8 +157,18 @@ runs only when no result was saved. This adds no second source loop or allocatio
 for proof-side state; actual body allocations and control instructions remain
 part of the compiled program. Branch summaries carry only mutable lexical slots,
 including shadowed bindings; immutable observations use proved heap preservation.
-The range's mathematical `forIn` still carries its cursor and complete captures;
-a smaller accumulator-only proof view remains follow-up work.
+
+The prepared completion-range mathematical `forIn` carries
+`Option Result × Mutable`: the iteration index remains a callback argument, but
+the cursor is erased from the accumulator and immutable captures are closed over.
+`Stmt.forIn_range_step_completion_eq` reuses `forIn_range_hom` twice to connect
+this view to the full state, requiring fixed-field preservation on both continuing
+and completing rounds. Its step still
+computes the full mathematical body result and then projects mutable coordinates;
+projections through unknown `Option.elim`/`if` expressions are not normalized
+automatically. A smaller accumulator therefore need not be definitionally equal
+to the simplest handwritten callback. The same source loop, actual heap and body
+trace remain the basis of correspondence and resource proofs.
 
 General nested loops and their mixed-exit combinations, function-level range
 returns, calls to the enclosing recursive function from a range and full models of

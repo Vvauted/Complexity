@@ -21,6 +21,37 @@ open Lean.Parser.Term
 
 namespace Internal
 
+private def completionRangeModel (captured : Array Binding)
+    (stateSyntax returnedType bodyNative : TSyntax `term)
+    (initialModel startModel stopModel strideModel : ValueModel) :
+    TermElabM (TSyntax `term × TSyntax `term × TSyntax `term × TSyntax `term) := do
+  let mutableType ← stateType (captured.filter (·.mutable)).toList
+  let mutableName := mkIdent (← mkFreshUserName `mutableState)
+  let stepIndex := mkIdent (← mkFreshUserName `index)
+  let iteration := mkIdent (← mkFreshUserName `rangeIteration)
+  let packedMutable ← packMutableState captured initialModel.native ⟨mutableName.raw⟩
+  let embedding ← `(fun ($mutableName:ident : $mutableType) => $packedMutable)
+  let nextMutable ← mutableState captured (← `($iteration:ident.2))
+  let mutableStep ← `(fun ($stepIndex:ident : Nat) ($mutableName:ident : $mutableType) =>
+    let $iteration:ident : Option $returnedType × $stateSyntax :=
+      $bodyNative $stepIndex:ident $packedMutable
+    ($iteration:ident.1, $nextMutable))
+  let initialMutable ← mutableState captured initialModel.native
+  let nativeRange ← `(({
+    start := $(startModel.native), stop := $(stopModel.native)
+    step := $(strideModel.native), step_pos := by
+      simp (config := { zetaDelta := true, failIfUnchanged := false }) only [Nat.add_eq] <;>
+        omega } : Std.Legacy.Range))
+  let nativeResult ← `(let outcome := Id.run (forIn (m := Id) $nativeRange
+      ((none, $initialMutable) : Option $returnedType × $mutableType)
+      (fun index running =>
+        let iteration : Option $returnedType × $mutableType := $mutableStep index running.2
+        Option.elim iteration.1
+          (pure (ForInStep.yield (none, iteration.2)))
+          (fun returned => pure (ForInStep.done (some returned, iteration.2)))))
+    (outcome.1, $embedding outcome.2))
+  return (nativeResult, embedding, mutableStep, initialMutable)
+
 partial def sequence (names : DeclarationNames)
     (imports : ImportedPrograms) (resultType : NativeType)
     (scope : List Binding) (elements : List (TSyntax `doElem))
@@ -404,20 +435,9 @@ partial def sequence (names : DeclarationNames)
         let bodyNative ← `(fun ($cursor:ident : Nat) ($initial:ident : $stateSyntax) =>
           Id.run $bodyTerm)
         let returnedType ← termOfExpr resultType.nativeType
-        let nativeRange ← `(({
-          start := $(startModel.native), stop := $(stopModel.native)
-          step := $(strideModel.native), step_pos := by
-            simp (config := { zetaDelta := true, failIfUnchanged := false }) only [Nat.add_eq] <;>
-              omega } : Std.Legacy.Range))
-        let nativeResult ← `(let outcome := Id.run (forIn (m := Id) $nativeRange
-            ((none, ($(startModel.native), $(initialModel.native))) :
-              Option $returnedType × (Nat × $stateSyntax))
-            (fun index running =>
-              let iteration := $bodyNative index running.2.2
-              Option.elim iteration.1
-                (pure (ForInStep.yield (none, (index + $(strideModel.native), iteration.2))))
-                (fun returned => pure (ForInStep.done (some returned, (index, iteration.2))))))
-          (outcome.1, outcome.2.2))
+        let (nativeResult, embedding, mutableStep, initialMutable) ←
+          completionRangeModel captured stateSyntax returnedType bodyNative
+            initialModel startModel stopModel strideModel
         let resultName := mkIdent (← mkFreshUserName `rangeValue)
         let resultRaw := mkIdent (← mkFreshUserName `rangeSource)
         let resultObserved := mkIdent (← mkFreshUserName `rangeObserved)
@@ -436,7 +456,8 @@ partial def sequence (names : DeclarationNames)
         modify fun state => { state with ranges := state.ranges.push {
           tag := tag.getId, captured, state := stateBinding, index := indexBinding
           body := summary.calls, returned := summary.returned, bodyNative
-          start, stop, stride, result, model := .completion resultType } }
+          start, stop, stride, result,
+          model := .completion resultType embedding mutableStep initialMutable } }
         let rangeTrace := Trace.range tag.getId #[initialValue] result
           (summary.calls.all Trace.preservesArrays)
         let nativeType ← termOfExpr rangeType.nativeType

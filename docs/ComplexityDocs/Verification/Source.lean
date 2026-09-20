@@ -78,10 +78,17 @@ model.
 Correspondence relates the actual saved result and locals at their final heap;
 the payload belongs to the local block, not necessarily the function's result
 type. Only continuing rounds advance, and completion uses the real stopped guard.
-The summary introduces no second source loop or runtime allocation. General
-nested loops and their mixed exits, function-level range returns, calls to the
-enclosing recursive function from a range and full models of arbitrary heap
-mutation remain open. Mathematical correspondence does not itself give a RAM bound.
+The prepared mathematical view carries only `Option Result × Mutable`, erasing
+the cursor from its accumulator and closing over immutable captures through a
+state-reconstruction proof. Its step
+still projects the full body model's result; projections through unknown
+`Option.elim`/`if` expressions are not normalized automatically. Smaller state
+therefore need not give the simplest handwritten callback by definitional equality.
+The actual source loop and heap/body trace are unchanged: the summary introduces
+no second source loop or runtime allocation. General nested loops and their mixed
+exits, function-level range returns, calls to the enclosing recursive function
+from a range and full models of arbitrary heap mutation remain open.
+Mathematical correspondence does not itself give a RAM bound.
 
 The [iterative factorial](##Examples.Language.Factorial) uses one range and a
 mutable accumulator through the older `(pure)` compatibility naming. Its

@@ -275,9 +275,21 @@ rounds advance; completion leaves through the real masked false guard using
 `TotalWP.while_completion`. The shared continuation runs only on the absent-result
 path. No second source loop, helper traversal or allocation is added for the
 proof-side summary; real body allocation remains in the actual execution.
-Branch summaries carry only mutable lexical slots, but the range's mathematical
-`forIn` still retains its cursor and complete captured state. Shrinking that view
-requires a proved relation and preservation of the fields moved out of its state.
+Branch summaries carry only mutable lexical slots, including shadowed bindings.
+The prepared completion-range mathematical view likewise carries
+`Option Result × Mutable`, with no cursor in its accumulator and immutable captures
+closed over. `Stmt.forIn_range_step_completion_eq` applies `forIn_range_hom` twice
+to connect this view to the full state: the embedding must reconstruct the full
+body result on both continuing and completing rounds. Immutable observations
+still require actual heap preservation; a fixed handle alone is not enough.
+The reduced-state list proof and nested completion consumer have been checked
+on 0v0, retaining their mathematical statements and generated correspondence.
+The step still evaluates the full
+mathematical body result before projecting its mutable coordinates. There is no
+normalizer that pushes these projections through unknown `Option.elim`/`if`
+expressions, so reduced state does not yet imply the simplest callback by
+definitional equality. The actual source/raw loop, heap and body trace are unchanged;
+this mathematical simplification supplies no new RAM bound.
 General nested loops and their mixed-exit combinations, function-level range
 returns, calls to the enclosing recursive function from a range and full models of
 arbitrary heap mutation remain outside this automatic mathematical-model path.

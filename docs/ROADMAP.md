@@ -234,13 +234,22 @@ environment encodings or repeating source facts in a second resource proof.
    proof. A shorter public theorem must not hide an equally long private
    connection proof.
 2. Preserve native finite-range correspondence and inferred uniform budgets.
-   The mixed-exit mathematical `forIn` still carries its cursor and complete
-   captured state, even though branch summaries carry only mutable lexical slots.
-   Next generate a view over mutable accumulators, closing over immutable captures
-   and erasing the cursor through a proved iteration relation and fixed-field
-   preservation, using existing iteration/fold lemmas. Extend construct combinations
-   only with matching real consumers. Dependent bounds, recursion descent and
-   algorithmic potentials remain mathematical obligations, not guessed annotations.
+   The prepared local-completion `forIn` view carries `Option Result × Mutable`,
+   erasing the cursor from its state and closing over immutable captures.
+   `Stmt.forIn_range_step_completion_eq` reuses `forIn_range_hom` twice,
+   requiring reconstruction of the full state after every round, including early
+   completion. The reduced-state list proof and nested completion consumer have
+   been checked on 0v0; source execution and its heap/body trace are unchanged.
+   Its step still projects the full body model's
+   result: projections through unknown `Option.elim`/`if` expressions are not yet
+   normalized, so a smaller state does not guarantee definitional equality with
+   the simplest handwritten callback. Next remove this single-step proof burden
+   or address a demonstrated construct gap, guided by real consumer proofs.
+   First try a checked high-level step equation using `Option.elim_comp` and
+   `apply_ite` locally, before introducing a separate syntax normalizer. Project
+   the whole small state together, avoiding repeated branch expansion per field.
+   Dependent bounds, recursion descent and algorithmic potentials remain
+   mathematical obligations, not guessed annotations; no new RAM bound follows.
 3. Extend the represented native frontend from its checked scalar, List and
    recursive product/option result joins. These compose their heap-indexed
    relations across allocation, with real slot initialization and field copies.

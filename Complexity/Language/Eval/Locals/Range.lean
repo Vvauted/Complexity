@@ -108,6 +108,77 @@ theorem forIn_range_hom {State Mapped : Type}
   exact forIn_list_hom mapState step mappedStep stepEq
     (List.range' range.start range.size range.step) initial
 
+/-- Remove the proof cursor and fixed captures from a locally completing
+range's mathematical accumulator. Both exits retain the same optional result
+and the final state reconstructed by `embed`; its preservation is required for
+every round, including one that completes early. -/
+theorem forIn_range_step_completion_eq {α : Type}
+    (step : Nat → Captured → Option α × Captured)
+    (smallStep : Nat → Mutable → Option α × Mutable)
+    (embed : Mutable → Captured)
+    (stepEq : ∀ index mutable, step index (embed mutable) =
+      ((smallStep index mutable).1, embed (smallStep index mutable).2))
+    (start stop stride : Nat) (positive : 0 < stride) (initial : Mutable) :
+    (let outcome := Id.run (forIn (m := Id)
+        ({ start := start, stop := stop, step := stride, step_pos := positive } : Std.Legacy.Range)
+        ((none, (start, embed initial)) : Option α × (Nat × Captured))
+        (fun index state =>
+          let iteration := step index state.2.2
+          iteration.1.elim
+            (pure (ForInStep.yield (none, (index + stride, iteration.2))))
+            (fun value => pure (ForInStep.done (some value, (index, iteration.2))))))
+     (outcome.1, outcome.2.2)) =
+    (let outcome := Id.run (forIn (m := Id)
+        ({ start := start, stop := stop, step := stride, step_pos := positive } : Std.Legacy.Range)
+        ((none, initial) : Option α × Mutable)
+        (fun index state =>
+          let iteration := smallStep index state.2
+          iteration.1.elim
+            (pure (ForInStep.yield (none, iteration.2)))
+            (fun value => pure (ForInStep.done (some value, iteration.2)))))
+     (outcome.1, embed outcome.2)) := by
+  let range : Std.Legacy.Range :=
+    { start := start, stop := stop, step := stride, step_pos := positive }
+  let fullAdvance (index : Nat) (state : Option α × (Nat × Captured)) :
+      Id (ForInStep (Option α × (Nat × Captured))) :=
+    let iteration := step index state.2.2
+    iteration.1.elim
+      (pure (.yield (none, (index + stride, iteration.2))))
+      (fun value => pure (.done (some value, (index, iteration.2))))
+  let capturedAdvance (index : Nat) (state : Option α × Captured) :
+      Id (ForInStep (Option α × Captured)) :=
+    let iteration := step index state.2
+    iteration.1.elim
+      (pure (.yield (none, iteration.2)))
+      (fun value => pure (.done (some value, iteration.2)))
+  let smallAdvance (index : Nat) (state : Option α × Mutable) :
+      Id (ForInStep (Option α × Mutable)) :=
+    let iteration := smallStep index state.2
+    iteration.1.elim
+      (pure (.yield (none, iteration.2)))
+      (fun value => pure (.done (some value, iteration.2)))
+  let project (state : Option α × (Nat × Captured)) := (state.1, state.2.2)
+  let lift (state : Option α × Mutable) := (state.1, embed state.2)
+  have erased :
+      forIn (m := Id) range (none, embed initial) capturedAdvance =
+        project (forIn (m := Id) range (none, (start, embed initial)) fullAdvance) := by
+    refine forIn_range_hom project fullAdvance capturedAdvance ?_
+      range (none, (start, embed initial))
+    intro index state
+    cases outcome : step index state.2.2 with
+    | mk returned next =>
+        cases returned <;> simp [project, fullAdvance, capturedAdvance, outcome, Id.instMonad]
+  have restored :
+      forIn (m := Id) range (none, embed initial) capturedAdvance =
+        lift (forIn (m := Id) range (none, initial) smallAdvance) := by
+    refine forIn_range_hom lift smallAdvance capturedAdvance ?_ range (none, initial)
+    intro index state
+    cases outcome : smallStep index state.2 with
+    | mk returned next =>
+        cases returned <;>
+          simp [lift, smallAdvance, capturedAdvance, stepEq, outcome, Id.instMonad]
+  exact erased.symm.trans restored
+
 /-- Encode only a finite range's optional early return. The native mutable
 state is unchanged, normal steps advance the cursor, and early returns retain
 their actual cursor and final mutable state. The encoding need not be invertible. -/
