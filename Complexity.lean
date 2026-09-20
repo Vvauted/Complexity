@@ -436,6 +436,7 @@ import Complexity.Language.Eval.Locals.LocalReturn.Models
 import Complexity.Language.Eval.Locals.LocalReturn.While
 import Complexity.Language.Eval.Locals.Range
 import Complexity.Language.Eval.Locals.Range.Represented
+import Complexity.Language.Eval.Locals.Range.LocalReturn
 import Complexity.Language.Eval.Locals.While.Represented
 import Complexity.Language.Range.Fold
 import Complexity.Language.Eval.Locals.RangeControl

@@ -70,6 +70,11 @@ proof preserves the actual pending-controlled guard and increment, and carries
 fixed locals into the continuation. The existing List consumer retains its original replicate proof;
 range bodies that themselves exit the boundary still need a control-sensitive
 summary, and broader nested combinations remain open.
+The shared finite-range completion theorem now relates both continuing and
+locally returning rounds to Lean's `forIn`, retaining the actual pending result,
+final locals and heap. It reuses the existing completion rule, including the
+real stopped guard. The normal local-range generator consumes its always-continue
+specialization; automatic preparation of mixed-exit bodies remains open.
 The scoped while's resource proof reuses the visible guard/body contracts through
 a shared completion-aware readiness rule, without a second termination proof or
 manual `Part`/private-slot reconstruction. The same ranges, scratch capacity and

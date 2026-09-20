@@ -69,6 +69,12 @@ folding the selected List, with the same ordinary sum equation. A loop iteration
 that can either continue or return still needs a two-outcome mathematical
 summary; this closed-block support does not supply one.
 
+Normal finite ranges inside local value blocks retain their mathematical fold.
+Their generated proof uses the shared local-completion range theorem, which
+also describes a stored result, its final heap and the real stopped-guard step.
+Generating the two-outcome model for a range body that exits its enclosing
+value block remains open; the more general theorem alone does not enable it.
+
 The [iterative factorial](##Examples.Language.Factorial) uses one range and a
 mutable accumulator through the older `(pure)` compatibility naming. Its
 ordinary equality with `Nat.factorial` follows from

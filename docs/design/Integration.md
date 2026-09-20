@@ -246,8 +246,9 @@ same stable buffer-length bound without an extra temporary capture.
 A normal finite range inside a local-result `do` block now uses the same actual
 pending-controlled guard and increment. Its correspondence proves that the
 active result slot stays empty, retaining every fixed source coordinate for the
-continuation, including enclosing private slots. It reuses the existing related
-range rule and fold theorem; no second loop or executable helper is generated.
+continuation, including enclosing private slots. It specializes the shared
+local-completion range rule and existing fold theorem; no second loop or
+executable helper is generated.
 The allocating List consumer keeps its original replicate equation and total
 correctness proof. The added value-block control belongs to the actual compiled
 program; this does not claim an unchanged instruction count. Mixed
@@ -256,9 +257,20 @@ Preparation requires both a normally continuing scope and a complete body model
 and proof trace; a normal exit being possible alone does not justify a fold.
 The remaining iteration summary must distinguish updated continuing locals from
 a stored local result, retaining the actual final locals and heap in either
-case. Local completion still has normal source control and exits through the
-next masked false guard; the existing function-return range theorem cannot be
-used for that path unchanged.
+case. The shared `observe_while_completion_rel_forIn_range_step` theorem supplies
+that semantic connection to Lean's existing `forIn`: each actual body completes
+normally, and its optional saved result is observed at its actual final heap.
+Only continuing rounds advance the cursor. A completed round exits through the
+next masked false guard, by the existing `TotalWP.while_completion` rule.
+The frontend currently consumes the always-continue specialization; it still
+needs the two-outcome preparation summary to generate proofs for mixed exits.
+That summary must stop treating the active pending slot as fixed, while retaining
+ancestor slots and lexical captures. The local payload type is independent of
+the enclosing function's return type.
+Preparation should capture `Option result × state` at the return and fallthrough
+leaves, before their lexical observations are lost, using the existing product
+and Option representations. Branch composition must run the shared continuation
+only on the absent-result path and retain the completed path's own final state.
 
 The proof preparer now follows actual branch continuations when composing
 ranges, carrying their heap relations and frames. Nested-range and Option
