@@ -132,8 +132,11 @@ with mixed continuation and function-return branches. These use the actual
 `Control.returned`/`whileReturn`, not an added local value block or pending slot.
 A returned (`some`) round retains its actual payload and final heap without a
 cursor increment or an extra false guard. Raw lowering is unchanged; no new RAM
-cost bound follows. General nested loops, enclosing recursion from a range and
-full models of arbitrary heap mutation remain open.
+cost bound follows. Automatic action correspondence and refinement also cover
+a checked two-level finite-range nest with an inner function return. This does
+not establish arbitrary nested-loop support: general mixed local/function
+completion, enclosing recursion from a range and full models of arbitrary heap
+mutation remain open.
 
 In the retained `(pure)` compatibility API, finite ranges generate a native total
 iteration over the same normalized body. A shared finite-iteration theorem connects it to the

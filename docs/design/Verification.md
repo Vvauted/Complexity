@@ -186,8 +186,9 @@ private cursor and actual body during elaboration. Existing finite-iteration
 rules connect mathematical folds to source while execution; the remaining
 generator work must apply them to the same named loop, not introduce a separately
 called source implementation. General source control retains early returns.
-Automatic mathematical views for nested ranges, exits and recursive calls inside
-ranges are separate coverage obligations, not consequences of a finite index set.
+Automatic mathematical views for broader nested-range and mixed-completion
+combinations, and recursive calls inside ranges, remain separate coverage
+obligations, not consequences of a finite index set.
 Authors should not repeat library iteration or lowering proofs, and body calls
 must reuse their checked correspondences at the actual intermediate heap.
 
@@ -322,10 +323,15 @@ inside a pure range.
 The default represented frontend separately supports fully modeled `if`/`Option`
 finite-range bodies with mixed continuation and direct function returns. Their
 generated mathematical model and heap-indexed correspondence retain the actual
-returned payload and final heap; the ordinary List equation has been checked
+returned payload and final heap; the single-range List equation has been checked
 without changing its statement. This path adds no local value block or pending
-slot and leaves raw lowering unchanged. General nested loops, recursive calls
-from a range and full models of arbitrary heap mutation remain open; this source
+slot and leaves raw lowering unchanged. Automatic action correspondence and
+refinement are also checked for two nested finite ranges with an inner function
+return. These connect the generated model to source execution; algorithmic
+identities remain separate mathematical obligations. A private allocating List consumer
+also proves the batch result `(budget, (values.take (batches * budget)).reverse)`.
+Broader nested-loop combinations, general mixed local/function completion, recursive calls from a
+range and full models of arbitrary heap mutation remain open; source
 correspondence does not itself prove a RAM complexity bound.
 
 All source declarations expose ordinary-parameter `f_contract`, `f_args` and

@@ -495,6 +495,30 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
       preservedContents ← `(fun {kind} view values observed =>
         $contents:ident (kind := kind) view values ($preservedContents view values observed))
     currentHeap := ⟨finish.raw⟩
+    if range?.any (fun range => match range.model with
+        | .completion .. => true | .fold .. => false) then
+      -- Share this invocation's mathematical result only in its continuation.
+      -- Fresh names and exact subterms keep later generic loop bodies separate;
+      -- the actual payload, locals and heap still come from the observation.
+      let model ← result.requireModel
+      let sharedTerm := match model.model with
+        | `(let $_:ident := $outcome; $_) => outcome
+        | _ => model.model
+      let shared := mkIdent (← mkFreshUserName `rangeModel)
+      let context : TraceContext := {
+        heap := currentHeap, relations, known, scalarEqualities,
+        shape := preserved, contents := preservedContents, branchRules }
+      let continuation ← relationTrace (trace.extract (position + 1) trace.size)
+        returnedValue currentHeap relations known preserveArrays ranges finish?
+        (some context) actualBranches
+      let continuation := continuation.map fun tactic =>
+        (⟨tactic.raw.rewriteBottomUp fun stx =>
+          if stx == sharedTerm.raw then shared.raw else stx⟩ : TSyntax `tactic)
+      let equal := mkIdent (← mkFreshUserName `rangeModelEqual)
+      return tactics ++ #[← `(tactic| let $shared:ident := $sharedTerm),
+        ← `(tactic| have $equal:ident : $sharedTerm = $shared:ident := rfl),
+        ← `(tactic| dsimp only [Id.run, Id.instMonad, Pure.pure, Bind.bind] at $equal:ident),
+        ← `(tactic| simp only [$equal:ident])] ++ continuation
   if let some finish := finish? then
     return tactics ++ (← finish {
       heap := currentHeap, relations, known, scalarEqualities,

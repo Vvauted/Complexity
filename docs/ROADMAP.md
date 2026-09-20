@@ -24,9 +24,9 @@ work and every remaining obligation. The outstanding work is:
 - Share resolved operations and control-flow lowering completely; retain
   `(native)` naming compatibility and the older `(pure)` preparer without
   presenting them as separate recommended languages.
-- Complete general nested loops and their mixed-exit combinations, and calls
-  to the enclosing recursive function from ranges, using the same actual named
-  source loops.
+- Complete remaining nested-loop combinations, especially mixtures of local
+  and function completion, and calls to the enclosing recursive function from
+  ranges, using the same actual named source loops.
 - Generate mathematical-local guard/body interfaces from field representations;
   authors supply invariants, descent and genuine effect/range facts, not private
   slots, raw-environment transport or `Part` plumbing. Normal array-preserving
@@ -76,8 +76,10 @@ captures remain preserved. The local payload need not have the enclosing
 function's result type. This adds neither a second source loop nor runtime
 allocation for the mathematical summary. Fully modeled function-level finite-range
 returns also have checked mathematical correspondence through actual return
-control, without local-completion slots. General nested loops and their mixed
-exits, enclosing recursion from a range and full models of arbitrary heap mutation
+control, without local-completion slots. Automatic action correspondence and
+refinement are also checked for two nested finite ranges with an inner function
+return. Broader nested-loop combinations, mixed local/function completion,
+enclosing recursion from a range and full models of arbitrary heap mutation
 remain open; no new RAM bound follows from the model.
 The scoped while's resource proof reuses the visible guard/body contracts through
 a shared completion-aware readiness rule, without a second termination proof or
@@ -259,8 +261,14 @@ environment encodings or repeating source facts in a second resource proof.
    observation rule. The actual `Control.returned`/`whileReturn` path retains its
    payload and heap, without a local value block or pending slot. A returned
    round neither advances the cursor nor adds a false-guard iteration; raw
-   lowering is unchanged. General nested-loop combinations and calls to the
-   enclosing recursive function from a range remain follow-up work.
+   lowering is unchanged. Automatic action correspondence and refinement also
+   cover a two-level finite-range nest with an inner function return, retaining
+   the actual payload, locals and heaps. A private allocating List consumer also proves
+   the batch result `(budget, (values.take (batches * budget)).reverse)`.
+   The algorithm's mathematical identity remains a separate proof obligation.
+   Broader nested-loop combinations,
+   especially mixed local/function completion, and calls to the enclosing
+   recursive function from a range remain follow-up work.
    Dependent bounds, recursion descent and algorithmic potentials remain
    mathematical obligations, not guessed annotations; no new RAM bound follows.
 3. Extend the represented native frontend from its checked scalar, List and

@@ -182,10 +182,14 @@ round keeps the real payload and endpoint heap without advancing the cursor or
 running an extra false guard. Raw lowering is unchanged; the mathematical model
 does not select another returned value or executable loop.
 
-General nested loops and their mixed-exit combinations, calls to the enclosing
-recursive function from a range and full models of arbitrary heap mutation remain
-open. None of these mathematical range views infers a RAM bound for its body or
-control.
+Automatic action correspondence and refinement are also checked for a two-level
+finite-range nest with an inner function return, retaining actual payloads,
+locals and heaps. A completed `forIn` result may be shared in the proof when
+composing the continuation; this adds no executable binding or changed cost.
+Broader nested-loop combinations, especially mixed local/function completion,
+calls to the enclosing recursive function from a range and full models of
+arbitrary heap mutation remain open. None of these mathematical range views
+infers a RAM bound for its body or control.
 
 For pure finite Nat ranges, the shared
 [`while_range_encoded_invariant`](##Ram.LanguageCompiler.RealizationWP.while_range_encoded_invariant)

@@ -97,8 +97,11 @@ Their generated mathematical model and correspondence retain the actual
 `Control.returned` payload and final heap through `whileReturn`, without adding
 a local value block or pending-result slot. A returned (`some`) round neither
 advances the cursor nor runs an extra false guard. Raw lowering is unchanged.
-General nested loops and their mixed exits, calls to the enclosing recursive
-function from a range and full models of arbitrary heap mutation remain open.
+Automatic action correspondence and refinement are also checked for two nested
+finite ranges with an inner function return. Algorithmic identities still need
+their mathematical proofs. Broader nested-loop combinations, especially mixed
+local/function completion, calls to the enclosing recursive function from a
+range and full models of arbitrary heap mutation remain open.
 Mathematical correspondence does not itself give a RAM bound.
 
 The [iterative factorial](##Examples.Language.Factorial) uses one range and a

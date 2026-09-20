@@ -340,13 +340,26 @@ private def rangeBodyFinish (range : RangeRegistration) (site : ActualRangeSite)
     ← `(Lean.Parser.Tactic.simpLemma| Bool.false_eq_true),
     ← `(Lean.Parser.Tactic.simpLemma| ↓reduceIte)] ++
     fixedSimp ++ pending.entryRules ++ pending.currentRules ++ scalarFacts ++ context.branchRules
+  -- A nested named loop returns an actual locals tuple, not necessarily a
+  -- constructor expression. Compare its lexical coordinates using the fixed
+  -- fields already proved by that loop; do not rebuild them from the model.
+  let coordinateEqual ← `(by
+    simp (config := { zetaDelta := true }) only [$executionRules,*] <;> rfl)
+  let mut localsEqual ← `(Subsingleton.elim _ _)
+  for _ in site.scope do localsEqual ← `(Prod.ext $coordinateEqual $localsEqual)
   let executed ← `(by first
     | rfl
-    | simp only [$executionRules,*] <;> rfl)
+    | simp only [$executionRules,*] <;>
+        exact congrArg Part.some (Prod.ext (Prod.ext rfl $localsEqual) rfl))
   let returnedObserved ← `(by
-    simpa (config := { implicitDefEqProofs := false }) only
+    have retained := $stateObserved
+    -- Select mathematical branches before relating scalar coordinates;
+    -- otherwise rewriting a discriminant can hide its branch equation.
+    simp (config := { implicitDefEqProofs := false }) only
       [Id.run, Id.instMonad, Pure.pure, Bind.bind, $(context.branchRules),*]
-      using $stateObserved)
+      at retained ⊢ <;>
+      simpa (config := { implicitDefEqProofs := false }) only [$scalarFacts,*]
+        using retained)
   let completionRules := pending.currentRules ++ context.branchRules
   let completedObserved ← `(by
     simpa (config := { implicitDefEqProofs := false }) only

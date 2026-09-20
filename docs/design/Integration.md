@@ -108,8 +108,8 @@ The current integration work has these concrete obligations:
   allocating List consumer uses this form with its unchanged replicate proof.
   Fully modeled `if`/`Option` bodies, including nested mixed-return branches,
   can also return from that local block: their control-sensitive summary gives
-  a `forIn` model and checked heap-indexed correspondence. General nested loops
-  and their mixed-exit combinations remain open.
+  a `forIn` model and checked heap-indexed correspondence. Broader nested-loop
+  combinations, especially mixed local/function completion, remain open.
 - [ ] Generate mathematical-local loop interfaces from the resolved field
   representations. Normal represented rounds now retain their own mathematical
   traces independently of a whole-function model. The array-record consumer uses
@@ -205,8 +205,9 @@ The current integration work has these concrete obligations:
   total source correspondence. The array-record consumer now exercises general
   `while` with an explicit mathematical-state contract after each real append.
   Fully modeled `if`/`Option` range bodies also support function-level return
-  correspondence. Calls to the enclosing recursive function from a range and
-  general nested-loop models remain open. The distinct local-result and
+  correspondence, including a checked two-level finite-range nest with an inner
+  function return. Calls to the enclosing recursive function from a range and
+  broader nested-loop models remain open. The distinct local-result and
   function-return paths are described below.
 - [x] Simplify the generated range's mathematical view to its mutable
   accumulator, closing over immutable captures. `List.foldl_hom` automatically
@@ -305,14 +306,20 @@ and endpoint heap; it neither advances the cursor nor runs an additional false
 guard. The control relation retains the actual raw payload, rather than choosing
 one from the mathematical result. Raw lowering is unchanged, and this source
 correspondence supplies no additional RAM cost bound.
-General nested loops and their mixed-exit combinations, calls to the enclosing
-recursive function from a range and full models of arbitrary heap mutation
-remain outside this automatic mathematical-model path.
+Automatic action correspondence and refinement are also checked for a two-level
+finite-range nest with an inner function return. The proof reuses the inner
+loop's fixed-coordinate equalities and reconstructs the actual locals. After a
+completion range, a proof-local binding can share the primitive `forIn` result
+with the remaining continuation; actual payloads, locals and heaps are retained.
+This sharing introduces no executable binding or changed instruction cost.
+Broader nested-loop combinations, especially mixed local/function completion,
+calls to the enclosing recursive function from a range and full models of
+arbitrary heap mutation remain outside this automatic mathematical-model path.
 
 The proof preparer now follows actual branch continuations when composing
-ranges, carrying their heap relations and frames. Combinations involving nested
-loops still need consumer evidence; this does not close the complete
-integration gate. Explicit imports retain their source tables, order and written
+ranges, carrying their heap relations and frames. Further mixtures of local and
+function completion in nested loops still need consumer evidence; this does not
+close the complete integration gate. Explicit imports retain their source tables, order and written
 names, and resolved calls select those same entries. The frontend's buffer
 operations use the internal emitter to avoid an import cycle. Existing exact
 body identities and compiled consumers remain the compatibility requirements,
@@ -397,9 +404,9 @@ scope cleanup still checks those full locals before returning the visible view.
 General represented `while` now retains actual assignments, effectful guards
 and early function returns through the same source loop. The array-record
 consumer supplies a mathematical-state contract, not a total pure function.
-Mathematical range-view coverage for general nested loops and their mixed exits,
-and calls to an enclosing recursive function remains
-part of the integration gate. A normal range view folds mutable locals and
+Mathematical range-view coverage for broader nested-loop combinations, including
+mixed local/function completion and calls to an enclosing recursive function,
+remains part of the integration gate. A normal range view folds mutable locals and
 closes over fixed captures; a local-completion view also retains its payload.
 The function-return view instead retains the real returned control and heap.
 Each correspondence refers to the same named source loop, without adding source
