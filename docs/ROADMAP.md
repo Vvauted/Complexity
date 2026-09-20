@@ -31,12 +31,16 @@ work and every remaining obligation. The outstanding work is:
   slots, raw-environment transport or `Part` plumbing. Normal array-preserving
   rounds now have generated named mathematical locals and correspondence, used
   by the array-record while consumer. Completion-aware rounds reuse the same
-  field representations through supplied effect contracts; `Scope.loop_spec`
-  selects its mathematical state by source-variable names, without manual
-  visible-tuple or entry transport. This contract interface currently requires
-  a guard that preserves the model and heap; its body may change the heap.
-  Next migrate the remaining guard/body proof leaves and resource relations to
-  these mathematical locals, then extend effectful guards and construct combinations.
+  field representations through supplied effect contracts. The scoped loop's
+  guard/body source proofs now use native mathematical-local observations;
+  loop correctness and arena composition reuse those same contracts without
+  manual visible-tuple or entry transport. Direct native proof entries currently
+  require complete identity-represented locals; general heap-backed observations
+  retain their relational contracts. This loop composition requires a guard
+  that preserves the model and heap; its body may change the heap.
+  Next extend the direct proof workflow to non-identity field representations,
+  effectful guards and construct combinations, and simplify remaining fragment
+  readiness proofs without hiding an equally long private adapter.
   Do not assign a pure transition to arbitrary mutation or mistake a retained
   buffer handle for unchanged contents.
 - Compose function equations and state contracts through the same heap-indexed
@@ -56,10 +60,14 @@ Its resource proof now reuses the visible guard/body contracts through a shared
 completion-aware readiness rule, without a second termination proof or manual
 `Part`/private-slot reconstruction. The same ranges, scratch capacity and
 physical workspace bound remain explicit. A named-loop entry selects the checked
-completion coordinates and frames; the mathematical state/effect relations are
-still supplied by the author.
-The source proof uses `model_completion_contract` to compose its existing guard
-and worker contracts with the invariant, mathematical progress and result facts.
+completion coordinates and frames. Its mathematical entry now reuses the same
+guard/body model contracts, rather than restating their state/effect relations;
+word ranges, fragment readiness and capacity remain explicit.
+The source proof uses `model_completion_contract` to compose its mathematical
+guard/body contracts with the invariant, progress and result facts. Their native
+proof entries map the original actions through a proved identity-coordinate
+equivalence, retaining actual control, completion payloads and heaps. Older
+visible-local contracts are compatibility consequences, not separate proofs.
 Local-state representations survive without a pure body model; the raw buffer
 field observes only the handle, with contents still proved by the worker contract.
 The final stopped guard also has a shared realization rule, retaining the saved

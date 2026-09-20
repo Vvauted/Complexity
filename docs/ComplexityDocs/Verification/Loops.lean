@@ -103,6 +103,18 @@ does not turn aliased mutation into an assumed pure transition. The completed
 result remains the actual source return value; its contents are proved by the
 result predicate, not automatically converted into a mathematical Array or List.
 
+For complete identity-represented locals, `guard_model_contract_iff` and
+`body_model_contract_iff` turn these contracts into native triples over `Model`.
+Use the corresponding actual guard/body equation and `mvcgen` with the real
+operation contracts. The generated `modelEquiv` only rearranges source fields;
+`guard_model_action` and `body_model_action` map the result of the existing
+action, preserving its control and heap. They are proof observations, not
+additional source programs. The scoped loop proves its guard/body facts this
+way and reuses them for both loop correctness and resource composition; its
+older visible-local theorems are short compatibility consequences.
+This direct triple entry currently requires a complete identity representation.
+General Array/List observations retain their heap-indexed relational contracts.
+
 ## Finite ranges and resource rules
 
 For pure finite Nat ranges, the shared
@@ -165,7 +177,28 @@ and arbitrary potential functions can still use the public loop theorems below;
 the cost tactic is the uniform-cost, linear-iteration specialization, not a
 replacement for those general interfaces or automatic invariant discovery.
 
-For a named local-return loop with an existing finite execution, use
+For a named local-return loop with mathematical guard/body contracts and an
+existing finite execution, use
+
+```lean
+ram_source_loop_arena_model (encode := loopModel out count n value)
+  using (fun left heap _ =>
+    guard_model_spec out count n value left (fun current => current = heap)),
+    (fun left heap current active => body_model_spec out count n value
+      (remaining := left) (heap := heap) current (of_decide_eq_true active))
+```
+
+This entry selects the actual named loop and reuses its source contracts through
+`ArenaReady.while_completion_model_of_exec`. The supplied contracts determine
+the invariant, test, transition and completed result relation. There is no
+second invariant-preservation or termination proof. The remaining leaves are
+the real guard/body readiness, saved-result readiness, entry invariant and
+successful-control condition. For a complete identity representation, a proved
+correspondence removes raw entry coordinates from guard/body leaves. A general
+heap-indexed representation remains a relation; there is no inferred inverse
+from mathematical array contents to a unique handle.
+
+The lower-level visible-local entry remains available:
 
 ```lean
 ram_source_loop_arena (stateRel := invariantRelation)
@@ -176,9 +209,8 @@ The three relations concern visible source locals and actual heaps. This entry
 selects the registered completion coordinates and execution frames, then applies
 `ArenaReady.while_completion_of_exec`. Guard/body source contracts, their real
 resource readiness, readiness of the final stopped guard, and the initial facts
-remain obligations. The scoped-workspace consumer reuses its existing source
-contracts here; it does not reconstruct private completion slots or prove loop
-termination again. The rule preserves the same arena boundary between rounds,
+remain obligations. Neither entry reconstructs private completion slots in the
+author's proof or asks for loop termination again. Both preserve the same arena boundary between rounds,
 not arbitrary growing allocation, and does not infer a time budget.
 For the final stopped guard, `RealizationWP.localReturn_guard_some` uses the
 saved result's actual word-range proof. It follows the option match and false

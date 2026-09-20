@@ -114,6 +114,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Node
 import Complexity.Computability.Ram.Compiler.Language.Arena.NodeExecution
 import Complexity.Computability.Ram.Compiler.Language.Arena.Loop
 import Complexity.Computability.Ram.Compiler.Language.Arena.Loop.Completion
+import Complexity.Computability.Ram.Compiler.Language.Arena.Loop.Models
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Call
@@ -510,7 +511,9 @@ import Complexity.Language.Syntax.Represented.Correspondence.Range
 import Complexity.Language.Syntax.Represented.Correspondence.Relation
 import Complexity.Language.Syntax.Represented.Correspondence.While
 import Complexity.Language.Syntax.Represented.Correspondence.While.Completion
+import Complexity.Language.Syntax.Represented.Correspondence.While.Identity
 import Complexity.Language.Syntax.Represented.Correspondence.While.Models
+import Complexity.Language.Syntax.Represented.Correspondence.While.Observation
 import Complexity.Language.Syntax.Represented.Declarations
 import Complexity.Language.Syntax.Represented.Elab
 import Complexity.Language.Syntax.Represented.Expression

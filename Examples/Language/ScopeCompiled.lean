@@ -119,37 +119,20 @@ theorem loop_ready {w limit cursor : Nat} (hw : 0 < w)
         (Implementation.Source.make_loop1.entry (remaining, out, count, n, value, ())), heap⟩
       finish control) (successful : ControlFits w control) :
     ArenaReady execution w limit 1 cursor cursor := by
-  ram_source_loop_arena
-    (stateRel := fun left locals heap => locals = (left, out, count, n, value, ()) ∧
-      invariant out count n value left heap)
-    (prepared := fun left _ heap locals finish =>
-      locals = (left, out, count, n, value, ()) ∧ finish = heap ∧ 0 < left)
-    (completed := fun returned _ finish =>
-      returned = out ∧ out.Contents finish (resultContents count n value))
-  · intro left
-    refine (guard_eval left out count n value).mono (fun _ _ valid => valid.1)
-      (fun _ _ _ _ _ impossible => impossible) ?_
-    rintro _ heap again _ _ _ ⟨sameDecision, sameLocals, sameHeap⟩ active
-    exact ⟨sameLocals, sameHeap, of_decide_eq_true (sameDecision.symm.trans active)⟩
-  · rintro left _ heap ⟨rfl, valid⟩ _ _ ⟨rfl, rfl, active⟩
-    refine (Implementation.Source.make_loop1.body_completion_spec_at
-      (body_spec out count n value valid active) (left, out, count, n, value, ()) _).mono ?_
-        (Std.Do.PostCond.entails.refl _)
-    rintro _ rfl
-    refine ⟨⟨rfl, rfl⟩, ?_, ?_⟩
-    · rintro _ finish ⟨rfl, updated⟩
-      exact ⟨left - 1, rfl, updated⟩
-    · rintro returned locals finish ⟨rfl, _, contents⟩
-      exact ⟨rfl, contents⟩
-  · rintro left _ heap ⟨rfl, valid⟩ finish decision tested
+  ram_source_loop_arena_model (encode := loopModel out count n value)
+    using (fun left heap _ =>
+      guard_model_spec out count n value left (fun current => current = heap)),
+      (fun left heap current active => body_model_spec out count n value
+        (remaining := left) (heap := heap) current (of_decide_eq_true active))
+  · intro left heap valid finish decision tested
     exact guard_ready hw left out count n value heap
       (lt_of_le_of_lt valid.1 countFits) tested
-  · rintro left _ heap ⟨rfl, valid⟩ _ _ ⟨rfl, rfl, _⟩ finish outcome iterated fits
+  · intro left heap valid _ finish outcome iterated fits
     have length : out.length = 1 := by simpa using valid.2.size_eq.symm
-    exact body_ready hw left out count n value _ valid.2.valid.rooted
+    exact body_ready hw left out count n value heap valid.2.valid.rooted
       (by rw [length]; exact Nat.one_lt_two_pow (Nat.ne_of_gt hw))
       (lt_of_le_of_lt valid.1 countFits) nFits valueFits capacity iterated fits
-  · rintro state returned stopped ⟨rfl, contents⟩ finish decision tested
+  · rintro _ state returned stopped _ ⟨rfl, _, contents⟩ finish decision tested
     have length : returned.length = 1 := by simpa [resultContents] using contents.size_eq.symm
     apply RealizationWP.arenaReady (execution := tested) (heapLimit := limit) (cursor := cursor)
     apply RealizationWP.localReturn_guard_some (value := returned)
@@ -158,7 +141,7 @@ theorem loop_ready {w limit cursor : Nat} (hw : 0 < w)
     · change returned.length < 2 ^ w
       rw [length]
       exact Nat.one_lt_two_pow (Nat.ne_of_gt hw)
-  · exact ⟨rfl, current⟩
+  · exact current
   · exact successful
 
 /-- The generated maker's ordinary arguments, in the source function table's

@@ -54,6 +54,7 @@ language interface.
 | `Correspondence/Basic`, `Range`, `Relation`, `Exact`, `While` | Proof composition, actual range relations, heap-indexed correspondence, justified exact equations and mathematical while rounds |
 | `Correspondence/While/Models` | Source-field mathematical observations shared by normal and completion rounds, independent of pure operation traces |
 | `Correspondence/While/Completion` | Mathematical local-return contracts composed from actual guard/body effects and the existing completion rule |
+| `Correspondence/While/Identity`, `Observation` | Checked complete identity-coordinate equivalences and native proof entries for the same guard/body actions |
 | `Declarations`, `Elab` | Generate proof declarations and orchestrate source emission, proofs and registration |
 
 Preparation and correspondence share explicit data in
@@ -98,6 +99,10 @@ the same finite loop execution. Source completion contracts stay under
 `Language/Eval/Locals/LocalReturn/Models` supplies consequence rules for
 heap-indexed mathematical round contracts. The existing visible completion rule
 still owns loop semantics and execution frames.
+`Arena/Loop/Models` reuses those same round contracts for resource readiness;
+it adds fragment range/capacity obligations, not another invariant-preservation
+or termination proof. `LoopTactic` selects the actual named loop's coordinates
+and removes entry transport only when a proved identity correspondence exists.
 
 ## Documentation
 

@@ -53,9 +53,10 @@ result slots and entry transport. Invariants and genuine contents effects remain
 explicit; the model interface requires a guard preserving its model and heap,
 while the underlying relational rule also supports effectful guards.
 
-The separate resource proof can reuse these same visible guard/body contracts
+The separate resource proof reuses these same mathematical guard/body contracts
 through
-[`ArenaReady.while_completion_of_exec`](##Ram.LanguageCompiler.ArenaReady.while_completion_of_exec).
+[`ArenaReady.while_completion_model_of_exec`](##Ram.LanguageCompiler.ArenaReady.while_completion_model_of_exec),
+which composes the visible-contract rule internally.
 It lifts an existing finite loop execution, with no second descent argument.
 Shared execution frames restore the continuing state and handle the final masked
 guard after local completion. The client still proves word ranges, callee nesting

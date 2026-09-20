@@ -253,6 +253,60 @@ theorem invariant_done (out : Buffer .nat) (count n value : Nat)
   have zero : remaining = 0 := Nat.eq_zero_of_not_pos finished
   simpa only [zero, resultContents] using current.2
 
+/-- The loop's source variables, selected by name. The buffer field records its
+handle; the invariant separately describes its contents at the current heap. -/
+def loopModel (out : Buffer .nat) (count n value remaining : Nat) :
+    Implementation.Source.make_loop1.Model :=
+  Implementation.Source.make_loop1.mkModel
+    (remaining := remaining) (out := out) (count := count) (n := n) (value := value)
+
+open Implementation.Source.make_loop1 in
+/-- The actual guard decides positivity without changing the mathematical
+locals or heap. Its contract accepts any additional entry-heap condition. -/
+theorem guard_model_spec (out : Buffer .nat) (count n value remaining : Nat)
+    (pre : Heap → Prop) :
+    guard_model_contract (loopModel out count n value) remaining pre
+      (fun heap again next finish =>
+        again = decide (0 < remaining) ∧ next = remaining ∧ finish = heap) := by
+  rw [guard_model_contract_iff]
+  intro heap _
+  simp only [guard_model_action, loopModel]
+  rw [guard_eq]
+  mvcgen
+  simp_all [visible, modelEquiv, mkModel]
+
+open Implementation.Source.make_loop1 in
+/-- The worker's actual contents contract proves one mathematical loop round.
+Continuing rounds update the invariant; a local return supplies the final result. -/
+theorem body_model_spec (out : Buffer .nat) (count n value : Nat)
+    {remaining : Nat} {heap : Heap}
+    (current : invariant out count n value remaining heap) (active : 0 < remaining) :
+    body_model_contract (loopModel out count n value) remaining (fun entry => entry = heap)
+      (fun _ next finish => next = remaining - 1 ∧ invariant out count n value next finish)
+      (fun _ returned next finish => returned = out ∧ next = 0 ∧
+        out.Contents finish (resultContents count n value)) := by
+  rw [body_model_contract_iff]
+  rintro _ rfl
+  have workerSpec := Implementation.Source.work_spec
+    (work_total (if remaining < count ∧ 0 < n then value else 0))
+  simp only [body_model_action, loopModel]
+  rw [body_eq]
+  mvcgen [workerSpec]
+  rename_i entry same
+  subst entry
+  refine ⟨current.2, ?_⟩
+  intro returned finish updated
+  cases returned
+  mvcgen
+  all_goals
+    have advanced := invariant_step out count n value current active updated
+  · rename_i finished
+    have zero : remaining - 1 = 0 := by simpa using finished
+    simpa [loopModel, visible, modelEquiv, mkModel, zero] using
+      invariant_done out count n value advanced (by omega)
+  · simpa [loopModel, visible, modelEquiv, mkModel] using advanced
+
+open Implementation.Source.make_loop1 in
 /-- The loop's actual guard preserves its full lexical state and decides the
 ordinary positivity test used by the termination argument. -/
 theorem guard_eval (remaining : Nat) (out : Buffer .nat) (count n value : Nat) :
@@ -260,11 +314,10 @@ theorem guard_eval (remaining : Nat) (out : Buffer .nat) (count n value : Nat) :
       (fun locals _ => locals = (remaining, out, count, n, value, ()))
       (fun _ heap again locals finish => again = decide (0 < remaining) ∧
         locals = (remaining, out, count, n, value, ()) ∧ finish = heap) := by
-  rintro _ heap rfl
-  dsimp only
-  rw [Implementation.Source.make_loop1.guard_eq]
-  mvcgen
+  simpa [guard_model_contract, loopModel, and_assoc, and_left_comm, and_comm] using
+    guard_model_spec out count n value remaining (fun _ => True)
 
+open Implementation.Source.make_loop1 in
 /-- A real loop body calls the scoped worker and decreases only the remaining
 count. Its contents contract and complete local update also serve the separate
 resource proof; neither needs to re-prove the worker's behavior. -/
@@ -278,25 +331,8 @@ theorem body_spec (out : Buffer .nat) (count n value : Nat)
       (fun _ _ returned locals finish => returned = out ∧
         locals = (0, out, count, n, value, ()) ∧
           out.Contents finish (resultContents count n value)) := by
-  rintro _ entry ⟨rfl, rfl⟩
-  have workerSpec := Implementation.Source.work_spec
-    (work_total (if remaining < count ∧ 0 < n then value else 0))
-  dsimp only
-  rw [Implementation.Source.make_loop1.body_eq]
-  mvcgen [workerSpec]
-  rename_i entry same
-  subst entry
-  refine ⟨current.2, ?_⟩
-  intro returned finish updated
-  cases returned
-  mvcgen
-  all_goals
-    have advanced := invariant_step out count n value current active updated
-  · rename_i finished
-    have zero : remaining - 1 = 0 := by simpa using finished
-    refine ⟨trivial, ?_, invariant_done out count n value advanced (by omega)⟩
-    simp only [zero]
-  · exact ⟨trivial, advanced⟩
+  simpa [body_model_contract, loopModel, and_assoc, and_left_comm, and_comm] using
+    body_model_spec out count n value current active
 
 open Implementation.Source.make_loop1 in
 /-- Lean's existing well-founded measure proves termination of the actual
@@ -312,23 +348,15 @@ theorem loop_spec (out : Buffer .nat) (count n value remaining : Nat) :
       (fun _ _ returned locals finish => returned = out ∧
         locals = (0, out, count, n, value, ()) ∧
           out.Contents finish (resultContents count n value)) := by
-  let encode : Nat → Model := fun left =>
-    mkModel (remaining := left) (out := out) (count := count) (n := n) (value := value)
-  have specification := model_completion_contract encode (fun left => decide (0 < left))
+  have specification := model_completion_contract
+    (loopModel out count n value) (fun left => decide (0 < left))
     (invariant out count n value) (fun left next => next = left - 1) (measure id).wf
     (fun _ finish => out.Contents finish (resultContents count n value))
     (fun returned left finish => returned = out ∧ left = 0 ∧
       out.Contents finish (resultContents count n value))
-    (by
-      intro left heap _
-      simp only [guard_model_contract, encode, visibleModelRel_mkModel_iff]
-      refine Stmt.BlockSpec.mono_pre ?_ (fun _ _ initial => initial.1)
-      simpa [guard_completion_contract, visible, and_assoc, and_left_comm, and_comm] using
-        guard_eval left out count n value)
-    (by
-      intro left heap current active
-      simpa [body_model_contract, encode, and_assoc, and_left_comm, and_comm] using
-        body_spec out count n value current (of_decide_eq_true active))
+    (fun left heap _ => guard_model_spec out count n value left (fun entry => entry = heap))
+    (fun _ _ current active => body_model_spec out count n value current
+      (of_decide_eq_true active))
     (by
       rintro left next heap _ active rfl
       have positive : 0 < left := of_decide_eq_true active
@@ -337,7 +365,7 @@ theorem loop_spec (out : Buffer .nat) (count n value remaining : Nat) :
     (by
       intro left heap current stopped
       exact invariant_done out count n value current (of_decide_eq_false stopped)) remaining
-  simpa [encode, and_assoc, and_left_comm, and_comm] using specification
+  simpa [loopModel, and_assoc, and_left_comm, and_comm] using specification
 
 /-- One source declaration allocates the surviving result and repeatedly uses
 the same nested scratch scopes. Its successful result has the ordinary array

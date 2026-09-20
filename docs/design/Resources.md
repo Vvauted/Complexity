@@ -152,6 +152,13 @@ invariant or converts its source contracts through `Part` result equations.
 Word ranges, actual callee nesting and scratch capacity remain resource
 obligations. This rule keeps the arena boundary fixed across rounds; growing
 allocation and general live-space composition still require separate interfaces.
+`while_completion_model_of_exec` reuses the mathematical guard/body contracts
+and their invariant through this same rule. Its named-loop entry
+`ram_source_loop_arena_model` selects checked coordinates and frames; proved
+identity correspondence can remove entry tuple transport. It does not require
+or infer an inverse for general heap-indexed representations. The author still
+supplies actual word ranges, call nesting, scratch capacity and saved-result
+readiness, but does not reconstruct source preservation in the resource proof.
 
 Uniform structural budgets are inferred through the existing checked cost rules.
 Traversal's guard/body witnesses are chosen before arbitrary locals and heaps,

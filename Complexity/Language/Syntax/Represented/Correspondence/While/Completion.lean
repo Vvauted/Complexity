@@ -3,9 +3,8 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Language.Syntax.Represented.Correspondence.While.Models
+import Complexity.Language.Syntax.Represented.Correspondence.While.Observation
 import Complexity.Language.Eval.Locals.LocalReturn.Models
-import Mathlib.Tactic.Tauto
 
 /-!
 # Mathematical local contracts for while completion
@@ -35,58 +34,6 @@ private def completionResultType (pending : Name) : TermElabM (TSyntax `term) :=
     | .app (.const ``Option _) payload => termOfExpr payload
     | _ => throwError "the actual local completion slot must have an optional result"
 
-/-- Equality is an available observation only when all visible source slots are
-covered by identity fields. Represented arrays and records keep their relations. -/
-private def completionIdentityDeclaration (loop : WhileLocalRegistration) :
-    TermElabM (Array Syntax) := do
-  unless loop.captured.all (·.type.isIdentity) do return #[]
-  let site ← loop.site
-  let slots ← loop.slots
-  let visibleSlots := (site.scope.zipIdx.filter (fun (binding, _) => !binding.privatePending)).map (·.2)
-  unless slots.size == visibleSlots.size && visibleSlots.all slots.contains do return #[]
-  let member (suffix : Name) := mkIdent (site.name ++ suffix)
-  let name := member `visibleModelRel_mkModel_iff
-  let relation := member `visibleModelRel
-  let modelRel := member `modelRel
-  let makeModel := member `mkModel
-  let visibleType := member `Visible
-  let entry := member `entry
-  let locals := mkIdent (← mkFreshUserName `locals)
-  let heap := mkIdent (← mkFreshUserName `heap)
-  let mut parameters : Array (TSyntax ``Lean.Parser.Term.bracketedBinder) := #[]
-  let mut arguments : Array (TSyntax `term) := #[]
-  for binding in loop.captured do
-    let name := mkIdent (← mkFreshUserName binding.name.getId)
-    let type ← termOfExpr binding.type.nativeType
-    parameters := parameters.push (← `(bracketedBinder| ($name:ident : $type)))
-    arguments := arguments.push ⟨name.raw⟩
-  let constructed := Lean.Syntax.mkApp ⟨makeModel.raw⟩ arguments
-  let rawFields ← visibleSlots.mapM fun slot => do
-    let some index := slots.findIdx? (· == slot)
-      | throwError "the visible source slot has no identity field"
-    pure arguments[index]!
-  let rawTuple ← sourceTuple rawFields
-  let mut destruct : Array (TSyntax `tactic) := #[]
-  let mut current := locals
-  for _ in visibleSlots do
-    let field := mkIdent (← mkFreshUserName `field)
-    let tail := mkIdent (← mkFreshUserName `tail)
-    destruct := destruct.push (← `(tactic| rcases $current:ident with ⟨$field:ident, $tail:ident⟩))
-    current := tail
-  destruct := destruct.push (← `(tactic| cases $current:ident))
-  return #[(← `(command|
-    /-- A complete identity local view is exactly the original visible coordinates.
-    Raw handles contribute equality only; contents remain heap-dependent contracts. -/
-    @[simp] theorem $(whileDeclarationName name):ident $parameters:bracketedBinder*
-        ($locals:ident : $visibleType:ident) ($heap:ident : Complexity.Language.Heap) :
-        $relation:ident $constructed $locals:ident $heap:ident ↔ $locals:ident = $rawTuple := by
-      $destruct:tactic*
-      simp [$relation:ident, $modelRel:ident, $makeModel:ident, $entry:ident,
-        Complexity.Language.Representation.prod, Complexity.Language.Representation.ofEmbedding,
-        Complexity.Language.Representation.nat, Complexity.Language.Representation.bool,
-        Complexity.Language.Representation.unit, eq_comm, and_assoc, and_left_comm, and_comm]
-      all_goals tauto)).raw]
-
 /-- Generate contract-based mathematical observations for the actual locally
 returning loop. Its body need not have a total pure mathematical function. -/
 def completionWhileDeclarations (loop : WhileLocalRegistration) : TermElabM (Array Syntax) := do
@@ -114,7 +61,7 @@ def completionWhileDeclarations (loop : WhileLocalRegistration) : TermElabM (Arr
     def $(whileDeclarationName visibleModelRel):ident (model : $modelType:ident)
         (locals : $visibleType:ident) (heap : Complexity.Language.Heap) : Prop :=
       $modelRel:ident model ($entry:ident locals) heap)).raw
-  declarations := declarations ++ (← completionIdentityDeclaration loop)
+  declarations := declarations ++ (← completionIdentityDeclarations loop)
   declarations := declarations ++ #[
     (← `(command|
       /-- A supplied actual guard contract, expressed through mathematical indices.
@@ -206,7 +153,7 @@ def completionWhileDeclarations (loop : WhileLocalRegistration) : TermElabM (Arr
           intro _ _ output finish _ property
           cases stopped : $pending:ident output <;>
             simpa only [stopped] using property)).raw]
-  return declarations
+  return declarations ++ (← completionObservationDeclarations loop resultType)
 
 end Internal
 

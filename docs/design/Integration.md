@@ -122,20 +122,27 @@ The current integration work has these concrete obligations:
   through the actual masked guard, with no invented decrease after completion.
   `Scope.make` exercises this path. Its separate arena proof reuses these source
   contracts through shared completion-aware loop lifting; the named-loop tactic
-  supplies checked private coordinates and frames. Its resource proof still
-  supplies visible tuples and the mathematical state relation. The source
+  supplies checked private coordinates and frames. Its mathematical resource
+  entry reuses the guard/body model contracts and their invariant, with no
+  reconstruction of visible tuple relations or preservation proof. The source
   `Scope.loop_spec` now uses `model_completion_contract`: a source-named `mkModel`
   selects the mathematical locals, and shared consequence rules compose its
-  existing guard/body contracts with its genuine invariant, descent and result
+  mathematical guard/body contracts with its genuine invariant, descent and result
   arguments. There is no private `mono`/entry adapter or source tuple transport
   in this loop proof. This interface requires an explicitly proved
   model-and-heap-preserving guard; the older `completion_rel_contract` still
   supports effectful guards. Raw `Buffer` identity observes a handle, not its
   contents; the worker's actual update and reclamation contract is retained.
   General mathematical-local integration and local-return ranges remain open.
-  The original guard/body leaf contracts and resource invariant still use
-  visible tuples. Migrating those author-facing proofs is a separate remaining
-  obligation; shortening `loop_spec` alone does not finish the complete workflow.
+  The scoped consumer's substantive guard/body proofs now use native triples
+  over mathematical locals and the real worker contract. Its older visible-local
+  theorems are short compatibility consequences. The generated proof action maps
+  the original guard/body result, preserving actual control, completion payload
+  and heap; it is not another executable implementation. This direct entry
+  currently requires a proved complete identity-coordinate equivalence. General
+  Array/List observations have no heap-independent inverse and still use the
+  relational contract. Extending their direct proof workflow, effectful guards
+  and remaining fragment-readiness ergonomics is still an integration obligation.
 - [ ] Compose mathematical functions and state contracts through the same
   heap-indexed representation. A pure encoding is a special case; mutable
   array contents are not preserved by arbitrary heap extension.

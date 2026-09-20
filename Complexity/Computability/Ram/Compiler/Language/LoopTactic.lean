@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.Syntax.Core
 import Complexity.Computability.Ram.Compiler.Language.Arena.Loop.Completion
+import Complexity.Computability.Ram.Compiler.Language.Arena.Loop.Models
 import Complexity.Computability.Ram.Compiler.Language.CostBound.Locals
 import Complexity.Computability.Ram.Compiler.Language.Realization.Loop
 import Lean.Elab.Tactic
@@ -32,6 +33,12 @@ The arena entry connects visible local-completion contracts to the same finite
 execution in its goal. It selects only compiler coordinates and checked frames;
 the caller supplies the state relation, prepared-body condition and completed
 postcondition. Source effects and actual guard/body arena readiness remain goals.
+
+The mathematical arena entry reuses supplied guard/body model contracts. Their
+invariant, test, transition and completed postcondition are inferred from those
+contracts. For a complete identity view, its already proved correspondence
+removes visible-coordinate entry transport from readiness leaves. General
+heap-indexed representations remain explicit; no inverse is inferred.
 -/
 
 namespace Ram.LanguageCompiler.LoopTactic
@@ -162,6 +169,61 @@ private def arena (stateRel prepared completed : TSyntax `term) : TacticM Unit :
         simpa only [← $pendingEval, Equiv.symm_apply_apply] using stopped)
       (stateRel := $stateRel) (prepared := $prepared) (completed := $completed)))
 
+private def arenaModel (encode guardSpec bodySpec : TSyntax `term) : TacticM Unit :=
+    withMainContext do
+  let information ← coordinates ``ArenaReady 4
+  let some completion := information.completion? |
+    throwError "the named source loop has no registered local-completion coordinates"
+  let modelNamespace := completion.view.getPrefix
+  let relationName := modelNamespace ++ `visibleModelRel
+  discard <| getConstInfo relationName
+  let representation := mkCIdent relationName
+  let view := mkCIdent completion.view
+  let visible := mkCIdent completion.visible
+  let entry := mkCIdent completion.entry
+  let pending := mkCIdent completion.pending
+  let reconstruct := mkCIdent completion.reconstruct
+  let reconstructNone := mkCIdent completion.reconstructNone
+  let guardFrame := mkCIdent completion.guardFrame
+  let bodyFrame := mkCIdent completion.bodyFrame
+  let stoppedGuard := mkCIdent completion.stoppedGuard
+  let pendingEval := mkCIdent completion.pendingEval
+  let encoded ← Term.elabTermAndSynthesize encode none
+  evalTactic (← `(tactic|
+    apply ArenaReady.while_completion_model_of_exec
+      $view $visible $entry $pending $reconstruct $reconstructNone $guardFrame $bodyFrame
+      (by
+        intro state value stopped
+        apply $stoppedGuard state value
+        simpa only [← $pendingEval, Equiv.symm_apply_apply] using stopped)
+      (representation := fun index => $representation ($encode index))
+      (guardSpec := $guardSpec)
+      (bodySpec := by
+        intro index heap valid active
+        have supplied := ($bodySpec) index heap valid active
+        refine Complexity.Language.Stmt.BlockSpec.mono supplied
+          (fun _ _ initial => initial) ?_ (fun _ _ _ _ _ _ impossible => impossible)
+        intro _ _ output finish _ property
+        cases stopped : $pending output <;> simpa only [stopped] using property)))
+  let identityName := modelNamespace ++ `visibleModelRel_mkModel_iff
+  if (← getEnv).contains identityName then
+    let mut names := #[identityName, ``forall_eq, ``forall_eq']
+    if let .const name _ := encoded.getAppFn then
+      unless name == modelNamespace ++ `mkModel do
+        names := names.push name
+    let rules ← names.mapM fun name =>
+      `(Lean.Parser.Tactic.simpLemma| $(mkCIdent name):ident)
+    evalTactic (← `(tactic|
+      all_goals first
+      | case' guardReady =>
+          simp (config := { failIfUnchanged := false }) only [$rules,*]
+      | case' bodyReady =>
+          simp (config := { failIfUnchanged := false }) only [$rules,*]
+      | case' represented =>
+          simp (config := { failIfUnchanged := false }) only [$rules,*]
+          try rfl
+      | skip))
+
 /-- Compose uniform guard/body costs for the named loop in the goal.
 The remaining-iteration function is explicit; source invariants are inferred
 from the supplied block contracts. Mathematical loop obligations remain goals. -/
@@ -197,5 +259,19 @@ elab_rules : tactic
   | `(tactic| ram_source_loop_arena (stateRel := $stateRel)
       (prepared := $prepared) (completed := $completed)) =>
     arena stateRel prepared completed
+
+/-- Reuse a named loop's mathematical guard/body contracts for arena readiness
+of the actual finite execution. The supplied encoding selects mathematical
+locals; ranges, callee nesting, scratch capacity and completed-result readiness
+remain proof obligations. Only an existing proved identity correspondence can
+remove raw entry coordinates; arbitrary heap-indexed relations stay explicit. -/
+syntax (name := sourceLoopArenaModel)
+  "ram_source_loop_arena_model" " (" &"encode" " := " term ")"
+  " using " term:max ", " term : tactic
+
+elab_rules : tactic
+  | `(tactic| ram_source_loop_arena_model (encode := $encode)
+      using $guardSpec, $bodySpec) =>
+    arenaModel encode guardSpec bodySpec
 
 end Ram.LanguageCompiler.LoopTactic

@@ -65,6 +65,23 @@ theorem «at» (specification : BlockSpec action pre normal returned)
         | .fault _ => False⟩, ⟨⟩) :=
   specification start startHeap initial
 
+/-- Specialize a block contract to one ordinary input. Only the actual initial
+heap and its condition remain to be introduced in the native proof. -/
+theorem input_eq_iff (start : Input) (condition : Heap → Prop) :
+    BlockSpec action (fun input heap => input = start ∧ condition heap) normal returned ↔
+      ∀ startHeap, condition startHeap →
+        Std.Do.Triple (m := StateT Heap Part) (ps := .arg Heap .pure)
+          (action start) (fun heap => ⟨heap = startHeap⟩)
+          (fun outcome heap => ⟨match outcome.1 with
+            | .normal => normal start startHeap outcome.2 heap
+            | .returned value => returned start startHeap value outcome.2 heap
+            | .fault _ => False⟩, ⟨⟩) := by
+  constructor
+  · intro specification heap initial
+    exact specification start heap ⟨rfl, initial⟩
+  · rintro specification input heap ⟨rfl, initial⟩
+    exact specification heap initial
+
 /-- Recover the mathematical postcondition at an actual finite block result.
 The source contract supplies termination and excludes faults; uniqueness of
 the same partial computation identifies the observed locals and final heap. -/
