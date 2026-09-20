@@ -281,11 +281,25 @@ def programDeclarations (family : TSyntax `ident)
       if pureMode && site.nativeResult.isSome && site.hasStandardRange then
         rules := rules ++ #[loopMember site "nativeRangeStop", loopMember site "nativeRangeStep"]
       let nativeTypes := site.scope.toArray.filterMap (fun binding => binding.native.map (·.type))
+      let completion? : Option LoopCompletionCoordinateRegistration :=
+        if site.localReturn.isSome then some {
+          view := loopMember site "View"
+          visible := loopMember site "visible"
+          entry := loopMember site "entry"
+          pending := loopMember site "pending"
+          reconstruct := loopMember site "reconstruct"
+          reconstructNone := loopMember site "reconstruct_none"
+          guardFrame := loopMember site "guard_completion_frame"
+          bodyFrame := loopMember site "body_ancestor_pending_frame"
+          stoppedGuard := loopMember site "guard_completed"
+          pendingEval := loopMember site "pending_eval"
+        } else none
       coordinates := coordinates.push {
         code := loopMember site "Code"
         rules := rules
         captures := captures
         nativeTypes := nativeTypes
+        completion? := completion?
       }
   return (mkNullNode declarations, (functions.map fun fn => ({
     name := fn.name.getId

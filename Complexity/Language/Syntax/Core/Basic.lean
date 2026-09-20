@@ -34,12 +34,29 @@ structure LoopCaptureCoordinates where
   /-- Capture preservation on every actual body exit. -/
   bodyFrame : Name
 
+/-- Checked coordinates and frame theorems for a loop with a local-result slot.
+These declarations connect visible source locals to the same actual loop state;
+they do not provide an invariant, termination argument or resource bound. -/
+structure LoopCompletionCoordinates where
+  view : Name
+  visible : Name
+  entry : Name
+  pending : Name
+  reconstruct : Name
+  reconstructNone : Name
+  guardFrame : Name
+  bodyFrame : Name
+  stoppedGuard : Name
+  pendingEval : Name
+
 /-- Checked coordinate and capture declarations belonging to one generated source loop.
 The key is its actual `Code` declaration; no executable body or budget is stored here. -/
 structure LoopCoordinates where
   rules : Array Name
   /-- Raw coordinates first, followed by native coordinates when generated. -/
   captures : Array LoopCaptureCoordinates
+  /-- Present only for a loop whose actual control uses a pending local result. -/
+  completion? : Option LoopCompletionCoordinates := none
 
 /-- One actual lexical coordinate of a generated source block. The order retains
 shadowed bindings and anonymous compiler locals; names alone do not identify slots. -/
@@ -108,11 +125,24 @@ structure LoopCaptureCoordinateRegistration where
   guardFrame : TSyntax `ident
   bodyFrame : TSyntax `ident
 
+structure LoopCompletionCoordinateRegistration where
+  view : TSyntax `ident
+  visible : TSyntax `ident
+  entry : TSyntax `ident
+  pending : TSyntax `ident
+  reconstruct : TSyntax `ident
+  reconstructNone : TSyntax `ident
+  guardFrame : TSyntax `ident
+  bodyFrame : TSyntax `ident
+  stoppedGuard : TSyntax `ident
+  pendingEval : TSyntax `ident
+
 structure LoopCoordinateRegistration where
   code : TSyntax `ident
   rules : Array (TSyntax `ident)
   captures : Array LoopCaptureCoordinateRegistration
   nativeTypes : Array (TSyntax `term)
+  completion? : Option LoopCompletionCoordinateRegistration := none
 
 partial def registeredTypeNames (type : Lean.Expr) : Lean.Meta.MetaM (Array Name) := do
   let type ← Lean.Meta.whnf type
@@ -138,6 +168,19 @@ def registerLoopCoordinates (entries : Array LoopCoordinateRegistration) :
       let guardFrame ← Lean.resolveGlobalConstNoOverload capture.guardFrame
       let bodyFrame ← Lean.resolveGlobalConstNoOverload capture.bodyFrame
       return ⟨view, guardFrame, bodyFrame⟩
+    let completion? : Option LoopCompletionCoordinates ← entry.completion?.mapM fun completion => do
+      return {
+        view := ← Lean.resolveGlobalConstNoOverload completion.view
+        visible := ← Lean.resolveGlobalConstNoOverload completion.visible
+        entry := ← Lean.resolveGlobalConstNoOverload completion.entry
+        pending := ← Lean.resolveGlobalConstNoOverload completion.pending
+        reconstruct := ← Lean.resolveGlobalConstNoOverload completion.reconstruct
+        reconstructNone := ← Lean.resolveGlobalConstNoOverload completion.reconstructNone
+        guardFrame := ← Lean.resolveGlobalConstNoOverload completion.guardFrame
+        bodyFrame := ← Lean.resolveGlobalConstNoOverload completion.bodyFrame
+        stoppedGuard := ← Lean.resolveGlobalConstNoOverload completion.stoppedGuard
+        pendingEval := ← Lean.resolveGlobalConstNoOverload completion.pendingEval
+      }
     let nativeRules ← Lean.Elab.Command.liftTermElabM do
       let mut names := #[]
       for type in entry.nativeTypes do
@@ -150,7 +193,7 @@ def registerLoopCoordinates (entries : Array LoopCoordinateRegistration) :
         -- native-coordinate derivation; registration never adds a proof premise.
         discard <| Lean.getConstInfo rule
         rules := rules.push rule
-    modifyEnv fun env => loopCoordinatesExt.addEntry env (code, ⟨rules, captures⟩)
+    modifyEnv fun env => loopCoordinatesExt.addEntry env (code, { rules, captures, completion? })
 
 end Core
 

@@ -50,6 +50,17 @@ the actual masked guard without requiring another decrease. The proof view
 hides private result slots, but mathematical source-state relations remain
 explicit rather than being inferred automatically.
 
+The separate resource proof can reuse these same visible guard/body contracts
+through
+[`ArenaReady.while_completion_of_exec`](##Ram.LanguageCompiler.ArenaReady.while_completion_of_exec).
+It lifts an existing finite loop execution, with no second descent argument.
+Shared execution frames restore the continuing state and handle the final masked
+guard after local completion. The client still proves word ranges, callee nesting
+and sufficient scratch capacity for the real guard and body. A completed round
+does not need readiness of an unreachable next body. This fixed-boundary rule
+permits scratch allocation that is reclaimed before the next round; it does not
+silently reset storage retained by a callee.
+
 The safety premise `ScopeSafe initial finish control` says surviving locals
 and any returned value are rooted in the entry object domain. `TotalWP.scope`
 and `scope_compose` require this premise and apply the postcondition to

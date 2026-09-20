@@ -145,6 +145,22 @@ and arbitrary potential functions can still use the public loop theorems below;
 the cost tactic is the uniform-cost, linear-iteration specialization, not a
 replacement for those general interfaces or automatic invariant discovery.
 
+For a named local-return loop with an existing finite execution, use
+
+```lean
+ram_source_loop_arena (stateRel := invariantRelation)
+  (prepared := bodyPrecondition) (completed := resultPostcondition)
+```
+
+The three relations concern visible source locals and actual heaps. This entry
+selects the registered completion coordinates and execution frames, then applies
+`ArenaReady.while_completion_of_exec`. Guard/body source contracts, their real
+resource readiness, readiness of the final stopped guard, and the initial facts
+remain obligations. The scoped-workspace consumer reuses its existing source
+contracts here; it does not reconstruct private completion slots or prove loop
+termination again. The rule preserves the same arena boundary between rounds,
+not arbitrary growing allocation, and does not infer a time budget.
+
 ## Reuse a traversal invariant
 
 The [read/helper/branch/write traversal](##Examples.Language.Traversal) writes
@@ -174,6 +190,12 @@ inequalities. The source invariant and termination proof are reused. The
 successful relation, while retaining the original precondition as a usable
 fact. Mathematical invariants, frame composition and potential inequalities
 remain explicit; correctness contracts themselves contain no instruction budget.
+
+When an actual `Exec` is already available, `BlockSpec.post_of_exec` applies the
+same contract directly at that execution's endpoint. Its input map may install
+fixed captures or a local block's empty result slot; the result still observes
+the complete actual final locals and heap. No client-side `Part` equation or
+second execution witness is needed.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every

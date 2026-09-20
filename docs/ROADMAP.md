@@ -30,7 +30,10 @@ work and every remaining obligation. The outstanding work is:
   authors supply invariants, descent and genuine effect/range facts, not private
   slots, raw-environment transport or `Part` plumbing. Normal array-preserving
   rounds now have generated named mathematical locals and correspondence, used
-  by the array-record while consumer. General effect/completion interfaces remain open.
+  by the array-record while consumer. Next, connect completion-aware mathematical
+  locals through source effect contracts and remove the visible-tuple transport
+  from `Scope.loop_spec`. Do not assign a pure transition to arbitrary mutation
+  or mistake a retained buffer handle for unchanged contents.
 - Compose function equations and state contracts through the same heap-indexed
   representation, including actual aliases and intermediate heaps.
 - Migrate the remaining existing consumers, retaining their original mathematical
@@ -44,6 +47,12 @@ been checked together. The shared rule requires invariant preservation and
 decrease only for continuing rounds. Cleanup still sees the full state, and all
 added control instructions belong to the changed compiled program. This does
 not finish general mathematical-local automation or range integration.
+Its resource proof now reuses the visible guard/body contracts through a shared
+completion-aware readiness rule, without a second termination proof or manual
+`Part`/private-slot reconstruction. The same ranges, scratch capacity and
+physical workspace bound remain explicit. A named-loop entry selects the checked
+completion coordinates and frames; the mathematical state/effect relations are
+still supplied by the author.
 
 ## M0 — Decisions and questions to settle
 

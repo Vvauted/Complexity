@@ -116,9 +116,15 @@ The current integration work has these concrete obligations:
   completion contracts: the shared well-founded rule requires invariant
   preservation and decrease only for continuing iterations. A local result exits
   through the actual masked guard, with no invented decrease after completion.
-  `Scope.make` exercises this path. Its proof still supplies visible tuples and
-  the mathematical state relation; generating fully mathematical-local interfaces
-  and extending this experience to local-return ranges remain open.
+  `Scope.make` exercises this path. Its separate arena proof reuses these source
+  contracts through shared completion-aware loop lifting; the named-loop tactic
+  supplies checked private coordinates and frames. Its proof still supplies
+  visible tuples and the mathematical state relation. The next mathematical-local
+  interface should compose source effect contracts, so `Scope.loop_spec` can
+  retain its genuine invariant, descent and result arguments without tuple or
+  entry transport. Raw `Buffer` identity observes a handle, not its contents;
+  the worker's update and reclamation contract cannot become an assumed pure
+  mathematical step. This interface and local-return ranges remain open.
 - [ ] Compose mathematical functions and state contracts through the same
   heap-indexed representation. A pure encoding is a special case; mutable
   array contents are not preserved by arbitrary heap extension.

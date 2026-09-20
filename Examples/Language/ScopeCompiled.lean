@@ -4,7 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Examples.Language.ScopeCompiledWork
-import Complexity.Computability.Ram.Compiler.Language.Arena.Loop
+import Complexity.Computability.Ram.Compiler.Language.LoopTactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
@@ -122,42 +122,6 @@ theorem body_ready {w limit cursor : Nat} (hw : 0 < w)
       | callReturn callee continuation => cases continuation
   | seqFault called => exact False.elim successful
 
-private theorem guard_post (remaining : Nat) (out : Buffer .nat) (count n value : Nat)
-    (heap : Heap) {finish : State _} {decision : Bool}
-    (execution : Exec Implementation.Source.program Implementation.Source.make_loop1.Guard
-      ⟨Implementation.Source.make_loop1.View.symm
-        (Implementation.Source.make_loop1.entry (remaining, out, count, n, value, ())), heap⟩
-      finish (.returned decision)) :
-    finish = ⟨Implementation.Source.make_loop1.View.symm
-      (Implementation.Source.make_loop1.entry (remaining, out, count, n, value, ())), heap⟩ ∧
-      decision = decide (0 < remaining) := by
-  have observed : Stmt.observe Implementation.Source.make_loop1.View
-      Implementation.Source.make_loop1.Guard Implementation.Source.program
-      (Implementation.Source.make_loop1.entry (remaining, out, count, n, value, ())) heap =
-        Part.some ((.returned decision, Implementation.Source.make_loop1.View finish.locals),
-          finish.heap) := by
-    apply Stmt.observe_eq_some_iff.mpr
-    simpa only [Equiv.symm_apply_apply] using execution
-  have property := (guard_eval remaining out count n value).post_of_eq
-    (start := (remaining, out, count, n, value, ())) rfl
-    (by simpa only [Implementation.Source.make_loop1.guard_observe] using observed)
-  have coordinates :=
-    (Implementation.Source.make_loop1.guard_completion_frame
-      (remaining, out, count, n, value, ()) execution).symm.trans
-        (congrArg Implementation.Source.make_loop1.entry property.2.1)
-  have sameLocals : finish.locals = Implementation.Source.make_loop1.View.symm
-      (Implementation.Source.make_loop1.entry (remaining, out, count, n, value, ())) := by
-    simpa only [Equiv.symm_apply_apply] using
-      congrArg Implementation.Source.make_loop1.View.symm coordinates
-  have sameHeap := property.2.2
-  refine ⟨?_, property.1⟩
-  cases finish with
-  | mk locals finalHeap =>
-      dsimp only at sameLocals sameHeap
-      subst locals
-      subst finalHeap
-      rfl
-
 /-- Every finite source loop reuses the same scratch capacity. The original
 mathematical invariant and body contract supply preservation; the additional
 proof checks only ranges and one level of actual callee nesting. -/
@@ -173,74 +137,41 @@ theorem loop_ready {w limit cursor : Nat} (hw : 0 < w)
         (Implementation.Source.make_loop1.entry (remaining, out, count, n, value, ())), heap⟩
       finish control) (successful : ControlFits w control) :
     ArenaReady execution w limit 1 cursor cursor := by
-  let roundInvariant : State _ → Prop := fun state =>
-    (∃ left, state.locals = Implementation.Source.make_loop1.View.symm
-      (Implementation.Source.make_loop1.entry (left, out, count, n, value, ())) ∧
-        invariant out count n value left state.heap) ∨
-    (Implementation.Source.make_loop1.pending
-        (Implementation.Source.make_loop1.View state.locals) = some out ∧
-      out.Contents state.heap (resultContents count n value))
-  apply ArenaReady.while_of_exec (invariant := roundInvariant) execution
-  · rintro ⟨locals, entryHeap⟩ after decision initial tested
-    rcases initial with ⟨left, rfl, initial⟩ | ⟨stopped, completed⟩
-    · exact guard_ready hw left out count n value entryHeap
-        (lt_of_le_of_lt initial.1 countFits) tested
-    · have length : out.length = 1 := by simpa [resultContents] using completed.size_eq.symm
-      exact completed_guard_ready hw _ out
-        (by rw [length]; exact Nat.one_lt_two_pow (Nat.ne_of_gt hw)) stopped tested
-  · rintro ⟨locals, entryHeap⟩ afterGuard afterBody outcome initial tested iterated success
-    rcases initial with ⟨left, rfl, initial⟩ | ⟨stopped, completed⟩
-    · obtain ⟨sameState, _⟩ := guard_post left out count n value entryHeap tested
-      cases sameState
-      have length : out.length = 1 := by simpa using initial.2.size_eq.symm
-      exact body_ready hw left out count n value entryHeap initial.2.valid.rooted
-        (by rw [length]; exact Nat.one_lt_two_pow (Nat.ne_of_gt hw))
-        (lt_of_le_of_lt initial.1 countFits) nFits valueFits capacity iterated success
-    · have exited := Implementation.Source.make_loop1.guard_completed
-        ⟨locals, entryHeap⟩ out (by
-          simpa only [Implementation.Source.make_loop1.pending,
-            Implementation.Source.make_loop1.view_apply] using stopped)
-      cases (tested.deterministic exited).2
-  · rintro ⟨locals, entryHeap⟩ afterGuard afterBody initial tested iterated
-    rcases initial with ⟨left, rfl, initial⟩ | ⟨stopped, completed⟩
-    · obtain ⟨sameState, sameControl⟩ := guard_post left out count n value entryHeap tested
-      cases sameState
-      have active : 0 < left := of_decide_eq_true sameControl.symm
-      have observed : Stmt.observe Implementation.Source.make_loop1.View
-          Implementation.Source.make_loop1.Body Implementation.Source.program
-          (Implementation.Source.make_loop1.entry (left, out, count, n, value, ())) entryHeap =
-            Part.some ((.normal, Implementation.Source.make_loop1.View afterBody.locals),
-              afterBody.heap) := by
-        apply Stmt.observe_eq_some_iff.mpr
-        simpa only [Equiv.symm_apply_apply] using iterated
-      have updated := (body_spec out count n value initial active).post_of_eq
-        (start := (left, out, count, n, value, ())) ⟨rfl, rfl⟩
-        (by simpa only [Implementation.Source.make_loop1.body_observe] using observed)
-      cases completion : Implementation.Source.make_loop1.pending
-          (Implementation.Source.make_loop1.View afterBody.locals) with
-      | none =>
-          simp only [completion] at updated
-          obtain ⟨visibleEqual, kept⟩ := updated
-          have coordinates : Implementation.Source.make_loop1.entry
-              (left - 1, out, count, n, value, ()) =
-                Implementation.Source.make_loop1.View afterBody.locals := by
-            simpa only [Equiv.apply_symm_apply, completion, visibleEqual,
-              Implementation.Source.make_loop1.reconstruct_none] using
-              Implementation.Source.make_loop1.body_ancestor_pending_frame iterated
-          left
-          refine ⟨left - 1, ?_, kept⟩
-          simpa only [Equiv.symm_apply_apply] using
-            congrArg Implementation.Source.make_loop1.View.symm coordinates.symm
-      | some result =>
-          simp only [completion] at updated
-          obtain ⟨rfl, _, contents⟩ := updated
-          exact Or.inr ⟨completion, contents⟩
-    · have exited := Implementation.Source.make_loop1.guard_completed
-        ⟨locals, entryHeap⟩ out (by
-          simpa only [Implementation.Source.make_loop1.pending,
-            Implementation.Source.make_loop1.view_apply] using stopped)
-      cases (tested.deterministic exited).2
-  · exact Or.inl ⟨remaining, rfl, current⟩
+  ram_source_loop_arena
+    (stateRel := fun left locals heap => locals = (left, out, count, n, value, ()) ∧
+      invariant out count n value left heap)
+    (prepared := fun left _ heap locals finish =>
+      locals = (left, out, count, n, value, ()) ∧ finish = heap ∧ 0 < left)
+    (completed := fun returned _ finish =>
+      returned = out ∧ out.Contents finish (resultContents count n value))
+  · intro left
+    refine (guard_eval left out count n value).mono (fun _ _ valid => valid.1)
+      (fun _ _ _ _ _ impossible => impossible) ?_
+    rintro _ heap again _ _ _ ⟨sameDecision, sameLocals, sameHeap⟩ active
+    exact ⟨sameLocals, sameHeap, of_decide_eq_true (sameDecision.symm.trans active)⟩
+  · rintro left _ heap ⟨rfl, valid⟩ _ _ ⟨rfl, rfl, active⟩
+    refine (Implementation.Source.make_loop1.body_completion_spec_at
+      (body_spec out count n value valid active) (left, out, count, n, value, ()) _).mono ?_
+        (Std.Do.PostCond.entails.refl _)
+    rintro _ rfl
+    refine ⟨⟨rfl, rfl⟩, ?_, ?_⟩
+    · rintro _ finish ⟨rfl, updated⟩
+      exact ⟨left - 1, rfl, updated⟩
+    · rintro returned locals finish ⟨rfl, _, contents⟩
+      exact ⟨rfl, contents⟩
+  · rintro left _ heap ⟨rfl, valid⟩ finish decision tested
+    exact guard_ready hw left out count n value heap
+      (lt_of_le_of_lt valid.1 countFits) tested
+  · rintro left _ heap ⟨rfl, valid⟩ _ _ ⟨rfl, rfl, _⟩ finish outcome iterated fits
+    have length : out.length = 1 := by simpa using valid.2.size_eq.symm
+    exact body_ready hw left out count n value _ valid.2.valid.rooted
+      (by rw [length]; exact Nat.one_lt_two_pow (Nat.ne_of_gt hw))
+      (lt_of_le_of_lt valid.1 countFits) nFits valueFits capacity iterated fits
+  · rintro state returned stopped ⟨rfl, contents⟩ finish decision tested
+    have length : returned.length = 1 := by simpa [resultContents] using contents.size_eq.symm
+    exact completed_guard_ready hw state returned
+      (by rw [length]; exact Nat.one_lt_two_pow (Nat.ne_of_gt hw)) stopped tested
+  · exact ⟨rfl, current⟩
   · exact successful
 
 /-- The generated maker's ordinary arguments, in the source function table's
@@ -293,21 +224,10 @@ theorem make_ready {w limit cursor : Nat} (hw : 0 < w)
                           (loop_ready hw count (heap.alloc (τ := .nat) 1 0).1 count n value
                             (heap.alloc (τ := .nat) 1 0).2 initial
                             countFits nFits valueFits capacity loop trivial)
-                        have observed : Stmt.observe Implementation.Source.make_loop1.View
-                            Implementation.Source.make_loop1.Code Implementation.Source.program
-                            (Implementation.Source.make_loop1.entry
-                              (count, (heap.alloc (τ := .nat) 1 0).1, count, n, value, ()))
-                            (heap.alloc (τ := .nat) 1 0).2 =
-                              Part.some ((.normal,
-                                Implementation.Source.make_loop1.View middle.locals),
-                                middle.heap) := by
-                          apply Stmt.observe_eq_some_iff.mpr
-                          simpa only [Equiv.symm_apply_apply] using loop
-                        have property :=
-                          (loop_spec (heap.alloc (τ := .nat) 1 0).1 count n value count).post_of_eq
-                            (start := (count, (heap.alloc (τ := .nat) 1 0).1,
-                              count, n, value, ())) ⟨rfl, initial⟩
-                            (by simpa only [Implementation.Source.make_loop1.observe] using observed)
+                        have property := Stmt.BlockSpec.post_of_exec
+                          Implementation.Source.make_loop1.View Implementation.Source.make_loop1.entry
+                          (loop_spec (heap.alloc (τ := .nat) 1 0).1 count n value count)
+                          ⟨rfl, initial⟩ loop
                         have ranges :
                             ValueFits w (τ := .buffer .nat)
                               (Implementation.Source.make_loop1.visible

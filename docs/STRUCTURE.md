@@ -88,6 +88,10 @@ dependencies. Arena allocation/cleanup and measured simulation retain their own
 modules. A complete simulation induction stays together; a file is not split
 solely to meet a line limit.
 
+`Arena/Loop/Completion` connects visible local-return contracts to readiness of
+the same finite loop execution. Source completion contracts stay under
+`Language/Eval/Locals/LocalReturn`; this RAM module adds only resource composition.
+
 ## Documentation
 
 The existing `ComplexityDocs.GettingStarted` and `ComplexityDocs.Verification`

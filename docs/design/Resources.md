@@ -144,6 +144,15 @@ shared result and its actual access-set bounds instead of assembling a large
 runner tuple. Concise loop-resource interfaces, further consumer migration,
 general live-space observations and problem-level composition remain unfinished.
 
+Local-return loops can lift the same finite source execution through
+`ArenaReady.while_completion_of_exec`. It consumes their visible guard/body
+contracts and generated completion frames, internally distinguishing continuing
+and completed rounds. The scoped-workspace consumer no longer reconstructs that
+invariant or converts its source contracts through `Part` result equations.
+Word ranges, actual callee nesting and scratch capacity remain resource
+obligations. This rule keeps the arena boundary fixed across rounds; growing
+allocation and general live-space composition still require separate interfaces.
+
 Uniform structural budgets are inferred through the existing checked cost rules.
 Traversal's guard/body witnesses are chosen before arbitrary locals and heaps,
 and its function wrapper is inferred around the supplied loop bound. Direct,

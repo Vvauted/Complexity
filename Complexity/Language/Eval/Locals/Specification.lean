@@ -74,6 +74,28 @@ theorem post_of_eq (specification : BlockSpec action pre normal returned)
     exact Part.TotalCorrectness.stateT_post_of_eq
       (specification.«at» start startHeap initial) rfl executed
 
+/-- Apply an ordinary-local contract to the same finite source execution.
+The input map may install fixed captures or private entry slots. The conclusion
+uses the actual final locals and heap, without reconstructing an execution or
+requiring another termination argument. -/
+theorem post_of_exec {signatures : List Signature} {Γ : List Ty}
+    (view : Env Γ ≃ Output) (inputLocals : Input → Output)
+    {program : Program signatures} {stmt : Stmt signatures Γ result}
+    (specification : BlockSpec
+      (fun start => observe view stmt program (inputLocals start)) pre normal returned)
+    {start : Input} {startHeap : Heap} {finish : State Γ} {control : Control result}
+    (initial : pre start startHeap)
+    (execution : Exec program stmt ⟨view.symm (inputLocals start), startHeap⟩ finish control) :
+    match control with
+    | .normal => normal start startHeap (view finish.locals) finish.heap
+    | .returned value => returned start startHeap value (view finish.locals) finish.heap
+    | .fault _ => False := by
+  have observed : observe view stmt program (inputLocals start) startHeap =
+      Part.some ((control, view finish.locals), finish.heap) :=
+    observe_eq_some_iff.mpr (by
+      simpa only [Equiv.symm_apply_apply] using execution)
+  cases control <;> exact specification.post_of_eq initial observed
+
 /-- Strengthen the initial condition and weaken either successful relation.
 The consequences may use the condition at the original input and heap; no
 preservation of that condition at the final heap is assumed. -/

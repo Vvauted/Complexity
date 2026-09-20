@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Syntax.Core
+import Complexity.Computability.Ram.Compiler.Language.Arena.Loop.Completion
 import Complexity.Computability.Ram.Compiler.Language.CostBound.Locals
 import Complexity.Computability.Ram.Compiler.Language.Realization.Loop
 import Lean.Elab.Tactic
@@ -26,6 +27,11 @@ Its precondition is separate from the resource invariant; extra frame facts are
 not silently discarded. Besides the guard/body word and nesting proofs, callers
 retain any nontrivial source postcondition consequences. Neither entry unfolds
 callee implementations, assumes operation prices or searches for invariants.
+
+The arena entry connects visible local-completion contracts to the same finite
+execution in its goal. It selects only compiler coordinates and checked frames;
+the caller supplies the state relation, prepared-body condition and completed
+postcondition. Source effects and actual guard/body arena readiness remain goals.
 -/
 
 namespace Ram.LanguageCompiler.LoopTactic
@@ -132,6 +138,30 @@ private def realize (guardSpec bodySpec specification : TSyntax `term) :
           intros
           first | assumption | trivial | contradiction | skip))
 
+private def arena (stateRel prepared completed : TSyntax `term) : TacticM Unit :=
+    withMainContext do
+  let information ← coordinates ``ArenaReady 4
+  let some completion := information.completion? |
+    throwError "the named source loop has no registered local-completion coordinates"
+  let view := mkCIdent completion.view
+  let visible := mkCIdent completion.visible
+  let entry := mkCIdent completion.entry
+  let pending := mkCIdent completion.pending
+  let reconstruct := mkCIdent completion.reconstruct
+  let reconstructNone := mkCIdent completion.reconstructNone
+  let guardFrame := mkCIdent completion.guardFrame
+  let bodyFrame := mkCIdent completion.bodyFrame
+  let stoppedGuard := mkCIdent completion.stoppedGuard
+  let pendingEval := mkCIdent completion.pendingEval
+  evalTactic (← `(tactic|
+    apply ArenaReady.while_completion_of_exec $view $visible $entry $pending $reconstruct
+      $reconstructNone $guardFrame $bodyFrame
+      (by
+        intro state value stopped
+        apply $stoppedGuard state value
+        simpa only [← $pendingEval, Equiv.symm_apply_apply] using stopped)
+      (stateRel := $stateRel) (prepared := $prepared) (completed := $completed)))
+
 /-- Compose uniform guard/body costs for the named loop in the goal.
 The remaining-iteration function is explicit; source invariants are inferred
 from the supplied block contracts. Mathematical loop obligations remain goals. -/
@@ -153,5 +183,19 @@ syntax (name := sourceLoopRealize)
 elab_rules : tactic
   | `(tactic| ram_source_loop_realize using $guardSpec, $bodySpec total $specification) =>
     realize guardSpec bodySpec specification
+
+/-- Connect visible completion contracts to arena readiness of the actual finite
+execution in the goal. Only the named loop's compiler coordinates and frames are
+automatic. The supplied mathematical relations determine the remaining source
+contract, guard/body readiness, completed-guard readiness and entry obligations;
+no new termination proof or inferred effect/capacity premise is introduced. -/
+syntax (name := sourceLoopArena)
+  "ram_source_loop_arena" " (" &"stateRel" " := " term ")"
+  " (" &"prepared" " := " term ")" " (" &"completed" " := " term ")" : tactic
+
+elab_rules : tactic
+  | `(tactic| ram_source_loop_arena (stateRel := $stateRel)
+      (prepared := $prepared) (completed := $completed)) =>
+    arena stateRel prepared completed
 
 end Ram.LanguageCompiler.LoopTactic

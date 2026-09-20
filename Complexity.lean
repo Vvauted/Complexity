@@ -113,6 +113,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Lowering
 import Complexity.Computability.Ram.Compiler.Language.Arena.Node
 import Complexity.Computability.Ram.Compiler.Language.Arena.NodeExecution
 import Complexity.Computability.Ram.Compiler.Language.Arena.Loop
+import Complexity.Computability.Ram.Compiler.Language.Arena.Loop.Completion
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Call
