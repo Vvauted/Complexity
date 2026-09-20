@@ -398,6 +398,79 @@ def completionDeclarations (program : TSyntax `ident) (site : BlockSite)
             ⟨($property:ident).1, ($property:ident).2.1⟩, ?_⟩
         simpa only [$pendingReconstruct:ident, $visibleReconstruct:ident]
           using ($property:ident).2.2)).raw
+  let contractOfBodySpec := loopMember site "completion_contract_of_body_spec"
+  let bodyPre ← freshProofName site.name `bodyPre
+  let bodyNormal ← freshProofName site.name `bodyNormal
+  let bodyReturned ← freshProofName site.name `bodyReturned
+  let precondition ← freshProofName site.name `precondition
+  let normalPost ← freshProofName site.name `normalPost
+  let returnedPost ← freshProofName site.name `returnedPost
+  let transported ← freshProofName site.name `transported
+  let stopped ← freshProofName site.name `stopped
+  let bodyInvocation ← tupleApplication site.scope (loopMember site "body")
+    (← `($entry:ident $start:ident))
+  let bodyAction ← `(fun ($start:ident : $visibleType:ident) => $bodyInvocation)
+  declarations := declarations.push (← `(command|
+    /-- Reuse an existing visible body contract across this actual scratch
+    boundary. The consequences prove non-escape and the desired observations
+    after trimming the current final heap, without rebuilding the body proof. -/
+    theorem $contractOfBodySpec:ident {$bodyPre:ident : $preType}
+        {$bodyNormal:ident : $normalType} {$bodyReturned:ident : $returnedType}
+        {$pre:ident : $preType} {$normal:ident : $normalType} {$returned:ident : $returnedType}
+        ($chosen:ident : $bodyContract:ident $bodyPre:ident $bodyNormal:ident $bodyReturned:ident)
+        ($precondition:ident : ∀ $start:ident $heap:ident,
+          $pre:ident $start:ident $heap:ident → $bodyPre:ident $start:ident $heap:ident)
+        ($normalPost:ident : ∀ $start:ident $heap:ident $output:ident $finish:ident,
+          $pre:ident $start:ident $heap:ident →
+          $bodyNormal:ident $start:ident $heap:ident $output:ident $finish:ident →
+          $visibleRooted:ident $heap:ident $output:ident ∧
+            $normal:ident $start:ident $heap:ident $output:ident
+              (($finish:ident).take ($heap:ident).objects.size))
+        ($returnedPost:ident : ∀ $start:ident $heap:ident $value:ident $output:ident $finish:ident,
+          $pre:ident $start:ident $heap:ident →
+          $bodyReturned:ident $start:ident $heap:ident $value:ident $output:ident $finish:ident →
+          $visibleRooted:ident $heap:ident $output:ident ∧
+            Complexity.Language.ValueRooted $heap:ident (τ := $targetType) $value:ident ∧
+            $returned:ident $start:ident $heap:ident $value:ident $output:ident
+              (($finish:ident).take ($heap:ident).objects.size)) :
+        $contract:ident $pre:ident $normal:ident $returned:ident := by
+      change Complexity.Language.Stmt.BlockSpec $bodyAction $bodyPre:ident
+        (fun $start:ident $heap:ident $output:ident $finish:ident =>
+          match $pending:ident $output:ident with
+          | none => $bodyNormal:ident $start:ident $heap:ident
+              ($visible:ident $output:ident) $finish:ident
+          | some $value:ident => $bodyReturned:ident $start:ident $heap:ident $value:ident
+              ($visible:ident $output:ident) $finish:ident)
+        (fun _ _ _ _ _ => False) at $chosen:ident
+      apply $contractOfBody:ident
+      have $transported:ident :=
+        Complexity.Language.Stmt.LocalReturn.completion_mono (result := $result)
+        (action := $bodyAction) $pending:ident $visible:ident
+        (pre := $bodyPre:ident) (pre' := $pre:ident)
+        (normal := $bodyNormal:ident) (completed := $bodyReturned:ident)
+        (normal' := fun $start:ident $heap:ident $output:ident $finish:ident =>
+          $visibleRooted:ident $heap:ident $output:ident ∧
+            $normal:ident $start:ident $heap:ident $output:ident
+              (($finish:ident).take ($heap:ident).objects.size))
+        (completed' := fun $start:ident $heap:ident $value:ident $output:ident $finish:ident =>
+          $visibleRooted:ident $heap:ident $output:ident ∧
+            Complexity.Language.ValueRooted $heap:ident (τ := $targetType) $value:ident ∧
+            $returned:ident $start:ident $heap:ident $value:ident $output:ident
+              (($finish:ident).take ($heap:ident).objects.size))
+        (by
+          refine Complexity.Language.Stmt.BlockSpec.mono $chosen:ident
+            (fun _ _ $initial:ident => $initial:ident) ?_
+            (fun _ _ _ _ _ _ $property:ident => $property:ident)
+          intro _ _ $output:ident $finish:ident _ $property:ident
+          cases $stopped:ident : $pending:ident $output:ident <;>
+            simpa only [$stopped:ident] using $property:ident)
+        $precondition:ident $normalPost:ident $returnedPost:ident
+      refine Complexity.Language.Stmt.BlockSpec.mono $transported:ident
+        (fun _ _ $initial:ident => $initial:ident) ?_
+        (fun _ _ _ _ _ _ $property:ident => $property:ident)
+      intro _ _ $output:ident $finish:ident _ $property:ident
+      cases $stopped:ident : $pending:ident $output:ident <;>
+        simpa only [$stopped:ident] using $property:ident)).raw
   return declarations
 
 def loopCompletionDeclarations (program : TSyntax `ident) (site : BlockSite)

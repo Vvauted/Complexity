@@ -149,6 +149,41 @@ theorem completion_spec {Input Output Visible : Type}
   | returned value => exact False.elim property
   | fault error => exact False.elim property
 
+/-- Strengthen the entry condition and transport the two visible completion
+postconditions at their actual heaps. Private result slots and the impossible
+enclosing-function return are handled once, independently of source syntax. -/
+theorem completion_mono {Input Output Visible LocalResult : Type}
+    {action : Input → StateT Heap Part (Control result × Output)}
+    (pending : Output → Option LocalResult) (visible : Output → Visible)
+    {pre pre' : Input → Heap → Prop}
+    {normal normal' : Input → Heap → Visible → Heap → Prop}
+    {completed completed' : Input → Heap → LocalResult → Visible → Heap → Prop}
+    (specification : BlockSpec action pre
+      (fun start heap output finish => match pending output with
+        | none => normal start heap (visible output) finish
+        | some value => completed start heap value (visible output) finish)
+      (fun _ _ _ _ _ => False))
+    (precondition : ∀ start heap, pre' start heap → pre start heap)
+    (normalPost : ∀ start heap output finish,
+      pre' start heap → normal start heap output finish → normal' start heap output finish)
+    (completedPost : ∀ start heap value output finish,
+      pre' start heap → completed start heap value output finish →
+        completed' start heap value output finish) :
+    BlockSpec action pre'
+      (fun start heap output finish => match pending output with
+        | none => normal' start heap (visible output) finish
+        | some value => completed' start heap value (visible output) finish)
+      (fun _ _ _ _ _ => False) := by
+  refine specification.mono precondition ?_ (fun _ _ _ _ _ _ impossible => impossible)
+  intro start heap output finish initial property
+  cases stopped : pending output with
+  | none =>
+      exact normalPost start heap (visible output) finish initial
+        (by simpa only [stopped] using property)
+  | some value =>
+      exact completedPost start heap value (visible output) finish initial
+        (by simpa only [stopped] using property)
+
 /-- Separate the roots of a pending local result from the unchanged actual
 control. In particular, a fault does not erase a nonempty slot's roots. -/
 theorem scopeSafe_pending (initial : Heap) (finish : State Γ)

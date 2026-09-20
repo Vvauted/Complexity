@@ -104,12 +104,18 @@ The current integration work has these concrete obligations:
   their local type/representation metadata independently of pure operation
   traces and reuse the same mathematical state generator. Their supplied
   guard/body contracts relate observations at the actual heaps; they do not
-  require or generate a pure body transition. Extend this interface to broader
-  effectful guards and construct combinations. Fixed captured handles do not by
+  require or generate a pure body transition. Extend automatic effect/frame
+  composition across construct combinations. Fixed captured handles do not by
   themselves preserve captured contents, and no total model of the complete
   while is required. The normal-round interface currently requires checked
   array-preserving operations and no guard assignment to retained locals; it
   does not invent a transition for arbitrary aliased mutation.
+  Its current `relationTrace` consumes pure-operation correspondence and global
+  array preservation. Mutable calls need supplied effects for that actual source
+  call, renewed observations for changed fields, and per-observation frames for
+  retained fields; stale aliases cannot be carried forward unconditionally.
+  Adding another relational WP expansion or choosing a raw handle from a model
+  does not fill this gap.
   Local-return blocks also need an author-facing completion/local-state view:
   compiler-private result slots must not enlarge user invariants or scratch
   tuples. Keep complete source coordinates for execution and run scope cleanup
@@ -130,8 +136,14 @@ The current integration work has these concrete obligations:
   mathematical guard/body contracts with its genuine invariant, descent and result
   arguments. There is no private `mono`/entry adapter or source tuple transport
   in this loop proof. This interface requires an explicitly proved
-  model-and-heap-preserving guard; the older `completion_rel_contract` still
-  supports effectful guards. Raw `Buffer` identity observes a handle, not its
+  model-and-heap-preserving guard and now specializes
+  `model_completion_effects_contract`. The general rule passes the guard's actual
+  final mathematical state and heap to the body through a supplied preparation
+  relation, with descent relative to the pre-guard state. The corresponding
+  arena-readiness rule reuses the same finite execution. These are checked
+  contract composition, not automatic effect/frame inference; the current
+  scoped consumer exercises the preserving specialization. Raw `Buffer`
+  identity observes a handle, not its
   contents; the worker's actual update and reclamation contract is retained.
   General mathematical-local integration and local-return ranges remain open.
   The scoped consumer's substantive guard/body proofs now use native triples
@@ -141,7 +153,7 @@ The current integration work has these concrete obligations:
   and heap; it is not another executable implementation. This direct entry
   currently requires a proved complete identity-coordinate equivalence. General
   Array/List observations have no heap-independent inverse and still use the
-  relational contract. Extending their direct proof workflow, effectful guards
+  relational contract. Extending their direct proof workflow, effect/frame inference
   and remaining fragment-readiness ergonomics is still an integration obligation.
 - [ ] Compose mathematical functions and state contracts through the same
   heap-indexed representation. A pure encoding is a special case; mutable

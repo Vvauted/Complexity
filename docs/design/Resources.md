@@ -159,6 +159,11 @@ identity correspondence can remove entry tuple transport. It does not require
 or infer an inverse for general heap-indexed representations. The author still
 supplies actual word ranges, call nesting, scratch capacity and saved-result
 readiness, but does not reconstruct source preservation in the resource proof.
+The more general `while_completion_model_effects_of_exec` passes a guard's
+actual final mathematical state and heap into the body through a supplied
+preparation relation. The preserving-guard rule specializes it. Both retain a
+fixed arena boundary; neither silently discards storage retained by the guard,
+infers effect contracts or asks for a second termination proof.
 
 `ArenaReady.call_seq_of_exec` composes a standalone call with its next statement
 on the same finite execution. The next statement sees the callee's actual final

@@ -97,7 +97,13 @@ without tuple, `Part` or hidden-entry transport. A completed body needs no next
 invariant or decrease. The rule requires the supplied guard contract to preserve
 the mathematical index and actual heap; it may use the current invariant to
 justify its accesses. No heap-preservation restriction is imposed on the body.
-More general guards still use `completion_rel_contract`. A raw
+For a guard that changes locals or the heap, use `model_completion_effects_contract`.
+Its supplied `prepared before initial tested after` relates the round's input to
+the guard's actual output. The body contract starts at `tested, after`; only a
+continuing body must reestablish the invariant and decrease relative to `before`.
+A false guard supplies the exit condition at its own final heap. The simpler
+`model_completion_contract` is a specialization of this rule. This composition
+does not infer the guard's effects or a frame for aliased observations. A raw
 `Buffer` field observes its handle, not unchanged contents, and this interface
 does not turn aliased mutation into an assumed pure transition. The completed
 result remains the actual source return value; its contents are proved by the
@@ -197,6 +203,15 @@ successful-control condition. For a complete identity representation, a proved
 correspondence removes raw entry coordinates from guard/body leaves. A general
 heap-indexed representation remains a relation; there is no inferred inverse
 from mathematical array contents to a unique handle.
+
+The general
+[`ArenaReady.while_completion_model_effects_of_exec`](##Ram.LanguageCompiler.ArenaReady.while_completion_model_effects_of_exec)
+accepts the same effectful guard/body contracts and adds readiness at the actual
+post-guard model and heap. It reuses the given finite execution without requiring
+descent again. The preserving-guard rule above is a specialization. This is still
+a fixed-cursor rule: heap mutation and reclaimed scratch are allowed, but retained
+allocation cannot silently reset the cursor. The named tactic above selects the
+preserving specialization; the general rule is currently used directly.
 
 The lower-level visible-local entry remains available:
 

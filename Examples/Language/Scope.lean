@@ -96,18 +96,13 @@ theorem inner_eval (temp out : Buffer .nat) (n value : Nat) :
         temp.Rooted heap ∧ out.Rooted heap)
       (fun _ heap locals finish => locals = (temp, out, n, value, ()) ∧ finish = heap)
       (fun _ _ _ _ _ => False) := by
-  apply Implementation.Source.work_scope2.completion_contract_of_body
-  rintro _ heap ⟨rfl, tempRooted, outRooted⟩
-  refine (Implementation.Source.work_scope2.body_completion_spec_at
-    (inner_body_eval temp out n value) (temp, out, n, value, ()) _).mono ?_
-      (Std.Do.PostCond.entails.refl _)
-  rintro _ rfl
-  refine ⟨rfl, ?_, ?_⟩
-  · rintro _ _ ⟨rfl, rfl⟩
+  refine Implementation.Source.work_scope2.completion_contract_of_body_spec
+    (inner_body_eval temp out n value) (fun _ _ current => current.1) ?_ ?_
+  · rintro _ heap _ _ ⟨rfl, tempRooted, outRooted⟩ ⟨rfl, rfl⟩
     refine ⟨?_, rfl, Heap.take_alloc_self (τ := .nat) _ n 0⟩
     simp only [Implementation.Source.work_scope2.VisibleRooted, ValueRooted,
       tempRooted, outRooted, and_self]
-  · intro _ _ _ impossible
+  · intro _ _ _ _ _ _ impossible
     exact False.elim impossible
 
 /-- The actual outer body reads its still-live temporary after inner cleanup.
@@ -128,11 +123,9 @@ theorem outer_body_spec (out : Buffer .nat) (n value previous : Nat) :
   subst entry
   intro temp middle allocated initialized growth fresh
   have retained : out.Contents middle #[previous] := by
-    have preserved := observed.alloc (τ := .nat) n value
-    rw [allocated] at preserved
-    exact preserved
+    simpa only [allocated] using observed.alloc (τ := .nat) n value
   mvcgen [innerSpec]
-  refine ⟨⟨trivial, initialized.valid.rooted, observed.valid.rooted.mono growth⟩, ?_, ?_⟩
+  refine ⟨⟨trivial, initialized.valid.rooted, retained.valid.rooted⟩, ?_, ?_⟩
   swap
   · intro _ _ _ impossible
     exact False.elim impossible
@@ -161,16 +154,11 @@ theorem outer_eval (out : Buffer .nat) (n value previous : Nat) :
       (fun _ _ _ _ => False)
       (fun _ _ _ locals finish => locals = (out, n, value, ()) ∧
         out.Contents finish (workContents n value previous)) := by
-  apply Implementation.Source.work_scope1.completion_contract_of_body
-  rintro _ heap ⟨rfl, observed⟩
-  refine (Implementation.Source.work_scope1.body_completion_spec_at
-    (outer_body_spec out n value previous) (out, n, value, ()) _).mono ?_
-      (Std.Do.PostCond.entails.refl _)
-  rintro _ rfl
-  refine ⟨⟨rfl, observed⟩, ?_, ?_⟩
-  · intro _ _ impossible
+  refine Implementation.Source.work_scope1.completion_contract_of_body_spec
+    (outer_body_spec out n value previous) (fun _ _ current => current) ?_ ?_
+  · intro _ _ _ _ _ impossible
     exact False.elim impossible
-  · rintro _ _ finish ⟨rfl, updated⟩
+  · rintro _ heap _ _ finish ⟨rfl, observed⟩ ⟨rfl, updated⟩
     refine ⟨?_, trivial, rfl, updated.take observed.valid.rooted⟩
     simp only [Implementation.Source.work_scope1.VisibleRooted, ValueRooted,
       observed.valid.rooted, and_self]

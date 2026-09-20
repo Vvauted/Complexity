@@ -36,10 +36,13 @@ work and every remaining obligation. The outstanding work is:
   loop correctness and arena composition reuse those same contracts without
   manual visible-tuple or entry transport. Direct native proof entries currently
   require complete identity-represented locals; general heap-backed observations
-  retain their relational contracts. This loop composition requires a guard
-  that preserves the model and heap; its body may change the heap.
+  retain their relational contracts. Mathematical loop composition now also
+  accepts effectful guards: their actual final model and heap feed the body,
+  while continuing rounds decrease relative to the pre-guard state. The
+  preserving-guard interface is a specialization of this general rule.
   Next extend the direct proof workflow to non-identity field representations,
-  effectful guards and construct combinations, and simplify remaining fragment
+  automate supplied effect/frame contracts across construct combinations,
+  and simplify remaining fragment
   readiness proofs without hiding an equally long private adapter.
   Do not assign a pure transition to arbitrary mutation or mistake a retained
   buffer handle for unchanged contents.
@@ -82,6 +85,12 @@ Local-state representations survive without a pure body model; the raw buffer
 field observes only the handle, with contents still proved by the worker contract.
 The final stopped guard also has a shared realization rule, retaining the saved
 result's range condition rather than a private payload-slot proof.
+Nested scratch proofs consume their existing visible body contracts directly;
+the remaining callbacks establish non-escape and the postcondition after
+trimming the actual final heap. This retains intervening writes, not an entry
+heap snapshot. General effectful-guard contract composition is proved at source
+and RAM-readiness levels; the current scoped consumer exercises its preserving
+specialization, not automatic inference of a mutating guard's contract.
 
 ## M0 — Decisions and questions to settle
 

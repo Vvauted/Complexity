@@ -43,15 +43,20 @@ source-visible variables. `completion_spec` applies these contracts in `mvcgen`.
 `completion_contract_of_body` closes the scope after checking the visible roots
 and any local result against its entry heap. The full compiler state is restored
 by an execution frame before cleanup; projecting the proof view cannot discard
-an escaping root. The [nested worker](##Examples.Language.Scope) uses these
-contracts. Its local-return loop uses `model_completion_contract`, built on
+an escaping root. `completion_contract_of_body_spec` consumes an existing body
+contract and leaves only the entry implication and the two cleanup consequences;
+the [nested worker](##Examples.Language.Scope) uses this entry without reopening
+native triples. The consequences concern the trimmed current final heap, retaining
+its writes. Its local-return loop uses `model_completion_contract`, built on
 `completion_rel_contract`: source-named mathematical locals and existing effect
 contracts feed the invariant, progress and result arguments. Continuing iterations
 preserve the invariant and decrease; a local result exits through the actual
 masked guard without requiring another decrease. The proof view hides private
 result slots and entry transport. Invariants and genuine contents effects remain
-explicit; the model interface requires a guard preserving its model and heap,
-while the underlying relational rule also supports effectful guards.
+explicit. The preserving-guard interface specializes
+`model_completion_effects_contract`, whose preparation relation retains the
+actual model and heap after an effectful guard. It does not infer mutation effects
+or assert that unchanged handles have unchanged contents.
 
 The separate resource proof reuses these same mathematical guard/body contracts
 through

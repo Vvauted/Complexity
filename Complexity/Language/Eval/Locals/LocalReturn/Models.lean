@@ -9,9 +9,10 @@ import Complexity.Language.Eval.Locals.Specification
 # Mathematical contracts for local-return rounds
 
 These consequence rules connect a heap-indexed mathematical state to the
-existing visible completion contracts. The guard contract explicitly preserves
-its model and actual heap and may use the invariant to justify its accesses.
-A body may change the heap: only its continuing
+existing visible completion contracts. A guard may change its model and heap;
+its postcondition supplies the body's actual mathematical input or the exit
+condition. The preserving-guard rules retain a simpler special case.
+A body may also change the heap: only its continuing
 branch supplies another invariant and a decrease. Its completed branch retains
 the returned value, final mathematical state and actual heap.
 
@@ -23,6 +24,88 @@ while rule and its checked execution frames.
 namespace Complexity.Language.Stmt.BlockSpec
 
 universe u
+
+/-- An effectful guard supplies a new mathematical observation at its actual
+final heap. A true result prepares the body; a false result establishes the
+normal exit. The observation need not determine a unique runtime handle. -/
+theorem guard_model_effects {Model : Type u} {Visible Locals : Type}
+    {action : Visible → StateT Heap Part (Control .bool × Locals)}
+    (visible : Locals → Visible) (stateRel : Model → Visible → Heap → Prop)
+    (invariant normal : Model → Heap → Prop)
+    (prepared : Model → Heap → Model → Heap → Prop)
+    (guardSpec : ∀ model heap, invariant model heap →
+      BlockSpec action (fun start current => stateRel model start current ∧ current = heap)
+        (fun _ _ _ _ => False)
+        (fun _ initial again output finish => ∃ next,
+          stateRel next (visible output) finish ∧
+            if again then prepared model initial next finish else normal next finish))
+    (model : Model) :
+    BlockSpec action (fun start heap => stateRel model start heap ∧ invariant model heap)
+      (fun _ _ _ _ => False)
+      (fun _ initial again output finish =>
+        if again then ∃ next, stateRel next (visible output) finish ∧
+          prepared model initial next finish
+        else ∃ next, stateRel next (visible output) finish ∧ normal next finish) := by
+  rintro start heap ⟨represented, valid⟩
+  refine ((guardSpec model heap valid).mono
+    (returned' := fun _ initial again output finish =>
+      if again then ∃ next, stateRel next (visible output) finish ∧
+        prepared model initial next finish
+      else ∃ next, stateRel next (visible output) finish ∧ normal next finish)
+    (fun _ _ initial => initial) (fun _ _ _ _ _ impossible => impossible) ?_)
+      start heap ⟨represented, rfl⟩
+  intro _ _ again _ _ _ property
+  cases again <;> exact property
+
+/-- Feed a body the mathematical state and actual heap produced by its guard.
+Only a continuing round preserves the invariant and decreases relative to the
+state before the guard. A local result retains its final observation instead. -/
+theorem body_model_effects {Model : Type u} {Visible Locals LocalResult : Type}
+    {result : Ty} {action : Visible → StateT Heap Part (Control result × Locals)}
+    (visible : Locals → Visible) (pending : Locals → Option LocalResult)
+    (stateRel : Model → Visible → Heap → Prop) (invariant : Model → Heap → Prop)
+    (prepared : Model → Heap → Model → Heap → Prop)
+    (step relation : Model → Model → Prop)
+    (completed : LocalResult → Model → Heap → Prop)
+    (bodySpec : ∀ model heap, invariant model heap →
+      ∀ tested after, prepared model heap tested after →
+        BlockSpec action (fun start current => stateRel tested start current ∧ current = after)
+          (fun _ _ output finish => match pending output with
+            | none => ∃ next, stateRel next (visible output) finish ∧
+                step model next ∧ invariant next finish
+            | some value => ∃ next, stateRel next (visible output) finish ∧
+                completed value next finish)
+          (fun _ _ _ _ _ => False))
+    (decreases : ∀ model heap, invariant model heap →
+      ∀ tested after, prepared model heap tested after →
+        ∀ next, step model next → relation next model)
+    (model : Model) (heap : Heap) (valid : invariant model heap) :
+    BlockSpec action
+      (fun start current => ∃ tested,
+        stateRel tested start current ∧ prepared model heap tested current)
+      (fun _ _ output finish => match pending output with
+        | none => ∃ next, True ∧
+            (stateRel next (visible output) finish ∧ invariant next finish) ∧ relation next model
+        | some value => ∃ next, stateRel next (visible output) finish ∧
+            completed value next finish)
+      (fun _ _ _ _ _ => False) := by
+  rintro start after ⟨tested, represented, ready⟩
+  refine ((bodySpec model heap valid tested after ready).mono
+    (normal' := fun _ _ output finish => match pending output with
+      | none => ∃ next, True ∧
+          (stateRel next (visible output) finish ∧ invariant next finish) ∧ relation next model
+      | some value => ∃ next, stateRel next (visible output) finish ∧
+          completed value next finish)
+    (fun _ _ initial => initial) ?_ (fun _ _ _ _ _ _ impossible => impossible))
+      start after ⟨represented, rfl⟩
+  intro _ _ output finish _ updated
+  cases stopped : pending output with
+  | none =>
+      simp only [stopped] at updated ⊢
+      obtain ⟨next, related, advanced, preserved⟩ := updated
+      exact ⟨next, trivial, ⟨related, preserved⟩,
+        decreases model heap valid tested after ready next advanced⟩
+  | some value => simpa only [stopped] using updated
 
 /-- Carry a heap-dependent invariant through a guard whose supplied contract
 preserves the mathematical state and heap. No equality of raw locals follows
