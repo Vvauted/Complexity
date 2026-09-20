@@ -281,6 +281,14 @@ and List contents, but not a second ready execution, a resource contract, word
 ranges or spare capacity. The old callable bound delegates to this proof with its
 stronger precondition. Constructing the actual ready execution still requires the
 original range and capacity proofs; the cost-only rule does not remove them.
+Use [`FunctionArenaCostBound.mono`](##Ram.LanguageCompiler.FunctionArenaCostBound.mono)
+to strengthen a certificate's precondition and enlarge its bound: prove that the
+new precondition implies the old one and that the old bound is at most the new
+bound under that precondition. For the same program, body, arguments, word width,
+heap limit and depth, the rule retains the actual execution, readiness and cost
+internally. The two length-indexed fold certificates use this interface; budget
+comparisons remain mathematical obligations, while capacity is still required
+to construct a ready execution.
 
 Conversely, [fold readiness](##Ram.LanguageCompiler.List.Fold.ready) and its
 [callable resource certificate](##Ram.LanguageCompiler.List.Fold.functionResources_of_ready)

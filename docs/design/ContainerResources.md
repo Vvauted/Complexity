@@ -139,6 +139,13 @@ representation and List contents, but no separate resource contract, word-range
 proof or spare-capacity premise. Those remain necessary when constructing a
 ready execution. The compatibility `functionCostBound` delegates to this proof;
 it no longer constructs a comparison traversal at cursor zero.
+[`FunctionArenaCostBound.mono`](../../Complexity/Computability/Ram/Compiler/Language/Arena/FunctionResources.lean)
+adapts an existing cost certificate for the same program, body, argument map,
+word width, heap limit and depth. Supply a stronger precondition and a budget
+comparison under that precondition; the rule reuses the same execution,
+readiness and compiler cost. `reverseAppendFold_costBound` and `sumFold_costBound`
+use it without unpacking execution witnesses. It discovers neither budgets nor
+capacity.
 `pushCost` and length-indexed `reverseAppendCost` now infer the callback and native
 wrapper costs from their actual bodies and existing callee certificates. The
 ordinary reverse/append equation, affine invocation bound and three-word-per-head

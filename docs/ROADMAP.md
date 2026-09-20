@@ -230,9 +230,11 @@ environment encodings or repeating source facts in a second resource proof.
    `TotalWP.of_blockSpec` through shared tactics, with no private adapter.
    Its proof leaves still contain mathematical mutable-coordinate patterns;
    general potential and allocating-loop setup are separate follow-up work.
-   The two length-indexed List fold cost certificates still unpack an execution
-   just to strengthen a precondition and rewrite its budget. Factor this
-   consequence rule into `FunctionArenaCostBound` and reuse the existing certificates.
+   The two length-indexed List fold cost certificates now use
+   `FunctionArenaCostBound.mono` to strengthen their mathematical preconditions
+   and compare budgets, without unpacking executions. The shared rule reuses
+   the same execution, readiness and compiler cost; it does not infer a budget,
+   word range or capacity.
    Reuse source totality and actual heaps without another per-program termination
    proof. A shorter public theorem must not hide an equally long private
    connection proof.
@@ -250,8 +252,10 @@ environment encodings or repeating source facts in a second resource proof.
    The checked List proof uses this equation and its original mathematical
    induction without per-field callback transport; nested branches are also
    checked. This does not promise a simplest normal form for arbitrary callbacks.
-   Next address a concrete operation, control-flow or resource-connection gap
-   exposed by a consumer proof, retaining these checked equations and statements.
+   Next connect function-level finite-range returns to generated mathematical
+   models through the existing return-aware range observation rule. Preserve the
+   actual `.returned`/`whileReturn` payload and heap without introducing a local
+   value block or changing executable control and cost.
    Dependent bounds, recursion descent and algorithmic potentials remain
    mathematical obligations, not guessed annotations; no new RAM bound follows.
 3. Extend the represented native frontend from its checked scalar, List and

@@ -53,6 +53,22 @@ def FunctionArenaCostBound {X : Type u} {signatures : List Signature}
       ∀ {cursor finalCursor} (ready : ArenaReady execution w heapLimit depth cursor finalCursor)
         {steps}, ArenaExecutionCost ready steps → steps + 2 ≤ bound x
 
+/-- Strengthen the entry precondition and enlarge its mathematical budget without
+changing the actual execution, readiness or compiler cost. The budget comparison
+is required only for inputs satisfying the new precondition. -/
+theorem FunctionArenaCostBound.mono {X : Type u} {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {Γ : List Ty} {result : Ty}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    {args : X → Env Γ} {pre pre' : X → Heap → Prop}
+    {w heapLimit depth : Nat} {bound bound' : X → Nat}
+    (bounded : FunctionArenaCostBound program body args pre w heapLimit depth bound)
+    (precondition : ∀ x heap, pre' x heap → pre x heap)
+    (budget : ∀ x heap, pre' x heap → bound x ≤ bound' x) :
+    FunctionArenaCostBound program body args pre' w heapLimit depth bound' := by
+  intro x heap allowed finish value execution cursor finalCursor ready steps cost
+  exact (bounded x heap (precondition x heap allowed) finish value execution ready cost).trans
+    (budget x heap allowed)
+
 /-- Relocation preserves the actual body's readiness and retained arena bound.
 Argument values and their heap-indexed precondition are unchanged. -/
 theorem FunctionArenaResources.renameCalls {X : Type u} {source target : List Signature}

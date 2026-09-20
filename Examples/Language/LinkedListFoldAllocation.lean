@@ -129,13 +129,12 @@ theorem reverseAppendFold_costBound (w heapLimit length : Nat) :
         List.Fold.functionCostPre (Representation.list .nat) ListReducer.push
           (fun _ _ => True) input heap ∧ input.2.1.length = length)
       w heapLimit 2 (fun _ => reverseAppendFoldBound length) := by
-  intro input heap allowed finish value execution cursor finalCursor ready steps cost
-  have bounded := List.Fold.functionCostBound_of_actual
-    NativeLists.Operations.fold0.callback_contract (push_fold_costBound w heapLimit)
-    input heap allowed.1 finish value execution ready cost
-  dsimp only at bounded
-  rw [reverseAppendFoldBound_eq, allowed.2] at bounded
-  exact bounded
+  refine (List.Fold.functionCostBound_of_actual
+    NativeLists.Operations.fold0.callback_contract (push_fold_costBound w heapLimit)).mono
+      (fun _ _ allowed => allowed.1) ?_
+  intro input heap allowed
+  dsimp only
+  rw [reverseAppendFoldBound_eq, allowed.2]
 
 /-- Infer the native wrapper's bound from a length-indexed fold certificate.
 The mathematical inputs select that certificate; only the two roots are passed

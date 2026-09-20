@@ -42,13 +42,12 @@ theorem sumFold_costBound (w heapLimit length : Nat) :
           (fun accumulator head => accumulator + head < 2 ^ w) input heap ∧
         input.2.1.length = length)
       w heapLimit 4 (fun _ => sumFoldBound length) := by
-  intro input heap allowed finish value execution cursor finalCursor ready steps cost
-  have bounded := List.Fold.functionCostBound_of_actual (add_fold_contract w)
-    (add_fold_costBound_at_depth w heapLimit 3)
-    input heap allowed.1 finish value execution ready cost
-  dsimp only at bounded
-  rw [List.Fold.functionBound_const, allowed.2] at bounded
-  exact bounded
+  refine (List.Fold.functionCostBound_of_actual (add_fold_contract w)
+    (add_fold_costBound_at_depth w heapLimit 3)).mono (fun _ _ allowed => allowed.1) ?_
+  intro input heap allowed
+  dsimp only
+  rw [List.Fold.functionBound_const, allowed.2]
+  exact le_rfl
 
 /-- Infer both actual calls' costs, carrying the first call's source
 postcondition to the new list's cost proof. The source declaration itself and
