@@ -59,6 +59,16 @@ Exact unchanged-heap equations compose checked calls, conditionals and Option
 branches when their result has a heap-independent encoding. A general mutable
 contract need not promise an unchanged heap, and a missing exact equation does
 not reject its source program.
+
+A branch may return early while the other path continues to a later return,
+including inside a typed local `do` value block. For fully modeled operations,
+the mathematical proof follows that continuation only on the continuing path;
+the source keeps one shared continuation and its actual selected heap. The
+[allocating List consumer](##Examples.Language.LinkedList) uses this form before
+folding the selected List, with the same ordinary sum equation. A loop iteration
+that can either continue or return still needs a two-outcome mathematical
+summary; this closed-block support does not supply one.
+
 The [iterative factorial](##Examples.Language.Factorial) uses one range and a
 mutable accumulator through the older `(pure)` compatibility naming. Its
 ordinary equality with `Nat.factorial` follows from

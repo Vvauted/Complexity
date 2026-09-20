@@ -85,6 +85,13 @@ The current integration work has these concrete obligations:
   The result's outer Option itself distinguishes a continuing block from a
   completed one, including `some none` when the returned value is optional.
   No separate activity flag or flag/result consistency proof is needed.
+  A mixed return/continue branch now retains its mathematical model when the
+  continuing path reaches a modeled return. Preparation resolves that path once;
+  proof composition appends it only to the normal arm, while actual source
+  lowering retains the original branch and one shared continuation. The
+  allocating `chooseSum` value block uses this form with its unchanged List-sum
+  proof. A still-open normal exit, as in a range iteration, is not converted into
+  a completed result or admitted by the normal-fold gate.
   The existing `Scope.work` now puts its nested scratch scopes inside a plain
   `do` value block. Visible completion contracts and actual execution frames
   hide private result slots from its source proof; cleanup still checks the
@@ -247,6 +254,11 @@ program; this does not claim an unchanged instruction count. Mixed
 normal/local-return bodies still need a control-sensitive result summary.
 Preparation requires both a normally continuing scope and a complete body model
 and proof trace; a normal exit being possible alone does not justify a fold.
+The remaining iteration summary must distinguish updated continuing locals from
+a stored local result, retaining the actual final locals and heap in either
+case. Local completion still has normal source control and exits through the
+next masked false guard; the existing function-return range theorem cannot be
+used for that path unchanged.
 
 The proof preparer now follows actual branch continuations when composing
 ranges, carrying their heap relations and frames. Nested-range and Option
@@ -322,7 +334,8 @@ The existing record/List mathematical proofs check through this boundary, and th
 List's exact RAM count includes its actual control instructions. The source
 preparer no longer rejects loops or scratch scopes just because they occur in a
 value branch. The local-return `while` in `Scope.make` has checked source and RAM
-proofs; local-return ranges still need consumer evidence. Ordinary
+proofs; normal ranges inside local value blocks have a checked List consumer,
+while locally exiting range models remain open. Ordinary
 `let x : T ← do ...` blocks use the same boundary. The existing structured scalar
 caller uses this form and retains its mathematical and actual RAM proofs;
 private Option control is simplified by the shared backend proof rules.

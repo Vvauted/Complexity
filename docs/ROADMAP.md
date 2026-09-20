@@ -111,7 +111,10 @@ assigns mathematical obligations to authors and routine lowering to the library.
 Generated ordinary functions and checked total-source correspondence work for
 supported scalar/structured and represented fragments. One native termination
 argument feeds correspondence; `Part.get` of the desired answer is not the
-implementation. Mutual-recursion proof ergonomics, broader combinations and
+implementation. Mixed return/continue branches retain a model when their
+continuing path reaches a modeled return, including allocating local value
+blocks. Open loop iterations still require a separate two-outcome summary.
+Mutual-recursion proof ergonomics, broader combinations and
 equation normalization remain work. See the
 [function-proof milestone](design/Verification.md#function-proof-milestone).
 

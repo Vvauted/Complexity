@@ -107,10 +107,36 @@ partial def sequence (names : DeclarationNames)
           toBindingModel := model, native := choice.native } } : Value)
       return (⟨#[raw] ++ continued.raw, native,
         choice.map (fun choice => #[choice.trace]), returned, none⟩ : PreparedBlock)
-    -- Mixed normal/return control is preserved without asserting one pure
-    -- output summary. The enclosing continuation runs only on normal paths.
-    let continued ← sequence names imports resultType (invalidateObservations scope true)
-      rest .immutable allowFallthrough localReturn
+    -- Only the normally continuing arm reaches the enclosing continuation.
+    -- Prepare that suffix once in its actual outgoing lexical scope; branch
+    -- locals are closed while assignments keep their original slot identity.
+    let yesContinues := yes.normalScope?.isSome
+    let normal := if yesContinues then yes else no
+    let some normalScope := normal.normalScope?
+      | throwError "a mixed source choice must have a normally continuing arm"
+    let after := closeScope scope normalScope
+    let after := if available && normal.native?.isSome && normal.calls?.isSome then after
+      else invalidateObservations after true
+    let continued ← sequence names imports resultType after rest
+      .immutable allowFallthrough localReturn
+    if continued.normalScope?.isNone then
+      -- This is proof-side continuation distribution, not another source
+      -- branch or execution. Both arms now return the same result type.
+      let completed := { continued with
+        native? := (· ++ ·) <$> normal.native? <*> continued.native?
+        calls? := (· ++ ·) <$> normal.calls? <*> continued.calls? }
+      let choice ← choiceModel available resultType
+        (if yesContinues then completed else yes)
+        (if yesContinues then no else completed) choose trace
+      let native ← choice.mapM fun choice => do
+        return #[← `(doElem| return $(choice.native))]
+      let returned := choice.map fun choice => ({
+        type := resultType, raw := ⟨choice.result.rawName.raw⟩
+        model? := choice.result.model?.map fun model => {
+          toBindingModel := model, native := choice.native } } : Value)
+      return ⟨#[raw] ++ continued.raw, native,
+        choice.map (fun choice => #[choice.trace]), returned, none⟩
+    -- A genuinely mixed block still has no single normal range-body model.
     return { continued with raw := #[raw] ++ continued.raw, native? := none, calls? := none }
   match elements with
   | [] =>

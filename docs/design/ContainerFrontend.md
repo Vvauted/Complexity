@@ -116,6 +116,10 @@ Source lowering uses the existing conditional, a local result slot and an
 ordinary continuation; it adds no interpreter or heap-independent List decoder.
 Only the selected branch executes. Initializing, assigning and reading the join
 slot remain actual source operations for the separate cost proof.
+`chooseSum` writes the selection as a plain local `do` block: the true arm
+returns early, and only the other path reaches the fallback allocation. Its
+unchanged sum proof uses a checked model of that completed block; preparation
+does not duplicate the fallback in the source or execute it after the early return.
 
 The same binding interface supports `match` with exactly two List branches
 (`[]` and `head :: tail`) or Option branches (`none` and `some payload`). List

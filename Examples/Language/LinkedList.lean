@@ -532,10 +532,10 @@ source_program (native) NativeBranches importing NativeConstruction, Reducer whe
     return result
 
   def chooseSum (flag : Bool) (head : Nat) (left : List Nat) (right : List Nat) : Nat := do
-    let chosen : List Nat ← if flag then do
-      let selected := head :: left
-      return selected
-    else do
+    let chosen : List Nat ← do
+      if flag then
+        let selected := head :: left
+        return selected
       let selected := NativeConstruction.prepend head right
       return selected
     let result := chosen.foldl Reducer.add 0
