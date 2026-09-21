@@ -404,9 +404,19 @@ premises and actual pending-slot conditions. The generated `Site.pending` names
 the real slot for the running premise, without a handwritten lexical position.
 Recursive and shared-continuation proofs remain local; eligibility is
 conservative, including after value branches.
-No new user syntax is required. These are low-level contracts whose closure
-parameters still need a canonical consumer interface, not an automatic named
-arena-cost entry.
+No new source-program syntax is required. The
+[named cost entry](##Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Range.Tactic)
+`ram_source_range_arena_cost using related, running costs guardCost, bodyCost`
+selects the same published contract from the goal's actual loop `Code` and
+`related`'s registered `stateRel`; it does not switch to a preserving variant.
+Optional `facts [inputObserved]` before `costs` supplies captured source
+observations needed by that contract. Such facts cannot be recovered from a
+runtime handle. Guard/body cost certificates remain independent proved bounds.
+This entry covers saved local completion with uniform component bounds only;
+normal and direct-function-return ranges still use the explicit rules. Recursive
+and shared-continuation sites without published contracts are not covered.
+Positivity or nontrivial budget comparisons may remain goals; this is still a
+loop cost bound, not a complete function RAM or readiness theorem.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every

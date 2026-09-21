@@ -71,6 +71,27 @@ private def elabRangeRelation : Lean.Elab.Term.TermElab := fun stx expectedType?
     "The same heap-indexed mathematical state relation used by this source range's round contracts."
   return result
 
+-- Register only the declarations already checked above. Resource entries can
+-- select this exact relation without reconstructing or proving another round.
+private def registerRangeRounds (code stateRel guardRel bodyRel : Name)
+    (localCompletion : Bool) : Lean.Elab.Tactic.TacticM Unit := do
+  registerLoopRangeRounds (← resolveGlobalConstNoOverload (mkIdent code)) {
+    stateRel := ← resolveGlobalConstNoOverload (mkIdent stateRel)
+    guardRel := ← resolveGlobalConstNoOverload (mkIdent guardRel)
+    bodyRel := ← resolveGlobalConstNoOverload (mkIdent bodyRel)
+    localCompletion }
+
+private def rangeRoundRegistration (code stateRel guardRel bodyRel : TSyntax `ident)
+    (localCompletion : Bool) : TermElabM (TSyntax `tactic) := do
+  let registration := mkCIdent ``registerRangeRounds
+  let codeName : TSyntax `term := quote code.getId
+  let stateRelName : TSyntax `term := quote stateRel.getId
+  let guardRelName : TSyntax `term := quote guardRel.getId
+  let bodyRelName : TSyntax `term := quote bodyRel.getId
+  let completion : TSyntax `term := quote localCompletion
+  `(tactic| run_tac
+    $registration:ident $codeName $stateRelName $guardRelName $bodyRelName $completion)
+
 /-- The source emitter has already selected the named loop. Only its actual
 arguments are read from the elaborated goal; transparent proof locals preserve
 anonymous coordinates and frozen endpoints without interpreting source text. -/
@@ -791,7 +812,8 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     ← `(tactic| obtain ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩ :=
       $related:ident)] ++ pending.current ++ bodyProof
   let bodyRelationProof ← rangeRoundProof bodyRel bodyStatement bodySteps body bodySuffix publishRounds
-  let relationBody ← `(
+  let relationBody ← `(fun ($index:ident : Nat) ($state:ident : $stateType)
+      ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap) =>
     ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
       $state:ident $selected $current:ident ∧
     $cursor = $index:ident ∧ $fixedType ∧ $heapPost $current:ident)
@@ -799,15 +821,19 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
       let suffix := mkIdent (if preserveArrays then `stateRel_preserving else `stateRel)
       `(represented_range_relation $guard:ident $suffix:ident => $relationBody)
     else pure relationBody
+  let registration ← if publishRounds then do
+      pure #[← rangeRoundRegistration code
+        (member (if preserveArrays then `stateRel_preserving else `stateRel))
+        (member guardSuffix.getId) (member bodySuffix.getId) site.pendingSlot?.isSome]
+    else pure #[]
   let prepareRelations := pending.entry ++ #[
     ← `(tactic| let $startEqual:ident : $entryCursor = $(startModel.model) := Eq.symm $startObserved),
     ← `(tactic| let $stopEqual:ident : $frozenStop = $(stopModel.model) := Eq.symm $stopObserved),
     ← `(tactic| let $strideEqual:ident : $frozenStride = $(strideModel.model) := Eq.symm $strideObserved),
     ← `(tactic| have $positive:ident : 0 < $(strideModel.model) := by
       simp (config := { zetaDelta := true, failIfUnchanged := false }) only [Nat.add_eq] <;> omega),
-    ← `(tactic| let $stateRel:ident ($index:ident : Nat) ($state:ident : $stateType)
-        ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap) : Prop := $relationBody),
-    guardProof, bodyRelationProof]
+    ← `(tactic| let $stateRel:ident := $relationBody),
+    guardProof, bodyRelationProof] ++ registration
   let exposeExecution := #[
     ← `(tactic| change Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident
       $entry $heap = _ at $executed:ident),

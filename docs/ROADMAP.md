@@ -240,9 +240,12 @@ environment encodings or repeating source facts in a second resource proof.
    expose `stateRel` and `guard_rel`/`body_rel` (or preserving variants), reused
    by correspondence. The generated `Site.pending` names the actual slot in the
    running premise.
-   Recursive and shared-continuation proofs remain local. These low-level
-   contracts still need a canonical consumer interface and an automatic named
-   arena-cost entry; exporting proofs alone does not complete that connection.
+   `ram_source_range_arena_cost` selects the published contract from the actual
+   loop `Code` and supplied `stateRel`, without switching preserving variants.
+   It composes saved local completion with independent uniform guard/body bounds;
+   captured source observations remain supplied facts, not decoded handles.
+   Normal/direct-return ranges still use explicit rules, and recursive or
+   shared-continuation proofs without published contracts remain outside this entry.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
    published bounds.
    Source postconditions now also flow into later input-dependent call budgets;

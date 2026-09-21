@@ -49,6 +49,16 @@ structure LoopCompletionCoordinates where
   stoppedGuard : Name
   pendingEval : Name
 
+/-- Already proved mathematical round contracts for one represented range.
+The ordinary and array-preserving relations remain distinct choices. These
+names contain no resource annotations or inverse of a heap representation. -/
+structure LoopRangeRoundCoordinates where
+  stateRel : Name
+  guardRel : Name
+  bodyRel : Name
+  /-- The actual loop saves a local result rather than returning from the function. -/
+  localCompletion : Bool
+
 /-- Checked coordinate and capture declarations belonging to one generated source loop.
 The key is its actual `Code` declaration; no executable body or budget is stored here. -/
 structure LoopCoordinates where
@@ -57,6 +67,8 @@ structure LoopCoordinates where
   captures : Array LoopCaptureCoordinates
   /-- Present only for a loop whose actual control uses a pending local result. -/
   completion? : Option LoopCompletionCoordinates := none
+  /-- Published by represented correspondence after both round proofs are checked. -/
+  rangeRounds : Array LoopRangeRoundCoordinates := #[]
 
 /-- One actual lexical coordinate of a generated source block. The order retains
 shadowed bindings and anonymous compiler locals; names alone do not identify slots. -/
@@ -122,6 +134,16 @@ private initialize loopCoordinatesExt :
 /-- Find the checked coordinates registered for an actual generated loop body. -/
 def getLoopCoordinates? (env : Environment) (code : Name) : Option LoopCoordinates :=
   (loopCoordinatesExt.getState env).find? code
+
+/-- Attach checked round declarations to their existing source loop. Registration
+does not construct a proof or change which source fragments have correspondence. -/
+def registerLoopRangeRounds (code : Name) (rounds : LoopRangeRoundCoordinates) : CoreM Unit := do
+  let some information := getLoopCoordinates? (← getEnv) code |
+    throwError "range round contracts require an already registered source loop"
+  for name in #[code, rounds.stateRel, rounds.guardRel, rounds.bodyRel] do
+    discard <| getConstInfo name
+  modifyEnv fun env => loopCoordinatesExt.addEntry env
+    (code, { information with rangeRounds := information.rangeRounds.push rounds })
 
 namespace Core
 

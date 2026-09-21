@@ -4,7 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Examples.Language.LinkedList
-import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Range.Uniform
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Range.Tactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostTactic
 import Complexity.Computability.Ram.Compiler.Language.List.Cons
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.Scalar
@@ -286,38 +286,9 @@ theorem prependRange_loop_costBound
       ⟨RangeNative.Source.prependRange_loop1.View.symm locals, heap⟩
       (StmtCostBound.whileLinearBound prependRangeGuardCost.val prependRangeBodyCost.val
         (count - index)) := by
-  suffices bounded : StmtArenaCostBound RangeNative.Source.program w heapLimit (depth + 1)
-      RangeNative.Source.prependRange_loop1.Code
-      ⟨RangeNative.Source.prependRange_loop1.View.symm locals, heap⟩
-      (StmtCostBound.whileLinearBound prependRangeGuardCost.val prependRangeBodyCost.val
-        ({ start := index, stop := count, step := 1, step_pos := Nat.zero_lt_one } :
-          Std.Legacy.Range).size) by
-    simp only [Std.Legacy.Range.size, Nat.add_sub_cancel, Nat.div_one] at bounded
-    exact @bounded
-  apply StmtArenaCostBound.while_range_completion_rel_linear
-    (τ := .option (.node .nat))
-    (view := RangeNative.Source.prependRange_loop1.View)
-    (program := RangeNative.Source.program)
-    (guard := RangeNative.Source.prependRange_loop1.Guard)
-    (body := RangeNative.Source.prependRange_loop1.Body)
-    (stoppedGuard := RangeNative.Source.prependRange_loop1.guard_completed)
-    (stop := count) (stride := 1) (positive := Nat.zero_lt_one)
-    (stateRel := RangeNative.Source.prependRange_loop1.stateRel count head rawTail initialHeap)
-    (resultRep := Representation.ofEmbedding
-      (Function.Embedding.refl (Value (.option (.node .nat)))))
-    (step := fun _ (current : List Nat × List Nat × Nat × Nat) =>
-      (none, (current.2.2.1 :: current.1, current.2.1, current.2.2.1, current.2.2.2)))
-    (guardRel := RangeNative.Source.prependRange_loop1.guard_rel count head rawTail initialHeap)
-    (bodyRel := RangeNative.Source.prependRange_loop1.body_rel
-      count head tail rawTail initialHeap inputObserved)
-    (guardBound := prependRangeGuardCost.val) (bodyBound := prependRangeBodyCost.val)
-    (guardCost := fun actual current => prependRangeGuardCost.property w heapLimit depth
-      ⟨RangeNative.Source.prependRange_loop1.View.symm actual, current⟩)
-    (bodyCost := fun actual current => prependRangeBodyCost.property w heapLimit depth
-      ⟨RangeNative.Source.prependRange_loop1.View.symm actual, current⟩)
-    (start := index) (mutable := state) (locals := locals) (heap := heap)
-  · exact related
-  · simpa only [RangeNative.Source.prependRange_loop1.pending_eval] using running
+  ram_source_range_arena_cost using related, running facts [inputObserved]
+    costs (prependRangeGuardCost.property w heapLimit depth),
+      (prependRangeBodyCost.property w heapLimit depth)
 
 end NativeRange
 
