@@ -38,7 +38,8 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
     (initialHeap : TSyntax `term) (initialRelations : Array RetainedObservation)
     (initialKnown : Array (Name × TSyntax `term) := #[]) (preserveArrays : Bool := false)
     (ranges : Array RangeRegistration := #[]) (finish? : Option TraceFinish := none)
-    (seed? : Option TraceContext := none) (actualBranches : Bool := false) :
+    (seed? : Option TraceContext := none) (actualBranches : Bool := false)
+    (publishRounds : Bool := false) :
     TermElabM (Array (TSyntax `tactic)) := do
   let initial : TraceContext ← match seed? with
     | some context => pure context
@@ -102,8 +103,11 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
         known := (next.known.filter (fun entry => entry.1 != result.rawName.getId)).push
           (result.rawName.getId, actual)
         relations := next.relations.push ⟨joined.getId, result.type, ⟨joined.raw⟩⟩ }
+    -- The same source suffix can be reached through several branch proofs.
+    -- Keep its correspondence local rather than publish one context-dependent
+    -- round theorem repeatedly, including through inherited finish closures.
     return joinTactics ++ (← relationTrace rest returnedValue next.heap next.relations next.known
-      preserveArrays ranges finish? (some next) true)
+      preserveArrays ranges finish? (some next) true (publishRounds := false))
   for (instruction, position) in trace.zipIdx do
     if actualBranches then
       let context : TraceContext := {
@@ -114,7 +118,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
       | .valueBlock body returned result =>
           let bodyProof ← relationTrace body returned currentHeap relations known
             preserveArrays ranges (some (finishChoice returned result #[] rest))
-            (some context) true
+            (some context) true (publishRounds := publishRounds)
           return tactics ++ bodyProof
       | .conditional condition yes no yesResult noResult result =>
           let observation ← observationAt condition currentHeap relations
@@ -129,9 +133,11 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           let yesProof ← relationTrace yes yesResult currentHeap relations known preserveArrays ranges
             (some (finishChoice yesResult result yesRules rest))
             (some { context with branchRules := branchRules ++ yesRules }) true
+            (publishRounds := publishRounds)
           let noProof ← relationTrace no noResult currentHeap relations known preserveArrays ranges
             (some (finishChoice noResult result noRules rest))
             (some { context with branchRules := branchRules ++ noRules }) true
+            (publishRounds := publishRounds)
           return tactics ++ #[
             ← `(tactic| have $equality:ident : $(condition.model) = $raw := $observation),
             ← `(tactic| dsimp (config := { failIfUnchanged := false }) only at $equality:ident),
@@ -190,6 +196,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           let context := { context with branchRules := branchRules ++ rules }
           let noneProof ← relationTrace absent noneResult currentHeap relations known preserveArrays ranges
             (some (finishChoice noneResult result rules rest)) (some context) true
+            (publishRounds := publishRounds)
           let mut someContext := context
           let mut somePrefix := #[]
           if payload.type.isIdentity then
@@ -205,6 +212,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           let someProof ← relationTrace present someResult currentHeap someContext.relations
             someContext.known preserveArrays ranges
             (some (finishChoice someResult result rules rest)) (some someContext) true
+            (publishRounds := publishRounds)
           let someProof := somePrefix ++ someProof
           return tactics ++ #[← `(tactic| focus
             have $observed:ident : ($representation : Complexity.Language.Representation $nativeType $coreType).Rel
@@ -274,7 +282,9 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           let (setup, proof, fixedCount) ←
             rangeRelationProof range initial currentHeap relations known preserveArrays
               (fun body returned heap observations known strong finish =>
-                relationTrace body returned heap observations known strong ranges (some finish))
+                relationTrace body returned heap observations known strong ranges (some finish)
+                  (publishRounds := publishRounds))
+              (publishRounds := publishRounds)
           tactics := tactics ++ setup
           rangeFixedCount := some fixedCount
           pure (result, proof)
@@ -311,8 +321,10 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
           let noRules := branchRules.push (← `(Lean.Parser.Tactic.simpLemma| if_neg $test:ident))
           let yesProof ← relationTrace yes yesResult currentHeap relations known preserveArrays
             ranges none (some { branchContext with branchRules := yesRules })
+            (publishRounds := publishRounds)
           let noProof ← relationTrace no noResult currentHeap relations known preserveArrays
             ranges none (some { branchContext with branchRules := noRules })
+            (publishRounds := publishRounds)
           let heapPost ← if preserveArrays then
               `(fun finish => Complexity.Language.Heap.ShapeExtends $currentHeap finish ∧
                 Complexity.Language.Buffer.PreservesContents $currentHeap finish)
@@ -368,6 +380,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
             branchRules := rules }
           let noneProof ← relationTrace absent noneResult currentHeap relations known preserveArrays
             ranges none (some branchContext)
+            (publishRounds := publishRounds)
           let mut someRelations := relations
           let mut someKnown := known
           let mut somePrefix := #[]
@@ -381,7 +394,8 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
               ⟨payloadObserved.raw⟩⟩
           let someProof := somePrefix ++
             (← relationTrace present someResult currentHeap someRelations someKnown preserveArrays
-              ranges none (some { branchContext with relations := someRelations, known := someKnown }))
+              ranges none (some { branchContext with relations := someRelations, known := someKnown })
+              (publishRounds := publishRounds))
           let heapPost ← if preserveArrays then
               `(fun finish => Complexity.Language.Heap.ShapeExtends $currentHeap finish ∧
                 Complexity.Language.Buffer.PreservesContents $currentHeap finish)
@@ -517,7 +531,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
         shape := preserved, contents := preservedContents, branchRules }
       let continuation ← relationTrace (trace.extract (position + 1) trace.size)
         returnedValue currentHeap relations known preserveArrays ranges finish?
-        (some context) actualBranches
+        (some context) actualBranches (publishRounds := publishRounds)
       let continuation := continuation.map fun tactic =>
         (⟨tactic.raw.rewriteBottomUp fun stx =>
           if stx == sharedTerm.raw then shared.raw else stx⟩ : TSyntax `tactic)

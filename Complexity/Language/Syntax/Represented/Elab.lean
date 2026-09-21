@@ -173,9 +173,13 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
       if let some declaration ← liftTermElabM (totalDeclaration? names fn) then
         elabCommand declaration
         totals := totals.push fn.name.getId
-    if fn.preservesArrays then
-      elabCommand (← liftTermElabM (relationDeclaration names fn model true ranges))
-    elabCommand (← liftTermElabM (relationDeclaration names fn model false ranges))
+    -- Correspondence can publish checked round lemmas in the source loop's
+    -- namespace, outside the enclosing theorem's asynchronous name prefix.
+    withScope (fun scope => if model.recursive || ranges.isEmpty then scope else
+        { scope with opts := Elab.async.set scope.opts false }) do
+      if fn.preservesArrays then
+        elabCommand (← liftTermElabM (relationDeclaration names fn model true ranges))
+      elabCommand (← liftTermElabM (relationDeclaration names fn model false ranges))
     if fn.exposed then elabCommand (← liftTermElabM (refinementDeclaration names fn))
   for loop in prepared.whiles do
     let some site := actualSites.whiles.find? (fun site => site.tag == loop.tag)

@@ -231,9 +231,12 @@ environment encodings or repeating source facts in a second resource proof.
    `remainingCost + 17` bound without repeated execution transport.
    `while_range_rel` reuses the range's `guardRel`/`bodyRel` for normal rounds and
    direct function returns; its body budget covers the whole actual iteration.
-   Saved local completion is outside that rule. Generated ranges' mathematical
-   round relations still need public names and an automatic named arena-cost
-   entry; a shared theorem alone does not complete that frontend connection.
+   Saved local completion is outside that rule. Eligible nonrecursive range sites
+   expose `stateRel` and `guard_rel`/`body_rel` (or preserving variants), reused
+   by correspondence.
+   Recursive and shared-continuation proofs remain local. These low-level
+   contracts still need a canonical consumer interface and an automatic named
+   arena-cost entry; exporting proofs alone does not complete that connection.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
    published bounds.
    Source postconditions now also flow into later input-dependent call budgets;

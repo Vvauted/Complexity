@@ -23,6 +23,54 @@ open Lean.Parser.Term
 
 namespace Internal
 
+-- Publish the proof where it is checked, rather than abstracting a later local
+-- hypothesis (which would merely assume the round it is meant to establish).
+private def publishRangeRound (source suffix : Name) (steps : Syntax) :
+    Lean.Elab.Tactic.TacticM Unit := Lean.Elab.Tactic.withMainContext do
+  let sourceName ← resolveGlobalConstNoOverload (mkIdent source)
+  let name := sourceName.getPrefix ++ suffix
+  let goal ← Lean.Elab.Tactic.getMainGoal
+  let remaining ← Lean.Elab.Tactic.run goal
+    (Lean.Elab.Tactic.withoutRecover (Lean.Elab.Tactic.evalTactic steps))
+  unless remaining.isEmpty do
+    throwError "the represented range round has unsolved goals"
+  let value ← instantiateMVars (mkMVar goal)
+  let type ← instantiateMVars (← goal.getType)
+  let closed ← Closure.mkValueTypeClosure type value (zetaDelta := true)
+  let shared := ShareCommon.shareCommon' #[closed.type, closed.value]
+  addDecl (.thmDecl {
+    name, levelParams := closed.levelParams.toList
+    type := shared[0]!, value := shared[1]! })
+  addDocStringCore name
+    "One represented range round of the actual source loop, with its captured input and heap relations."
+  goal.assign (mkAppN (mkConst name closed.levelArgs.toList) closed.exprArgs)
+
+-- Internal wrapper: keep the already generated tactic block as syntax instead
+-- of serializing and compiling it again inside `run_tac`.
+syntax (name := representedRangeRound)
+  "represented_range_round " ident ppSpace ident " => " Lean.Parser.Tactic.tacticSeq : tactic
+
+elab_rules : tactic
+  | `(tactic| represented_range_round $source:ident $suffix:ident => $steps:tacticSeq) =>
+      publishRangeRound source.getId suffix.getId steps
+
+-- Give the shared relation a name as well, so the round contracts need not
+-- repeat its source-coordinate formula in every precondition and postcondition.
+syntax (name := representedRangeRelation)
+  "represented_range_relation " ident ppSpace ident " => " term : term
+
+@[term_elab representedRangeRelation]
+private def elabRangeRelation : Lean.Elab.Term.TermElab := fun stx expectedType? => do
+  let `(represented_range_relation $source:ident $suffix:ident => $body:term) := stx
+    | throwUnsupportedSyntax
+  let sourceName ← resolveGlobalConstNoOverload source
+  let name := sourceName.getPrefix ++ suffix.getId
+  let value ← Lean.Elab.Term.elabTermAndSynthesize body expectedType?
+  let result ← mkAuxDefinition name (← inferType value) value (zetaDelta := true) (compile := false)
+  addDocStringCore name
+    "The same heap-indexed mathematical state relation used by this source range's round contracts."
+  return result
+
 /-- The source emitter has already selected the named loop. Only its actual
 arguments are read from the elaborated goal; transparent proof locals preserve
 anonymous coordinates and frozen endpoints without interpreting source text. -/
@@ -143,6 +191,15 @@ private def rangeSummaryProof (name : TSyntax `ident) (statement : TSyntax `term
   `(tactic| have $name:ident : $statement := by
     $steps:tactic*)
 
+private def rangeRoundProof (name : TSyntax `ident) (statement : TSyntax `term)
+    (steps : Array (TSyntax `tactic)) (source suffix : TSyntax `ident)
+    (publish : Bool) : TermElabM (TSyntax `tactic) := do
+  let steps ← if publish then
+      pure #[← `(tactic| represented_range_round $source:ident $suffix:ident =>
+        $steps:tactic*)]
+    else pure steps
+  rangeSummaryProof name statement steps
+
 private def rangePendingProof (site : ActualRangeSite)
     (arguments fields : Array (TSyntax `term)) (running : TSyntax `ident) :
     TermElabM RangePendingProof := do
@@ -155,7 +212,7 @@ private def rangePendingProof (site : ActualRangeSite)
   let pendingEntry := mkIdent (← mkFreshUserName `rangePendingEntry)
   let pendingCurrent := mkIdent (← mkFreshUserName `rangePendingCurrent)
   return {
-    entry := #[← `(tactic| have $pendingEntry:ident : $entryPending = none := by rfl)]
+    entry := #[← `(tactic| let $pendingEntry:ident : $entryPending = none := by rfl)]
     current := #[← `(tactic|
       have $pendingCurrent:ident : $currentPending = none := $running:ident)]
     entryRules := #[← `(Lean.Parser.Tactic.simpLemma| $pendingEntry:ident)]
@@ -465,7 +522,7 @@ only a mathematical view; body calls retain their actual control and heap. -/
 def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     (heap : TSyntax `term) (relations : Array RetainedObservation)
     (known : Array (Name × TSyntax `term)) (preserveArrays : Bool)
-    (proveBody : RangeBodyProof) :
+    (proveBody : RangeBodyProof) (publishRounds : Bool := false) :
     TermElabM (Array (TSyntax `tactic) × TSyntax `term × Nat) := do
   let site ← range.site
   let returnsFromFunction ← range.returnsFromFunction
@@ -657,8 +714,7 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let mut localsEta ← `(Subsingleton.elim _ _)
   for _ in site.scope do localsEta ← `(Prod.ext rfl $localsEta)
   localsEta ← `(show $(← sourceTuple fields) = $locals:ident from $localsEta)
-  let guardProof ← `(tactic|
-    have $guardRel:ident : ∀ ($index:ident : Nat) ($state:ident : $stateType)
+  let guardStatement ← `(∀ ($index:ident : Nat) ($state:ident : $stateType)
         ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap),
         $stateRel:ident $index:ident $state:ident $locals:ident $current:ident →
         $pendingValue $locals:ident = none →
@@ -666,7 +722,8 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
           Complexity.Language.Stmt.observe $view:ident $guard:ident $program:ident
             $locals:ident $current:ident =
             Part.some ((.returned (decide ($index:ident < $(stopModel.model))), after), finish) ∧
-          $stateRel:ident $index:ident $state:ident after finish ∧ $pendingValue after = none := by
+          $stateRel:ident $index:ident $state:ident after finish ∧ $pendingValue after = none)
+  let guardSteps := #[← `(tactic| exact (by
       intro $index:ident $state:ident $locals:ident $current:ident $related:ident $running:ident
       obtain ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩ := $related:ident
       $(pending.current):tactic*
@@ -681,7 +738,10 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
         · apply congrArg Complexity.Language.Control.returned
           simp only [$cursorEqual:ident, $stopEqual:ident, $fixedSimp,*]
         · simpa only [$(pending.currentRules),*] using $localsEta
-      · rfl)
+      · rfl))]
+  let guardSuffix := mkIdent (if preserveArrays then `guard_rel_preserving else `guard_rel)
+  let bodySuffix := mkIdent (if preserveArrays then `body_rel_preserving else `body_rel)
+  let guardProof ← rangeRoundProof guardRel guardStatement guardSteps guard guardSuffix publishRounds
   let initial ← `(⟨$entryObserved, $startEqual:ident, by repeat' constructor, $initialFrame⟩)
   let rangeProof ← rangeLoopProof site returnsFromFunction completionRep nativeStep startModel.model stopModel.model
     strideModel.model initialModel.model entry heap initial
@@ -730,18 +790,23 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
       $active:ident $related:ident $running:ident),
     ← `(tactic| obtain ⟨$stateObserved:ident, $cursorEqual:ident, $fixed:ident, $framed:ident⟩ :=
       $related:ident)] ++ pending.current ++ bodyProof
-  let bodyRelationProof ← rangeSummaryProof bodyRel bodyStatement bodySteps
+  let bodyRelationProof ← rangeRoundProof bodyRel bodyStatement bodySteps body bodySuffix publishRounds
+  let relationBody ← `(
+    ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
+      $state:ident $selected $current:ident ∧
+    $cursor = $index:ident ∧ $fixedType ∧ $heapPost $current:ident)
+  let relationBody ← if publishRounds then do
+      let suffix := mkIdent (if preserveArrays then `stateRel_preserving else `stateRel)
+      `(represented_range_relation $guard:ident $suffix:ident => $relationBody)
+    else pure relationBody
   let prepareRelations := pending.entry ++ #[
-    ← `(tactic| have $startEqual:ident : $entryCursor = $(startModel.model) := Eq.symm $startObserved),
-    ← `(tactic| have $stopEqual:ident : $frozenStop = $(stopModel.model) := Eq.symm $stopObserved),
-    ← `(tactic| have $strideEqual:ident : $frozenStride = $(strideModel.model) := Eq.symm $strideObserved),
+    ← `(tactic| let $startEqual:ident : $entryCursor = $(startModel.model) := Eq.symm $startObserved),
+    ← `(tactic| let $stopEqual:ident : $frozenStop = $(stopModel.model) := Eq.symm $stopObserved),
+    ← `(tactic| let $strideEqual:ident : $frozenStride = $(strideModel.model) := Eq.symm $strideObserved),
     ← `(tactic| have $positive:ident : 0 < $(strideModel.model) := by
       simp (config := { zetaDelta := true, failIfUnchanged := false }) only [Nat.add_eq] <;> omega),
     ← `(tactic| let $stateRel:ident ($index:ident : Nat) ($state:ident : $stateType)
-        ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap) : Prop :=
-      ($representation : Complexity.Language.Representation $stateType $stateCore).Rel
-        $state:ident $selected $current:ident ∧
-      $cursor = $index:ident ∧ $fixedType ∧ $heapPost $current:ident),
+        ($locals:ident : $localsType:ident) ($current:ident : Complexity.Language.Heap) : Prop := $relationBody),
     guardProof, bodyRelationProof]
   let exposeExecution := #[
     ← `(tactic| change Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident

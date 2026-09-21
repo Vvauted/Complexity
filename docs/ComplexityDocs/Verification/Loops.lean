@@ -381,8 +381,15 @@ reuses the source `guardRel`/`bodyRel` for normal rounds and direct function
 returns. The body budget includes the whole actual iteration, including any
 cursor increment executed; local-pending completion has a different final guard
 and is not covered. Readiness and capacity remain separate obligations.
-Generated ranges' mathematical round relations are not yet publicly named or
-connected to an automatic named arena-cost entry.
+Eligible nonrecursive represented range sites expose `stateRel` and
+`guard_rel`/`body_rel`, or their `_preserving` variants, under the actual source
+loop. Correspondence reuses the relation and named proofs without regenerating
+the body proof. Lean's closure retains captures, the initial heap, representation
+premises and actual pending-slot conditions. Recursive and shared-continuation
+proofs remain local; eligibility is conservative, including after value branches.
+No new user syntax is required. These are low-level contracts whose closure
+parameters still need a canonical consumer interface, not an automatic named
+arena-cost entry.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every

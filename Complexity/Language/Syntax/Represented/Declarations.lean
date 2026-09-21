@@ -201,7 +201,8 @@ def relationDeclaration (names : DeclarationNames) (fn : Function)
       ← `(tactic| exact ⟨returned, finish, executed, related, shape⟩)]
   let mut tactics ← compositionTactics header model
   tactics := tactics.push (← `(tactic| unfold $nativeName:ident))
-  tactics := tactics ++ (← relationTrace model.calls model.returned ⟨heap.raw⟩ inputRelations #[] preserveArrays ranges)
+  tactics := tactics ++ (← relationTrace model.calls model.returned ⟨heap.raw⟩ inputRelations
+    #[] preserveArrays ranges (publishRounds := !model.recursive))
   declaration tactics
 
 private partial def inputType : List Parameter → TermElabM (TSyntax `term)
