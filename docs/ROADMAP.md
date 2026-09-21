@@ -274,10 +274,15 @@ environment encodings or repeating source facts in a second resource proof.
    composes supplied embedding, array, product and view certificates; this consumer
    applies its mathematical record certificate to actual entry, round and return
    observations instead of repeating descriptor/field range projections.
-   Extracting loop totality still uses the known two `letPrim` bindings and
-   sequence; scalar-update equations and algorithmic ranges remain supplied.
-   General source-totality transport, further layouts, allocating-loop setup and
-   source-facing space contracts remain work. Recursive or shared-continuation
+   `ram_source_arena_step using total as currentTotal` now transports existing
+   totality through primitive bindings and sequences, retaining a matching proof
+   at the next other statement; this consumer obtains loop totality automatically.
+   A sequence retains continuation totality at the actual intermediate state only
+   on normal completion; early return neither executes nor charges the suffix.
+   Transport across branches, calls and scopes remains open, as do further layouts,
+   general allocating-loop setup and source-facing space. Algorithmic/element
+   ranges, scalar-update equations and capacity remain supplied. Recursive or
+   shared-continuation
    proofs without published contracts remain outside the named range entry.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
    published bounds.

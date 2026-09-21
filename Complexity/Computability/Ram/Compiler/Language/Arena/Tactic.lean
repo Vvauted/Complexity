@@ -18,6 +18,13 @@ an unknown Boolean gives two proof obligations, each charging only its own path.
 Option matches likewise inspect the actual source value and bind its stored
 payload, retaining ranges obtained from the actual callee's readiness proof.
 
+`ram_source_arena_step using total as currentTotal` additionally transports an
+existing source total-correctness proof through primitive bindings and sequencing.
+It stops at the next other statement, retaining its matching proof as
+`currentTotal`. A sequence carries the source postcondition into the measured
+outcome: normal completion supplies totality of the continuation at its actual
+intermediate state, while early return retains only the original return contract.
+
 `ram_source_arena_call exact using cost` consumes an actual callee cost witness.
 Its optional `via embedded` transports a witness from the original source program.
 `ram_source_arena_call measured using certificate` directly composes an existing
@@ -187,6 +194,37 @@ private partial def step : TacticM Unit := do
             if next.isForall || next.isAppOf ``Ram.LanguageCompiler.ArenaMeasured then
               step
 
+/-- Carry an existing source proof through the same bindings and sequences as
+the measured goal. Keep the next fragment's proof named instead of unfolding it. -/
+private partial def stepTotal (total : TSyntax `term) (name : TSyntax `ident) : TacticM Unit :=
+  withMainContext do
+    let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
+    unless target.isAppOf ``Ram.LanguageCompiler.ArenaMeasured do
+      throwError "expected an ArenaMeasured goal for source totality transport"
+    let statement ← Ram.LanguageCompiler.Tactic.exposeStatement 7
+    let program ← Term.exprToSyntax target.getAppArgs[1]!
+    let fragment ← Term.exprToSyntax statement
+    let entry ← Term.exprToSyntax target.getAppArgs[9]!
+    let total ← Term.exprToSyntax (← Term.elabTermAndSynthesize (← `(term|
+      ($total : Complexity.Language.TotalWP $program $fragment _ _ $entry))) none)
+    if statement.isAppOf ``Complexity.Language.Stmt.letPrim then
+      let next ← `(term| (Complexity.Language.TotalWP.letPrim_iff _ _).mp $total)
+      evalTactic (← `(tactic| apply Ram.LanguageCompiler.ArenaMeasured.letPrim))
+      Ram.LanguageCompiler.Tactic.onGoals do
+        withMainContext do
+          let nextTarget := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
+          if nextTarget.isAppOf ``Ram.LanguageCompiler.ArenaMeasured then
+            stepTotal next name
+          else
+            step
+    else if statement.isAppOf ``Complexity.Language.Stmt.seq then
+      let head ← `(term| (Complexity.Language.TotalWP.seq_iff _ _).mp $total)
+      evalTactic (← `(tactic| apply Ram.LanguageCompiler.ArenaMeasured.seq))
+      evalTactic (← `(tactic| refine Ram.LanguageCompiler.ArenaMeasured.of_totalWP_post $head ?_))
+      stepTotal head name
+    else
+      evalTactic (← `(tactic| have $name := $total))
+
 /-- Keep the elaborated source terms themselves when applying the public call
 rules. `exprToSyntax` uses typed metavariables, not lossy pretty-printed binders. -/
 private def callTerms : TacticM
@@ -315,6 +353,11 @@ the next call and mathematical obligations for explicit proofs. Conditionals
 and option matches preserve the selected path's actual heap, cursor and count. -/
 syntax "ram_source_arena_step" : tactic
 
+/-- Transport supplied source totality through primitive bindings and sequencing.
+Stop at the next other statement and name its matching total-correctness proof.
+Sequential outcomes retain source facts at their actual intermediate state. -/
+syntax "ram_source_arena_step" "using" term "as" ident : tactic
+
 /-- Compose the current actual source call with an exact callee cost witness,
 then process structural statements in its actual continuation. -/
 syntax "ram_source_arena_call" "exact" "using" term:max (&"via" term)? : tactic
@@ -336,6 +379,7 @@ syntax "ram_source_arena_call" "(" &"index" ":=" term ")" "using"
 
 elab_rules : tactic
   | `(tactic| ram_source_arena_step) => step
+  | `(tactic| ram_source_arena_step using $total as $name:ident) => focus (stepTotal total name)
   | `(tactic| ram_source_arena_call exact using $cost) => exactCall cost none
   | `(tactic| ram_source_arena_call exact using $cost via $embedded) =>
       exactCall cost (some embedded)

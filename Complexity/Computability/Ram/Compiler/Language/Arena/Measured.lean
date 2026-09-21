@@ -15,6 +15,8 @@ same interface; there is no additional execution semantics or instruction price.
 `ArenaMeasured.of_totalWP` reuses budget-free source totality and attaches a
 resource proof to that execution. `ArenaMeasured.at_exec` transports the measured
 observations to a supplied execution by source determinism.
+`ArenaMeasured.of_totalWP_post` supplies an existing source postcondition to the
+same measured execution without changing its resource witnesses or count.
 
 Calls resume at the actual callee heap and cursor. Callee contracts remain
 independent source correctness, resource and cost proofs, and the continuation
@@ -69,6 +71,25 @@ theorem of_totalWP {signatures : List Signature}
   obtain ⟨finalCursor, ready, outcome⟩ := resources finish control execution property
   obtain ⟨steps, cost⟩ := ready.exists_cost
   exact ⟨finish, control, finalCursor, steps, execution, ready, cost, outcome⟩
+
+/-- Supply the independent source postcondition to the existing measured
+execution. Its actual outcome, readiness, cursor and instruction count are retained. -/
+theorem of_totalWP_post {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w heapLimit depth : Nat}
+    {Γ : List Ty} {result : Ty} {stmt : Complexity.Language.Stmt signatures Γ result}
+    {normal : Complexity.Language.State Γ → Prop}
+    {returned : Value result → Complexity.Language.State Γ → Prop}
+    {post : Complexity.Language.State Γ → Control result → Nat → Nat → Prop}
+    {entry : Complexity.Language.State Γ} {cursor : Nat}
+    (total : TotalWP program stmt normal returned entry)
+    (measured : ArenaMeasured program w heapLimit depth stmt
+      (fun finish control finalCursor steps =>
+        control.Satisfies normal returned finish → post finish control finalCursor steps)
+      entry cursor) :
+    ArenaMeasured program w heapLimit depth stmt post entry cursor := by
+  obtain ⟨finish, control, finalCursor, steps, execution, ready, cost, outcome⟩ := measured
+  exact ⟨finish, control, finalCursor, steps, execution, ready, cost,
+    outcome (total.postcondition execution)⟩
 
 /-- Recover the measured readiness, count and observations for a given execution.
 Source determinism identifies its outcome; no execution or count is reconstructed. -/

@@ -264,8 +264,9 @@ theorem function_measured {w heapLimit cursor : Nat} (positive : 0 < w)
   have total := (repeatAppend_copies count chunkValues initialValue).wp
     (ArrayRangeNative.Source.repeatAppend_args count chunk initial) heap
     ⟨rfl, chunkObserved, initialObserved⟩
-  have loopTotal := (TotalWP.seq_iff _ _).mp
-    ((TotalWP.letPrim_iff _ _).mp ((TotalWP.letPrim_iff _ _).mp total))
+  have countFits : count < 2 ^ w := valid.1
+  have initialFits := RepresentationFits.valueFits (invariant_state_fits valid) initialObserved
+  ram_source_arena_step using total as loopTotal
   let model := mkModel (remaining := count) (state := initialValue) (initial := initialValue)
     (chunk := chunkValues) (count := count)
   have measured := ArenaMeasured.of_totalWP
@@ -282,11 +283,8 @@ theorem function_measured {w heapLimit cursor : Nat} (positive : 0 < w)
           ram_source_locals ArrayRangeNative.Source.repeatAppend_loop1
           simp_all [modelRel, mkModel, state_representation]) execution
         (by cases control <;> simp_all [Control.Satisfies]))
-  have countFits : count < 2 ^ w := valid.1
-  have initialFits := RepresentationFits.valueFits (invariant_state_fits valid) initialObserved
-  ram_source_arena_step
   apply measured.mono_post
-  rintro after control finalCursor steps ⟨cursorEq, rfl, finalModel, related, finalValid, _⟩
+  rintro after control finalCursor steps ⟨cursorEq, rfl, finalModel, related, finalValid, _⟩ _
   have finalFits := RepresentationFits.valueFits (invariant_state_fits finalValid)
     (model_rel_state related)
   ram_source_locals ArrayRangeNative.Source.repeatAppend_loop1 at *

@@ -481,14 +481,21 @@ The same function's
 [`function_resources`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.function_resources)
 bounds a supplied execution using this readiness.
 [`function_measured`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.function_measured)
-uses the original `repeatAppend_copies.wp`: `TotalWP.letPrim_iff` and `seq_iff`
-expose loop totality, then `of_totalWP` combines it with `loop_ready`.
-The existing `ram_source_arena_step` composes the surrounding bindings, sequence
-and return; `body_ready` follows by `at_exec`. No handwritten environments or
-execution-case analysis are needed, and the program and published premises/bounds
-are unchanged.
-Extracting loop totality still depends on the known two `letPrim` bindings and
-sequence. The mathematical record certificate
+uses `ram_source_arena_step using total as loopTotal` on the original
+`repeatAppend_copies.wp`; `of_totalWP` then combines `loopTotal` with `loop_ready`.
+In general, `ram_source_arena_step using total as currentTotal` transports the
+existing `TotalWP` through primitive bindings and sequences, stopping at another
+statement with its matching proof named `currentTotal`.
+[`ArenaMeasured.of_totalWP_post`](##Ram.LanguageCompiler.ArenaMeasured.of_totalWP_post)
+retains the source postcondition on the same measured outcome, readiness and count.
+For sequences, normal completion supplies the continuation's totality at the
+actual intermediate state; early return requires neither execution nor termination
+of the suffix and adds no cost for it. This transport does not yet cross branches,
+calls or scopes. The ordinary structural pass composes the final return, and
+`body_ready` follows by `at_exec`; no handwritten environments, execution-case
+analysis or fixed-shape totality stripping are needed in this consumer.
+Its program, `loop_ready`, ranges, capacity and counts are unchanged.
+The mathematical record certificate
 [`invariant_state_fits`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.invariant_state_fits)
 now composes the shared `RepresentationFits` rules and applies to actual entry,
 round and return observations; the chunk's descriptor uses the array rule.
