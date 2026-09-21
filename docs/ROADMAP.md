@@ -231,21 +231,24 @@ environment encodings or repeating source facts in a second resource proof.
    `remainingCost + 17` bound without repeated execution transport.
    `while_range_rel` reuses the range's `guardRel`/`bodyRel` for normal rounds and
    direct function returns; its body budget covers the whole actual iteration.
+   Direct returns pay the existing `+17` control charge without a later guard.
    Saved local completion instead uses `while_range_completion_rel`, retaining
    its actual final false guard and the `10 + 11` control overhead. The uniform
-   `while_range_completion_rel_linear` combines supplied guard/body bounds with
-   `Std.Legacy.Range.size` and the existing `whileLinearBound`; no handwritten
-   linear potential is needed. These remain loop cost bounds, not complete
+   `while_range_rel_linear` and `while_range_completion_rel_linear` combine
+   supplied guard/body bounds with `Std.Legacy.Range.size` and the existing
+   `whileLinearBound`; no handwritten linear potential is needed.
+   These remain loop cost bounds, not complete
    function RAM or readiness guarantees. Eligible nonrecursive range sites
    expose `stateRel` and `guard_rel`/`body_rel` (or preserving variants), reused
    by correspondence. The generated `Site.pending` names the actual slot in the
    running premise.
    `ram_source_range_arena_cost` selects the published contract from the actual
    loop `Code` and supplied `stateRel`, without switching preserving variants.
-   It composes saved local completion with independent uniform guard/body bounds;
-   captured source observations remain supplied facts, not decoded handles.
-   Normal/direct-return ranges still use explicit rules, and recursive or
-   shared-continuation proofs without published contracts remain outside this entry.
+   It composes normal, direct-return and saved-local-completion ranges with
+   independent uniform guard/body bounds; only saved completion needs `running`.
+   Captured source observations remain supplied facts, not decoded handles.
+   Nonuniform budgets still use explicit rules; recursive or shared-continuation
+   proofs without published contracts remain outside this entry.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
    published bounds.
    Source postconditions now also flow into later input-dependent call budgets;

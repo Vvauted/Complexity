@@ -379,18 +379,22 @@ inequalities; the rule bounds existing executions without another termination pr
 For finite ranges,
 [`while_range_rel`](##Ram.LanguageCompiler.StmtArenaCostBound.while_range_rel)
 reuses the source `guardRel`/`bodyRel` for normal rounds and direct function
-returns. The body budget includes the whole actual iteration, including any
+returns. Direct returns pay the existing `+17` control charge without running a
+later guard. The body budget includes the whole actual iteration, including any
 cursor increment executed. Local-pending completion instead uses
 [`while_range_completion_rel`](##Ram.LanguageCompiler.StmtArenaCostBound.while_range_completion_rel):
 the saved result leaves the body normally and exits through the real false guard.
 The bound includes that guard's cost plus the normal-round and false-exit
 overheads `10 + 11`, rather than treating the result as a function return.
-For uniform guard and whole-body certificates,
+For uniform guard and whole-body certificates, use
+[`while_range_rel_linear`](##Ram.LanguageCompiler.StmtArenaCostBound.while_range_rel_linear)
+for normal/direct-return ranges, or
 [`while_range_completion_rel_linear`](##Ram.LanguageCompiler.StmtArenaCostBound.while_range_completion_rel_linear)
-uses positive stride, `Std.Legacy.Range.size` and the existing `whileLinearBound`
-to discharge the linear potential inequalities. The uniform guard certificate
-covers both running and stopped paths; component bounds may be supplied by
-`ram_source_arena_cost`. These are bounds on the actual loop, not complete
+for saved local completion. Both use positive stride, `Std.Legacy.Range.size`
+and the existing `whileLinearBound` to discharge the linear potential inequalities.
+The completion variant's guard certificate covers running and stopped paths;
+component bounds may be supplied by `ram_source_arena_cost`.
+These are bounds on the actual loop, not complete
 function RAM theorems; readiness and capacity remain separate obligations.
 The existing allocating
 [`prependRange` consumer](##Complexity.Language.Examples.LinkedList.NativeRange.prependRange_loop_costBound)
@@ -406,15 +410,17 @@ Recursive and shared-continuation proofs remain local; eligibility is
 conservative, including after value branches.
 No new source-program syntax is required. The
 [named cost entry](##Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Range.Tactic)
-`ram_source_range_arena_cost using related, running costs guardCost, bodyCost`
+`ram_source_range_arena_cost using related costs guardCost, bodyCost`
 selects the same published contract from the goal's actual loop `Code` and
 `related`'s registered `stateRel`; it does not switch to a preserving variant.
+Normal and direct-function-return ranges use this form without `running`;
+saved local completion requires `using related, running` instead.
 Optional `facts [inputObserved]` before `costs` supplies captured source
 observations needed by that contract. Such facts cannot be recovered from a
 runtime handle. Guard/body cost certificates remain independent proved bounds.
-This entry covers saved local completion with uniform component bounds only;
-normal and direct-function-return ranges still use the explicit rules. Recursive
-and shared-continuation sites without published contracts are not covered.
+This entry composes uniform component bounds only; nonuniform budgets still use
+the explicit rules. Recursive and shared-continuation sites without published
+contracts are not covered.
 Positivity or nontrivial budget comparisons may remain goals; this is still a
 loop cost bound, not a complete function RAM or readiness theorem.
 
