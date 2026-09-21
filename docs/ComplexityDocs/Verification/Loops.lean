@@ -400,10 +400,11 @@ The existing allocating
 [`prependRange` consumer](##Complexity.Language.Examples.LinkedList.NativeRange.prependRange_loop_costBound)
 combines its generated round contracts with inferred guard/body bounds this way;
 it supplies neither a second loop induction nor register-level proofs.
-Eligible nonrecursive represented range sites expose `stateRel` and
+Eligible nonrecursive represented range sites expose `stateRel`, `entry_rel` and
 `guard_rel`/`body_rel`, or their `_preserving` variants, under the actual source
-loop. Correspondence reuses the relation and named proofs without regenerating
-the body proof. Lean's closure retains captures, the initial heap, representation
+loop. The entry and round facts come from the same checked correspondence proofs;
+correspondence reuses them without regenerating the body proof.
+Lean's closure retains captures, the initial heap, representation
 premises and actual pending-slot conditions. The generated `Site.pending` names
 the real slot for the running premise, without a handwritten lexical position.
 Recursive and shared-continuation proofs remain local; eligibility is
@@ -418,11 +419,26 @@ saved local completion requires `using related, running` instead.
 Optional `facts [inputObserved]` before `costs` supplies captured source
 observations needed by that contract. Such facts cannot be recovered from a
 runtime handle. Guard/body cost certificates remain independent proved bounds.
+At the actual initial state, use `ram_source_range_arena_cost entry`
+with the same optional `facts [inputObserved]` and `costs guardCost, bodyCost`.
+It applies the ordinary published `entry_rel` to infer the start, mathematical
+model and captures from the real state and supplied observations.
+Preserving variants and arbitrary represented states
+continue to use explicit `using related` or `using related, running`.
+`ram_source_arena_cost` preserves the named loop goal when it stops there, so
+the entry form can compose with that pass into an inferred enclosing-function
+cost certificate without restating the entry relation.
+The existing
+[`prependRange_costBound`](##Complexity.Language.Examples.LinkedList.NativeRange.prependRange_costBound)
+uses this composition for its unchanged function, with initialization added once.
+Its body envelope is affine in the range count by
+[`prependRangeBodyBound_eq`](##Complexity.Language.Examples.LinkedList.NativeRange.prependRangeBodyBound_eq).
 This entry composes uniform component bounds only; nonuniform budgets still use
 the explicit rules. Recursive and shared-continuation sites without published
 contracts are not covered.
-Positivity or nontrivial budget comparisons may remain goals; this is still a
-loop cost bound, not a complete function RAM or readiness theorem.
+Positivity or nontrivial budget comparisons may remain goals. The range rule
+bounds only its loop; enclosing cost composition does not establish readiness,
+capacity or an actual whole-function RAM execution.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every

@@ -22,9 +22,9 @@ The range condition remains separate from mathematical correctness.
 The final theorem compiles the actual `Native.Source.sumFrom` caller, including
 its imported fold call and its own outer invocation, return and halt.
 
-The allocating finite-range consumer reuses its generated single-round
-correspondence and inferred component budgets. Its theorem bounds the actual
-loop; it does not supply the enclosing function's arena readiness or capacity.
+The allocating finite-range consumer reuses its generated entry and single-round
+correspondence with inferred component budgets. Structural composition infers
+the enclosing function's bound; arena readiness and capacity remain separate.
 -/
 
 namespace Complexity.Language.Examples.LinkedList
@@ -289,6 +289,47 @@ theorem prependRange_loop_costBound
   ram_source_range_arena_cost using related, running facts [inputObserved]
     costs (prependRangeGuardCost.property w heapLimit depth),
       (prependRangeBodyCost.property w heapLimit depth)
+
+/-- Infer the unchanged source body's bound around its range certificate.
+The numeric witness depends only on the count; the generated entry proof uses
+the existing input observation without a hand-built local-state relation. -/
+def prependRangeCost (count : Nat) : { bound : Nat //
+    ∀ w heapLimit depth head (tail : List Nat) (rawTail : Option (NodeRef .nat)) (heap : Heap),
+      (Representation.list .nat).Rel tail rawTail heap →
+      StmtArenaCostBound RangeNative.Source.program w heapLimit (depth + 1)
+        (RangeNative.Source.program.body RangeNative.Source.prependRangeId)
+        ⟨RangeNative.Source.prependRange_args count head rawTail, heap⟩ bound } := ⟨_, by
+  intro w heapLimit depth head tail rawTail heap observed
+  ram_source_arena_cost
+  ram_source_range_arena_cost entry facts [observed] costs
+    (prependRangeGuardCost.property w heapLimit depth),
+    (prependRangeBodyCost.property w heapLimit depth)⟩
+
+/-- The callable function adds its actual two-instruction initialization once. -/
+def prependRangeBodyBound (count : Nat) : Nat := (prependRangeCost count).val + 2
+
+/-- A count-only bound on the same callable implementation, under its original
+heap-indexed List observation. This does not assert capacity or realizability. -/
+theorem prependRange_costBound (w heapLimit depth count : Nat) :
+    FunctionArenaCostBound RangeNative.Source.program
+      (RangeNative.Source.program.body RangeNative.Source.prependRangeId)
+      (fun input : Nat × List Nat × Option (NodeRef .nat) =>
+        RangeNative.Source.prependRange_args count input.1 input.2.2)
+      (fun input heap => (Representation.list .nat).Rel input.2.1 input.2.2 heap)
+      w heapLimit (depth + 1) (fun _ => prependRangeBodyBound count) := by
+  apply FunctionArenaCostBound.of_stmt
+  rintro ⟨head, tail, rawTail⟩ heap observed
+  exact (prependRangeCost count).property w heapLimit depth head tail rawTail heap observed
+
+/-- All count-dependent work is the existing round envelope; the enclosing
+source control and function initialization contribute only a fixed term. -/
+theorem prependRangeBodyBound_eq (count : Nat) :
+    prependRangeBodyBound count =
+      (prependRangeGuardCost.val + prependRangeBodyCost.val + 10) * count +
+        prependRangeBodyBound 0 := by
+  simp only [prependRangeBodyBound, prependRangeCost, StmtCostBound.whileLinearBound,
+    Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, Nat.mul_zero]
+  omega
 
 end NativeRange
 

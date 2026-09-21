@@ -65,7 +65,39 @@ private def directBodyProof (name : Name) (facts : Array (TSyntax `term)) :
         (Complexity.Language.Control.represents_iff_exists _ _ _ _).mpr
           ⟨none, rfl, observed⟩⟩)
 
-private def rangeCost (related : TSyntax `term) (running? : Option (TSyntax `term))
+/-- Fix the actual source entry before using observations to instantiate its
+mathematical values. No shape of the mathematical state is inspected. -/
+private def entryProof (rounds : Complexity.Language.Syntax.LoopRangeRoundCoordinates)
+    (view : Name) (entry : Lean.Expr) (facts : Array (TSyntax `term)) : TacticM Lean.Expr := do
+  let checked ← mkConstWithFreshMVarLevels rounds.entryRel
+  let (arguments, _, relation) ← forallMetaTelescope (← inferType checked)
+  let fields := relation.getAppArgs
+  unless relation.getAppFn.isConstOf rounds.stateRel && fields.size ≥ 4 do
+    throwError "the registered range entry theorem must conclude its state relation"
+  let entry ← Term.exprToSyntax entry
+  let actualLocals ← Term.elabTermAndSynthesize (← `($(mkCIdent view) ($entry).locals)) none
+  let actualHeap ← Term.elabTermAndSynthesize (← `(($entry).heap)) none
+  unless (← isDefEq fields[fields.size - 2]! actualLocals) &&
+      (← isDefEq fields[fields.size - 1]! actualHeap) do
+    throwError "the range entry contract does not match this actual source state"
+  let observations ← facts.mapM fun fact => Term.elabTermAndSynthesize fact none
+  for argument in arguments do
+    unless ← argument.mvarId!.isAssigned do
+      let type ← inferType argument
+      if ← isProp type then
+        let supplied ← observations.anyM fun observation => do
+          if ← isDefEq type (← inferType observation) then
+            argument.mvarId!.assign observation
+            return true
+          return false
+        unless supplied do
+          discard <| argument.mvarId!.assumptionCore
+  let proof ← instantiateMVars (mkAppN checked arguments)
+  if proof.hasExprMVar then
+    throwError "provide the mathematical observations required by {rounds.entryRel} in facts"
+  return proof
+
+private def rangeCost (related? : Option (TSyntax `term)) (running? : Option (TSyntax `term))
     (facts : Array (TSyntax `term)) (guardCost bodyCost : TSyntax `term) :
     TacticM Unit := focus <| withMainContext do
   let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
@@ -76,24 +108,35 @@ private def rangeCost (related : TSyntax `term) (running? : Option (TSyntax `ter
     throwError "the goal must retain the source range's Code declaration"
   let some coordinates := Complexity.Language.Syntax.getLoopCoordinates? (← getEnv) code |
     throwError "the goal must retain a registered source range's Code declaration"
-  let relatedProof ← Term.elabTermAndSynthesize related none
+  let relatedProof ←
+    if let some related := related? then do
+      Term.elabTermAndSynthesize related none
+    else do
+      let some rounds := coordinates.rangeRounds.find? fun rounds =>
+          rounds.stateRel == code.getPrefix ++ `stateRel |
+        throwError "this range has no published ordinary entry contract"
+      entryProof rounds (code.getPrefix ++ `View) target.getAppArgs[8]! facts
   let relation := (← instantiateMVars (← inferType relatedProof)).consumeMData
   let some rounds := coordinates.rangeRounds.find? fun rounds =>
       relation.getAppFn.isConstOf rounds.stateRel |
-    throwErrorAt related "the supplied relation does not select published round contracts for this range"
-  let arguments := relation.getAppArgs
+    throwError "the supplied relation does not select published round contracts for this range"
+  let arguments ← relation.getAppArgs.mapM fun argument => do whnf argument
   unless arguments.size ≥ 4 do
-    throwErrorAt related "expected a range relation applied to index, mathematical state, locals and heap"
+    throwError "expected a range relation applied to index, mathematical state, locals and heap"
   let stateRel ← Term.exprToSyntax
     (mkAppN relation.getAppFn (arguments.extract 0 (arguments.size - 4)))
   let start ← Term.exprToSyntax arguments[arguments.size - 4]!
   let mutable ← Term.exprToSyntax arguments[arguments.size - 3]!
   let locals ← Term.exprToSyntax arguments[arguments.size - 2]!
   let heap ← Term.exprToSyntax arguments[arguments.size - 1]!
+  let represented ← Term.exprToSyntax relatedProof
   evalTactic (← `(tactic| apply StmtArenaCostBound.mono))
   if rounds.localCompletion then
-    let some running := running? |
-      throwError "this range saves a local result; supply its empty-pending proof after the state relation"
+    let running ← match related?, running? with
+      | none, _ => `(by rfl)
+      | some _, some running => pure running
+      | some _, none =>
+          throwError "this range saves a local result; supply its empty-pending proof after the state relation"
     let some completion := coordinates.completion? |
       throwError "the source range has no registered local-completion coordinates"
     let pendingAtom ← forallTelescope (← getConstInfo completion.pendingEval).type fun _ equation => do
@@ -114,7 +157,10 @@ private def rangeCost (related : TSyntax `term) (running? : Option (TSyntax `ter
         (guardCost := by intro locals heap; exact $guardCost ⟨($view).symm locals, heap⟩)
         (bodyCost := by intro locals heap; exact $bodyCost ⟨($view).symm locals, heap⟩)
         (start := $start) (mutable := $mutable) (locals := $locals) (heap := $heap)))
-    evalTactic (← `(tactic| case' running => simpa only [$pendingEval:ident] using $running))
+    if related?.isNone then
+      evalTactic (← `(tactic| case' running => rfl))
+    else
+      evalTactic (← `(tactic| case' running => simpa only [$pendingEval:ident] using $running))
   else
     if running?.isSome then
       throwError "this range has no saved local result; supply only the state relation"
@@ -127,10 +173,11 @@ private def rangeCost (related : TSyntax `term) (running? : Option (TSyntax `ter
         (guardCost := by intro locals heap; exact $guardCost ⟨($view).symm locals, heap⟩)
         (bodyCost := by intro locals heap; exact $bodyCost ⟨($view).symm locals, heap⟩)
         (start := $start) (mutable := $mutable) (locals := $locals) (heap := $heap)))
-  evalTactic (← `(tactic| case' represented => exact $related))
+  evalTactic (← `(tactic| case' represented => exact $represented))
   evalTactic (← `(tactic|
-    all_goals try
-      simp (config := { failIfUnchanged := false }) only
+    all_goals try first
+    | exact Nat.le_refl _
+    | simp (config := { failIfUnchanged := false }) only
         [Std.Legacy.Range.size, Nat.add_sub_cancel, Nat.div_one] <;> omega))
 
 /-- Compose uniform arena costs for a named represented range using its existing
@@ -159,18 +206,36 @@ syntax (name := sourceRangeArenaCostDirectWithFacts)
   "ram_source_range_arena_cost" " using " term:max
   ppSpace &"facts" ppSpace "[" term,* "]" ppSpace &"costs" ppSpace term:max ", " term : tactic
 
+/-- Use the already checked initial-state relation of a named range after the
+enclosing structural cost pass. Captured mathematical observations remain
+supplied facts; the entry proof must match this actual initial state. This form
+selects the ordinary published relation, not its array-preserving variant. -/
+syntax (name := sourceRangeArenaCostEntry)
+  "ram_source_range_arena_cost" ppSpace &"entry"
+  ppSpace &"costs" ppSpace term:max ", " term : tactic
+
+@[inherit_doc sourceRangeArenaCostEntry]
+syntax (name := sourceRangeArenaCostEntryWithFacts)
+  "ram_source_range_arena_cost" ppSpace &"entry"
+  ppSpace &"facts" ppSpace "[" term,* "]" ppSpace &"costs" ppSpace term:max ", " term : tactic
+
 elab_rules : tactic
   | `(tactic| ram_source_range_arena_cost using $related, $running
       facts [$observations:term,*] costs $guardCost, $bodyCost) =>
-    rangeCost related (some running) observations.getElems guardCost bodyCost
+    rangeCost (some related) (some running) observations.getElems guardCost bodyCost
   | `(tactic| ram_source_range_arena_cost using $related, $running
       costs $guardCost, $bodyCost) =>
-    rangeCost related (some running) #[] guardCost bodyCost
+    rangeCost (some related) (some running) #[] guardCost bodyCost
   | `(tactic| ram_source_range_arena_cost using $related
       facts [$observations:term,*] costs $guardCost, $bodyCost) =>
-    rangeCost related none observations.getElems guardCost bodyCost
+    rangeCost (some related) none observations.getElems guardCost bodyCost
   | `(tactic| ram_source_range_arena_cost using $related
       costs $guardCost, $bodyCost) =>
-    rangeCost related none #[] guardCost bodyCost
+    rangeCost (some related) none #[] guardCost bodyCost
+  | `(tactic| ram_source_range_arena_cost entry
+      facts [$observations:term,*] costs $guardCost, $bodyCost) =>
+    rangeCost none none observations.getElems guardCost bodyCost
+  | `(tactic| ram_source_range_arena_cost entry costs $guardCost, $bodyCost) =>
+    rangeCost none none #[] guardCost bodyCost
 
 end Ram.LanguageCompiler.Arena.RangeCostTactic

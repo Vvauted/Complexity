@@ -24,7 +24,9 @@ The tactic also introduces a bound in a goal of the form
 `{ bound : Nat // ∀ entry, StmtArenaCostBound program w heapLimit depth body entry bound }`.
 That metavariable is determined by the structural proofs, not by numerical
 search or a second instruction-price interpreter. Conditional and option branches
-use the existing maximum rules. Loops and unsupported statements remain goals;
+use the existing maximum rules. Loops and unsupported statements retain their
+original named declaration in the remaining goals, so a fragment-specific entry
+can consume their checked contracts without rebuilding source coordinates;
 this pass establishes neither termination nor arena readiness.
 -/
 
@@ -153,9 +155,14 @@ private partial def cost (certificates : List Certificate) : TacticM Unit := do
         else if statement.isAppOf ``Complexity.Language.Stmt.matchOption then
           applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.match_max))
         else if statement.isAppOf ``Complexity.Language.Stmt.call then
-          if certificates.isEmpty then return
+          if certificates.isEmpty then
+            liftMetaTactic fun goal => do
+              return [← goal.replaceTargetDefEq target]
+            return
           applyCallee statement certificates
         else
+          liftMetaTactic fun goal => do
+            return [← goal.replaceTargetDefEq target]
           return
         Ram.LanguageCompiler.Tactic.onGoals (cost certificates)
       else

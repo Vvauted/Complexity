@@ -49,11 +49,13 @@ structure LoopCompletionCoordinates where
   stoppedGuard : Name
   pendingEval : Name
 
-/-- Already proved mathematical round contracts for one represented range.
+/-- Already proved mathematical entry and round contracts for one represented range.
 The ordinary and array-preserving relations remain distinct choices. These
 names contain no resource annotations or inverse of a heap representation. -/
 structure LoopRangeRoundCoordinates where
   stateRel : Name
+  /-- The relation at the actual entry used by source correspondence. -/
+  entryRel : Name
   guardRel : Name
   bodyRel : Name
   /-- The actual loop saves a local result rather than returning from the function. -/
@@ -67,7 +69,7 @@ structure LoopCoordinates where
   captures : Array LoopCaptureCoordinates
   /-- Present only for a loop whose actual control uses a pending local result. -/
   completion? : Option LoopCompletionCoordinates := none
-  /-- Published by represented correspondence after both round proofs are checked. -/
+  /-- Published after the actual entry and both round proofs are checked. -/
   rangeRounds : Array LoopRangeRoundCoordinates := #[]
 
 /-- One actual lexical coordinate of a generated source block. The order retains
@@ -140,7 +142,7 @@ does not construct a proof or change which source fragments have correspondence.
 def registerLoopRangeRounds (code : Name) (rounds : LoopRangeRoundCoordinates) : CoreM Unit := do
   let some information := getLoopCoordinates? (← getEnv) code |
     throwError "range round contracts require an already registered source loop"
-  for name in #[code, rounds.stateRel, rounds.guardRel, rounds.bodyRel] do
+  for name in #[code, rounds.stateRel, rounds.entryRel, rounds.guardRel, rounds.bodyRel] do
     discard <| getConstInfo name
   modifyEnv fun env => loopCoordinatesExt.addEntry env
     (code, { information with rangeRounds := information.rangeRounds.push rounds })

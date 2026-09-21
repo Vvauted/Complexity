@@ -42,7 +42,7 @@ private def publishRangeRound (source suffix : Name) (steps : Syntax) :
     name, levelParams := closed.levelParams.toList
     type := shared[0]!, value := shared[1]! })
   addDocStringCore name
-    "One represented range round of the actual source loop, with its captured input and heap relations."
+    "A checked entry or round relation of the actual source range, with its captured input and heap observations."
   goal.assign (mkAppN (mkConst name closed.levelArgs.toList) closed.exprArgs)
 
 -- Internal wrapper: keep the already generated tactic block as syntax instead
@@ -73,24 +73,26 @@ private def elabRangeRelation : Lean.Elab.Term.TermElab := fun stx expectedType?
 
 -- Register only the declarations already checked above. Resource entries can
 -- select this exact relation without reconstructing or proving another round.
-private def registerRangeRounds (code stateRel guardRel bodyRel : Name)
+private def registerRangeRounds (code stateRel entryRel guardRel bodyRel : Name)
     (localCompletion : Bool) : Lean.Elab.Tactic.TacticM Unit := do
   registerLoopRangeRounds (← resolveGlobalConstNoOverload (mkIdent code)) {
     stateRel := ← resolveGlobalConstNoOverload (mkIdent stateRel)
+    entryRel := ← resolveGlobalConstNoOverload (mkIdent entryRel)
     guardRel := ← resolveGlobalConstNoOverload (mkIdent guardRel)
     bodyRel := ← resolveGlobalConstNoOverload (mkIdent bodyRel)
     localCompletion }
 
-private def rangeRoundRegistration (code stateRel guardRel bodyRel : TSyntax `ident)
+private def rangeRoundRegistration (code stateRel entryRel guardRel bodyRel : TSyntax `ident)
     (localCompletion : Bool) : TermElabM (TSyntax `tactic) := do
   let registration := mkCIdent ``registerRangeRounds
   let codeName : TSyntax `term := quote code.getId
   let stateRelName : TSyntax `term := quote stateRel.getId
+  let entryRelName : TSyntax `term := quote entryRel.getId
   let guardRelName : TSyntax `term := quote guardRel.getId
   let bodyRelName : TSyntax `term := quote bodyRel.getId
   let completion : TSyntax `term := quote localCompletion
   `(tactic| run_tac
-    $registration:ident $codeName $stateRelName $guardRelName $bodyRelName $completion)
+    $registration:ident $codeName $stateRelName $entryRelName $guardRelName $bodyRelName $completion)
 
 /-- The source emitter has already selected the named loop. Only its actual
 arguments are read from the elaborated goal; transparent proof locals preserve
@@ -763,9 +765,16 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let guardSuffix := mkIdent (if preserveArrays then `guard_rel_preserving else `guard_rel)
   let bodySuffix := mkIdent (if preserveArrays then `body_rel_preserving else `body_rel)
   let guardProof ← rangeRoundProof guardRel guardStatement guardSteps guard guardSuffix publishRounds
-  let initial ← `(⟨$entryObserved, $startEqual:ident, by repeat' constructor, $initialFrame⟩)
+  let (entryRel, entryProof) ← do
+    let name := mkIdent (← mkFreshUserName `rangeEntryRelated)
+    let statement ← `($stateRel:ident $(startModel.model) $(initialModel.model) $entry $heap)
+    let initial ← `(⟨$entryObserved, $startEqual:ident, by repeat' constructor, $initialFrame⟩)
+    let suffix := mkIdent (if preserveArrays then `entry_rel_preserving else `entry_rel)
+    let proof ← rangeRoundProof name statement #[← `(tactic| exact $initial)]
+      guard suffix publishRounds
+    pure (name, proof)
   let rangeProof ← rangeLoopProof site returnsFromFunction completionRep nativeStep startModel.model stopModel.model
-    strideModel.model initialModel.model entry heap initial
+    strideModel.model initialModel.model entry heap ⟨entryRel.raw⟩
     stateRel guardRel bodyRel positive control after finish executed outcome
   let normalProof ← if returnsFromFunction then do
       let equal := mkIdent (← mkFreshUserName `rangeControlEqual)
@@ -824,6 +833,7 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let registration ← if publishRounds then do
       pure #[← rangeRoundRegistration code
         (member (if preserveArrays then `stateRel_preserving else `stateRel))
+        (member (if preserveArrays then `entry_rel_preserving else `entry_rel))
         (member guardSuffix.getId) (member bodySuffix.getId) site.pendingSlot?.isSome]
     else pure #[]
   let prepareRelations := pending.entry ++ #[
@@ -833,7 +843,7 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     ← `(tactic| have $positive:ident : 0 < $(strideModel.model) := by
       simp (config := { zetaDelta := true, failIfUnchanged := false }) only [Nat.add_eq] <;> omega),
     ← `(tactic| let $stateRel:ident := $relationBody),
-    guardProof, bodyRelationProof] ++ registration
+    guardProof, bodyRelationProof, entryProof] ++ registration
   let exposeExecution := #[
     ← `(tactic| change Complexity.Language.Stmt.observe $view:ident $code:ident $program:ident
       $entry $heap = _ at $executed:ident),

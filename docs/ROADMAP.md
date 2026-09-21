@@ -239,14 +239,22 @@ environment encodings or repeating source facts in a second resource proof.
    `whileLinearBound`; no handwritten linear potential is needed.
    These remain loop cost bounds, not complete
    function RAM or readiness guarantees. Eligible nonrecursive range sites
-   expose `stateRel` and `guard_rel`/`body_rel` (or preserving variants), reused
-   by correspondence. The generated `Site.pending` names the actual slot in the
-   running premise.
+   expose `stateRel`, `entry_rel` and `guard_rel`/`body_rel` (or preserving variants),
+   reused from the same correspondence proofs. The generated `Site.pending`
+   names the actual slot in the running premise.
    `ram_source_range_arena_cost` selects the published contract from the actual
    loop `Code` and supplied `stateRel`, without switching preserving variants.
    It composes normal, direct-return and saved-local-completion ranges with
-   independent uniform guard/body bounds; only saved completion needs `running`.
+   independent uniform guard/body bounds; explicit `using` needs `running` only
+   for saved completion.
    Captured source observations remain supplied facts, not decoded handles.
+   The structural arena-cost pass preserves the named loop goal. The range
+   tactic's `entry` form reuses the ordinary checked relation and observations to
+   infer the start, model and captures. The unchanged `prependRange` now has an
+   inferred enclosing-function cost certificate and an affine-in-count body
+   envelope, including initialization once.
+   Preserving entries still use explicit `using`; readiness,
+   capacity and actual RAM execution remain separate obligations.
    Nonuniform budgets still use explicit rules; recursive or shared-continuation
    proofs without published contracts remain outside this entry.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
