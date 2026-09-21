@@ -12,6 +12,9 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionResources.Ca
 arena readiness and its actual compiler count. Its postcondition observes the
 same final state, control, cursor and count. Equalities and upper bounds use the
 same interface; there is no additional execution semantics or instruction price.
+`ArenaMeasured.of_totalWP` reuses budget-free source totality and attaches a
+resource proof to that execution. `ArenaMeasured.at_exec` transports the measured
+observations to a supplied execution by source determinism.
 
 Calls resume at the actual callee heap and cursor. Callee contracts remain
 independent source correctness, resource and cost proofs, and the continuation
@@ -44,6 +47,28 @@ def ArenaMeasured {signatures : List Signature}
       ArenaExecutionCost ready steps ∧ post finish control finalCursor steps
 
 namespace ArenaMeasured
+
+/-- Measure the existing total-correctness execution using its resource proof.
+The final observations and count concern that same execution, without a time budget. -/
+theorem of_totalWP {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w heapLimit depth : Nat}
+    {Γ : List Ty} {result : Ty} {stmt : Complexity.Language.Stmt signatures Γ result}
+    {normal : Complexity.Language.State Γ → Prop}
+    {returned : Value result → Complexity.Language.State Γ → Prop}
+    {post : Complexity.Language.State Γ → Control result → Nat → Prop}
+    {entry : Complexity.Language.State Γ} {cursor : Nat}
+    (total : TotalWP program stmt normal returned entry)
+    (resources : ∀ finish control
+      (execution : Complexity.Language.Exec program stmt entry finish control),
+      control.Satisfies normal returned finish →
+        ∃ finalCursor, ArenaReady execution w heapLimit depth cursor finalCursor ∧
+          post finish control finalCursor) :
+    ArenaMeasured program w heapLimit depth stmt
+      (fun finish control finalCursor _ => post finish control finalCursor) entry cursor := by
+  obtain ⟨finish, control, execution, property⟩ := total
+  obtain ⟨finalCursor, ready, outcome⟩ := resources finish control execution property
+  obtain ⟨steps, cost⟩ := ready.exists_cost
+  exact ⟨finish, control, finalCursor, steps, execution, ready, cost, outcome⟩
 
 /-- Recover the measured readiness, count and observations for a given execution.
 Source determinism identifies its outcome; no execution or count is reconstructed. -/

@@ -261,15 +261,20 @@ environment encodings or repeating source facts in a second resource proof.
    envelope has a finite-sum identity and an all-input polynomial bound, using
    existing APIs without new tactics or metadata. `ArenaReady.while_model_of_exec`
    reuses the same normal-round contracts with changing heaps and arena cursors;
-   `ArenaMeasured.at_exec` aligns a measured fragment with the given execution.
+   `ArenaMeasured.of_totalWP` combines existing source totality with resources
+   for that same execution; `at_exec` aligns the measurement with a given execution.
    The array-record loop has exact cursor growth equal to its cumulative
    reservation, with word/element ranges and capacity explicit and aliases allowed.
    The function resource/measured interfaces connect this to an actual halted
    invocation with the original `copies` contract and nonuniform cost bound,
    retaining the real launch and capacity premises. Old arrays are not reclaimed;
-   this is not peak-live space or an input-loading bound. Remaining work includes
-   generic allocating-loop setup, structural `letPrim`/sequence/return readiness
-   composition and source-facing space contracts. Recursive or shared-continuation
+   this is not peak-live space or an input-loading bound. The existing structural
+   arena pass now composes this consumer's surrounding bindings, sequence and
+   return, without handwritten environments or execution cases. Extracting loop
+   totality still uses the known two `letPrim` bindings and sequence; field
+   projections still connect representations to `ValueFits`. General automation
+   of those steps, allocating-loop setup and source-facing space
+   contracts remain work. Recursive or shared-continuation
    proofs without published contracts remain outside the named range entry.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
    published bounds.

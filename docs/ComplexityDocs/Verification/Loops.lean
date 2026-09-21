@@ -465,6 +465,9 @@ Separately,
 lifts the same finite normal-body loop through its existing guard/body contracts,
 allowing actual heaps and arena cursors to change. Fragment readiness and resource
 invariants remain supplied; no second loop induction or termination proof is needed.
+[`ArenaMeasured.of_totalWP`](##Ram.LanguageCompiler.ArenaMeasured.of_totalWP)
+combines an existing `TotalWP` with a resource proof for that same `Exec`, taking
+its count from `ready.exists_cost`, not a new semantics, price or termination proof.
 [`ArenaMeasured.at_exec`](##Ram.LanguageCompiler.ArenaMeasured.at_exec) transports
 the same measured readiness, count and observations to a given source execution.
 The array-record loop's
@@ -478,7 +481,15 @@ The same function's
 [`function_resources`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.function_resources)
 bounds a supplied execution using this readiness.
 [`function_measured`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.function_measured)
-obtains the execution from the original `repeatAppend_copies` source totality.
+uses the original `repeatAppend_copies.wp`: `TotalWP.letPrim_iff` and `seq_iff`
+expose loop totality, then `of_totalWP` combines it with `loop_ready`.
+The existing `ram_source_arena_step` composes the surrounding bindings, sequence
+and return; `body_ready` follows by `at_exec`. No handwritten environments or
+execution-case analysis are needed, and the program and published premises/bounds
+are unchanged.
+Extracting loop totality still depends on the known two `letPrim` bindings and
+sequence. Word-range proofs still project mathematical representations into
+the required `ValueFits` fields; neither step is generally automated.
 [`execute`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.execute)
 combines them with the existing cost certificate through `ArenaMeasured.execute_le`.
 It retains `FunctionArenaLaunch` word, code, stack, rooted-input and `ArenaRep`
@@ -487,9 +498,9 @@ premises, plus the cumulative capacity condition, and bounds the actual halted
 The same outcome has exact cursor growth `reserve` and a represented output
 with `output.copies = initialValue.copies + r`; this is the original counter
 contract, not a complete expected-array formula. Input loading, `Program.TimeO`
-and peak-live space are not established by this theorem. Generic allocating-loop
-setup, structural readiness for the surrounding bindings/sequence/return and
-source-facing space contracts remain work.
+and peak-live space are not established by this theorem. General source-totality
+and representation-to-range transport, allocating-loop setup and source-facing
+space contracts remain work.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every

@@ -230,6 +230,63 @@ theorem loop_ready {w heapLimit cursor : Nat} (positive : 0 < w)
   have empty : model_remaining finalModel = 0 := Nat.eq_zero_of_not_pos (of_decide_eq_false stopped)
   simpa only [empty, reserve_zero, Nat.add_zero] using accounting
 
+/-- Obtain source termination from the existing correctness contract and measure
+that very execution, with no additional termination or instruction-budget premise. -/
+theorem function_measured {w heapLimit cursor : Nat} (positive : 0 < w)
+    (count : Nat) (chunkValues : Array Nat) (initialValue : Payload)
+    (chunk : Buffer .nat) (initial : Buffer .nat × Nat) (heap : Heap)
+    (chunkObserved : chunk.Contents heap chunkValues)
+    (initialObserved : state_representation.Rel initialValue initial heap)
+    (valid : invariant w heapLimit
+      (mkModel (remaining := count) (state := initialValue) (initial := initialValue)
+        (chunk := chunkValues) (count := count)) cursor) :
+    ArenaMeasured ArrayRangeNative.Source.program w heapLimit 2
+      (ArrayRangeNative.Source.program.body ArrayRangeNative.Source.repeatAppendId)
+      (fun _ control finalCursor _ => ∃ value, control = .returned value ∧
+        finalCursor = cursor + reserve count initialValue.values.size chunkValues.size)
+      ⟨ArrayRangeNative.Source.repeatAppend_args count chunk initial, heap⟩ cursor := by
+  have total := (repeatAppend_copies count chunkValues initialValue).wp
+    (ArrayRangeNative.Source.repeatAppend_args count chunk initial) heap
+    ⟨rfl, chunkObserved, initialObserved⟩
+  have loopTotal := (TotalWP.seq_iff _ _).mp
+    ((TotalWP.letPrim_iff _ _).mp ((TotalWP.letPrim_iff _ _).mp total))
+  let model := mkModel (remaining := count) (state := initialValue) (initial := initialValue)
+    (chunk := chunkValues) (count := count)
+  have measured := ArenaMeasured.of_totalWP
+    (w := w) (heapLimit := heapLimit) (depth := 2) (cursor := cursor)
+    (post := fun after control finalCursor =>
+      finalCursor = cursor + reserve count initialValue.values.size chunkValues.size ∧
+        control = .normal ∧ ∃ finalModel, modelRel finalModel (View after.locals) after.heap ∧
+          invariant w heapLimit finalModel finalCursor ∧ modelGuard finalModel = false)
+    loopTotal (by
+      intro after control execution successful
+      exact loop_ready positive model _ valid
+        (by
+          dsimp only [model]
+          ram_source_locals ArrayRangeNative.Source.repeatAppend_loop1
+          simp_all [modelRel, mkModel, state_representation]) execution
+        (by cases control <;> simp_all [Control.Satisfies]))
+  have countFits : count < 2 ^ w := valid.1
+  have sizeFits : initialValue.values.size + count * chunkValues.size < 2 ^ w := valid.2.2.1
+  have copiesFits : initialValue.copies + count < 2 ^ w := valid.2.1
+  have initialSize : initialValue.values.size = initial.1.length := initialObserved.1.size_eq
+  have initialCopies : initialValue.copies = initial.2 := initialObserved.2
+  have initialLengthFits : initial.1.length < 2 ^ w := by omega
+  have initialCopiesFits : initial.2 < 2 ^ w := by omega
+  ram_source_arena_step
+  apply measured.mono_post
+  rintro after control finalCursor steps ⟨cursorEq, rfl, finalModel, related, finalValid, _⟩
+  have finalObserved := model_rel_state related
+  have finalSize : (model_state finalModel).values.size =
+      (View after.locals).2.1.1.length := finalObserved.1.size_eq
+  have finalCopies : (model_state finalModel).copies = (View after.locals).2.1.2 := finalObserved.2
+  have finalSizeFits := finalValid.2.2.1
+  have finalCopiesFits := finalValid.2.1
+  have returnedLengthFits : (View after.locals).2.1.1.length < 2 ^ w := by omega
+  have returnedCopiesFits : (View after.locals).2.1.2 < 2 ^ w := by omega
+  ram_source_locals ArrayRangeNative.Source.repeatAppend_loop1 at *
+  ram_source_arena_step
+
 /-- Attach the loop readiness to the unchanged function's two bindings and final return. -/
 theorem body_ready {w heapLimit cursor : Nat} (positive : 0 < w)
     (count : Nat) (chunkValues : Array Nat) (initialValue : Payload)
@@ -245,59 +302,11 @@ theorem body_ready {w heapLimit cursor : Nat} (positive : 0 < w)
       ⟨ArrayRangeNative.Source.repeatAppend_args count chunk initial, heap⟩ finish (.returned value)) :
     ArenaReady execution w heapLimit 2 cursor
       (cursor + reserve count initialValue.values.size chunkValues.size) := by
-  let startModel := mkModel (remaining := count) (state := initialValue) (initial := initialValue)
-    (chunk := chunkValues) (count := count)
-  let start : State _ :=
-    ⟨Env.cons (τ := .nat) count (Env.cons (τ := .prod (.buffer .nat) .nat) initial
-      (ArrayRangeNative.Source.repeatAppend_args count chunk initial)),
-      heap⟩
-  have represented : modelRel startModel (View start.locals) start.heap := by
-    dsimp only [start, startModel]
-    ram_source_locals ArrayRangeNative.Source.repeatAppend_loop1
-    simp_all [modelRel, mkModel, state_representation]
-  have countFits : count < 2 ^ w := valid.1
-  have sizeFits : initialValue.values.size + count * chunkValues.size < 2 ^ w := valid.2.2.1
-  have copiesFits : initialValue.copies + count < 2 ^ w := valid.2.1
-  have initialSize : initialValue.values.size = initial.1.length := initialObserved.1.size_eq
-  have initialCopies : initialValue.copies = initial.2 := initialObserved.2
-  have initialFits : ValueFits w (τ := .prod (.buffer .nat) .nat) initial := by
-    change initial.1.length < 2 ^ w ∧ initial.2 < 2 ^ w
-    constructor <;> omega
-  cases execution with
-  | letPrim initialized =>
-      apply ArenaReady.letPrim (body := initialized) initialFits
-      cases initialized with
-      | letPrim sequence =>
-          apply ArenaReady.letPrim (body := sequence) countFits
-          cases sequence with
-          | @seqNormal _ _ _ _ _ middle _ _ loop returned =>
-              obtain ⟨finalCursor, ready, cursorEq, _, finalModel, related, finalValid, _⟩ :=
-                loop_ready positive startModel start valid represented loop trivial
-              have finalObserved := model_rel_state related
-              have finalSize : (model_state finalModel).values.size =
-                  (View middle.locals).2.1.1.length := finalObserved.1.size_eq
-              have finalCopies : (model_state finalModel).copies =
-                  (View middle.locals).2.1.2 := finalObserved.2
-              have finalSizeFits := finalValid.2.2.1
-              have finalCopiesFits := finalValid.2.1
-              have returnedFits : ValueFits w (τ := .prod (.buffer .nat) .nat)
-                  (View middle.locals).2.1 := by
-                change (View middle.locals).2.1.1.length < 2 ^ w ∧
-                  (View middle.locals).2.1.2 < 2 ^ w
-                constructor <;> omega
-              have ready' : ArenaReady loop w heapLimit 2 cursor
-                  (cursor + reserve count initialValue.values.size chunkValues.size) := by
-                rw [cursorEq] at ready
-                exact ready
-              apply ArenaReady.seqNormal (tail := returned) ready'
-              cases returned
-              ram_source_locals ArrayRangeNative.Source.repeatAppend_loop1 at returnedFits
-              apply ArenaReady.ret
-              exact returnedFits
-          | seqReturn loop =>
-              obtain ⟨_, _, _, impossible, _⟩ :=
-                loop_ready positive startModel start valid represented loop trivial
-              cases impossible
+  obtain ⟨finalCursor, _, ready, _, _, _, cursorEq⟩ :=
+    (function_measured positive count chunkValues initialValue chunk initial heap
+      chunkObserved initialObserved valid).at_exec execution
+  subst finalCursor
+  exact ready
 
 /-- Bound the original function's retained allocation by the cumulative fresh-array reservation.
 Its source precondition retains actual handles and permits overlapping inputs. -/
@@ -325,31 +334,6 @@ theorem function_resources {w heapLimit : Nat} (positive : 0 < w)
     ⟨countFits, copiesFit, sizeFit, chunkSizeFits, valuesFit, chunkFit, capacity⟩
   exact ⟨_, body_ready positive count chunkValues initialValue input.1 input.2 heap
     observed.1 observed.2 valid execution, Nat.le_refl _⟩
-
-/-- Obtain source termination from the existing correctness contract and measure
-that very execution, with no additional termination or instruction-budget premise. -/
-theorem function_measured {w heapLimit cursor : Nat} (positive : 0 < w)
-    (count : Nat) (chunkValues : Array Nat) (initialValue : Payload)
-    (chunk : Buffer .nat) (initial : Buffer .nat × Nat) (heap : Heap)
-    (chunkObserved : chunk.Contents heap chunkValues)
-    (initialObserved : state_representation.Rel initialValue initial heap)
-    (valid : invariant w heapLimit
-      (mkModel (remaining := count) (state := initialValue) (initial := initialValue)
-        (chunk := chunkValues) (count := count)) cursor) :
-    ArenaMeasured ArrayRangeNative.Source.program w heapLimit 2
-      (ArrayRangeNative.Source.program.body ArrayRangeNative.Source.repeatAppendId)
-      (fun _ control finalCursor _ => ∃ value, control = .returned value ∧
-        finalCursor = cursor + reserve count initialValue.values.size chunkValues.size)
-      ⟨ArrayRangeNative.Source.repeatAppend_args count chunk initial, heap⟩ cursor := by
-  obtain ⟨finish, value, execution, _⟩ :=
-    repeatAppend_copies count chunkValues initialValue
-      (ArrayRangeNative.Source.repeatAppend_args count chunk initial) heap
-      ⟨rfl, chunkObserved, initialObserved⟩
-  have ready := body_ready positive count chunkValues initialValue chunk initial heap
-    chunkObserved initialObserved valid execution
-  obtain ⟨steps, cost⟩ := ready.exists_cost
-  exact ArenaMeasured.exists_returned_iff.mpr
-    ⟨finish, value, _, steps, execution, ready, cost, rfl⟩
 
 /-- Publish one complete invocation with the original mathematical contract,
 the exact retained arena growth and the previously proved nonuniform time bound. -/
