@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity
 import Examples.Language.ArrayIterationCompiled
+import Examples.Language.ArrayIterationReady
 import Examples.Language.Factorial
 import Examples.Language.FactorialCompiled
 import Examples.Language.LinkedList
@@ -456,8 +457,39 @@ where `r` is the iteration count, `s` the initial array size and `k` the chunk s
 The [mathlib asymptotic corollary](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendCost.isBigO_functionBodyBound)
 is `O(1 + r + r*s + r²*k)`, with no constraints on relative input sizes.
 These existing APIs need no new tactic, metadata or mathematical framework for
-this proof. They establish a conditional function-cost certificate, not readiness,
+this proof. These cost theorems alone establish a conditional certificate, not readiness,
 capacity, `Program.TimeO` or an actual halted-runner result.
+
+Separately,
+[`ArenaReady.while_model_of_exec`](##Ram.LanguageCompiler.ArenaReady.while_model_of_exec)
+lifts the same finite normal-body loop through its existing guard/body contracts,
+allowing actual heaps and arena cursors to change. Fragment readiness and resource
+invariants remain supplied; no second loop induction or termination proof is needed.
+[`ArenaMeasured.at_exec`](##Ram.LanguageCompiler.ArenaMeasured.at_exec) transports
+the same measured readiness, count and observations to a given source execution.
+The array-record loop's
+[`loop_ready`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.loop_ready)
+proves `finalCursor = initialCursor + reserve`, where
+`reserve = Σ (i < r), (s + (i + 1) * k)`.
+Its invariant retains word/element ranges and sufficient cumulative capacity;
+input aliases are allowed. Each round allocates a fresh array without reclaiming
+old arrays, so this is cumulative allocation, not peak-live storage.
+The same function's
+[`function_resources`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.function_resources)
+bounds a supplied execution using this readiness.
+[`function_measured`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.function_measured)
+obtains the execution from the original `repeatAppend_copies` source totality.
+[`execute`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.execute)
+combines them with the existing cost certificate through `ArenaMeasured.execute_le`.
+It retains `FunctionArenaLaunch` word, code, stack, rooted-input and `ArenaRep`
+premises, plus the cumulative capacity condition, and bounds the actual halted
+`runUntil` result. Initialization, outer call and halt are counted once.
+The same outcome has exact cursor growth `reserve` and a represented output
+with `output.copies = initialValue.copies + r`; this is the original counter
+contract, not a complete expected-array formula. Input loading, `Program.TimeO`
+and peak-live space are not established by this theorem. Generic allocating-loop
+setup, structural readiness for the surrounding bindings/sequence/return and
+source-facing space contracts remain work.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every

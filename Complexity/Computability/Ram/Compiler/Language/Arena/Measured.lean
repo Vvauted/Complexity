@@ -45,6 +45,22 @@ def ArenaMeasured {signatures : List Signature}
 
 namespace ArenaMeasured
 
+/-- Recover the measured readiness, count and observations for a given execution.
+Source determinism identifies its outcome; no execution or count is reconstructed. -/
+theorem at_exec {signatures : List Signature}
+    {program : Complexity.Language.Program signatures} {w heapLimit depth : Nat}
+    {Γ : List Ty} {result : Ty} {stmt : Complexity.Language.Stmt signatures Γ result}
+    {post : Complexity.Language.State Γ → Control result → Nat → Nat → Prop}
+    {entry finish : Complexity.Language.State Γ} {control : Control result} {cursor : Nat}
+    (measured : ArenaMeasured program w heapLimit depth stmt post entry cursor)
+    (execution : Complexity.Language.Exec program stmt entry finish control) :
+    ∃ finalCursor steps,
+      ∃ ready : ArenaReady execution w heapLimit depth cursor finalCursor,
+        ArenaExecutionCost ready steps ∧ post finish control finalCursor steps := by
+  obtain ⟨_, _, finalCursor, steps, actual, ready, cost, outcome⟩ := measured
+  obtain ⟨rfl, rfl⟩ := actual.deterministic execution
+  exact ⟨finalCursor, steps, ready, cost, outcome⟩
+
 /-- An empty statement preserves the actual state and cursor without instructions. -/
 theorem skip {signatures : List Signature}
     {program : Complexity.Language.Program signatures} {w heapLimit depth : Nat}

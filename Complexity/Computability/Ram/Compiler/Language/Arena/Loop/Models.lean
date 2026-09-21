@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Arena.Loop.Completion
 import Complexity.Language.Eval.Locals.LocalReturn.Models
+import Complexity.Language.Eval.Locals.While.Represented
 
 /-!
 # Arena readiness from mathematical local contracts
@@ -15,9 +16,10 @@ add only fragment readiness at their actual mathematical input and heap. A
 continuing body preserves the invariant; a completed body instead supplies its
 result condition at the actual final heap.
 
-This rule does not repeat the loop induction or a termination argument. It
-uses the visible completion readiness rule and the existing mathematical
-contract consequences. A representation need not determine the raw locals.
+The normal-model rule threads changing arena cursors through the existing
+indexed loop rule. Completion-aware rules use the visible completion interface.
+Neither repeats loop induction or termination; a representation need not
+determine the raw locals, and resource invariants may depend on the current heap.
 -/
 
 namespace Ram.LanguageCompiler.ArenaReady
@@ -25,6 +27,85 @@ namespace Ram.LanguageCompiler.ArenaReady
 open Complexity.Language
 
 universe u
+
+/-- Lift the same successful finite loop through its mathematical guard/body
+contracts while allowing allocations. Source contracts transport observations
+at the actual heaps and exclude body returns and faults; fragment readiness
+supplies the resource invariant at each actual final cursor. No time budget,
+second termination argument or inverse of the representation is required. -/
+theorem while_model_of_exec {Model : Type u}
+    {signatures : List Signature} {program : Complexity.Language.Program signatures}
+    {Γ : List Ty} {result : Ty} {Locals : Type}
+    {w heapLimit depth cursor : Nat}
+    {guard : Complexity.Language.Stmt signatures Γ .bool}
+    {body : Complexity.Language.Stmt signatures Γ result}
+    (view : Env Γ ≃ Locals)
+    (stateRel : Model → Locals → Heap → Prop) (test : Model → Bool) (next : Model → Model)
+    (guardSpec : ∀ model,
+      Stmt.BlockSpec (fun locals => Stmt.observe view guard program locals) (stateRel model)
+        (fun _ _ _ _ => False)
+        (fun _ _ again output finish => again = test model ∧ stateRel model output finish))
+    (bodySpec : ∀ model, test model = true →
+      Stmt.BlockSpec (fun locals => Stmt.observe view body program locals) (stateRel model)
+        (fun _ _ output finish => stateRel (next model) output finish)
+        (fun _ _ _ _ _ => False))
+    (invariant : Model → Heap → Nat → Prop)
+    (guardReady : ∀ model current start, invariant model current.heap start →
+      stateRel model (view current.locals) current.heap →
+      ∀ after decision
+        (tested : Complexity.Language.Exec program guard current after (.returned decision)),
+        stateRel model (view after.locals) after.heap →
+        ∃ finalCursor, ArenaReady tested w heapLimit depth start finalCursor ∧
+          invariant model after.heap finalCursor)
+    (bodyReady : ∀ model current start, invariant model current.heap start →
+      test model = true → stateRel model (view current.locals) current.heap →
+      ∀ after (iterated : Complexity.Language.Exec program body current after .normal),
+        stateRel (next model) (view after.locals) after.heap →
+        ∃ finalCursor, ArenaReady iterated w heapLimit depth start finalCursor ∧
+          invariant (next model) after.heap finalCursor)
+    {model : Model} {entry finish : Complexity.Language.State Γ} {control : Control result}
+    (execution : Complexity.Language.Exec program (.while guard body) entry finish control)
+    (represented : stateRel model (view entry.locals) entry.heap)
+    (initial : invariant model entry.heap cursor)
+    (successful : control.Satisfies (fun _ => True) (fun _ _ => True) finish) :
+    ∃ finalCursor, ArenaReady execution w heapLimit depth cursor finalCursor ∧
+      control = .normal ∧ ∃ finalModel,
+        stateRel finalModel (view finish.locals) finish.heap ∧
+        invariant finalModel finish.heap finalCursor ∧ test finalModel = false := by
+  apply while_of_exec_indexed
+    (invariant := fun model current start =>
+      stateRel model (view current.locals) current.heap ∧ invariant model current.heap start)
+    (guardPost := fun model current decision start =>
+      stateRel model (view current.locals) current.heap ∧ invariant model current.heap start ∧
+        decision = test model)
+    (post := fun current outcome finalCursor => outcome = .normal ∧ ∃ finalModel,
+      stateRel finalModel (view current.locals) current.heap ∧
+      invariant finalModel current.heap finalCursor ∧ test finalModel = false)
+    (initialIndex := model) execution
+  · rintro currentModel current start ⟨related, valid⟩ after decision tested
+    have guarded : decision = test currentModel ∧
+        stateRel currentModel (view after.locals) after.heap := by
+      apply (guardSpec currentModel).post_of_exec view id
+        (finish := after) (control := .returned decision) related
+      simpa only [id_eq, Equiv.symm_apply_apply] using tested
+    obtain ⟨finalCursor, ready, preserved⟩ :=
+      guardReady currentModel current start valid related after decision tested guarded.2
+    exact ⟨finalCursor, ready, guarded.2, preserved, guarded.1⟩
+  · rintro currentModel current start ⟨related, valid, active⟩ after outcome iterated
+    have advanced := (bodySpec currentModel active.symm).post_of_exec view id
+      (finish := after) (control := outcome) related
+      (by simpa only [id_eq, Equiv.symm_apply_apply] using iterated)
+    cases outcome with
+    | normal =>
+        obtain ⟨finalCursor, ready, preserved⟩ :=
+          bodyReady currentModel current start valid active.symm related after iterated advanced
+        exact ⟨finalCursor, ready, next currentModel, advanced, preserved⟩
+    | returned value => exact False.elim advanced
+    | fault error => exact False.elim advanced
+  · rintro currentModel current start ⟨related, valid, stopped⟩
+    exact ⟨rfl, currentModel, related, valid, stopped.symm⟩
+  · exact ⟨represented, initial⟩
+  · exact successful
 
 /-- Reuse mathematical local contracts through an effectful guard. The body
 starts at the guard's actual final heap and mathematical observation, related

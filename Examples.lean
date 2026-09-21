@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Examples.Language.Allocation
 import Examples.Language.ArrayIterationCompiled
+import Examples.Language.ArrayIterationReady
 import Examples.Language.Buffer
 import Examples.Language.BufferCompiled
 import Examples.Language.Factorial

@@ -259,9 +259,18 @@ environment encodings or repeating source facts in a second resource proof.
    unchanged array-record `repeatAppend` reuses generated mathematical round
    contracts and the actual append cost as its array grows. Its inferred function
    envelope has a finite-sum identity and an all-input polynomial bound, using
-   existing APIs without new tactics or metadata. Generic nonuniform setup and
-   readiness composition remain work; recursive or shared-continuation proofs
-   without published contracts remain outside the named range entry.
+   existing APIs without new tactics or metadata. `ArenaReady.while_model_of_exec`
+   reuses the same normal-round contracts with changing heaps and arena cursors;
+   `ArenaMeasured.at_exec` aligns a measured fragment with the given execution.
+   The array-record loop has exact cursor growth equal to its cumulative
+   reservation, with word/element ranges and capacity explicit and aliases allowed.
+   The function resource/measured interfaces connect this to an actual halted
+   invocation with the original `copies` contract and nonuniform cost bound,
+   retaining the real launch and capacity premises. Old arrays are not reclaimed;
+   this is not peak-live space or an input-loading bound. Remaining work includes
+   generic allocating-loop setup, structural `letPrim`/sequence/return readiness
+   composition and source-facing space contracts. Recursive or shared-continuation
+   proofs without published contracts remain outside the named range entry.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
    published bounds.
    Source postconditions now also flow into later input-dependent call budgets;
