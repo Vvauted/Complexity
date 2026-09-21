@@ -157,10 +157,11 @@ inside the local block run only when no result was saved. This adds no second
 source loop or allocation for proof-side state; actual body allocations and control instructions remain
 part of the compiled program. Branch summaries carry only mutable lexical slots,
 including shadowed bindings; immutable observations use proved heap preservation.
-At a typed `do` boundary, the supported finite-range/Option model can also carry
-updated outer mutable bindings alongside its terminal payload. The code after
-the block consumes both through their actual heap-indexed relation; this is not
-a generated unchanged-heap exact equation or a new general `while` model.
+The shared proof boundary for supported typed `do`, `if` and Option/List `match`
+value bindings lets finite-range/Option models carry updated outer mutable bindings
+alongside the terminal payload. The code after the binding consumes both through
+their actual heap-indexed relation, retaining the original raw return markers and
+joins; this is not an unchanged-heap exact equation or a general `while` model.
 
 The prepared completion-range mathematical `forIn` carries
 `Option Result × Mutable`: the iteration index remains a callback argument, but

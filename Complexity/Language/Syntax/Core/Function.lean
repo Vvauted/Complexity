@@ -116,6 +116,8 @@ def equationDeclaration (family programName : TSyntax `ident)
     all_goals repeat' first
       | rfl
       | (split <;> simp_all only [Option.some.injEq, reduceCtorEq])
+      | (apply bind_congr; intro value)
+      | (apply congrFun; apply bind_congr; intro value)
       | (congr 1; funext value)
     all_goals rfl)
   for param in fn.params.reverse do

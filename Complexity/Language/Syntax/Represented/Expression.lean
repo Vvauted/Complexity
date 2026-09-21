@@ -45,6 +45,7 @@ def fieldProjection (count index : Nat) (receiver : TSyntax `term) :
 private def projectObservation (purePair first : Bool) (pair : Observation) : Observation :=
   match pair with
   | .pair _ left right => if first then left else right
+  | .refl => if purePair then .refl else .projection purePair first pair
   | _ => .projection purePair first pair
 
 private def fieldObservation (count index : Nat) (receiver : Observation) : Observation := Id.run do

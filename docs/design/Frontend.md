@@ -116,13 +116,14 @@ body and continues with the current locals and heap. This does not add general
 value-level `if` expressions or arbitrary named calls inside expressions;
 the existing explicit call forms remain in use.
 
-Typed `let x : T ← do ...` blocks can retain a mathematical model while updating
-outer mutable bindings in the supported finite-range/Option local-return fragment.
-The model carries the returned payload and final mutable state into the outer
-continuation, related at the actual final heap; raw return and `localJoin` are
-unchanged. This is not a generated unchanged-heap exact equation. Standalone
-typed `← if`/`← match` bindings that update outer state still omit their model.
-The boundary does not supply models for arbitrary mutation or general `while`.
+Typed `let x : T ← do ...`, `← if ...` and `← match ...` (Option/List) value
+bindings share the state-carrying mathematical boundary for modeled bodies,
+including the supported finite-range/Option local-return fragment. The model
+carries the returned payload and final outer mutable state into the continuation,
+related at the actual final heap. Direct conditional/match bindings retain their
+return markers inside the selected arm, with the selector outside; no extra raw
+join is introduced. This is not a generated unchanged-heap exact equation or
+support for arbitrary patterns, mutation or general `while` models.
 
 Effectful `for i in [:stop]` and `for i in [start:stop]` use half-open ranges
 and unit steps, with an immutable iteration index. Endpoints retain their

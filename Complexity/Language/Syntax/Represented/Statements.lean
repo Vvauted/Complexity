@@ -21,6 +21,27 @@ open Lean.Parser.Term
 
 namespace Internal
 
+/-- A direct value choice keeps its local-return boundary inside each arm.
+The selector is outside that boundary, as in the original source lowering. -/
+private def closeValueChoice (slot : JoinSlot) (elements : Array (TSyntax `doElem)) :
+    TermElabM (Array (TSyntax `doElem)) := do
+  let [element] := elements.toList
+    | throwError "a prepared value choice must retain its branch structure"
+  match element with
+  | `(doElem| if $test:term then $yes:doSeq else $no:doSeq) =>
+      let yes ← slot.branch (getDoElems yes)
+      let no ← slot.branch (getDoElems no)
+      return #[← `(doElem| if $test:term then $yes:doSeq else $no:doSeq)]
+  | `(doElem| match $value:term with
+      | $first:term => $firstBody:doSeq
+      | $second:term => $secondBody:doSeq) =>
+      let firstBody ← slot.branch (getDoElems firstBody)
+      let secondBody ← slot.branch (getDoElems secondBody)
+      return #[← `(doElem| match $value:term with
+        | $first:term => $firstBody:doSeq
+        | $second:term => $secondBody:doSeq)]
+  | _ => throwError "a prepared value choice must retain its branch structure"
+
 private def completionRangeModel (captured : Array Binding)
     (stateSyntax returnedType bodyNative : TSyntax `term)
     (initialModel startModel stopModel strideModel : ValueModel) :
@@ -731,7 +752,9 @@ partial def sequence (names : DeclarationNames)
           some (name, annotation, expression)
       | _ => none
     if let some (name, annotation, expression) := binding? then
-      if let some body := doParts? expression then
+      let prepareValueBlock (body : TSyntax ``doSeq)
+          (closeBoundary : JoinSlot → Array (TSyntax `doElem) →
+            TermElabM (Array (TSyntax `doElem))) : PrepareM PreparedBlock := do
         let some annotation := annotation
           | throwErrorAt name "a source value block requires an explicit result type"
         let selectedType ← resolveType annotation
@@ -744,8 +767,8 @@ partial def sequence (names : DeclarationNames)
           throwErrorAt expression "a value-producing block cannot finish without returning a value"
         let slot := mkIdent (← mkFreshUserName (name.getId.appendAfter "_join"))
         let joinSlot ← makeJoinSlot slot selectedType.coreTy
-        let boundary ← joinSlot.branch prepared.raw
-        let rawPrefix := (← joinSlot.initialization) ++ getDoElems boundary
+        let boundary ← closeBoundary joinSlot prepared.raw
+        let rawPrefix := (← joinSlot.initialization) ++ boundary
         let stateInputs := do
           let context ← returnedState?
           let native ← prepared.native?
@@ -826,6 +849,11 @@ partial def sequence (names : DeclarationNames)
           calls? := (· ++ ·) <$> prepared.calls? <*> continued.calls?
           completion? := CompletionSummary.prepend? ((fun binding => #[binding]) <$> nativeBinding)
             prepared.calls? continued.completion? }
+      let continueValueBlock (choice : TSyntax `doElem) : PrepareM PreparedBlock :=
+        prepareValueBlock ⟨Lean.Elab.Term.Do.mkDoSeq #[choice.raw]⟩ closeValueChoice
+      if let some body := doParts? expression then
+        return ← prepareValueBlock body fun slot elements =>
+          getDoElems <$> slot.branch elements
       if let some (matched, first, firstBody, second, secondBody) := matchParts? expression then
         let some annotation := annotation
           | throwErrorAt name "a native match binding requires an explicit result type"
@@ -859,6 +887,18 @@ partial def sequence (names : DeclarationNames)
           return ← sequence names imports resultType scope (read :: select :: rest) .immutable allowFallthrough localReturn completion returnState
         let .option payloadType := discriminant.type
           | throwErrorAt matched "native matching currently supports List and Option values"
+        if scope.any (·.mutable) then
+          -- Keep the List inspection above outside the join, and share the
+          -- value-block observer for the selected arm's final mutable state.
+          let firstElements ← returnElements firstBody
+          let secondElements ← returnElements secondBody
+          let firstSeq : TSyntax ``doSeq :=
+            ⟨Lean.Elab.Term.Do.mkDoSeq (firstElements.map (·.raw))⟩
+          let secondSeq : TSyntax ``doSeq :=
+            ⟨Lean.Elab.Term.Do.mkDoSeq (secondElements.map (·.raw))⟩
+          return ← continueValueBlock (← `(doElem| match $matched:term with
+            | $first:term => $firstSeq:doSeq
+            | $second:term => $secondSeq:doSeq))
         let (noneBody, payloadPattern, someBody) ←
           if isNonePattern first then do
             let some payload := somePattern? second
@@ -949,6 +989,15 @@ partial def sequence (names : DeclarationNames)
       if let some (test, yes, no) := conditionalParts? expression then
         let some annotation := annotation
           | throwErrorAt name "a native conditional binding requires an explicit result type"
+        if scope.any (·.mutable) then
+          let yesElements ← returnElements yes
+          let noElements ← returnElements no
+          let yesSeq : TSyntax ``doSeq :=
+            ⟨Lean.Elab.Term.Do.mkDoSeq (yesElements.map (·.raw))⟩
+          let noSeq : TSyntax ``doSeq :=
+            ⟨Lean.Elab.Term.Do.mkDoSeq (noElements.map (·.raw))⟩
+          return ← continueValueBlock (← `(doElem|
+            if $test:term then $yesSeq:doSeq else $noSeq:doSeq))
         let selectedType ← resolveType annotation
         let condition ← value scope test
         expect test (← resolveType (← `(Bool))) condition.type

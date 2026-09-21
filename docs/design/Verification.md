@@ -334,16 +334,19 @@ Broader nested-loop combinations, general mixed local/function completion, recur
 range and full models of arbitrary heap mutation remain open; source
 correspondence does not itself prove a RAM complexity bound.
 
-Typed `do` value blocks in the supported finite-range/Option fragment also have
-checked generated models and action correspondence when they update outer mutable
-bindings used by the continuation. The mathematical observer carries the terminal
+Supported typed `do`, `if` and Option/List `match` value bindings share generated
+state-carrying models and action correspondence for outer mutable bindings used
+by the continuation. The mathematical observer carries the terminal
 payload and final mutable state, using a heap-indexed relation rather than a
 generated unchanged-heap exact equation. The algorithm's final result equation
 remains a separate mathematical proof. A private state-carrying List consumer
 proves the exact result `(decide (values.length < budget),
 (values.take budget).reverse, values.drop budget)`; a scalar/Unit local-return
-case without a range also retains its mathematical equation. Standalone typed
-`← if`/`← match` bindings with outer updates do not yet retain this state-carrying model.
+case without a range also retains its mathematical equation. Direct typed
+`if`/Option/List `match` consumers also have checked exact equations for scalar
+updates and allocating List transfers through nested value blocks. Sharing this
+proof boundary does not infer frames for arbitrary effects or close the remaining
+loop, recursion and RAM-resource obligations.
 
 All source declarations expose ordinary-parameter `f_contract`, `f_args` and
 `f_onArgs` interfaces. They reuse the existing source contract and argument

@@ -398,17 +398,19 @@ combinations remain open. Ordinary
 `let x : T ← do ...` blocks use the same boundary. The existing structured scalar
 caller uses this form and retains its mathematical and actual RAM proofs;
 private Option control is simplified by the shared backend proof rules.
-For typed `do` blocks in the supported finite-range/Option fragment, generated
-models and action correspondence also retain updated outer mutable bindings.
+Supported typed `do`, `if` and Option/List `match` value bindings reuse `prepareValueBlock`
+and its boundary-closing continuation to retain updated outer mutable bindings.
 The `returnState` mathematical observer records a terminal return as its payload
 and final carried state; existing lexical slots and representations track both.
 The proof-only `Trace.valueBlock` boundary composes the body and outer continuation
-once. The raw body still returns its declared payload through the same `localJoin`;
-no partial Option extraction, default value or `Part.get` supplies a result. This path
-uses a heap-indexed relation, not a generated unchanged-heap exact equation.
-Standalone typed `← if`/`← match` bindings with outer updates still omit their
-mathematical model. This does not supply general `while` models, arbitrary
-mutation or undeclared frames, and gives no new RAM cost bound.
+once. For direct `if`/`match`, the original local-return markers remain inside
+their arms; the selector, including actual `List.uncons` for List matching, stays
+outside those markers. Only the selected arm runs, and raw `localJoin` placement
+and count are preserved. No partial Option extraction, default value or `Part.get`
+supplies a result. This path uses a heap-indexed relation, not a generated
+unchanged-heap exact equation. It does not supply general `while` models,
+arbitrary mutation, enclosing recursion from ranges or undeclared frames, and
+gives no new RAM cost bound.
 The existing nested-scratch worker also uses a plain value block. Its generated
 completion contracts expose source-visible locals and distinguish fallthrough
 from a local result. Actual execution frames reconstruct the compiler slots;
