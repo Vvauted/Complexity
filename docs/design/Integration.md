@@ -222,6 +222,14 @@ The current integration work has these concrete obligations:
   supplied operation certificates, using the existing structural rules rather
   than per-function ABI adapters or guessed operation prices. The original
   record append's full uniform `TimeO` proof now uses these shared passes.
+  `program_wrapper_cost` determines a size-indexed `Nat` budget before the
+  concrete input, word width and heap limit are introduced, following the
+  generated body without handwritten packing or import-index formulas.
+  Supplied leaf costs retain their mathematical size-equality obligations.
+  Its inferred budget and `program_time_asymptotics` composition of supplied
+  mathlib bounds are checked in the unchanged append `TimeO` theorem. Constants
+  require an explicit `1 =O(growth)` premise; this does not infer loop/recurrence
+  bounds, capacity or termination.
   Result-dependent continuations still require their own source contracts;
   the passes do not infer mathematical invariants or data-dependent prices.
 - [x] Select code independently of correctness: `program%` also selects an

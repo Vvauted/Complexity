@@ -206,12 +206,20 @@ environment encodings or repeating source facts in a second resource proof.
 
 1. Extend the checked allocating-call proof pass from its current ordinary
    constructor, fold and typed-join consumers. Uniform wrapper budgets follow
-   from `StmtArenaCostBound` and supplied callee certificates; the two straight-line
-   constructor wrappers retain their exact counts. `ArenaMeasured.execute_le`
-   shares publication with independent mathematical specifications; `execute_eq`
-   retains exact body and invocation counts in the constructor-pair and selected-branch
-   consumers. Known returned values no longer need existential witness packaging
-   in the structural pass. Indexed calls
+   from `StmtArenaCostBound` and supplied callee certificates. For `Program`
+   entries, `program_wrapper_cost` can determine a size-indexed budget before
+   introducing the input, word width and heap limit; it follows the actual
+   generated body without consumer-written packing or import-index formulas.
+   The append consumer checks both this inferred budget and its complete
+   `program_time_asymptotics` composition, with the public `TimeO` statement
+   unchanged. The latter combines supplied mathlib bounds and requires
+   `1 =O(growth)` to absorb constants; algorithmic bounds, capacity and termination
+   remain separate obligations.
+   The two straight-line constructor wrappers retain their exact counts.
+   `ArenaMeasured.execute_le` shares publication with independent mathematical
+   specifications; `execute_eq` retains exact body and invocation counts in the
+   constructor-pair and selected-branch consumers. Known returned values no longer
+   need existential witness packaging in the structural pass. Indexed calls
    now compose supplied mathematical-input bounds, and the shared ghost-indexed
    arena loop rule is used by the actual-only fold cost proof. `push` and
    `reverseAppend` use inferred wrapper costs, preserving their published bounds.
@@ -244,6 +252,9 @@ environment encodings or repeating source facts in a second resource proof.
    and compare budgets, without unpacking executions. The shared rule reuses
    the same execution, readiness and compiler cost; it does not infer a budget,
    word range or capacity.
+   Three allocating-List leaf cost proofs also reuse
+   `FunctionArenaCostBound.of_stmt` for the function wrapper, without unpacking
+   execution witnesses or restating its overhead.
    Reuse source totality and actual heaps without another per-program termination
    proof. A shorter public theorem must not hide an equally long private
    connection proof.

@@ -134,10 +134,10 @@ bound, including any added packing and call instructions.
 The [compiled record example](##Examples.Language.ProgramCompiled) independently
 proves `append.TimeO (fun _ => True) (fun x => x.left.size + x.right.size) (fun n => n)`.
 It composes the existing array-copy cost with shared field-projection, packing
-and invocation rules. `program_packing% append` reads the actual generated
-packing; no second adapter is supplied. The full bound counts output allocation
-and initialization, both copying calls, record-field operations, entry packing,
-calls, returns and the final halt.
+and invocation rules. The shared pass follows the actual generated body;
+the consumer supplies no separate packing or import-index formulas. The full bound
+counts output allocation and initialization, both copying calls, record-field
+operations, entry packing, calls, returns and the final halt.
 
 The shared [capacity rule](##Complexity.Computability.Ram.Compiler.Language.Program.Capacity)
 chooses one input-independent constant for the actual code and fixed-depth stack.
@@ -151,13 +151,28 @@ provide cell ranges and room for the combined output. The
 [time publication rule](##Complexity.Computability.Ram.Compiler.Language.Program.Time)
 combines these with the measured body at every admitted width. This example
 covers all input arrays, not just inputs for which capacity was assumed.
-Resource proofs still explicitly compose operation certificates; general native
-resource inference is separate from the automated correctness correspondence.
+Resource proofs still supply operation certificates and mathematical size facts;
+general native resource inference is separate from automated correctness
+correspondence.
 The shared `program_wrapper_measured` and `program_wrapper_cost` tactics now
 perform the structural entry/call composition in this example from the supplied
 append certificate. They follow the actual generated source, preserve its
 function-table embeddings and retain every call's initialization and return cost.
+For each size, `program_wrapper_cost` can determine a uniform `Nat` budget before
+introducing the input, word width and heap limit. The append consumer supplies
+the existing leaf certificate and rewrites its cost using the input-size equality;
+it does not write `Packing`/`Uncurry` overhead or imported-function index formulas.
 Mathematical loop invariants and result-dependent operation bounds are not inferred.
+
+The [asymptotic composition pass](##Complexity.Computability.Ram.Compiler.Language.Program.Asymptotics),
+`program_time_asymptotics [leaf_BigO, one_BigO]`, combines supplied mathlib `IsBigO`
+proofs through Nat addition, maxima, constant multiples, actual `callCost` and
+`invocationBound`. Unfold the chosen wrapper budget first; operation budgets
+remain supplied leaves. Constant absorption requires `one_BigO` proving
+`(fun _ => (1 : ℝ)) =O[l] growth`, rather than assuming growth is linear.
+The append example checks the inferred uniform budget and complete asymptotic
+composition with its original public statement unchanged. The pass handles
+cost-expression algebra, not loop/recurrence bounds, capacity or termination.
 
 The [RAM interface](##Complexity.Computability.Ram.Compiler.Language.Program)
 requires actual halted executions uniformly over all admitted word widths.

@@ -5,9 +5,8 @@ Authors: vvauted
 -/
 import Examples.Language.Program
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInputResources
-import Complexity.Computability.Ram.Compiler.Language.Program.Packing
+import Complexity.Computability.Ram.Compiler.Language.Program.Asymptotics
 import Complexity.Computability.Ram.Compiler.Language.Program.Time
-import Complexity.Computability.Ram.Compiler.Language.Program.Uncurry
 import Complexity.Computability.Ram.Compiler.Language.Program.WrapperTactic
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendCost
 
@@ -29,22 +28,18 @@ namespace Complexity.Examples.TypedProgram
 
 open Language Program Ram.LanguageCompiler
 
-private abbrev inputPacking := program_packing% append
+private def appendCost (size : Nat) : { bound : Nat //
+    ∀ (input : AppendInput) (w limit : Nat), input.left.size + input.right.size = size →
+      StmtArenaCostBound append.source w limit 3 (append.source.body append.fn)
+        ⟨append.args input, Input.heap input⟩ bound } :=
+  ⟨_, by
+    intro input w limit sized
+    have contents := Program.arrayPair_contents input.left input.right
+    have bounded := BufferCopy.append_costBound input.left input.right w limit
+    rw [sized] at bounded
+    program_wrapper_cost [bounded]⟩
 
-private abbrev importedAppend :=
-  NativeAppend.Source.imports.Complexity.Language.Buffer.Copy.map.toFun Buffer.Copy.appendId
-
-private abbrev importedNative :=
-  (SignatureMap.appendRight
-    [Program.Packing.signature [.buffer .nat, .buffer .nat] (.buffer .nat)]
-    NativeAppend.Source.signatures).toFun NativeAppend.Source.appendId
-
-private def nativeBodyBound (n : Nat) : Nat :=
-  Program.Uncurry.callBound NativeAppend.Source.program importedAppend
-    (.buffer .nat) (.buffer .nat) (BufferCopy.appendBodyBound n) + 2
-
-private def appendBodyBound (n : Nat) : Nat :=
-  inputPacking.callBound append.source importedNative (nativeBodyBound n)
+private def appendBodyBound (size : Nat) : Nat := (appendCost size).val
 
 private theorem append_measured (input : AppendInput) (w : Nat)
     (admitted : Program.width 1 input ≤ w) :
@@ -62,25 +57,14 @@ private theorem append_costBound (input : AppendInput) (w limit : Nat) :
     StmtArenaCostBound append.source w limit 3 (append.source.body append.fn)
       ⟨append.args input, Input.heap input⟩
       (appendBodyBound (input.left.size + input.right.size)) := by
-  have contents := Program.arrayPair_contents input.left input.right
-  unfold appendBodyBound nativeBodyBound
-  program_wrapper_cost [BufferCopy.append_costBound input.left input.right w limit]
+  exact (appendCost _).property input w limit rfl
 
 private theorem appendBodyBound_linear :
     Asymptotics.IsBigO Filter.atTop (fun n => (appendBodyBound n : ℝ))
       (fun n : Nat => (n : ℝ)) := by
-  have constant (c : Nat) : Asymptotics.IsBigO Filter.atTop
-      (fun _ : Nat => (c : ℝ)) (fun n : Nat => (n : ℝ)) :=
-    (Asymptotics.isLittleO_const_id_atTop (c : ℝ)).isBigO.natCast_atTop
-  have bounded := ((BufferCopy.isBigO_appendBodyBound.add
-    (constant (Program.Uncurry.callBound NativeAppend.Source.program importedAppend
-      (.buffer .nat) (.buffer .nat) 0))).add (constant 2)).add
-    (constant (inputPacking.callBound append.source importedNative 0))
-  convert bounded using 1
-  funext n
-  simp only [appendBodyBound, nativeBodyBound]
-  rw [Program.Packing.callBound_eq, Program.Uncurry.callBound_eq]
-  simp only [Nat.cast_add, Nat.cast_ofNat]
+  unfold appendBodyBound appendCost
+  program_time_asymptotics [BufferCopy.isBigO_appendBodyBound,
+    (Asymptotics.isLittleO_const_id_atTop (1 : ℝ)).isBigO.natCast_atTop]
 
 /-- The actual high-level record program, including its packing entry, has
 uniform linear word-RAM time on all inputs, with no finite-capacity precondition. -/
@@ -93,6 +77,7 @@ theorem append_timeO :
     exact append_measured input w admitted
   · intro input _ w _
     exact append_costBound input w _
-  · exact Program.isBigO_invocationBound_linear append appendBodyBound_linear
+  · program_time_asymptotics [appendBodyBound_linear,
+      (Asymptotics.isLittleO_const_id_atTop (1 : ℝ)).isBigO.natCast_atTop]
 
 end Complexity.Examples.TypedProgram

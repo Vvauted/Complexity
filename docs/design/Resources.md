@@ -78,6 +78,10 @@ execution relation. `FunctionCostBound.of_stmt` adds the returning-body wrapper
 once; `callCost` still comes from the actual calling convention. The proved
 `callCost_eq_add` separates the body count from that fixed generated overhead,
 keeping frame and return layouts out of recursive arithmetic proofs.
+For allocating bodies, `FunctionArenaCostBound.of_stmt` lifts an existing
+statement certificate over the same execution and readiness, adding the function
+wrapper once. Three allocating-List leaf cost proofs use this rule without
+unpacking execution witnesses or restating the wrapper overhead.
 
 The scalar consumer now uses `ram_source_cost` to compose these rules. Its uniform branch bound
 does not need the helper's mathematical result; a result-dependent continuation
@@ -253,16 +257,30 @@ program. The source-copy loop contracts supply the existing invariant and
 termination reasoning. Independent arena cost rules account for actual output
 initialization and both copies. Shared `Uncurry` and `Packing` rules add the
 generated field projections, entry assembly, calls and returns; the time
-publication rule adds the actual outer invocation and halt. The packing used
-in the proof is read from the generated program, not separately reconstructed.
+publication rule adds the actual outer invocation and halt. The shared
+`program_wrapper_cost` pass follows the actual generated body and composes these
+rules, without consumer-written packing, uncurrying or import-index formulas.
+For each mathematical size, it determines one `Nat` budget before the concrete
+input, word width and heap limit are introduced. Only the supplied leaf cost
+certificate needs its input-size equality rewritten to that fixed size.
 
 One input-independent width constant establishes code and fixed-depth stack
 capacity, while the input's extra bit provides room for the output and exact
 cell values. The theorem quantifies over all input arrays and every admitted
 width; capacity is not a mathematical input precondition. Its asymptotic relation
-is mathlib's `IsBigO`. Resource-certificate composition is still explicit in the
-compiled consumer; generating these structural combinations for general native
-programs remains an automation task, not a missing execution or cost connection.
+is mathlib's `IsBigO`. Operation certificates, size facts, ranges and capacity
+remain explicit; structural wrapper composition and its uniform budget are
+generated. General native resource inference remains an automation task, not a
+missing execution or cost connection.
+
+`program_time_asymptotics` composes supplied mathlib `IsBigO` leaves through Nat
+addition, maxima, constant multiples, actual `callCost` and `invocationBound`.
+It reuses the proved call-overhead equations, not new instruction prices.
+Constant absorption requires a supplied `1 =O(growth)` proof; growth need not be
+linear. The append consumer checks both its inferred budget and complete
+asymptotic composition without changing the public statement. This automates
+cost-expression algebra, not algorithmic loop/recurrence bounds, capacity or
+termination.
 
 Keep three layers distinct: mathematical behavior; resource arguments over the
 same source implementation; and a concrete backend adequacy theorem. Ordinary

@@ -94,9 +94,9 @@ theorem push_fold_costBound (w heapLimit : Nat) :
       ListReducer.Source.program ListReducer.Source.pushId rfl
       (Representation.list .nat) (fun _ _ => True)
       w heapLimit 1 (fun _ _ => pushBodySteps + 2) := by
-  rintro ⟨mathematical, accumulator, head⟩ heap _ finish value execution
-    cursor finalCursor ready steps cost
-  exact Nat.add_le_add_right (pushCost.property w heapLimit _ execution ready cost) 2
+  apply FunctionArenaCostBound.of_stmt
+  rintro ⟨mathematical, accumulator, head⟩ heap _
+  exact pushCost.property w heapLimit _
 
 /-- The fold's complete callable-body bound is affine in the traversed list
 length. Its coefficient uses the actual relocated callback and compiler costs. -/
@@ -294,11 +294,10 @@ theorem reverseAppend_costBound (w heapLimit length : Nat) :
         (Representation.list .nat).Rel input.1 input.2.2.1 heap ∧
         (Representation.list .nat).Rel input.2.1 input.2.2.2 heap)
       w heapLimit 3 (fun _ => reverseAppendBodyBound length + 2) := by
+  apply FunctionArenaCostBound.of_stmt
   rintro ⟨values, tailValues, root, tail⟩ heap ⟨lengthEq, observed, tailObserved⟩
-    finish value execution cursor finalCursor ready steps cost
-  exact Nat.add_le_add_right
-    ((reverseAppendCost length).property w heapLimit values tailValues root tail heap
-      lengthEq observed tailObserved execution ready cost) 2
+  exact (reverseAppendCost length).property w heapLimit values tailValues root tail heap
+    lengthEq observed tailObserved
 
 /-- Infer the actual `reverse` wrapper's body bound from its call to
 `reverseAppend`. Constructing its empty tail, returning the result and the
@@ -328,11 +327,9 @@ theorem reverse_costBound (w heapLimit length : Nat) :
       (fun input heap => input.1.length = length ∧
         (Representation.list .nat).Rel input.1 input.2 heap)
       w heapLimit 4 (fun _ => (reverseCost length).val + 2) := by
+  apply FunctionArenaCostBound.of_stmt
   rintro ⟨values, root⟩ heap ⟨lengthEq, observed⟩
-    finish value execution cursor finalCursor ready steps cost
-  exact Nat.add_le_add_right
-    ((reverseCost length).property w heapLimit values root heap lengthEq observed
-      execution ready cost) 2
+  exact (reverseCost length).property w heapLimit values root heap lengthEq observed
 
 /-- The native reverse wrapper composes its existing measured callee directly.
 Its returned root and real intermediate heap remain available for a later fold,

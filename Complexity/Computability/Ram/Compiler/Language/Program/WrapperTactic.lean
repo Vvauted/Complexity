@@ -26,6 +26,11 @@ environment or its ordinary right-associated value tuple is reconstructed and
 checked against the certificate's argument function. Mathematical data are not
 decoded from pointers, and arbitrary resource indices are not guessed.
 
+An unspecified bound is inferred directly from the structural cost rules. A
+witness introduced before the input and width binders stays uniform in them;
+only the supplied operation budget may depend on the chosen mathematical size.
+An explicitly supplied bound retains the separate numerical comparison.
+
 The passes reuse the existing arena proof rules and compiler costs. They do not
 add an interpreter, synthesize mathematical invariants, or infer resource facts
 from the desired answer. Input ranges, current-heap preconditions and numerical
@@ -390,10 +395,11 @@ elab_rules : tactic
             pure ({ proof, index := some index } : CostCertificate)
         | `(wrapperCostCertificate| $proof:term) => pure ({ proof } : CostCertificate)
         | _ => throwUnsupportedSyntax
-      withMainContext do
+      let inferBound ← withMainContext do
         let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
         unless target.isAppOf ``Ram.LanguageCompiler.StmtArenaCostBound do
           throwError "program_wrapper_cost expects a statement cost goal"
+        if target.getAppArgs.back!.isMVar then return true
         for certificate in parsed do
           let proof ← Term.elabTerm certificate.proof none
           let type ← instantiateMVars (← inferType proof)
@@ -401,7 +407,9 @@ elab_rules : tactic
             if let some fn := bodyFunction? type.getAppArgs[5]! then
               if let some embedding ← findEmbedding? type.getAppArgs[2]! target.getAppArgs[1]! then
                 recordCosts embedding fn
-      applyCostRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.mono))
+        return false
+      unless inferBound do
+        applyCostRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.mono))
       Ram.LanguageCompiler.Tactic.onGoals (cost parsed)
 
 end Complexity.Program.WrapperTactic

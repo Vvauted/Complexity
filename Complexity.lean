@@ -207,6 +207,7 @@ import Complexity.Computability.Ram.Compiler.Language.Program
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayFunction
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInputResources
+import Complexity.Computability.Ram.Compiler.Language.Program.Asymptotics
 import Complexity.Computability.Ram.Compiler.Language.Program.Capacity
 import Complexity.Computability.Ram.Compiler.Language.Program.Capacity.Polynomial
 import Complexity.Computability.Ram.Compiler.Language.Program.Deriving
