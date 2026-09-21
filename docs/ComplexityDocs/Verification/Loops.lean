@@ -7,6 +7,7 @@ import Complexity
 import Examples.Language.Factorial
 import Examples.Language.FactorialCompiled
 import Examples.Language.LinkedList
+import Examples.Language.LinkedListCompiled
 import Examples.Language.ScalarCompiled
 import Examples.Language.Traversal
 import Examples.Language.TraversalCompiled
@@ -379,14 +380,30 @@ For finite ranges,
 [`while_range_rel`](##Ram.LanguageCompiler.StmtArenaCostBound.while_range_rel)
 reuses the source `guardRel`/`bodyRel` for normal rounds and direct function
 returns. The body budget includes the whole actual iteration, including any
-cursor increment executed; local-pending completion has a different final guard
-and is not covered. Readiness and capacity remain separate obligations.
+cursor increment executed. Local-pending completion instead uses
+[`while_range_completion_rel`](##Ram.LanguageCompiler.StmtArenaCostBound.while_range_completion_rel):
+the saved result leaves the body normally and exits through the real false guard.
+The bound includes that guard's cost plus the normal-round and false-exit
+overheads `10 + 11`, rather than treating the result as a function return.
+For uniform guard and whole-body certificates,
+[`while_range_completion_rel_linear`](##Ram.LanguageCompiler.StmtArenaCostBound.while_range_completion_rel_linear)
+uses positive stride, `Std.Legacy.Range.size` and the existing `whileLinearBound`
+to discharge the linear potential inequalities. The uniform guard certificate
+covers both running and stopped paths; component bounds may be supplied by
+`ram_source_arena_cost`. These are bounds on the actual loop, not complete
+function RAM theorems; readiness and capacity remain separate obligations.
+The existing allocating
+[`prependRange` consumer](##Complexity.Language.Examples.LinkedList.NativeRange.prependRange_loop_costBound)
+combines its generated round contracts with inferred guard/body bounds this way;
+it supplies neither a second loop induction nor register-level proofs.
 Eligible nonrecursive represented range sites expose `stateRel` and
 `guard_rel`/`body_rel`, or their `_preserving` variants, under the actual source
 loop. Correspondence reuses the relation and named proofs without regenerating
 the body proof. Lean's closure retains captures, the initial heap, representation
-premises and actual pending-slot conditions. Recursive and shared-continuation
-proofs remain local; eligibility is conservative, including after value branches.
+premises and actual pending-slot conditions. The generated `Site.pending` names
+the real slot for the running premise, without a handwritten lexical position.
+Recursive and shared-continuation proofs remain local; eligibility is
+conservative, including after value branches.
 No new user syntax is required. These are low-level contracts whose closure
 parameters still need a canonical consumer interface, not an automatic named
 arena-cost entry.

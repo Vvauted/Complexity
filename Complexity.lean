@@ -102,6 +102,8 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Loop
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Models
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Node
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Range
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Range.Completion
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Range.Uniform
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostTactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Execution
 import Complexity.Computability.Ram.Compiler.Language.Arena.ExecutionCost

@@ -4,6 +4,9 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Examples.Language.LinkedList
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Range.Uniform
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostTactic
+import Complexity.Computability.Ram.Compiler.Language.List.Cons
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.Scalar
 import Complexity.Computability.Ram.Compiler.Language.List.Fold.Native
 import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
@@ -18,6 +21,10 @@ fold interfaces; no second callback implementation or register proof is needed.
 The range condition remains separate from mathematical correctness.
 The final theorem compiles the actual `Native.Source.sumFrom` caller, including
 its imported fold call and its own outer invocation, return and halt.
+
+The allocating finite-range consumer reuses its generated single-round
+correspondence and inferred component budgets. Its theorem bounds the actual
+loop; it does not supply the enclosing function's arena readiness or capacity.
 -/
 
 namespace Complexity.Language.Examples.LinkedList
@@ -242,5 +249,76 @@ theorem sumFrom_execute {w heapLimit : Nat} {placement : Nat → Ram.Word w}
     (sumFrom_realizable launch.positive values).execute_le (sumFrom_total values)
       (sumFrom_costBound launch.positive values) launch ⟨observed, fits⟩ observed ⟨observed, fits⟩
   exact ⟨outcome, result.1, result.2, outcome.bodySteps_le bounded, bounded⟩
+
+namespace NativeRange
+
+/-- A uniform bound for both the running and stopped paths of the actual range
+guard, inferred from its source instructions. -/
+def prependRangeGuardCost : { bound : Nat // ∀ w heapLimit depth initial,
+    StmtArenaCostBound RangeNative.Source.program w heapLimit (depth + 1)
+      RangeNative.Source.prependRange_loop1.Guard initial bound } := by
+  ram_source_arena_cost
+
+/-- The whole range body includes its linked cons call and cursor update.
+The shared cons certificate supplies the allocating operation's cost. -/
+def prependRangeBodyCost : { bound : Nat // ∀ w heapLimit depth initial,
+    StmtArenaCostBound RangeNative.Source.program w heapLimit (depth + 1)
+      RangeNative.Source.prependRange_loop1.Body initial bound } := by
+  ram_source_arena_cost [(Ram.LanguageCompiler.List.Cons.arenaCostBound .nat _ _ _)
+    via RangeNative.Source.imports.RangeNative.Operations.consNat.embedding]
+
+/-- The existing source round contracts compose inferred uniform bounds into a
+linear bound for this same allocating loop. The running condition uses the
+named completion view, not a private lexical position. No second traversal,
+register proof or hand-written potential inequality is needed. Readiness and
+capacity remain separate, as does the enclosing function's wrapper cost. -/
+theorem prependRange_loop_costBound
+    (w heapLimit depth count head : Nat) (tail : List Nat)
+    (rawTail : Option (NodeRef .nat)) (initialHeap : Heap)
+    (index : Nat) (state : List Nat × List Nat × Nat × Nat)
+    (locals : RangeNative.Source.prependRange_loop1.Locals) (heap : Heap)
+    (related : RangeNative.Source.prependRange_loop1.stateRel
+      count head rawTail initialHeap index state locals heap)
+    (running : RangeNative.Source.prependRange_loop1.pending locals = none)
+    (inputObserved : (Representation.list .nat).Rel tail rawTail initialHeap) :
+    StmtArenaCostBound RangeNative.Source.program w heapLimit (depth + 1)
+      RangeNative.Source.prependRange_loop1.Code
+      ⟨RangeNative.Source.prependRange_loop1.View.symm locals, heap⟩
+      (StmtCostBound.whileLinearBound prependRangeGuardCost.val prependRangeBodyCost.val
+        (count - index)) := by
+  suffices bounded : StmtArenaCostBound RangeNative.Source.program w heapLimit (depth + 1)
+      RangeNative.Source.prependRange_loop1.Code
+      ⟨RangeNative.Source.prependRange_loop1.View.symm locals, heap⟩
+      (StmtCostBound.whileLinearBound prependRangeGuardCost.val prependRangeBodyCost.val
+        ({ start := index, stop := count, step := 1, step_pos := Nat.zero_lt_one } :
+          Std.Legacy.Range).size) by
+    simp only [Std.Legacy.Range.size, Nat.add_sub_cancel, Nat.div_one] at bounded
+    exact @bounded
+  apply StmtArenaCostBound.while_range_completion_rel_linear
+    (τ := .option (.node .nat))
+    (view := RangeNative.Source.prependRange_loop1.View)
+    (program := RangeNative.Source.program)
+    (guard := RangeNative.Source.prependRange_loop1.Guard)
+    (body := RangeNative.Source.prependRange_loop1.Body)
+    (stoppedGuard := RangeNative.Source.prependRange_loop1.guard_completed)
+    (stop := count) (stride := 1) (positive := Nat.zero_lt_one)
+    (stateRel := RangeNative.Source.prependRange_loop1.stateRel count head rawTail initialHeap)
+    (resultRep := Representation.ofEmbedding
+      (Function.Embedding.refl (Value (.option (.node .nat)))))
+    (step := fun _ (current : List Nat × List Nat × Nat × Nat) =>
+      (none, (current.2.2.1 :: current.1, current.2.1, current.2.2.1, current.2.2.2)))
+    (guardRel := RangeNative.Source.prependRange_loop1.guard_rel count head rawTail initialHeap)
+    (bodyRel := RangeNative.Source.prependRange_loop1.body_rel
+      count head tail rawTail initialHeap inputObserved)
+    (guardBound := prependRangeGuardCost.val) (bodyBound := prependRangeBodyCost.val)
+    (guardCost := fun actual current => prependRangeGuardCost.property w heapLimit depth
+      ⟨RangeNative.Source.prependRange_loop1.View.symm actual, current⟩)
+    (bodyCost := fun actual current => prependRangeBodyCost.property w heapLimit depth
+      ⟨RangeNative.Source.prependRange_loop1.View.symm actual, current⟩)
+    (start := index) (mutable := state) (locals := locals) (heap := heap)
+  · exact related
+  · simpa only [RangeNative.Source.prependRange_loop1.pending_eval] using running
+
+end NativeRange
 
 end Complexity.Language.Examples.LinkedList

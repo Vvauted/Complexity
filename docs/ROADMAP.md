@@ -231,9 +231,15 @@ environment encodings or repeating source facts in a second resource proof.
    `remainingCost + 17` bound without repeated execution transport.
    `while_range_rel` reuses the range's `guardRel`/`bodyRel` for normal rounds and
    direct function returns; its body budget covers the whole actual iteration.
-   Saved local completion is outside that rule. Eligible nonrecursive range sites
+   Saved local completion instead uses `while_range_completion_rel`, retaining
+   its actual final false guard and the `10 + 11` control overhead. The uniform
+   `while_range_completion_rel_linear` combines supplied guard/body bounds with
+   `Std.Legacy.Range.size` and the existing `whileLinearBound`; no handwritten
+   linear potential is needed. These remain loop cost bounds, not complete
+   function RAM or readiness guarantees. Eligible nonrecursive range sites
    expose `stateRel` and `guard_rel`/`body_rel` (or preserving variants), reused
-   by correspondence.
+   by correspondence. The generated `Site.pending` names the actual slot in the
+   running premise.
    Recursive and shared-continuation proofs remain local. These low-level
    contracts still need a canonical consumer interface and an automatic named
    arena-cost entry; exporting proofs alone does not complete that connection.
