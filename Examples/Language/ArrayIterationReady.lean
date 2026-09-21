@@ -9,6 +9,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Tactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.Loop.Models
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.LocalsTactic
+import Complexity.Computability.Ram.Compiler.Language.Representation
 
 /-!
 # Cumulative allocation for the existing array-record loop
@@ -118,6 +119,22 @@ theorem invariant_step {w heapLimit cursor : Nat} {model : Model}
       at reserved
     omega
 
+/-- The current mathematical record has word-sized fields; any actual observation
+inherits these ranges through the shared representation rules. -/
+theorem invariant_state_fits {w heapLimit cursor : Nat} {model : Model}
+    (valid : invariant w heapLimit model cursor) :
+    RepresentationFits state_representation w (model_state model) := by
+  have sizeFits := valid.2.2.1
+  have copiesFits := valid.2.1
+  apply RepresentationFits.comap
+  apply RepresentationFits.prod
+  · apply RepresentationFits.array
+    change (model_state model).values.size < 2 ^ w
+    omega
+  · apply RepresentationFits.ofEmbedding
+    change (model_state model).copies < 2 ^ w
+    omega
+
 /-- The actual guard does not allocate; its scalar comparison uses the represented count. -/
 theorem guard_measured {w heapLimit cursor : Nat}
     (model : Model) (locals : Locals) (heap : Heap)
@@ -140,6 +157,8 @@ theorem body_measured {w heapLimit cursor : Nat} (positive : 0 < w)
       (fun _ control finalCursor _ => control = .normal ∧
         finalCursor = cursor + (model_state model).values.size + (model_chunk model).size)
       ⟨View.symm locals, heap⟩ cursor := by
+  have stateFits := RepresentationFits.valueFits (invariant_state_fits valid)
+    (model_rel_state related)
   obtain ⟨remainingFits, copiesFit, sizeFit, chunkSizeFit, valuesFit, chunkFit, space⟩ := valid
   change decide (0 < model_remaining model) = true at active
   have activeCount : 0 < model_remaining model := of_decide_eq_true active
@@ -148,8 +167,8 @@ theorem body_measured {w heapLimit cursor : Nat} (positive : 0 < w)
   have leftObserved : locals.2.1.1.Contents heap (model_state model).values := stateObserved.1
   have copiesEq : (model_state model).copies = locals.2.1.2 := stateObserved.2
   have remainingEq : model_remaining model = locals.1 := model_rel_remaining related
-  have leftSize : (model_state model).values.size = locals.2.1.1.length := leftObserved.size_eq
-  have rightSize : (model_chunk model).size = locals.2.2.2.1.length := chunkObserved.size_eq
+  have chunkDescriptorFits := RepresentationFits.valueFits
+    (RepresentationFits.array .nat chunkSizeFit) chunkObserved
   have roundSizeFits : (model_state model).values.size + (model_chunk model).size < 2 ^ w := by
     have multiple : (model_chunk model).size ≤
         model_remaining model * (model_chunk model).size := by
@@ -162,9 +181,6 @@ theorem body_measured {w heapLimit cursor : Nat} (positive : 0 < w)
     rw [Nat.sub_add_cancel activeCount] at reserveStep
     rw [reserveStep] at space
     omega
-  have leftFits : locals.2.1.1.length < 2 ^ w := by omega
-  have rightFits : locals.2.2.2.1.length < 2 ^ w := by omega
-  have currentCopiesFit : locals.2.1.2 < 2 ^ w := by omega
   have nextCopiesFit : locals.2.1.2 + 1 < 2 ^ w := by omega
   have currentRemainingFit : locals.1 < 2 ^ w := by omega
   have appended := BufferCopy.append_arenaMeasured (w := w) (heapLimit := heapLimit)
@@ -267,23 +283,12 @@ theorem function_measured {w heapLimit cursor : Nat} (positive : 0 < w)
           simp_all [modelRel, mkModel, state_representation]) execution
         (by cases control <;> simp_all [Control.Satisfies]))
   have countFits : count < 2 ^ w := valid.1
-  have sizeFits : initialValue.values.size + count * chunkValues.size < 2 ^ w := valid.2.2.1
-  have copiesFits : initialValue.copies + count < 2 ^ w := valid.2.1
-  have initialSize : initialValue.values.size = initial.1.length := initialObserved.1.size_eq
-  have initialCopies : initialValue.copies = initial.2 := initialObserved.2
-  have initialLengthFits : initial.1.length < 2 ^ w := by omega
-  have initialCopiesFits : initial.2 < 2 ^ w := by omega
+  have initialFits := RepresentationFits.valueFits (invariant_state_fits valid) initialObserved
   ram_source_arena_step
   apply measured.mono_post
   rintro after control finalCursor steps ⟨cursorEq, rfl, finalModel, related, finalValid, _⟩
-  have finalObserved := model_rel_state related
-  have finalSize : (model_state finalModel).values.size =
-      (View after.locals).2.1.1.length := finalObserved.1.size_eq
-  have finalCopies : (model_state finalModel).copies = (View after.locals).2.1.2 := finalObserved.2
-  have finalSizeFits := finalValid.2.2.1
-  have finalCopiesFits := finalValid.2.1
-  have returnedLengthFits : (View after.locals).2.1.1.length < 2 ^ w := by omega
-  have returnedCopiesFits : (View after.locals).2.1.2 < 2 ^ w := by omega
+  have finalFits := RepresentationFits.valueFits (invariant_state_fits finalValid)
+    (model_rel_state related)
   ram_source_locals ArrayRangeNative.Source.repeatAppend_loop1 at *
   ram_source_arena_step
 

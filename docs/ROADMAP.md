@@ -270,11 +270,14 @@ environment encodings or repeating source facts in a second resource proof.
    retaining the real launch and capacity premises. Old arrays are not reclaimed;
    this is not peak-live space or an input-loading bound. The existing structural
    arena pass now composes this consumer's surrounding bindings, sequence and
-   return, without handwritten environments or execution cases. Extracting loop
-   totality still uses the known two `letPrim` bindings and sequence; field
-   projections still connect representations to `ValueFits`. General automation
-   of those steps, allocating-loop setup and source-facing space
-   contracts remain work. Recursive or shared-continuation
+   return, without handwritten environments or execution cases. `RepresentationFits`
+   composes supplied embedding, array, product and view certificates; this consumer
+   applies its mathematical record certificate to actual entry, round and return
+   observations instead of repeating descriptor/field range projections.
+   Extracting loop totality still uses the known two `letPrim` bindings and
+   sequence; scalar-update equations and algorithmic ranges remain supplied.
+   General source-totality transport, further layouts, allocating-loop setup and
+   source-facing space contracts remain work. Recursive or shared-continuation
    proofs without published contracts remain outside the named range entry.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
    published bounds.

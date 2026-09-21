@@ -42,6 +42,20 @@ the shared refinement contract without a new execution induction or an inverse
 on invalid raw values. Constructor/projection correspondence remains a compiler
 obligation; an encoding declaration alone cannot justify a native operation.
 
+For word-range transport, the backend's
+[`RepresentationFits`](##Ram.LanguageCompiler.RepresentationFits) certificate
+says that every actual value related to the mathematical value at its current
+heap satisfies `ValueFits`. Its one-way `ofEmbedding`, `array`, `prod` and
+`comap` rules compose supplied range facts for existing representations; they
+do not select a canonical handle, add an encoder or establish that a represented
+value exists. Apply the certificate to a real observation with
+[`RepresentationFits.valueFits`](##Ram.LanguageCompiler.RepresentationFits.valueFits)
+as `RepresentationFits.valueFits certificate observed`.
+The array rule needs only a mathematical length bound and establishes descriptor
+`ValueFits`, not element ranges, rooting, address bounds or allocation capacity.
+Products use both observations at the same heap and permit shared storage.
+These are explicit proved certificates, not typeclass inference or new syntax.
+
 ## Contiguous arrays and copying
 
 The [buffer copy library](##Complexity.Language.Buffer.Copy) contains actual

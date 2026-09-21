@@ -232,6 +232,7 @@ import Complexity.Computability.Ram.Compiler.Language.Realization.Range
 import Complexity.Computability.Ram.Compiler.Language.Realization.WP
 import Complexity.Computability.Ram.Compiler.Language.Scalar
 import Complexity.Computability.Ram.Compiler.Language.Scalar.Int
+import Complexity.Computability.Ram.Compiler.Language.Representation
 import Complexity.Computability.Ram.Compiler.Language.RepresentedFunction
 import Complexity.Computability.Ram.Compiler.Language.Simulation
 import Complexity.Computability.Ram.Compiler.Language.Tactic

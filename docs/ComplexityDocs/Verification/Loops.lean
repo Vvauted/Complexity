@@ -488,8 +488,13 @@ and return; `body_ready` follows by `at_exec`. No handwritten environments or
 execution-case analysis are needed, and the program and published premises/bounds
 are unchanged.
 Extracting loop totality still depends on the known two `letPrim` bindings and
-sequence. Word-range proofs still project mathematical representations into
-the required `ValueFits` fields; neither step is generally automated.
+sequence. The mathematical record certificate
+[`invariant_state_fits`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.invariant_state_fits)
+now composes the shared `RepresentationFits` rules and applies to actual entry,
+round and return observations; the chunk's descriptor uses the array rule.
+`ram_source_arena_step` consumes the resulting `ValueFits` facts without repeated
+descriptor/field projections. Scalar-update equations, algorithmic ranges,
+element bounds and capacity still need their original proofs.
 [`execute`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.execute)
 combines them with the existing cost certificate through `ArenaMeasured.execute_le`.
 It retains `FunctionArenaLaunch` word, code, stack, rooted-input and `ArenaRep`
@@ -499,8 +504,8 @@ The same outcome has exact cursor growth `reserve` and a represented output
 with `output.copies = initialValue.copies + r`; this is the original counter
 contract, not a complete expected-array formula. Input loading, `Program.TimeO`
 and peak-live space are not established by this theorem. General source-totality
-and representation-to-range transport, allocating-loop setup and source-facing
-space contracts remain work.
+transport, range certificates for further layouts, allocating-loop setup and
+source-facing space contracts remain work.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every
