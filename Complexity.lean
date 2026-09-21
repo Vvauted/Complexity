@@ -527,6 +527,7 @@ import Complexity.Language.Syntax.Represented.OperationDeclarations
 import Complexity.Language.Syntax.Represented.Preparation
 import Complexity.Language.Syntax.Represented.Statements
 import Complexity.Language.Syntax.Represented.Types
+import Complexity.Language.Syntax.Termination
 import Complexity.Language.Syntax.Types
 import Complexity.Language.Verification
 import Complexity.Language.Verification.Heap

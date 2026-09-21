@@ -69,6 +69,13 @@ private def completionRangeModel (captured : Array Binding)
       (fun ($nextState:ident : $stateSyntax) => $nextMutable)
       $iteration)
   let initialMutable ← mutableState captured initialModel.native
+  let running := mkIdent (← mkFreshUserName `running)
+  -- Instantiate the callback at the actual range index before elaborating its
+  -- recursive calls, retaining the range membership used for termination.
+  let appliedStep ← `(let $mutableName:ident : $mutableType := $running.2
+    Prod.map (id : Option $returnedType → Option $returnedType)
+      (fun ($nextState:ident : $stateSyntax) => $nextMutable)
+      $iteration)
   let nativeRange ← `(({
     start := $(startModel.native), stop := $(stopModel.native)
     step := $(strideModel.native), step_pos := by
@@ -76,8 +83,8 @@ private def completionRangeModel (captured : Array Binding)
         omega } : Std.Legacy.Range))
   let nativeResult ← `(let outcome := Id.run (forIn (m := Id) $nativeRange
       ((none, $initialMutable) : Option $returnedType × $mutableType)
-      (fun index running =>
-        let iteration : Option $returnedType × $mutableType := $mutableStep index running.2
+      (fun $stepIndex:ident $running:ident =>
+        let iteration : Option $returnedType × $mutableType := $appliedStep
         Option.elim iteration.1
           (pure (ForInStep.yield (none, iteration.2)))
           (fun returned => pure (ForInStep.done (some returned, iteration.2)))))

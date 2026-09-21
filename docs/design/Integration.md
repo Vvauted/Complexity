@@ -208,9 +208,9 @@ The current integration work has these concrete obligations:
   Fully modeled `if`/`Option` range bodies also support function-level return
   correspondence, including a checked two-level finite-range nest with an inner
   function return. Normal and function-returning ranges also compose self-calls
-  with descent from fixed captures. Index-dependent descent and broader
-  nested-loop models remain open. The distinct local-result
-  and function-return paths are described below.
+  with descent from fixed captures or the actual range bound. Broader nested-loop
+  and mixed local/function models remain open. The distinct local-result and
+  function-return paths are described below.
 - [x] Simplify the generated range's mathematical view to its mutable
   accumulator, closing over immutable captures. `List.foldl_hom` automatically
   connects it to the unchanged full source state. The existing List proofs use
@@ -323,12 +323,16 @@ completion range, a proof-local binding can share the primitive `forIn` result
 with the remaining continuation; actual payloads, locals and heaps are retained.
 This sharing introduces no executable binding or changed instruction cost.
 Normal and function-returning ranges also compose enclosing self-calls with
-descent from fixed captures.
+descent from fixed captures or the actual range bound.
 The native iteration instantiates its full mathematical state with `let` bindings;
 correspondence recovers immutable capture equality from actual fixed slots and
 `Representation.functional` at the current heap. Array observations still need
-a contents frame. Broader nested-loop combinations, mixed local/function
-completion, index-dependent recursive descent and full models of arbitrary heap
+a contents frame. Shared
+[termination preprocessing](../../Complexity/Language/Syntax/Termination.lean)
+uses Lean's `wf_preprocess` to supply the actual `index < stop` for recursive
+descent. Ordinary `foldl`/`forIn` equations expose no attached proof arguments;
+source control, heap effects and costs are unchanged. Broader nested-loop
+combinations, mixed local/function completion and full models of arbitrary heap
 mutation remain open. Generated model equations need not be minimally reduced.
 
 The proof preparer now follows actual branch continuations when composing
@@ -432,9 +436,8 @@ scope cleanup still checks those full locals before returning the visible view.
 General represented `while` now retains actual assignments, effectful guards
 and early function returns through the same source loop. The array-record
 consumer supplies a mathematical-state contract, not a total pure function.
-Mathematical range-view coverage for broader nested-loop combinations, mixed
-local/function completion and index-dependent recursive descent remains part of
-the integration gate.
+Mathematical range-view coverage for broader nested-loop combinations and mixed
+local/function completion remains part of the integration gate.
 A normal range view folds mutable locals and
 closes over fixed captures; a local-completion view also retains its payload.
 The function-return view instead retains the real returned control and heap.

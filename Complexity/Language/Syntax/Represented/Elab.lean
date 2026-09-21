@@ -9,6 +9,7 @@ import Complexity.Language.Syntax.Represented.Declarations
 import Complexity.Language.Syntax.Represented.ModelEquation
 import Complexity.Language.Syntax.Represented.Correspondence.While
 import Complexity.Language.Syntax.Represented.Correspondence.While.Completion
+import Complexity.Language.Syntax.Termination
 
 /-!
 # Elaboration of represented source programs

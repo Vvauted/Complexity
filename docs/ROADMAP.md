@@ -26,8 +26,8 @@ work and every remaining obligation. The outstanding work is:
   presenting them as separate recommended languages.
 - Complete remaining nested-loop combinations, especially mixtures of local
   and function completion. Normal and function-returning finite ranges support
-  self-calls with descent from fixed captures; index-dependent descent still needs
-  coverage on the same actual source loops.
+  self-calls whose descent follows from fixed captures or the actual range bound;
+  this does not cover every loop/recursion combination.
 - Generate mathematical-local guard/body interfaces from field representations;
   authors supply invariants, descent and genuine effect/range facts, not private
   slots, raw-environment transport or `Part` plumbing. Normal array-preserving
@@ -80,9 +80,9 @@ returns also have checked mathematical correspondence through actual return
 control, without local-completion slots. Automatic action correspondence and
 refinement are also checked for two nested finite ranges with an inner function
 return. Normal and function-returning finite ranges also have checked self-recursion
-with descent from fixed captures. Broader nested-loop combinations, mixed
-local/function completion, index-dependent recursive descent and full models of
-arbitrary heap mutation remain open; no new RAM bound follows from the model.
+with descent from fixed captures or the actual range bound. Broader nested-loop
+combinations, mixed local/function completion and full models of arbitrary heap
+mutation remain open; no new RAM bound follows from the model.
 The scoped while's resource proof reuses the visible guard/body contracts through
 a shared completion-aware readiness rule, without a second termination proof or
 manual `Part`/private-slot reconstruction. The same ranges, scratch capacity and
@@ -292,11 +292,12 @@ environment encodings or repeating source facts in a second resource proof.
    the batch result `(budget, (values.take (batches * budget)).reverse)`.
    The algorithm's mathematical identity remains a separate proof obligation.
    Normal and function-returning finite ranges also compose enclosing self-calls
-   whose decrease follows from fixed captures. Generated correspondence and
-   totality reuse the author's single termination argument at the actual
-   intermediate heap; model equations need not have a simplest normal form.
-   Broader nested-loop combinations, especially mixed local/function completion,
-   and index-dependent recursive descent remain follow-up work.
+   whose decrease follows from fixed captures or the actual range bound. Lean's
+   well-founded preprocessing exposes `index < stop` to the author's termination
+   proof; ordinary model equations remain `foldl`/`forIn`. Generated correspondence
+   reuses that argument at the actual intermediate heap; model equations need not
+   have a simplest normal form. Broader nested-loop combinations, especially
+   mixed local/function completion, remain follow-up work.
    Dependent bounds, recursion descent and algorithmic potentials remain
    mathematical obligations, not guessed annotations; no new RAM bound follows.
 3. Extend the represented native frontend from its checked scalar, List and
