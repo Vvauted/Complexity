@@ -42,8 +42,18 @@ private def closeValueChoice (slot : JoinSlot) (elements : Array (TSyntax `doEle
         | $second:term => $secondBody:doSeq)]
   | _ => throwError "a prepared value choice must retain its branch structure"
 
+/-- Instantiate the full state before elaborating recursive calls. A standalone
+callback over arbitrary captures would lose their connection to the enclosing
+function's termination measure, even when immediately applied to this state. -/
+private def rangeBodyAt (cursor initial : TSyntax `ident)
+    (stateType body index state : TSyntax `term) : TermElabM (TSyntax `term) :=
+  `(let $cursor:ident : Nat := $index
+    let $initial:ident : $stateType := $state
+    Id.run $body)
+
 private def completionRangeModel (captured : Array Binding)
-    (stateSyntax returnedType bodyNative : TSyntax `term)
+    (stateSyntax returnedType : TSyntax `term) (cursor initial : TSyntax `ident)
+    (body : TSyntax `term)
     (initialModel startModel stopModel strideModel : ValueModel) :
     TermElabM (TSyntax `term × TSyntax `term × TSyntax `term × TSyntax `term) := do
   let mutableType ← stateType (captured.filter (·.mutable)).toList
@@ -53,10 +63,11 @@ private def completionRangeModel (captured : Array Binding)
   let packedMutable ← packMutableState captured initialModel.native ⟨mutableName.raw⟩
   let embedding ← `(fun ($mutableName:ident : $mutableType) => $packedMutable)
   let nextMutable ← mutableState captured ⟨nextState.raw⟩
+  let iteration ← rangeBodyAt cursor initial stateSyntax body ⟨stepIndex.raw⟩ packedMutable
   let mutableStep ← `(fun ($stepIndex:ident : Nat) ($mutableName:ident : $mutableType) =>
     Prod.map (id : Option $returnedType → Option $returnedType)
       (fun ($nextState:ident : $stateSyntax) => $nextMutable)
-      ($bodyNative $stepIndex:ident $packedMutable))
+      $iteration)
   let initialMutable ← mutableState captured initialModel.native
   let nativeRange ← `(({
     start := $(startModel.native), stop := $(stopModel.native)
@@ -469,7 +480,7 @@ partial def sequence (names : DeclarationNames)
           Id.run $bodyTerm)
         let returnedType ← termOfExpr resultType.nativeType
         let (nativeResult, embedding, mutableStep, initialMutable) ←
-          completionRangeModel captured stateSyntax returnedType bodyNative
+          completionRangeModel captured stateSyntax returnedType cursor initial bodyTerm
             initialModel startModel stopModel strideModel
         let resultName := mkIdent (← mkFreshUserName `rangeValue)
         let resultRaw := mkIdent (← mkFreshUserName `rangeSource)
@@ -570,7 +581,8 @@ partial def sequence (names : DeclarationNames)
       let some initialModel := initialValue.model? | return ← sourceOnly
       let packedMutable ← packMutableState captured initialModel.native ⟨mutableName.raw⟩
       let embedding ← `(fun ($mutableName:ident : $mutableType) => $packedMutable)
-      let nextState ← `($bodyNative $stepIndex:ident $packedMutable)
+      let nextState ← rangeBodyAt cursor initial stateSyntax bodyTerm
+        ⟨stepIndex.raw⟩ packedMutable
       let nextMutable ← mutableState captured nextState
       let mutableStep ← `(fun ($mutableName:ident : $mutableType) ($stepIndex:ident : Nat) => $nextMutable)
       let initialMutable ← mutableState captured initialModel.native

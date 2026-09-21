@@ -186,9 +186,11 @@ private cursor and actual body during elaboration. Existing finite-iteration
 rules connect mathematical folds to source while execution; the remaining
 generator work must apply them to the same named loop, not introduce a separately
 called source implementation. General source control retains early returns.
-Automatic mathematical views for broader nested-range and mixed-completion
-combinations, and recursive calls inside ranges, remain separate coverage
-obligations, not consequences of a finite index set.
+Normal and function-returning finite ranges support self-calls whose decrease
+follows from fixed captures, reusing the native termination argument. Broader
+nested-range and mixed-completion combinations and index-dependent recursive
+descent remain separate coverage obligations, not consequences of a finite
+index set.
 Authors should not repeat library iteration or lowering proofs, and body calls
 must reuse their checked correspondences at the actual intermediate heap.
 
@@ -330,9 +332,18 @@ refinement are also checked for two nested finite ranges with an inner function
 return. These connect the generated model to source execution; algorithmic
 identities remain separate mathematical obligations. A private allocating List consumer
 also proves the batch result `(budget, (values.take (batches * budget)).reverse)`.
-Broader nested-loop combinations, general mixed local/function completion, recursive calls from a
-range and full models of arbitrary heap mutation remain open; source
-correspondence does not itself prove a RAM complexity bound.
+Normal and function-returning finite ranges also have checked enclosing self-calls
+with descent from fixed captures. A private normally continuing allocating-List
+consumer proves `List.replicate (width ^ depth) head ++ tail` by induction,
+with generated model, action correspondence, refinement and total source
+correctness. One native
+termination argument is reused; the algorithm's identity is not inferred.
+The function-returning recursive consumer checks its model equation, action
+correspondence, refinement and ordinary base equation, not a complete recursive
+result formula. Its generated model equation is not promised a simplest form.
+Broader nested-loop combinations, general mixed local/function completion,
+index-dependent recursive descent and full models of arbitrary heap mutation
+remain open. Source correspondence does not itself prove a RAM complexity bound.
 
 Supported typed `do`, `if` and Option/List `match` value bindings share generated
 state-carrying models and action correspondence for outer mutable bindings used

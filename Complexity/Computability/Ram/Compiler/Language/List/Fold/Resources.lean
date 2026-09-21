@@ -3,7 +3,8 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.List.Fold
+import Complexity.Computability.Ram.Compiler.Language.List.Fold.Ready
+import Complexity.Computability.Ram.Compiler.Language.List.Fold.CostBound
 
 /-!
 # Resource contracts for calling the shared list fold

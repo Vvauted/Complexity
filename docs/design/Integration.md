@@ -207,9 +207,10 @@ The current integration work has these concrete obligations:
   `while` with an explicit mathematical-state contract after each real append.
   Fully modeled `if`/`Option` range bodies also support function-level return
   correspondence, including a checked two-level finite-range nest with an inner
-  function return. Calls to the enclosing recursive function from a range and
-  broader nested-loop models remain open. The distinct local-result and
-  function-return paths are described below.
+  function return. Normal and function-returning ranges also compose self-calls
+  with descent from fixed captures. Index-dependent descent and broader
+  nested-loop models remain open. The distinct local-result
+  and function-return paths are described below.
 - [x] Simplify the generated range's mathematical view to its mutable
   accumulator, closing over immutable captures. `List.foldl_hom` automatically
   connects it to the unchanged full source state. The existing List proofs use
@@ -321,9 +322,14 @@ loop's fixed-coordinate equalities and reconstructs the actual locals. After a
 completion range, a proof-local binding can share the primitive `forIn` result
 with the remaining continuation; actual payloads, locals and heaps are retained.
 This sharing introduces no executable binding or changed instruction cost.
-Broader nested-loop combinations, especially mixed local/function completion,
-calls to the enclosing recursive function from a range and full models of
-arbitrary heap mutation remain outside this automatic mathematical-model path.
+Normal and function-returning ranges also compose enclosing self-calls with
+descent from fixed captures.
+The native iteration instantiates its full mathematical state with `let` bindings;
+correspondence recovers immutable capture equality from actual fixed slots and
+`Representation.functional` at the current heap. Array observations still need
+a contents frame. Broader nested-loop combinations, mixed local/function
+completion, index-dependent recursive descent and full models of arbitrary heap
+mutation remain open. Generated model equations need not be minimally reduced.
 
 The proof preparer now follows actual branch continuations when composing
 ranges, carrying their heap relations and frames. Further mixtures of local and
@@ -417,8 +423,8 @@ outside those markers. Only the selected arm runs, and raw `localJoin` placement
 and count are preserved. No partial Option extraction, default value or `Part.get`
 supplies a result. This path uses a heap-indexed relation, not a generated
 unchanged-heap exact equation. It does not supply general `while` models,
-arbitrary mutation, enclosing recursion from ranges or undeclared frames, and
-gives no new RAM cost bound.
+arbitrary mutation, arbitrary loop/recursion combinations or undeclared frames,
+and gives no new RAM cost bound.
 The existing nested-scratch worker also uses a plain value block. Its generated
 completion contracts expose source-visible locals and distinguish fallthrough
 from a local result. Actual execution frames reconstruct the compiler slots;
@@ -426,9 +432,10 @@ scope cleanup still checks those full locals before returning the visible view.
 General represented `while` now retains actual assignments, effectful guards
 and early function returns through the same source loop. The array-record
 consumer supplies a mathematical-state contract, not a total pure function.
-Mathematical range-view coverage for broader nested-loop combinations, including
-mixed local/function completion and calls to an enclosing recursive function,
-remains part of the integration gate. A normal range view folds mutable locals and
+Mathematical range-view coverage for broader nested-loop combinations, mixed
+local/function completion and index-dependent recursive descent remains part of
+the integration gate.
+A normal range view folds mutable locals and
 closes over fixed captures; a local-completion view also retains its payload.
 The function-return view instead retains the real returned control and heap.
 Each correspondence refers to the same named source loop, without adding source

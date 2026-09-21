@@ -384,6 +384,82 @@ private def rangeBodyFinish (range : RangeRegistration) (site : ActualRangeSite)
     exact ⟨$after, $(context.heap), $executed,
       ⟨$returnedObserved, $cursorObserved, $fixed:ident, $nextFrame⟩, $completedObserved⟩)]
 
+private def rangeCaptureNeedsContents : NativeType → Bool
+  | .array _ => true
+  | .prod left right => rangeCaptureNeedsContents left || rangeCaptureNeedsContents right
+  | .option payload => rangeCaptureNeedsContents payload
+  | .record _ layout _ => rangeCaptureNeedsContents layout
+  | .pure _ | .raw _ | .list _ => false
+
+/-- Recover immutable mathematical captures from observations of the same
+actual slots in the current heap. These facts are available to the function's
+original recursive descent proof; they do not assume an inverse representation. -/
+private def rangeImmutableFacts (range : RangeRegistration) (initialValue : Value)
+    (positions : Array Nat) (fixed : Array (Nat × TSyntax `term))
+    (arguments fields : Array (TSyntax `term))
+    (selected heap current frameShape : TSyntax `term)
+    (frameContents : Option (TSyntax `term)) (entryObserved : TSyntax `term) :
+    TermElabM (Array (TSyntax `tactic)) := do
+  let currentModel ← range.state.requireModel
+  let initialModel ← initialValue.requireModel
+  let entrySelected ← fieldsTerm (← positions.toList.mapM fun position =>
+    match arguments[position]? with
+    | some argument => pure argument
+    | none => throwError "an immutable range capture has no actual entry coordinate")
+  let relationName := range.state.relationName
+  let currentBinding := { range.state with model? := some {
+    currentModel with rawModel := selected, observation := .named relationName.getId } }
+  let entryBinding := { range.state with model? := some {
+    model := initialModel.model, rawModel := entrySelected
+    observation := .named relationName.getId } }
+  let entryName := mkIdent (← mkFreshUserName `rangeEntryObserved)
+  let stateType ← termOfExpr range.state.type.nativeType
+  let stateCore ← termOfExpr (coreTypeExpr range.state.type.coreTy)
+  let stateRepresentation ← termOfExpr range.state.type.representation
+  let currentRelations : Array RetainedObservation :=
+    #[⟨relationName.getId, range.state.type, ⟨relationName.raw⟩⟩]
+  let entryRelations : Array RetainedObservation :=
+    #[⟨relationName.getId, range.state.type, ⟨entryName.raw⟩⟩]
+  let mut facts := #[]
+  for binding in range.captured, index in [:range.captured.size] do
+    if binding.mutable then continue
+    -- Products, options and records reuse preservation of their fields.
+    -- A contents-observing array still requires the actual contents frame.
+    if rangeCaptureNeedsContents binding.type && frameContents.isNone then continue
+    let some position := positions[index]?
+      | throwError "an immutable range capture has no lexical slot"
+    let some (_, fixedFact) := fixed.find? (fun entry => entry.1 == position)
+      | throwError "an immutable range capture has no fixed source coordinate"
+    let some actual := fields[position]?
+      | throwError "an immutable range capture is outside its current source locals"
+    let some entry := arguments[position]?
+      | throwError "an immutable range capture has no actual entry coordinate"
+    let projection ← fieldProjection range.captured.size index ⟨range.state.name.raw⟩
+    let currentField ← value [currentBinding] projection (some binding.type)
+    let entryField ← value [entryBinding] projection (some binding.type)
+    let currentValue := (← currentField.requireModel).model
+    let entryValue := (← entryField.requireModel).model
+    let observedCurrent ← observationAt currentField current currentRelations
+    let observedEntry ← observationAt entryField heap entryRelations
+    let preserved ← preservation binding.type heap current frameShape frameContents
+    let nativeType ← termOfExpr binding.type.nativeType
+    let coreType ← termOfExpr (coreTypeExpr binding.type.coreTy)
+    let representation ← termOfExpr binding.type.representation
+    let representation ← `(($representation : Complexity.Language.Representation
+      $nativeType $coreType))
+    let equality := mkIdent (← mkFreshUserName `rangeImmutableEqual)
+    facts := facts.push (← `(tactic|
+      have $equality:ident : $currentValue = $entryValue := by
+        apply ($representation).functional (value := $entry) (heap := $current)
+        · have observed : ($representation).Rel $currentValue $actual $current := $observedCurrent
+          simpa only [$fixedFact:term] using observed
+        · exact $preserved (show ($representation).Rel $entryValue $entry $heap from $observedEntry)))
+  if facts.isEmpty then return #[]
+  return #[← `(tactic|
+    have $entryName:ident :
+        ($stateRepresentation : Complexity.Language.Representation $stateType $stateCore).Rel
+          $(initialModel.model) $entrySelected $heap := $entryObserved)] ++ facts
+
 /-- Prove the original named range in its full source coordinates. Iteration is
 only a mathematical view; body calls retain their actual control and heap. -/
 def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
@@ -535,7 +611,11 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
   let bodyFinish := rangeBodyFinish range site returnsFromFunction completionType?.isSome
     fields positions index cursorEqual strideEqual fixed strideModel
     completionCore completionRep frameShape frameContents preserveArrays fixedSimp pending
-  let mut bodyPrefix := #[]
+  let fixedCoordinates := fixedSlots.zip fixedFacts |>.map fun ((_, position), fact) =>
+    (position, fact)
+  let mut bodyPrefix ← rangeImmutableFacts range initialValue positions fixedCoordinates
+    argumentTerms fields selected heap ⟨current.raw⟩ frameShape
+    (if preserveArrays then some frameContents else none) entryObserved
   let mut bodyRelations : Array RetainedObservation := #[]
   if range.state.type.isIdentity then
     bodyPrefix := bodyPrefix ++ #[

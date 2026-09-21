@@ -145,8 +145,16 @@ returned-value-sensitive bound, and traversal checks actual heap/frame transport
 allocation-aware result: actual final placement/cursor and complete machine memory,
 with the known call depth retained. The scoped-workspace consumer now uses this
 shared result and its actual access-set bounds instead of assembling a large
-runner tuple. Concise loop-resource interfaces, further consumer migration,
-general live-space observations and problem-level composition remain unfinished.
+runner tuple. `ArenaMeasured.execute_le_of_bound` publishes a measured
+`steps + 2 ≤ bound` through the existing exact-count `execute_eq` rule, retaining
+the same typed outcome and independent source specification. That bound already
+includes function initialization; only the outer invocation and halt remain to
+be added. `execute_le` delegates to it after applying a separate structural bound.
+The fold's `execute_le` uses its bounded `arenaMeasured` and independent source
+`program_total` directly, without repeating callback relocation or runner-witness
+packaging. Existing ranges, capacity, reservations and costs remain unchanged.
+Concise loop-resource interfaces, further consumer migration, general live-space
+observations and problem-level composition remain unfinished.
 
 Local-return loops can lift the same finite source execution through
 `ArenaReady.while_completion_of_exec`. It consumes their visible guard/body

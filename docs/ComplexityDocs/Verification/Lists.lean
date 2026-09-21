@@ -242,6 +242,11 @@ combines a measured body and its structural bound with an independent
 `FunctionTotal` specification. It retains the same actual result, heap and cursor
 and adds initialization, outer call and halt once. The mathematical specification
 does not acquire a time-budget premise or select a different execution.
+If the measured postcondition already retains `steps + 2 ≤ bound`, use
+[`ArenaMeasured.execute_le_of_bound`](##Ram.LanguageCompiler.ArenaMeasured.execute_le_of_bound).
+This bound includes initialization; the rule reuses exact-count publication for
+the same typed outcome, adding only outer invocation overhead and halt.
+`execute_le` delegates to this rule after applying its separate cost certificate.
 
 When the measured body supplies an exact count, use
 [`ArenaMeasured.execute_eq`](##Ram.LanguageCompiler.ArenaMeasured.execute_eq)
@@ -300,8 +305,12 @@ rounds. The fold does not repeat its list or termination induction in the
 resource proof. Its
 [resource-only measured entry](##Ram.LanguageCompiler.List.Fold.arenaMeasured_of_ready)
 packages that same execution and actual count without a proposed time bound.
-The older bounded measured interface applies the independent cost certificate
-afterward. The native read-only
+The bounded measured interface applies the independent cost certificate afterward.
+[`List.Fold.execute_le`](##Ram.LanguageCompiler.List.Fold.execute_le) publishes
+that observation with the independent source `program_total` through
+`execute_le_of_bound`, without repeating callback relocation or runner-witness
+packaging. Its result, instruction and reservation bounds remain unchanged.
+The native read-only
 [realization entry](##Ram.LanguageCompiler.List.Fold.Native.realizable_of_resources)
 also needs no time bound; the existing scalar sum consumer uses it, while its
 separate cost proof still supplies the callback's instruction bound. Range and capacity arguments

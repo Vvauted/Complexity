@@ -25,8 +25,9 @@ work and every remaining obligation. The outstanding work is:
   `(native)` naming compatibility and the older `(pure)` preparer without
   presenting them as separate recommended languages.
 - Complete remaining nested-loop combinations, especially mixtures of local
-  and function completion, and calls to the enclosing recursive function from
-  ranges, using the same actual named source loops.
+  and function completion. Normal and function-returning finite ranges support
+  self-calls with descent from fixed captures; index-dependent descent still needs
+  coverage on the same actual source loops.
 - Generate mathematical-local guard/body interfaces from field representations;
   authors supply invariants, descent and genuine effect/range facts, not private
   slots, raw-environment transport or `Part` plumbing. Normal array-preserving
@@ -78,9 +79,10 @@ allocation for the mathematical summary. Fully modeled function-level finite-ran
 returns also have checked mathematical correspondence through actual return
 control, without local-completion slots. Automatic action correspondence and
 refinement are also checked for two nested finite ranges with an inner function
-return. Broader nested-loop combinations, mixed local/function completion,
-enclosing recursion from a range and full models of arbitrary heap mutation
-remain open; no new RAM bound follows from the model.
+return. Normal and function-returning finite ranges also have checked self-recursion
+with descent from fixed captures. Broader nested-loop combinations, mixed
+local/function completion, index-dependent recursive descent and full models of
+arbitrary heap mutation remain open; no new RAM bound follows from the model.
 The scoped while's resource proof reuses the visible guard/body contracts through
 a shared completion-aware readiness rule, without a second termination proof or
 manual `Part`/private-slot reconstruction. The same ranges, scratch capacity and
@@ -216,10 +218,13 @@ environment encodings or repeating source facts in a second resource proof.
    `1 =O(growth)` to absorb constants; algorithmic bounds, capacity and termination
    remain separate obligations.
    The two straight-line constructor wrappers retain their exact counts.
-   `ArenaMeasured.execute_le` shares publication with independent mathematical
-   specifications; `execute_eq` retains exact body and invocation counts in the
-   constructor-pair and selected-branch consumers. Known returned values no longer
-   need existential witness packaging in the structural pass. Indexed calls
+   `ArenaMeasured.execute_le_of_bound` publishes a retained `steps + 2 ≤ bound`
+   through `execute_eq`, preserving the same typed outcome; this bound already
+   includes initialization. `execute_le` uses that route for a separately supplied
+   cost certificate. Independent mathematical specifications remain separate;
+   `execute_eq` retains exact counts in the constructor-pair and selected-branch
+   consumers. Known returned values no longer need existential witness packaging
+   in the structural pass. Indexed calls
    now compose supplied mathematical-input bounds, and the shared ghost-indexed
    arena loop rule is used by the actual-only fold cost proof. `push` and
    `reverseAppend` use inferred wrapper costs, preserving their published bounds.
@@ -229,8 +234,12 @@ environment encodings or repeating source facts in a second resource proof.
    the reverse/append and allocation-then-traversal resource proofs. Continue
    composing supplied loop contracts: the fold now lifts its existing finite
    source loop through the shared indexed readiness rule, with time bounds
-   applied separately to that same execution. Remove remaining resource-result
-   bookkeeping without assuming arbitrary potentials, budget comparisons or
+   applied separately to that same execution. `List.Fold.execute_le` publishes
+   its bounded `arenaMeasured` with independent source `program_total`, without
+   repeating callback relocation or packaging `cost.execute` witnesses. Its
+   statement, ranges, capacity, reservations and costs are unchanged.
+   Remove remaining resource-result bookkeeping without assuming arbitrary
+   potentials, budget comparisons or
    guard/body admissibility can be inferred. The fixed-heap
    `StmtCostBound` cannot silently stand in for a bound on allocating execution;
    retain the existing arena cost relation and function contracts. The `prependPair`
@@ -282,9 +291,12 @@ environment encodings or repeating source facts in a second resource proof.
    the actual payload, locals and heaps. A private allocating List consumer also proves
    the batch result `(budget, (values.take (batches * budget)).reverse)`.
    The algorithm's mathematical identity remains a separate proof obligation.
-   Broader nested-loop combinations,
-   especially mixed local/function completion, and calls to the enclosing
-   recursive function from a range remain follow-up work.
+   Normal and function-returning finite ranges also compose enclosing self-calls
+   whose decrease follows from fixed captures. Generated correspondence and
+   totality reuse the author's single termination argument at the actual
+   intermediate heap; model equations need not have a simplest normal form.
+   Broader nested-loop combinations, especially mixed local/function completion,
+   and index-dependent recursive descent remain follow-up work.
    Dependent bounds, recursion descent and algorithmic potentials remain
    mathematical obligations, not guessed annotations; no new RAM bound follows.
 3. Extend the represented native frontend from its checked scalar, List and

@@ -3,9 +3,8 @@ Copyright (c) 2026 vvauted. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
-import Complexity.Computability.Ram.Compiler.Language.List.Fold.Ready
-import Complexity.Computability.Ram.Compiler.Language.List.Fold.CostBound
-import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution
+import Complexity.Computability.Ram.Compiler.Language.List.Fold.Measured
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.FunctionExecution
 
 /-!
 # Measured execution of linked-list folding
@@ -182,49 +181,19 @@ theorem execute_le
       heap.ShapeExtends outcome.heap ∧
       outcome.result.steps ≤ invocationBound sourceProgram fn same step bound mathematical values ∧
       outcome.cursor ≤ cursor + accumulated step reserve mathematical values := by
-  have embedded := Complexity.Language.List.Fold.program_embeds sourceProgram fn same
-  have relocated :
-      Complexity.Language.List.Fold.calleeBody
-        (Complexity.Language.List.Fold.program sourceProgram fn same)
-        (Complexity.Language.List.Fold.calleeEntry accTy kind fn)
-        (Complexity.Language.List.Fold.callee_signature same) =
-      (Complexity.Language.List.Fold.calleeBody sourceProgram fn same).renameCalls
-        (Complexity.Language.List.Fold.calleeMap accTy kind signatures) :=
-    Complexity.Language.List.Fold.calleeBody_renameCalls embedded same
-  have linkedResources : CalleeResources
-      (Complexity.Language.List.Fold.program sourceProgram fn same)
-      (Complexity.Language.List.Fold.calleeEntry accTy kind fn)
-      (Complexity.Language.List.Fold.callee_signature same)
-      representation domain w heapLimit depth reserve := by
-    unfold CalleeResources
-    rw [relocated]
-    exact FunctionArenaResources.renameCalls resources embedded
-  have linkedBounded : CalleeCostBound
-      (Complexity.Language.List.Fold.program sourceProgram fn same)
-      (Complexity.Language.List.Fold.calleeEntry accTy kind fn)
-      (Complexity.Language.List.Fold.callee_signature same)
-      representation domain w heapLimit depth bound := by
-    unfold CalleeCostBound
-    rw [relocated]
-    exact FunctionArenaCostBound.renameCalls bounded embedded
   have accFits : ValueFits w accumulator := launch.arguments (τ := accTy) .here
   have headFits : ∀ head ∈ values, ValueFits w (kind.toValue head) :=
     contents_valueFits launch.arena.heapRep observed
-  have measured := body_measured
-    (Complexity.Language.List.Fold.callee_contract sourceProgram fn same correct)
-    linkedResources linkedBounded mathematical values accumulator root heap cursor launch.positive
+  have measured := arenaMeasured correct resources bounded
+    mathematical values accumulator root heap cursor launch.positive
     allowed related accFits headFits capacity observed
-  rw [← Complexity.Language.List.Fold.program_body sourceProgram fn same] at measured
-  obtain ⟨finalAcc, finalHeap, finalCursor, steps, execution, ready, cost,
-    coreBound, cursorBound⟩ := measured
-  obtain ⟨outcome, _, _, cursorEq, bodySteps⟩ := cost.execute launch
-  have property := outcome.post
-    (Complexity.Language.List.Fold.program_total correct mathematical values allowed)
-    ⟨related, observed⟩
-  refine ⟨outcome, property.1, property.2.1, property.2.2, ?_, ?_⟩
-  · rw [outcome.steps_eq, bodySteps]
-    unfold invocationBound
-    exact Nat.add_le_add_right (LocalCompiler.Function.callSteps_mono _ _ (by omega)) 1
-  · simpa only [cursorEq] using cursorBound
+  obtain ⟨outcome, cursorBound, property, _, _, stepsBound⟩ :=
+    measured.execute_le_of_bound
+      (bound := functionBound sourceProgram fn same step bound mathematical values)
+      (P := fun _ _ finalCursor =>
+        finalCursor ≤ cursor + accumulated step reserve mathematical values)
+      (Complexity.Language.List.Fold.program_total correct mathematical values allowed)
+      launch ⟨related, observed⟩
+  exact ⟨outcome, property.1, property.2.1, property.2.2, stepsBound, cursorBound⟩
 
 end Ram.LanguageCompiler.List.Fold

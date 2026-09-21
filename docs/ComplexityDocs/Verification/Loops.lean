@@ -191,10 +191,13 @@ Automatic action correspondence and refinement are also checked for a two-level
 finite-range nest with an inner function return, retaining actual payloads,
 locals and heaps. A completed `forIn` result may be shared in the proof when
 composing the continuation; this adds no executable binding or changed cost.
-Broader nested-loop combinations, especially mixed local/function completion,
-calls to the enclosing recursive function from a range and full models of
-arbitrary heap mutation remain open. None of these mathematical range views
-infers a RAM bound for its body or control.
+Normal and function-returning finite ranges also compose enclosing self-calls with
+descent from fixed captures. Correspondence uses actual fixed slots and
+representation functionality at the current heap to recover those captures;
+arrays still need contents frames.
+Broader nested-loop combinations, mixed local/function completion, index-dependent
+recursive descent and full models of arbitrary heap mutation remain open.
+None of these mathematical range views infers a RAM bound for its body or control.
 
 For pure finite Nat ranges, the shared
 [`while_range_encoded_invariant`](##Ram.LanguageCompiler.RealizationWP.while_range_encoded_invariant)
@@ -387,6 +390,17 @@ smaller mathematical indices through Lean's `WellFounded.induction`. A fixed
 function selector gives ordinary recursion; a varying selector supports mutually
 recursive functions with different signatures. The index is mathematical proof
 data, not runtime fuel, an instruction budget or a stack-depth bound.
+
+The default represented frontend also checks self-recursion from normal and
+function-returning finite ranges with a fixed captured depth. A single
+`termination_by depth` and targeted
+`decreasing_by simp_all only [decide_eq_true_eq]; omega` discharge the checked
+decrease; generated correspondence reuses it at actual intermediate heaps.
+Unrestricted `simp_all` is not a guaranteed fast substitute. This coverage does
+not include descent depending on the range index or general mixed local/function
+completion, and supplies no RAM cost bound. Generated model equations may still
+require deliberate simplification for an algorithmic proof.
+
 For the supported pure fragment, the [named factorial](##Examples.Language.Factorial)
 uses Lean's native termination machinery:
 

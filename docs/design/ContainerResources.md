@@ -68,6 +68,10 @@ ranges and remaining capacity remain supplied proofs. `reverseAppend` and
 execution/space observations. Their independent structural cost proofs still
 consume those certificates and apply to the same execution; the older bounded
 `arenaMeasured` interface delegates to the new entry and adds that cost proof.
+`List.Fold.execute_le` publishes this bounded observation with the independent
+source `program_total` through `ArenaMeasured.execute_le_of_bound`. It no longer
+repeats callback relocation or packages `cost.execute` witnesses; its result
+statement, ranges, capacity, reservations and instruction bound are unchanged.
 `ArenaMeasured` only packages existing witnesses; there is no new
 interpreter or pricing model. The `measured using` call form retains those
 observations directly, including across imports. `with_spec` attaches an
@@ -97,6 +101,9 @@ budgets while retaining their separately proved exact execution counts.
 The shared `ArenaMeasured.execute_le` combines a measured body, its structural
 bound and an independent `FunctionTotal` specification in one halted outcome,
 transporting heap/value/cursor observations and adding invocation overhead once.
+It delegates to `ArenaMeasured.execute_le_of_bound`, which accepts a measured
+`steps + 2 ≤ bound` and reuses `execute_eq` for that same typed outcome. Here
+`bound` already includes function initialization; it is not charged twice.
 Mathematical correctness does not acquire a cost premise. Actual callee readiness,
 word ranges, capacity and certificate selection remain supplied.
 `ArenaMeasured.execute_eq` instead retains a measured exact count, publishing the
