@@ -255,8 +255,13 @@ environment encodings or repeating source facts in a second resource proof.
    envelope, including initialization once.
    Preserving entries still use explicit `using`; readiness,
    capacity and actual RAM execution remain separate obligations.
-   Nonuniform budgets still use explicit rules; recursive or shared-continuation
-   proofs without published contracts remain outside this entry.
+   Nonuniform per-round costs already compose through `while_model`: the
+   unchanged array-record `repeatAppend` reuses generated mathematical round
+   contracts and the actual append cost as its array grows. Its inferred function
+   envelope has a finite-sum identity and an all-input polynomial bound, using
+   existing APIs without new tactics or metadata. Generic nonuniform setup and
+   readiness composition remain work; recursive or shared-continuation proofs
+   without published contracts remain outside the named range entry.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
    published bounds.
    Source postconditions now also flow into later input-dependent call budgets;

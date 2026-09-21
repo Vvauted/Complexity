@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity
+import Examples.Language.ArrayIterationCompiled
 import Examples.Language.Factorial
 import Examples.Language.FactorialCompiled
 import Examples.Language.LinkedList
@@ -433,12 +434,30 @@ The existing
 uses this composition for its unchanged function, with initialization added once.
 Its body envelope is affine in the range count by
 [`prependRangeBodyBound_eq`](##Complexity.Language.Examples.LinkedList.NativeRange.prependRangeBodyBound_eq).
-This entry composes uniform component bounds only; nonuniform budgets still use
-the explicit rules. Recursive and shared-continuation sites without published
-contracts are not covered.
+This entry composes uniform component bounds only; nonuniform rounds use the
+existing mathematical contract rules. Recursive and shared-continuation sites
+without published contracts are not covered.
 Positivity or nontrivial budget comparisons may remain goals. The range rule
 bounds only its loop; enclosing cost composition does not establish readiness,
 capacity or an actual whole-function RAM execution.
+
+For nonuniform costs, the unchanged `ArrayRangeNative.repeatAppend` copies a
+growing array on each round. Its
+[`function_costBound`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendCost.function_costBound)
+reuses generated `guard_model`/`body_model`, `while_model` and the actual
+`BufferCopy.append_costBound`. The `model_rel_state` and `model_rel_chunk`
+observations concern each real heap, without inverting handles or requiring
+disjoint inputs or another termination proof.
+The [finite-sum identity](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendCost.functionBodyBound_eq)
+describes the body envelope, not an exact runtime count. Its
+[all-input bound](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendCost.functionBodyBound_le)
+has form `F + r * (G + D + 10 + A * (s + r * k))`, with compiler-derived constants,
+where `r` is the iteration count, `s` the initial array size and `k` the chunk size.
+The [mathlib asymptotic corollary](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendCost.isBigO_functionBodyBound)
+is `O(1 + r + r*s + r²*k)`, with no constraints on relative input sizes.
+These existing APIs need no new tactic, metadata or mathematical framework for
+this proof. They establish a conditional function-cost certificate, not readiness,
+capacity, `Program.TimeO` or an actual halted-runner result.
 
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every
