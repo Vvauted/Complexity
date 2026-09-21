@@ -414,29 +414,20 @@ theorem repeatAppend_copies (count : Nat) (chunkValues : Array Nat) (initialValu
     preserved decreases
     (mkModel (remaining := count) (state := initialValue) (initial := initialValue)
       (chunk := chunkValues) (count := count)) rfl
-  apply (ArrayRangeNative.Source.repeatAppend_total_iff _ _).mpr
-  rintro actualCount chunk initial heap ⟨sameCount, chunkObserved, initialObserved⟩
-  subst actualCount
-  have specification :
-      ⦃fun current => ⌜chunk.Contents current chunkValues ∧
-        payloadRel initialValue initial current⌝⦄
-      ArrayRangeNative.Source.repeatAppend count chunk initial
-      ⦃⇓ result finish => ⌜∃ output, payloadRel output result finish ∧
-        output.copies = initialValue.copies + count⌝⦄ := by
-    rw [ArrayRangeNative.Source.repeatAppend_eq]
-    mvcgen [loopSpec]
-    refine ⟨by simp_all [modelRel, mkModel, payloadRel], ?_⟩
-    intro finalModel output finish represented valid stopped
-    have observed := model_rel_state represented
-    have empty : model_remaining finalModel = 0 := by
-      change decide (0 < model_remaining finalModel) = false at stopped
-      have : ¬0 < model_remaining finalModel := of_decide_eq_false stopped
-      omega
-    mvcgen
-    refine ⟨model_state finalModel, observed, ?_⟩
-    simpa only [invariant, empty, Nat.add_zero] using valid
-  exact (triple_iff_eval _ _ _).mp specification heap
-    ⟨chunkObserved, initialObserved⟩
+  apply (ArrayRangeNative.Source.repeatAppend_contract_iff_triple _ _).mpr
+  intro actualCount chunk initial heap
+  rw [ArrayRangeNative.Source.repeatAppend_eq]
+  mvcgen [loopSpec]
+  refine ⟨by simp_all [modelRel, mkModel, payloadRel], ?_⟩
+  intro finalModel output finish represented valid stopped
+  have observed := model_rel_state represented
+  have empty : model_remaining finalModel = 0 := by
+    change decide (0 < model_remaining finalModel) = false at stopped
+    have : ¬0 < model_remaining finalModel := of_decide_eq_false stopped
+    omega
+  mvcgen
+  refine ⟨model_state finalModel, observed, ?_⟩
+  simpa only [invariant, empty, Nat.add_zero] using valid
 
 /-- The source contract observes the entire returned record, including
 its actual final array. The supplied mathematical postcondition tracks its count;

@@ -124,7 +124,15 @@ assigns mathematical obligations to authors and routine lowering to the library.
 Generated ordinary functions and checked total-source correspondence work for
 supported scalar/structured and represented fragments. One native termination
 argument feeds correspondence; `Part.get` of the desired answer is not the
-implementation. Fully modeled mixed return/continue `if`/`Option` branches,
+implementation. `P.f_contract_iff_triple pre post` exposes the existing
+`FunctionTotal` contract as standard strict triples over ordinary parameters
+and an initial heap, with the actual result/final heap in the postcondition.
+It fixes total correctness and excludes faults, without adding a WP, pure model
+or budget. The source proof can enter `mvcgen` after rewriting `P.f_eq`, using
+its existing loop specification instead of an intermediate evaluation contract.
+Algorithmic invariants, descent, exit facts and the actual returned-value
+observation remain author obligations.
+Fully modeled mixed return/continue `if`/`Option` branches,
 including nested branches, compose inside local value blocks and their finite
 ranges. A completion summary retains the selected payload and state; following
 statements inside the block run only on continuation. Supported typed `do`,

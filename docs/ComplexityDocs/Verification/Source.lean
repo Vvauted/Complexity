@@ -182,6 +182,19 @@ Every declaration also generates `P.f_contract pre post`, with the function's
 ordinary curried parameters followed by the initial/final heaps. This is the
 existing `FunctionTotal` contract, not another correctness interpretation.
 `P.f_total_iff` proves its equivalence to actual successful evaluation.
+`P.f_contract_iff_triple pre post` instead exposes a standard strict `Triple`
+for each ordinary parameter tuple and `initialHeap`. Its precondition requires
+the current heap to equal `initialHeap` and satisfy `pre`; `post` retains the
+original parameters, `initialHeap`, returned result and actual final heap.
+The interface fixes `Part.TotalCorrectness` and a false fault postcondition:
+it is not a new WP, pure model or resource budget.
+The existing `repeatAppend_copies` consumer starts with the equivalence's `.mpr`,
+introduces ordinary parameters and the heap, rewrites the generated `f_eq`, then
+uses `mvcgen [loopSpec]`. No handwritten `Triple` type, intermediate specification
+or `triple_iff_eval` conversion is needed. The loop invariant, decrease and exit
+facts remain mathematical proofs; observing the actual returned record with
+`model_rel_state` and supplying the final existential output are still explicit.
+This interface does not generate that return observation.
 For resource contracts, `P.f_onArgs bound` applies an ordinary parameter function
 to the actual environment; `P.f_args` constructs that environment for a call.
 These generated operations replace hand-written `Env.head`/`tail` chains.

@@ -235,7 +235,30 @@ def totalDeclaration (family programName : TSyntax `ident)
         $contractName:ident $pre:ident $post:ident ↔ $ordinary := by
       rw [$contractName:ident, Complexity.Language.FunctionTotal.iff_eval]
       exact ⟨$forward, $backward⟩)
-  return #[onArgsDeclaration.raw, contractDeclaration.raw, declaration.raw]
+  let tripleName := generatedName family fn.name "_contract_iff_triple"
+  let currentHeap := mkIdent (← Macro.addMacroScope `currentHeap)
+  let action := Lean.Syntax.mkApp ⟨observation.raw⟩ arguments
+  let mut triple ← `(∀ ($initialHeap:ident : Complexity.Language.Heap),
+    Std.Do.Triple (m := ExceptT Complexity.Language.Fault (StateT Complexity.Language.Heap Part))
+      (ps := .except Complexity.Language.Fault (.arg Complexity.Language.Heap .pure))
+      $action
+      (fun $currentHeap:ident => ⟨$currentHeap:ident = $initialHeap:ident ∧ $ordinaryPre⟩)
+      (fun $value:ident $finalHeap:ident => ⟨$ordinaryPost⟩,
+        (fun _ _ => ⟨False⟩, ⟨⟩)))
+  for param in fn.params.reverse do
+    let parameter := param.name
+    let type ← valueTypeTerm param.type
+    triple ← `(∀ ($parameter:ident : $type), $triple)
+  let tripleDeclaration ← `(command|
+    open scoped Part.TotalCorrectness in
+    /-- Prove the ordinary-parameter source contract with a total-correctness triple
+    for the same action. The ghost initial heap equals the actual entry heap;
+    successful results use the actual final heap, and faults are excluded. -/
+    theorem $tripleName:ident ($pre:ident : $preType) ($post:ident : $postType) :
+        $contractName:ident $pre:ident $post:ident ↔ $triple := by
+      rw [$contractName:ident, Complexity.Language.FunctionTotal.iff_triple_eval]
+      exact ⟨$forward, $backward⟩)
+  return #[onArgsDeclaration.raw, contractDeclaration.raw, declaration.raw, tripleDeclaration.raw]
 
 def specificationDeclaration (family programName : TSyntax `ident)
     (fn : Function) (pureMode : Bool) : MacroM Syntax := do
