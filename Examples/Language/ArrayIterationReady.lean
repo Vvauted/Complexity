@@ -6,8 +6,8 @@ Authors: vvauted
 import Examples.Language.ArrayIterationCompiled
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendReady
 import Complexity.Computability.Ram.Compiler.Language.Arena.Tactic
-import Complexity.Computability.Ram.Compiler.Language.Arena.Loop.Models
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.FunctionExecution
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Loop
 import Complexity.Computability.Ram.Compiler.Language.LocalsTactic
 import Complexity.Computability.Ram.Compiler.Language.Representation
 
@@ -211,32 +211,22 @@ theorem loop_ready {w heapLimit cursor : Nat} (positive : 0 < w)
         invariant w heapLimit finalModel finalCursor ∧ modelGuard finalModel = false := by
   obtain ⟨finalCursor, ready, normal, finalModel, observed,
       ⟨finalValid, accounting⟩, stopped⟩ :=
-    ArenaReady.while_model_of_exec View modelRel modelGuard modelStep
+    ArenaReady.while_model_of_measured View modelRel modelGuard modelStep
       guard_model (fun current _ => body_model current)
       (fun current _ currentCursor => invariant w heapLimit current currentCursor ∧
         currentCursor + reserve (model_remaining current) (model_state current).values.size
           (model_chunk current).size =
         cursor + reserve (model_remaining model) (model_state model).values.size (model_chunk model).size)
       (by
-        intro current state currentCursor allowed related after decision tested _
-        have measured : ArenaMeasured ArrayRangeNative.Source.program w heapLimit 2 Guard
-            (fun _ _ finalCursor _ => finalCursor = currentCursor) state currentCursor := by
-          simpa only [Equiv.symm_apply_apply] using
-            guard_measured current (View state.locals) state.heap allowed.1 related
-        obtain ⟨finalCursor, _, ready, _, sameCursor⟩ := measured.at_exec tested
-        subst finalCursor
-        exact ⟨currentCursor, ready, allowed⟩)
+        intro current locals heap currentCursor allowed related
+        apply (guard_measured current locals heap allowed.1 related).mono_post
+        rintro after control finalCursor steps rfl _
+        exact allowed)
       (by
-        intro current state currentCursor allowed active related after iterated _
-        have measured : ArenaMeasured ArrayRangeNative.Source.program w heapLimit 2 Body
-            (fun _ control finalCursor _ => control = .normal ∧
-              finalCursor = currentCursor + (model_state current).values.size + (model_chunk current).size)
-            state currentCursor := by
-          simpa only [Equiv.symm_apply_apply] using
-            body_measured positive current (View state.locals) state.heap allowed.1 active related
-        obtain ⟨finalCursor, _, ready, _, _, sameCursor⟩ := measured.at_exec iterated
-        subst finalCursor
-        refine ⟨_, ready, invariant_step allowed.1 active, ?_⟩
+        intro current locals heap currentCursor allowed active related
+        apply (body_measured positive current locals heap allowed.1 active related).mono_post
+        rintro after control finalCursor steps ⟨_, rfl⟩ _
+        refine ⟨invariant_step allowed.1 active, ?_⟩
         have stepReserve := reserve_model_step current active
         have conserved := allowed.2
         omega)

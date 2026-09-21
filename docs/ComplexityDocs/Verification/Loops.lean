@@ -465,6 +465,13 @@ Separately,
 lifts the same finite normal-body loop through its existing guard/body contracts,
 allowing actual heaps and arena cursors to change. Fragment readiness and resource
 invariants remain supplied; no second loop induction or termination proof is needed.
+[`ArenaReady.while_model_of_measured`](##Ram.LanguageCompiler.ArenaReady.while_model_of_measured)
+delegates to this rule, handling view coordinates and `at_exec` witness unpacking.
+Measured guard/body postconditions can use the source contract's `stateRel` at
+the actual final heap to establish the resource invariant; no inverse of a handle
+or unchanged heap/cursor is required. The guard must preserve the mathematical
+model and the body must complete normally: this is not general early-return or
+model-changing-guard automation.
 [`ArenaMeasured.of_totalWP`](##Ram.LanguageCompiler.ArenaMeasured.of_totalWP)
 combines an existing `TotalWP` with a resource proof for that same `Exec`, taking
 its count from `ready.exists_cost`, not a new semantics, price or termination proof.
@@ -475,7 +482,10 @@ The array-record loop's
 proves `finalCursor = initialCursor + reserve`, where
 `reserve = Σ (i < r), (s + (i + 1) * k)`.
 Its invariant retains word/element ranges and sufficient cumulative capacity;
-input aliases are allowed. Each round allocates a fresh array without reclaiming
+input aliases are allowed. Its measured rounds use `mono_post` to prove resource
+preservation; the reserve recurrence, `invariant_step` and zero reserve at the
+false exit remain the author's mathematics, not a new time bound.
+Each round allocates a fresh array without reclaiming
 old arrays, so this is cumulative allocation, not peak-live storage.
 The same function's
 [`function_resources`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.function_resources)
@@ -494,7 +504,7 @@ of the suffix and adds no cost for it. This transport does not yet cross branche
 calls or scopes. The ordinary structural pass composes the final return, and
 `body_ready` follows by `at_exec`; no handwritten environments, execution-case
 analysis or fixed-shape totality stripping are needed in this consumer.
-Its program, `loop_ready`, ranges, capacity and counts are unchanged.
+Its program, public contracts, ranges, capacity and counts are unchanged.
 The mathematical record certificate
 [`invariant_state_fits`](##Complexity.Language.Examples.LinkedList.NativeRange.RepeatAppendReady.invariant_state_fits)
 now composes the shared `RepresentationFits` rules and applies to actual entry,

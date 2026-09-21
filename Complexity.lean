@@ -125,6 +125,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Measured
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Allocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Call
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.FunctionExecution
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Loop
 import Complexity.Computability.Ram.Compiler.Language.Arena.MeasuredAllocation
 import Complexity.Computability.Ram.Compiler.Language.Arena.MeasuredNode
 import Complexity.Computability.Ram.Compiler.Language.Arena.MeasuredSimulation

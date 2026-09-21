@@ -259,12 +259,18 @@ environment encodings or repeating source facts in a second resource proof.
    unchanged array-record `repeatAppend` reuses generated mathematical round
    contracts and the actual append cost as its array grows. Its inferred function
    envelope has a finite-sum identity and an all-input polynomial bound, using
-   existing APIs without new tactics or metadata. `ArenaReady.while_model_of_exec`
-   reuses the same normal-round contracts with changing heaps and arena cursors;
+   existing APIs without new tactics or metadata. `ArenaReady.while_model_of_measured`
+   delegates to `while_model_of_exec`, handling view coordinates and `at_exec`
+   witnesses for supplied round measurements. Their resource postconditions may
+   use source observations at the actual final heap; heap and cursor may change.
+   The guard still preserves its mathematical model, and the body completes normally.
    `ArenaMeasured.of_totalWP` combines existing source totality with resources
    for that same execution; `at_exec` aligns the measurement with a given execution.
    The array-record loop has exact cursor growth equal to its cumulative
    reservation, with word/element ranges and capacity explicit and aliases allowed.
+   Its measured-round callbacks prove resource preservation with `mono_post`;
+   reserve recurrence, invariant preservation and zero remaining reserve at exit
+   remain mathematical obligations, not new time or peak-live-space bounds.
    The function resource/measured interfaces connect this to an actual halted
    invocation with the original `copies` contract and nonuniform cost bound,
    retaining the real launch and capacity premises. Old arrays are not reclaimed;
@@ -282,8 +288,8 @@ environment encodings or repeating source facts in a second resource proof.
    Transport across branches, calls and scopes remains open, as do further layouts,
    general allocating-loop setup and source-facing space. Algorithmic/element
    ranges, scalar-update equations and capacity remain supplied. Recursive or
-   shared-continuation
-   proofs without published contracts remain outside the named range entry.
+   shared-continuation proofs without published contracts remain outside the
+   named range entry.
    `push` and `reverseAppend` use inferred wrapper costs, preserving their
    published bounds.
    Source postconditions now also flow into later input-dependent call budgets;
