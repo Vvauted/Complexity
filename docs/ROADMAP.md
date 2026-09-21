@@ -224,10 +224,18 @@ environment encodings or repeating source facts in a second resource proof.
    cost certificate. Independent mathematical specifications remain separate;
    `execute_eq` retains exact counts in the constructor-pair and selected-branch
    consumers. Known returned values no longer need existential witness packaging
-   in the structural pass. Indexed calls
-   now compose supplied mathematical-input bounds, and the shared ghost-indexed
-   arena loop rule is used by the actual-only fold cost proof. `push` and
-   `reverseAppend` use inferred wrapper costs, preserving their published bounds.
+   in the structural pass. Indexed calls compose supplied mathematical-input
+   bounds. `StmtArenaCostBound.while_model` reuses source guard/body `BlockSpec`
+   contracts at actual intermediate heaps. The fold cost proof consumes its
+   public mathematical round contracts, keeping the same program, signature and
+   `remainingCost + 17` bound without repeated execution transport.
+   `while_range_rel` reuses the range's `guardRel`/`bodyRel` for normal rounds and
+   direct function returns; its body budget covers the whole actual iteration.
+   Saved local completion is outside that rule. Generated ranges' mathematical
+   round relations still need public names and an automatic named arena-cost
+   entry; a shared theorem alone does not complete that frontend connection.
+   `push` and `reverseAppend` use inferred wrapper costs, preserving their
+   published bounds.
    Source postconditions now also flow into later input-dependent call budgets;
    the allocating `reverseSum` path uses this to traverse its actual new List.
    Direct measured-call composition now removes execution-witness unpacking in

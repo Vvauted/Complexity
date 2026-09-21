@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.List.Fold.Program
 import Complexity.Language.Eval.Verification
+import Complexity.Language.Eval.Locals.Specification
 
 /-!
 # Native callback proofs and observations of the same list fold
@@ -28,6 +29,102 @@ open scoped Part.TotalCorrectness
 universe u
 
 variable {signatures : List Signature} {accTy : Ty} {kind : CellTy} {α : Type u}
+
+/-- The actual fold locals, without a mathematical inverse for the represented
+accumulator or linked-list handle. -/
+def loopView : Env [accTy, .option (.node kind)] ≃ Value accTy × Option (NodeRef kind) where
+  toFun locals := (locals.head, locals.tail.head)
+  invFun locals := Env.cons locals.1 (Env.cons locals.2 Env.empty)
+  left_inv locals := by
+    funext τ v
+    cases v with
+    | here => rfl
+    | there v =>
+        cases v with
+        | here => rfl
+        | there v => cases v
+  right_inv _ := rfl
+
+@[simp] theorem loopView_apply (locals : Env [accTy, .option (.node kind)]) :
+    loopView locals = (locals.head, locals.tail.head) := rfl
+
+@[simp] theorem loopView_symm_apply (locals : Value accTy × Option (NodeRef kind)) :
+    loopView.symm locals = Env.cons locals.1 (Env.cons locals.2 Env.empty) := rfl
+
+/-- Mathematical fold state is observed at the actual heap. The callback domain
+and remaining immutable chain are retained alongside the accumulator relation. -/
+def loopModelRel (R : Representation α accTy) (step : α → CellValue kind → α)
+    (domain : α → CellValue kind → Prop) (model : α × List (CellValue kind))
+    (locals : Value accTy × Option (NodeRef kind)) (heap : Heap) : Prop :=
+  Admissible step domain model.1 model.2 ∧ R.Rel model.1 locals.1 heap ∧
+    NodeRef.Contents heap locals.2 model.2
+
+/-- The guard's mathematical decision depends only on the remaining list. -/
+def loopTest (model : α × List (CellValue kind)) : Bool := !model.2.isEmpty
+
+/-- One continuing round updates the accumulator and consumes one observed node. -/
+def loopNext (step : α → CellValue kind → α)
+    (model : α × List (CellValue kind)) : α × List (CellValue kind) :=
+  match model.2 with
+  | [] => model
+  | head :: tail => (step model.1 head, tail)
+
+/-- The actual guard retains the mathematical state and returns its emptiness
+decision. This contract is independent of callback costs and RAM resources. -/
+theorem guard_model_contract (program : Program signatures) (R : Representation α accTy)
+    (step : α → CellValue kind → α) (domain : α → CellValue kind → Prop)
+    (model : α × List (CellValue kind)) :
+    Stmt.BlockSpec (Stmt.observe loopView (guard accTy kind) program)
+      (loopModelRel R step domain model) (fun _ _ _ _ => False)
+      (fun _ _ again output finish =>
+        again = loopTest model ∧ loopModelRel R step domain model output finish) := by
+  rcases model with ⟨initial, values⟩
+  rintro ⟨acc, root⟩ heap ⟨allowed, related, contents⟩
+  have total : TotalWP program (guard accTy kind) (fun _ => False)
+      (fun (again : Bool) finish => again = loopTest (initial, values) ∧
+        loopModelRel R step domain (initial, values) (loopView finish.locals) finish.heap)
+      (state acc root heap) := by
+    cases contents with
+    | nil =>
+        apply TotalWP.matchNone rfl
+        apply (TotalWP.ret_iff _).mpr
+        exact ⟨rfl, allowed, related, .nil⟩
+    | cons found rest =>
+        apply TotalWP.matchSome rfl
+        apply (TotalWP.ret_iff _).mpr
+        exact ⟨rfl, allowed, related, .cons found rest⟩
+  simpa only [Control.Satisfies, Equiv.apply_symm_apply] using
+    (TotalWP.iff_triple_observe loopView (program := program) (stmt := guard accTy kind)
+      (locals := (acc, root)) (heap := heap)).mp total
+
+/-- Existing iteration correctness supplies the next mathematical state at the
+callback's actual final heap. Shape preservation transports only the immutable
+remaining chain, not arbitrary mutable accumulator observations. -/
+theorem iteration_model_contract {program : Program signatures} {fn : Fin signatures.length}
+    {same : signatures[fn] = stepSignature accTy kind}
+    {R : Representation α accTy} {step : α → CellValue kind → α}
+    {domain : α → CellValue kind → Prop}
+    (correct : Contract program fn same R step domain)
+    (model : α × List (CellValue kind)) (active : loopTest model = true) :
+    Stmt.BlockSpec (Stmt.observe loopView (iteration fn same) program)
+      (loopModelRel R step domain model)
+      (fun _ _ output finish => loopModelRel R step domain (loopNext step model) output finish)
+      (fun _ _ _ _ _ => False) := by
+  rcases model with ⟨initial, values⟩
+  rintro ⟨acc, root⟩ heap ⟨allowed, related, contents⟩
+  apply (TotalWP.iff_triple_observe loopView
+    (normal := fun finish => loopModelRel R step domain (loopNext step (initial, values))
+      (loopView finish.locals) finish.heap)
+    (returned := fun _ _ => False)).mp
+  cases contents with
+  | nil => simp [loopTest] at active
+  | cons found rest =>
+      obtain ⟨headAllowed, restAllowed⟩ := (admissible_cons step domain _ _ _).mp allowed
+      apply (iteration_total correct initial acc _ _ _ heap headAllowed related found).mono_post
+      · rintro finish ⟨next, nextHeap, rfl, nextRelated, preserved⟩
+        exact ⟨restAllowed, nextRelated, rest.mono preserved⟩
+      · intro _ _ impossible
+        exact impossible
 
 /-- Observe the selected actual callback at its checked step signature. This is
 only type transport and argument binding of the existing `Program.eval`. -/

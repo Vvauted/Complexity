@@ -366,6 +366,24 @@ fixed captures or a local block's empty result slot; the result still observes
 the complete actual final locals and heap. No client-side `Part` equation or
 second execution witness is needed.
 
+The [mathematical arena loop rule](##Ram.LanguageCompiler.StmtArenaCostBound.while_model)
+reuses source guard and normal-body `BlockSpec` contracts at actual intermediate
+heaps. The guard preserves the mathematical model, not necessarily the heap.
+The fold cost proof uses its public
+[mathematical round contracts](##Complexity.Language.List.Fold.Native), without
+repeating execution transport; its program, signature and `remainingCost + 17`
+bound are unchanged. Authors supply component bounds, an invariant and potential
+inequalities; the rule bounds existing executions without another termination proof.
+
+For finite ranges,
+[`while_range_rel`](##Ram.LanguageCompiler.StmtArenaCostBound.while_range_rel)
+reuses the source `guardRel`/`bodyRel` for normal rounds and direct function
+returns. The body budget includes the whole actual iteration, including any
+cursor increment executed; local-pending completion has a different final guard
+and is not covered. Readiness and capacity remain separate obligations.
+Generated ranges' mathematical round relations are not yet publicly named or
+connected to an automatic named arena-cost entry.
+
 `Buffer.Disjoint` permits different objects or disjoint `Set.Ico` intervals of
 the same object. `Buffer.PreservesOutside xs initial finish` says that every
 initially valid disjoint view retains its ordinary contents. Its `write`, `trans`
