@@ -225,6 +225,7 @@ import Complexity.Computability.Ram.Compiler.Language.Program.Capacity
 import Complexity.Computability.Ram.Compiler.Language.Program.Capacity.Polynomial
 import Complexity.Computability.Ram.Compiler.Language.Program.Deriving
 import Complexity.Computability.Ram.Compiler.Language.Program.Input
+import Complexity.Computability.Ram.Compiler.Language.Program.IntInput
 import Complexity.Computability.Ram.Compiler.Language.Program.Packing
 import Complexity.Computability.Ram.Compiler.Language.Program.Time
 import Complexity.Computability.Ram.Compiler.Language.Program.Wrapper
@@ -435,6 +436,7 @@ import Complexity.Language.Buffer.Copy.Native
 import Complexity.Language.Buffer.GetD
 import Complexity.Language.Buffer.Prod
 import Complexity.Language.Buffer.Prod.GetD
+import Complexity.Language.Buffer.Prod.Int
 import Complexity.Language.Buffer.Prod.Replicate
 import Complexity.Language.Buffer.Ragged.GetD
 import Complexity.Language.Buffer.Replicate
@@ -498,6 +500,7 @@ import Complexity.Language.List.Uncons.Native
 import Complexity.Language.Rooted
 import Complexity.Language.Representation
 import Complexity.Language.Representation.Array
+import Complexity.Language.Representation.Array.Int
 import Complexity.Language.Representation.RaggedArray
 import Complexity.Language.Representation.List
 import Complexity.Language.Representation.Preservation
@@ -564,6 +567,7 @@ import Complexity.Program.RaggedArrayInput
 import Complexity.Program.Basic
 import Complexity.Program.Deriving
 import Complexity.Program.Input
+import Complexity.Program.IntInput
 import Complexity.Program.Packing
 import Complexity.Program.Syntax
 import Complexity.Tactic.Ram.Array

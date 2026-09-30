@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Program.ArrayInput
+import Complexity.Program.IntInput
 import Complexity.Program.RaggedArrayInput
 import Lean.Elab.Deriving.Basic
 import Lean.EnvExtension

@@ -54,6 +54,19 @@ the actual final heap. `List Nat` and `List Bool` use immutable linked nodes,
 not arrays or a free host decoder. Products and options may contain these lists;
 nested lists and lists of records still need general element layouts.
 
+[Signed inputs](##Complexity.Program.IntInput) retain ordinary `Int` and `Array Int`
+at the fixed task boundary, including record fields and outputs. Scalars use
+their canonical Boolean/natural constructor fields: `(true, n)` means `-(n + 1)`,
+so `-1` remains distinct from zero. Arrays use two actual equal-length columns;
+the [RAM input layout](##Complexity.Computability.Ram.Compiler.Language.Program.IntInput)
+retains both columns, extents and width requirements. This registration does not
+by itself make `Int` expressions available in `source_program`.
+The [integer operation contracts](##Complexity.Language.Buffer.Prod.Int) reuse
+the existing pair reader and initialized allocator, proving ordinary signed
+`Array.getD` and `Array.replicate` observations, including negative defaults.
+The same source functions retain their existing cost certificates; integrating
+signed literals and operations into the represented frontend remains open.
+
 The typed-program example selects the existing linked-list constructor directly:
 
 ```lean
