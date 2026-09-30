@@ -187,6 +187,19 @@ private partial def assembleObservation (expected : Expr) (facts : Array Expr) :
     let first ← assembleObservation target.getAppArgs[0]! facts
     let second ← assembleObservation target.getAppArgs[1]! facts
     return ← mkAppM ``And.intro #[first, second]
+  if target.isAppOfArity ``Eq 3 then
+    let arguments := target.getAppArgs
+    let type ← whnf arguments[0]!
+    if type.isAppOfArity ``Prod 2 then
+      let first ← assembleObservation
+        (← mkEq (← mkAppM ``Prod.fst #[arguments[1]!])
+          (← mkAppM ``Prod.fst #[arguments[2]!])) facts
+      let second ← assembleObservation
+        (← mkEq (← mkAppM ``Prod.snd #[arguments[1]!])
+          (← mkAppM ``Prod.snd #[arguments[2]!])) facts
+      return ← mkAppOptM ``Prod.ext
+        #[some type.getAppArgs[0]!, some type.getAppArgs[1]!,
+          some arguments[1]!, some arguments[2]!, some first, some second]
   throwError "the fixed input observation does not supply the packed field relation {expected}"
 
 private def preparePacking (name : TSyntax `ident) (expected : Expr)
@@ -247,9 +260,9 @@ private def preparePacking (name : TSyntax `ident) (expected : Expr)
     let proof ← if ← isDefEq (← inferType represented) required then pure represented
       else
         try assembleObservation required (← observationConjuncts represented)
-        catch _ =>
+        catch error =>
           throwError "the fixed preloaded input does not establish the native argument \
-            representation after executable packing"
+            representation after executable packing:\n{error.toMessageData}"
     mkLambdaFVars #[x] proof
   return {
     program := ← instantiateMVars program

@@ -51,6 +51,7 @@ open Lean.Parser.Term
 or a nominal record observed through its checked field embedding. -/
 inductive NativeType where
   | pure (type : PureType)
+  | int
   | raw (type : Ty)
   | list (kind : CellTy)
   | array (kind : CellTy)
@@ -64,6 +65,7 @@ inductive NativeType where
 /-- The existing source type implementing this native mathematical view. -/
 def NativeType.coreTy : NativeType → Ty
   | .pure type => type.coreTy
+  | .int => .prod .bool .nat
   | .raw type => type
   | .list kind => .option (.node kind)
   | .array kind => .buffer kind
@@ -77,6 +79,7 @@ def NativeType.coreTy : NativeType → Ty
 /-- The ordinary Lean type, retaining each record's nominal identity. -/
 def NativeType.nativeType : NativeType → Expr
   | .pure type => type.nativeType
+  | .int => mkConst ``Int
   | .raw type => mkApp (mkConst ``Value) (coreTypeExpr type)
   | .list kind => mkApp (mkConst ``List [Level.zero])
       (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool)
@@ -98,6 +101,7 @@ composes existing relations; it neither reconstructs a record from an arbitrary
 handle nor changes the heap at which its contents are observed. -/
 def NativeType.representation : NativeType → Expr
   | .pure type => type.representation
+  | .int => mkConst ``Representation.int
   | .raw type =>
       let nativeType := mkApp (mkConst ``Value) (coreTypeExpr type)
       let embedding := mkApp (mkConst ``Function.Embedding.refl [Level.zero]) nativeType
@@ -187,6 +191,7 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if type.hasFVar || type.hasMVar then
     throwError "native source types must be closed and fully inferred"
   let reduced ← whnf type
+  if ← isDefEq reduced (mkConst ``Int) then return .int
   if let .app (.const name _) kind := reduced then
     if name == ``Buffer || name == ``NodeRef then
       let cellKind ← if ← isDefEq kind (mkConst ``CellTy.nat) then pure CellTy.nat
@@ -200,6 +205,10 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if let .app (.const ``Array _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .array .nat
     if ← isDefEq element (mkConst ``Bool) then return .array .bool
+    if ← isDefEq element (mkConst ``Int) then
+      let embedding ← mkAppM ``Function.Embedding.arrayMap
+        #[← mkAppM ``Equiv.toEmbedding #[mkConst ``Representation.intEquiv]]
+      return .arrayView .int (.arrayProd .bool .nat) embedding
     if let .app (.const ``Array _) _ ← whnf element then
       let payload ← resolveNativeTypeAux element records structuredProducts
       unless payload.hasScalarArrayColumns do

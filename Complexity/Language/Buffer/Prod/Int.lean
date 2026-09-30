@@ -14,8 +14,9 @@ The Boolean/natural pair operations already implement the physical integer
 layout. Their existing source bodies and cost certificates are unchanged.
 These contracts observe the very same calls using `Int` and `Array Int`,
 including negative defaults, empty arrays and actual final-heap contents.
-No executable map or host decoder is inserted. Signed syntax and arithmetic
-integration are separate from these representation contracts.
+No executable map or host decoder is inserted. The represented frontend uses
+these contracts for signed lookup and replication; arithmetic has separate
+source implementations and contracts.
 -/
 
 namespace Complexity.Language.Buffer.Prod
@@ -71,6 +72,19 @@ theorem getInt_eval_exists_preserving (values : Array Int) (index : Nat)
   exact ⟨_, heap, getInt_eval values index fallback columns heap observed, rfl,
     Heap.ShapeExtends.refl heap, fun {_} _ _ contents => contents⟩
 
+/-- The ordinary represented-call contract retains the actual final heap. -/
+theorem getInt_eval_exists (values : Array Int) (index : Nat)
+    (fallback : Int) (columns : Buffer .bool × Buffer .nat)
+    (default : Bool × Nat) (heap : Heap)
+    (observed : Representation.arrayInt.Rel values columns heap)
+    (defaultObserved : Representation.int.Rel fallback default heap) :
+    ∃ returned finish, getBoolNat columns index default heap = Part.some (.ok returned, finish) ∧
+      Representation.int.Rel (values.getD index fallback) returned finish ∧
+      heap.ShapeExtends finish := by
+  obtain ⟨returned, finish, executed, related, shape, _⟩ :=
+    getInt_eval_exists_preserving values index fallback columns default heap observed defaultObserved
+  exact ⟨returned, finish, executed, related, shape⟩
+
 end GetD
 
 namespace Replicate
@@ -89,6 +103,18 @@ theorem replicateInt_eval_exists_preserving (length : Nat) (initial : Int)
     replicateBoolNat_eval_exists_preserving length (Representation.intEquiv initial) heap
   refine ⟨returned, finish, execution, ?_, shape, preserved⟩
   simpa only [Representation.arrayInt_rel, Array.map_replicate] using related
+
+/-- The represented allocator returns the same signed array at its actual final heap. -/
+theorem replicateInt_eval_exists (length : Nat) (initial : Int)
+    (value : Bool × Nat) (heap : Heap)
+    (initialObserved : Representation.int.Rel initial value heap) :
+    ∃ returned finish,
+      replicateBoolNat length value heap = Part.some (.ok returned, finish) ∧
+      Representation.arrayInt.Rel (Array.replicate length initial) returned finish ∧
+      heap.ShapeExtends finish := by
+  obtain ⟨returned, finish, executed, related, shape, _⟩ :=
+    replicateInt_eval_exists_preserving length initial value heap initialObserved
+  exact ⟨returned, finish, executed, related, shape⟩
 
 /-- A signed initializer and actual final-heap integer-array observation. -/
 def intRepresentation :

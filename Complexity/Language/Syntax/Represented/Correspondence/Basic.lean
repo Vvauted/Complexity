@@ -112,7 +112,7 @@ private partial def arraySizeProof (type : NativeType) (observed : TSyntax `term
 private partial def observationProof (observation : Observation) (heap : TSyntax `term)
     (relations : Array RetainedObservation) : TermElabM (TSyntax `term) := do
   match observation with
-  | .refl => `(rfl)
+  | .refl => `(by rfl)
   | .named name =>
       let some entry := relations.find? (fun entry => entry.name == name)
         | throwError "the value's observation is not available in its current heap"
@@ -161,7 +161,7 @@ partial def preservation (type : NativeType) (initial finish shape : TSyntax `te
   let coreType ← termOfExpr (coreTypeExpr type.coreTy)
   let represented ← termOfExpr type.representation
   let proof ← match type with
-    | .pure _ | .raw _ => `(by
+    | .pure _ | .raw _ | .int => `(by
         intro a sourceValue observed
         exact observed)
     | .list kind => do

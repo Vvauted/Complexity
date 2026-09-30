@@ -162,7 +162,7 @@ def Encoding.relationSyntax (encoding : Encoding) : TermElabM (TSyntax `term) :=
 /-- Whether a native representation has an encoding independent of the heap.
 References observed as arrays or lists deliberately do not have such an encoding. -/
 partial def hasEncoding : NativeType → Bool
-  | .pure _ | .raw _ => true
+  | .pure _ | .raw _ | .int => true
   | .prod left right => hasEncoding left && hasEncoding right
   | .option payload => hasEncoding payload
   | .record _ layout _ => hasEncoding layout
@@ -172,6 +172,9 @@ partial def hasEncoding : NativeType → Bool
 direct-field records, without decoding any heap-backed collection. -/
 partial def encoding : NativeType → TermElabM Encoding
   | .pure type => pure ⟨type.embedding, type.relationEq⟩
+  | .int => do
+      return ⟨← mkAppM ``Equiv.toEmbedding #[mkConst ``Representation.intEquiv],
+        mkConst ``Representation.int_rel⟩
   | .raw type => do
       let nativeType := mkApp (mkConst ``Value) (coreTypeExpr type)
       let embedding ← mkAppM ``Function.Embedding.refl #[nativeType]

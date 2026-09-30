@@ -68,7 +68,7 @@ private partial def readPlan (array result : NativeType) (path : String)
       (← if result.isIdentity then `(congrArg Prod.snd $defaultObserved)
         else `(And.right $defaultObserved))
     let returned ← `(($(first.returned), $(second.returned)))
-    let related ← if result.isIdentity then `(Prod.ext $(first.related) $(second.related))
+    let related ← if result.isIdentity then `(congrArg₂ Prod.mk $(first.related) $(second.related))
       else `(And.intro $(first.related) $(second.related))
     return {
       body := first.body ++ second.body
@@ -79,6 +79,12 @@ private partial def readPlan (array result : NativeType) (path : String)
   match array with
   | .arrayView element columns _ =>
       match element with
+      | .int => do
+          let view := mkCIdent ``Representation.intEquiv
+          let layout ← resolveType (← `(Bool × Nat))
+          let inner ← readPlan columns layout path (← `(($rows).map $view:ident)) index
+            (← `($view:ident $fallback)) storage defaultView heap observed defaultObserved
+          return { inner with related := ← checked inner.returned inner.related }
       | .record _ layout embedding => do
           let view ← termOfExpr embedding
           let inner ← readPlan columns layout path (← `(($rows).map $view)) index
@@ -155,6 +161,15 @@ private partial def readPlan (array result : NativeType) (path : String)
       | .arrayProd left right => pairRows (.array left) (.array right)
       | .arrayView element columns _ =>
           match element with
+          | .int => do
+              let view := mkCIdent ``Representation.intEquiv
+              let columnRep ← termOfExpr columns.representation
+              let inner ← readPlan (.raggedArray columns) columns path
+                (← `(($rows).map (Array.map $view:ident))) index
+                (← `(($fallback).map $view:ident)) storage defaultView heap
+                (← `(Complexity.Language.Representation.raggedArrayOf_map
+                  $columnRep (Equiv.toEmbedding $view:ident) $observed)) defaultObserved
+              return { inner with related := ← checked inner.returned inner.related }
           | .record _ _ embedding => do
               let view ← termOfExpr embedding
               let columnRep ← termOfExpr columns.representation

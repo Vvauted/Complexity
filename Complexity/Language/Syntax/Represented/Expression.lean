@@ -256,9 +256,23 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
           return {
             native := ← `(some $(model.native)), model := ← `(some $(model.model))
             rawModel := ← `(some $(model.rawModel)), observation := .some model.observation } }
-  | `($_:num) => return {
-      type := ← resolveType (← `(Nat)), raw := stx
-      model? := some { native := stx, model := stx, rawModel := stx } }
+  | `($number:num) =>
+      if let some .int := expected then
+        let raw ← `((false, $number:num))
+        let native ← `(($number:num : Int))
+        return {
+          type := .int, raw := raw
+          model? := some { native := native, model := native, rawModel := raw } }
+      return {
+        type := ← resolveType (← `(Nat)), raw := stx
+        model? := some { native := stx, model := stx, rawModel := stx } }
+  | `(-$number:num) =>
+      let raw ← if number.getNat == 0 then `((false, 0))
+        else `((true, $(quote (number.getNat - 1))))
+      let native ← `((-$number:num : Int))
+      return {
+        type := .int, raw := raw
+        model? := some { native := native, model := native, rawModel := raw } }
   | `(()) => return {
       type := ← resolveType (← `(Unit)), raw := stx
       model? := some { native := stx, model := stx, rawModel := stx } }

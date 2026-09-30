@@ -363,4 +363,87 @@ theorem intervalWidth_correct :
       result = interval.2 - interval.1 + intervals.size + input.rows.size) := by
   program_correct IntervalLookup.width using fun _ => rfl
 
+/-- Signed values keep their native meaning at the fixed input boundary. -/
+structure SignedLookupInput where
+  values : Array Int
+  fallback : Int
+  index : Nat
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+source_program SignedArrays where
+  def lookup (input : SignedLookupInput) : Int := do
+    return input.values.getD input.index input.fallback
+
+  def replicate (value : Int) : Array Int := do
+    return Array.replicate 2 value
+
+  def missing (length : Nat) : Array Int := do
+    return Array.replicate length (-1)
+
+/-- A signed default is an ordinary integer, including when the array is empty. -/
+def signedLookup : Complexity.Program SignedLookupInput Int := program% SignedArrays.lookup
+
+theorem signedLookup_correct :
+    signedLookup.Correct (fun _ => True)
+      (fun input result => result = input.values.getD input.index input.fallback) := by
+  program_correct SignedArrays.lookup using fun _ => rfl
+
+/-- Scalar packing and actual initialized columns share one integer observation. -/
+def repeatInt : Complexity.Program Int (Array Int) := program% SignedArrays.replicate
+
+theorem repeatInt_correct :
+    repeatInt.Correct (fun _ => True) (fun value result => result = Array.replicate 2 value) := by
+  program_correct SignedArrays.replicate using fun _ => rfl
+
+/-- Negative literals initialize actual columns, rather than encoding an absent result. -/
+def missingInts : Complexity.Program Nat (Array Int) := program% SignedArrays.missing
+
+theorem missingInts_correct :
+    missingInts.Correct (fun _ => True) (fun length result => result = Array.replicate length (-1)) := by
+  program_correct SignedArrays.missing using fun _ => rfl
+
+/-- A signed field composes with the other columns of a nominal record. -/
+structure SignedReading where
+  coordinate : Int
+  active : Bool
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+structure SignedReadingInput where
+  readings : Array SignedReading
+  fallback : SignedReading
+  index : Nat
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+source_program SignedReadings where
+  def coordinate (input : SignedReadingInput) : Int := do
+    let reading := input.readings.getD input.index input.fallback
+    return reading.coordinate
+
+def signedCoordinate : Complexity.Program SignedReadingInput Int :=
+  program% SignedReadings.coordinate
+
+theorem signedCoordinate_correct :
+    signedCoordinate.Correct (fun _ => True)
+      (fun input result => result = (input.readings.getD input.index input.fallback).coordinate) := by
+  program_correct SignedReadings.coordinate using fun _ => rfl
+
+/-- Nested integer arrays retain a real borrowed row and its supplied default. -/
+structure SignedRowsInput where
+  rows : Array (Array Int)
+  fallback : Array Int
+  index : Nat
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+source_program SignedRows where
+  def first (input : SignedRowsInput) : Int := do
+    let row := input.rows.getD input.index input.fallback
+    return row.getD 0 (-1)
+
+def signedRowFirst : Complexity.Program SignedRowsInput Int := program% SignedRows.first
+
+theorem signedRowFirst_correct :
+    signedRowFirst.Correct (fun _ => True)
+      (fun input result => result = (input.rows.getD input.index input.fallback).getD 0 (-1)) := by
+  program_correct SignedRows.first using fun _ => rfl
+
 end Complexity.Examples.TypedProgram

@@ -59,13 +59,19 @@ at the fixed task boundary, including record fields and outputs. Scalars use
 their canonical Boolean/natural constructor fields: `(true, n)` means `-(n + 1)`,
 so `-1` remains distinct from zero. Arrays use two actual equal-length columns;
 the [RAM input layout](##Complexity.Computability.Ram.Compiler.Language.Program.IntInput)
-retains both columns, extents and width requirements. This registration does not
-by itself make `Int` expressions available in `source_program`.
+retains both columns, extents and width requirements.
 The [integer operation contracts](##Complexity.Language.Buffer.Prod.Int) reuse
 the existing pair reader and initialized allocator, proving ordinary signed
 `Array.getD` and `Array.replicate` observations, including negative defaults.
-The same source functions retain their existing cost certificates; integrating
-signed literals and operations into the represented frontend remains open.
+`source_program` accepts signed parameters, results, literals and supported
+record fields, and publishes these two real array operations at their ordinary
+Lean types. Composite column reads also support signed record fields and
+borrowed `Array Int` rows. The typed-program example proves their ordinary
+`Array.getD` and `Array.replicate` equations using `program_correct`, without
+consumer-written input-packing proofs.
+The same source functions retain their existing cost certificates. This does
+not yet publish general signed arithmetic syntax or infer a complete caller's
+RAM readiness and time bound.
 
 The typed-program example selects the existing linked-list constructor directly:
 
