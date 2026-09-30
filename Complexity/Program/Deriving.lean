@@ -137,6 +137,30 @@ def ensureStructureEmbedding (name : Name) : TermElabM Expr := do
   modifyEnv fun env => structureViewExt.addEntry env name
   return mkConst embeddingName
 
+private def deriveInputPrefix (instanceName : Name) (view : Expr) :
+    TermElabM Unit := do
+  let tupleType := (← inferType view).getAppArgs[1]!
+  let prefixValue ← withLocalDecl `Tail .implicit (mkSort (.succ .zero)) fun tail => do
+    let target ← mkAppM ``Prod #[tupleType, tail]
+    withLocalDecl `input .instImplicit (← mkAppM ``Input #[target]) fun input => do
+      let tailView ← mkAppM ``Function.Embedding.refl #[tail]
+      let fields ← mkAppM ``Function.Embedding.prodMap #[view, tailView]
+      mkLambdaFVars #[tail, input] (← mkAppM ``Input.comap #[input, fields])
+  addInterfaceInstance instanceName prefixValue
+    "Prepend the same derived field layout to any registered input tail."
+  let prefixClosed ← withLocalDecl `Tail .implicit (mkSort (.succ .zero)) fun tail => do
+    let target ← mkAppM ``Prod #[tupleType, tail]
+    withLocalDecl `input .instImplicit (← mkAppM ``Input #[target]) fun input => do
+      withLocalDecl `closed .instImplicit (← mkAppOptM ``Input.PrefixClosed
+          #[some target, some input]) fun closed => do
+        let fields ← mkAppM ``Function.Embedding.prodMap
+          #[view, ← mkAppM ``Function.Embedding.refl #[tail]]
+        let value ← mkAppOptM ``Input.PrefixClosed.comap
+          #[none, none, some input, some fields, some closed]
+        mkLambdaFVars #[tail, input, closed] value
+  addInterfaceInstance (instanceName.appendAfter "PrefixClosed") prefixClosed
+    "Derived field prefixes retain observations under exact heap prefixes."
+
 private def deriveArrayInput (name : Name) (embedding : Expr) (tupleType : Expr) :
     TermElabM Unit := do
   let arrayType ← mkAppM ``Array #[tupleType]
@@ -151,26 +175,7 @@ private def deriveArrayInput (name : Name) (embedding : Expr) (tupleType : Expr)
       #[none, none, some input, some view, some closed]
     addInterfaceInstance (name ++ `instProgramArrayInputPrefixClosed) value
       "Record-array contents survive exact prefixes of the initial heap."
-  let prefixValue ← withLocalDecl `Tail .implicit (mkSort (.succ .zero)) fun tail => do
-    let target ← mkAppM ``Prod #[arrayType, tail]
-    withLocalDecl `input .instImplicit (← mkAppM ``Input #[target]) fun input => do
-      let tailView ← mkAppM ``Function.Embedding.refl #[tail]
-      let fields ← mkAppM ``Function.Embedding.prodMap #[view, tailView]
-      mkLambdaFVars #[tail, input] (← mkAppM ``Input.comap #[input, fields])
-  addInterfaceInstance (name ++ `instProgramArrayInputProd) prefixValue
-    "Prepend the same record-array field layout to any registered input tail."
-  let prefixClosed ← withLocalDecl `Tail .implicit (mkSort (.succ .zero)) fun tail => do
-    let target ← mkAppM ``Prod #[arrayType, tail]
-    withLocalDecl `input .instImplicit (← mkAppM ``Input #[target]) fun input => do
-      withLocalDecl `closed .instImplicit (← mkAppOptM ``Input.PrefixClosed
-          #[some target, some input]) fun closed => do
-        let fields ← mkAppM ``Function.Embedding.prodMap
-          #[view, ← mkAppM ``Function.Embedding.refl #[tail]]
-        let value ← mkAppOptM ``Input.PrefixClosed.comap
-          #[none, none, some input, some fields, some closed]
-        mkLambdaFVars #[tail, input, closed] value
-  addInterfaceInstance (name ++ `instProgramArrayInputProdPrefixClosed) prefixClosed
-    "Record-array prefixes retain observations under exact heap prefixes."
+  deriveInputPrefix (name ++ `instProgramArrayInputProd) view
 
 private def deriveInput (name : Name) : TermElabM Unit := do
   let embedding ← ensureStructureEmbedding name
@@ -186,6 +191,7 @@ private def deriveInput (name : Name) : TermElabM Unit := do
       #[some tupleType, some (mkConst name), some input, some embedding, some preserved]
     addInterfaceInstance (name ++ `instProgramInputPrefixClosed) value
       "The record input observation is preserved by an exact extension of its initial heap."
+  deriveInputPrefix (name ++ `instProgramInputProd) embedding
   deriveArrayInput name embedding tupleType
 
 private def deriveOutput (name : Name) : TermElabM Unit := do

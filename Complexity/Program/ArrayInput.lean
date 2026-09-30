@@ -80,6 +80,12 @@ theorem comap {α : Type u} {β : Type v} (input : Input α) (view : β ↪ α)
   intro x args initial finish observed extension
   exact @PrefixClosed.mono α input closed (view x) args initial finish observed extension
 
+/-- Reassociation retains the same heap-prefix observation law. -/
+instance prodAssoc {α : Type u} {β : Type v} {γ : Type w}
+    [Input (α × β × γ)] [PrefixClosed (α × β × γ)] :
+    PrefixClosed ((α × β) × γ) :=
+  comap inferInstance (Equiv.prodAssoc α β γ).toEmbedding
+
 end PrefixClosed
 
 /-- Append one preloaded scalar array while leaving all old objects unchanged. -/

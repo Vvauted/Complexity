@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Program.Basic
 import Complexity.Language.ArrayFunction
 import Complexity.Language.Representation.List
+import Mathlib.Logic.Equiv.Prod
 
 /-!
 # Fixed mathematical inputs and outputs
@@ -32,7 +33,7 @@ namespace Complexity.Program
 
 open Language
 
-universe u v
+universe u v w
 
 namespace Input
 
@@ -71,6 +72,12 @@ def comap {α : Type u} {β : Type v} (input : Input α) (view : β ↪ α) : In
     functional first second :=
       view.injective ((@Input.representation α input).functional first second) }
   represented x := @Input.represented α input (view x)
+
+/-- Reassociate a nested field prefix using the same ordered input layout.
+This adds neither arguments nor heap objects. -/
+instance prodAssoc {α : Type u} {β : Type v} {γ : Type w}
+    [Input (α × β × γ)] : Input ((α × β) × γ) :=
+  comap inferInstance (Equiv.prodAssoc α β γ).toEmbedding
 
 /-- One ordinary natural argument, with no initial source objects. -/
 instance nat : Input Nat := ofEmbedding (τ := .nat) (Function.Embedding.refl Nat)

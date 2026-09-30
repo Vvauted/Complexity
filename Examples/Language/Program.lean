@@ -318,8 +318,8 @@ structure Reading where
 /-- The default is a genuine represented record, including its backing array. -/
 structure ReadingInput where
   readings : Array Reading
-  index : Nat
   fallback : Reading
+  index : Nat
   deriving Complexity.Program.Input, Complexity.Program.RamInput
 
 source_program RecordLookup where

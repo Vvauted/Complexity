@@ -116,6 +116,10 @@ Registration is fixed by the task before choosing a candidate. It does not run
 arbitrary host preprocessing or compile arbitrary Lean record operations.
 Currently deriving requires nondependent direct fields, no type parameters or
 inheritance, and an existing interface for the resulting ordered field tuple.
+Derived records also compose as fields before later fields, including when the
+nested record contains arrays. Product reassociation and the derived prefix
+instances reuse the same ordered layout; no field needs to be moved to the end
+just because it is a record. This is input registration, not extra runtime copying.
 Prepared source supports field projection, construction and returned records with
 array fields; natural-array `++` uses an actual allocation and copying call.
 Branch results may also contain arrays: the selected branch supplies the actual
@@ -160,8 +164,8 @@ uses the common row count. `recordLookup_correct` in the typed-program example
 states ordinary record projections and nested lookup, with `program_correct`
 handling the source correspondence. This does not support empty/Unit-only
 record elements, arbitrary element types or arbitrary record-array mutation.
-Input deriving still requires an existing interface for the ordered field tuple:
-in particular, a nested record followed by more fields is not generally supported.
+The fallback in this example is a nested record before a later scalar field;
+its derived prefix layout composes with the record-array input unchanged.
 
 Defaults containing arrays must themselves have actual represented storage.
 `Array.replicate length initial` for Nat/Bool allocates and initializes that

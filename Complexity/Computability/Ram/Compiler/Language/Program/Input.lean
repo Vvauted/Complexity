@@ -24,7 +24,7 @@ open Complexity.Language Ram.LanguageCompiler
 
 namespace RamInput
 
-universe u v
+universe u v w
 
 private theorem inputWordWidth_cons (head : Nat) (tail : Array Nat) :
     Ram.LanguageCompiler.ArrayFunction.inputWordWidth tail ≤
@@ -188,6 +188,11 @@ def comap {α : Type u} {β : Type v} [input : Input α] [RamInput α]
     rooted := fun x => RamInput.rooted (view x)
     fits := fun x w width => RamInput.fits (view x) w width
     arena := fun x w width => RamInput.arena (view x) w width }
+
+/-- Nested field prefixes reuse the same physical words, objects and width rule. -/
+instance prodAssoc {α : Type u} {β : Type v} {γ : Type w}
+    [Input (α × β × γ)] [RamInput (α × β × γ)] : RamInput ((α × β) × γ) :=
+  comap (Equiv.prodAssoc α β γ).toEmbedding
 
 end RamInput
 end Complexity.Program
