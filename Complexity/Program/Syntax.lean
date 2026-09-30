@@ -179,14 +179,23 @@ private partial def observationConjuncts (proof : Expr) : MetaM (Array Expr) := 
       (← observationConjuncts (← mkAppM ``And.right #[proof]))
   return #[proof]
 
-private partial def assembleObservation (expected : Expr) (facts : Array Expr) : MetaM Expr := do
-  for fact in facts do
-    if ← isDefEq (← inferType fact) expected then return fact
+-- The two layouts normally visit fields in the same order, even when their
+-- conjunction/product grouping differs. Start after the last matched field;
+-- wrap around so reordered or repeated observations still search every fact.
+private partial def assembleObservation (expected : Expr) (facts : Array Expr) :
+    StateT Nat MetaM Expr := do
   let target ← whnf expected
   if target.isAppOfArity ``And 2 then
     let first ← assembleObservation target.getAppArgs[0]! facts
     let second ← assembleObservation target.getAppArgs[1]! facts
     return ← mkAppM ``And.intro #[first, second]
+  let start ← get
+  for offset in [:facts.size] do
+    let i := (start + offset) % facts.size
+    let fact := facts[i]!
+    if ← isDefEq (← inferType fact) expected then
+      set (i + 1)
+      return fact
   if target.isAppOfArity ``Eq 3 then
     let arguments := target.getAppArgs
     let type ← whnf arguments[0]!
@@ -259,7 +268,8 @@ private def preparePacking (name : TSyntax `ident) (expected : Expr)
     let represented ← mkAppOptM ``Input.represented #[some α, some input, some x]
     let proof ← if ← isDefEq (← inferType represented) required then pure represented
       else
-        try assembleObservation required (← observationConjuncts represented)
+        try
+          (assembleObservation required (← observationConjuncts represented)).run' 0
         catch error =>
           throwError "the fixed preloaded input does not establish the native argument \
             representation after executable packing:\n{error.toMessageData}"
