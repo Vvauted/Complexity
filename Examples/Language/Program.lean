@@ -339,4 +339,28 @@ theorem recordLookup_correct :
           input.readings.size) := by
   program_correct RecordLookup.lookup using fun _ => rfl
 
+/-- Unequal-length interval rows retain their shared boundaries and pair columns. -/
+structure IntervalRows where
+  rows : Array (Array (Nat × Nat))
+  fallback : Array (Nat × Nat)
+  row : Nat
+  column : Nat
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+source_program IntervalLookup where
+  def width (input : IntervalRows) : Nat := do
+    let intervals ← input.rows.getD input.row input.fallback
+    let interval ← intervals.getD input.column (0, 0)
+    return interval.2 - interval.1 + intervals.size + input.rows.size
+
+/-- Ordinary nested array lookup uses real row slices and scalar column reads. -/
+def intervalWidth : Complexity.Program IntervalRows Nat := program% IntervalLookup.width
+
+theorem intervalWidth_correct :
+    intervalWidth.Correct (fun _ => True) (fun input result =>
+      let intervals := input.rows.getD input.row input.fallback
+      let interval := intervals.getD input.column (0, 0)
+      result = interval.2 - interval.1 + intervals.size + input.rows.size) := by
+  program_correct IntervalLookup.width using fun _ => rfl
+
 end Complexity.Examples.TypedProgram

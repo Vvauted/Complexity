@@ -89,7 +89,7 @@ private partial def readPlan (array result : NativeType) (path : String)
             | throwError "unsupported composite array storage"
           pair left right
   | .arrayProd left right => pair (.array left) (.array right)
-  | .array kind | .raggedArray kind => do
+  | .array kind | .raggedArray (.array kind) => do
       let ragged := match array with | .raggedArray _ => true | _ => false
       let family := if ragged then `Complexity.Language.Buffer.Ragged.GetD
         else `Complexity.Language.Buffer.GetD
@@ -131,6 +131,44 @@ private partial def readPlan (array result : NativeType) (path : String)
               exact $evaluated:ident $rows $index $fallback $storage $heap $observed)]
           equations := #[execution], sourceValue := ⟨sourceValue.raw⟩
           returned := selected, related := ← `(show $scalarRelation from rfl) }
+  | .raggedArray payload => do
+      let pairRows (left right : NativeType) : TermElabM ReadPlan := do
+        let first ← readPlan (.raggedArray left) left (path ++ "L")
+          (← `(($rows).map (Array.map Prod.fst))) index (← `(($fallback).map Prod.fst))
+          (← `((($storage).1, ($storage).2.1))) (← `(($defaultView).1)) heap
+          (← `(Complexity.Language.Representation.raggedArrayOf_fst $observed))
+          (← `(And.left $defaultObserved))
+        let second ← readPlan (.raggedArray right) right (path ++ "R")
+          (← `(($rows).map (Array.map Prod.snd))) index (← `(($fallback).map Prod.snd))
+          (← `((($storage).1, ($storage).2.2))) (← `(($defaultView).2)) heap
+          (← `(Complexity.Language.Representation.raggedArrayOf_snd $observed))
+          (← `(And.right $defaultObserved))
+        let returned ← `(($(first.returned), $(second.returned)))
+        return {
+          body := first.body ++ second.body
+          proof := first.proof ++ second.proof
+          equations := first.equations ++ second.equations
+          sourceValue := ← `(($(first.sourceValue), $(second.sourceValue)))
+          returned, related := ← checked returned
+            (← `(And.intro $(first.related) $(second.related))) }
+      match payload with
+      | .arrayProd left right => pairRows (.array left) (.array right)
+      | .arrayView element columns _ =>
+          match element with
+          | .record _ _ embedding => do
+              let view ← termOfExpr embedding
+              let columnRep ← termOfExpr columns.representation
+              let inner ← readPlan (.raggedArray columns) columns path
+                (← `(($rows).map (Array.map $view))) index (← `(($fallback).map $view))
+                storage defaultView heap
+                (← `(Complexity.Language.Representation.raggedArrayOf_map
+                  $columnRep $view $observed)) defaultObserved
+              return { inner with related := ← checked inner.returned inner.related }
+          | _ =>
+              let .prod left right := columns
+                | throwError "unsupported row payload columns"
+              pairRows left right
+      | _ => throwError "row payloads require supported scalar array columns"
   | _ => throwError "this array layout has no executable defaulted element reader"
 
 /-- Emit an actual source reader and checked mathematical/frame contracts. -/

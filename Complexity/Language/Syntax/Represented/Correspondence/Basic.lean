@@ -97,7 +97,7 @@ private partial def arraySizeProof (type : NativeType) (observed : TSyntax `term
   match type with
   | .array _ => `(Complexity.Language.Buffer.Contents.size_eq $observed)
   | .arrayProd _ _ => `(Complexity.Language.Representation.arrayProd_size $observed)
-  | .raggedArray _ => `(Complexity.Language.Representation.raggedArray_size $observed)
+  | .raggedArray _ => `(Complexity.Language.Representation.raggedArrayOf_size $observed)
   | .arrayView _ (.prod left _) _ =>
       let first ← `(And.left $observed)
       let sized ← arraySizeProof left first
@@ -145,7 +145,7 @@ private partial def observationProof (observation : Observation) (heap : TSyntax
       `(Complexity.Language.Representation.arrayProd_size
         $(← observationProof array heap relations))
   | .raggedArraySize array =>
-      `(Complexity.Language.Representation.raggedArray_size
+      `(Complexity.Language.Representation.raggedArrayOf_size
         $(← observationProof array heap relations))
   | .arrayViewSize type array =>
       arraySizeProof type (← observationProof array heap relations)
@@ -176,10 +176,10 @@ partial def preservation (type : NativeType) (initial finish shape : TSyntax `te
         `(Complexity.Language.Representation.Preserves.arrayProd
           $(← preservation (.array left) initial finish shape contents)
           $(← preservation (.array right) initial finish shape contents))
-    | .raggedArray kind =>
-        `(Complexity.Language.Representation.Preserves.raggedArray
+    | .raggedArray payload =>
+        `(Complexity.Language.Representation.Preserves.raggedArrayOf
           $(← preservation (.array .nat) initial finish shape contents)
-          $(← preservation (.array kind) initial finish shape contents))
+          $(← preservation payload initial finish shape contents))
     | .arrayView _ storage embedding =>
         `(Complexity.Language.Representation.Preserves.comap $(← termOfExpr embedding)
           $(← preservation storage initial finish shape contents))

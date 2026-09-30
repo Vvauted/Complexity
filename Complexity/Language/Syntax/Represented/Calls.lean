@@ -10,6 +10,7 @@ import Complexity.Language.Buffer.GetD
 import Complexity.Language.Buffer.Prod.GetD
 import Complexity.Language.Buffer.Ragged.GetD
 import Complexity.Language.Buffer.Replicate
+import Complexity.Language.Buffer.Prod.Replicate
 import Complexity.Language.List.Fold.Native
 import Complexity.Language.List.Cons.Native
 import Complexity.Language.List.Uncons.Native
@@ -316,6 +317,26 @@ private def arrayGetDOperation (kind : CellTy) : PrepareM Operation := do
         | .nat => ``Complexity.Language.Buffer.GetD.getNat_eval_exists_preserving
         | .bool => ``Complexity.Language.Buffer.GetD.getBool_eval_exists_preserving)) } }
 
+private def arrayProdReplicateOperation (left right : CellTy) : PrepareM Operation := do
+  let family := mkIdent `Complexity.Language.Buffer.Prod.Replicate
+  unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
+    modify fun state => { state with calledFamilies := state.calledFamilies.push family }
+  let length ← resolveType (← `(Nat))
+  let scalarType (kind : CellTy) := match kind with
+    | .nat => mkConst ``Nat | .bool => mkConst ``Bool
+  let element ← resolveType (← termOfExpr
+    (← mkAppM ``Prod #[scalarType left, scalarType right]))
+  let sourceName := match left, right with
+    | .nat, .nat => `replicateNatNat | .nat, .bool => `replicateNatBool
+    | .bool, .nat => `replicateBoolNat | .bool, .bool => `replicateBoolBool
+  let declaration (suffix : String) := mkCIdent ((family.getId ++ sourceName).appendAfter suffix)
+  return {
+    family, sourceName, inputs := #[length, element], result := .arrayProd left right
+    model? := some {
+      native := ⟨(mkCIdent ``Array.replicate).raw⟩, equation := none
+      relation := declaration "_eval_exists", refinement := declaration "_refines"
+      preservingRelation := some (declaration "_eval_exists_preserving") } }
+
 private def arrayProdGetDOperation (left right : CellTy) : PrepareM Operation := do
   let family := mkIdent `Complexity.Language.Buffer.Prod.GetD
   unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
@@ -351,7 +372,7 @@ private def raggedArrayGetDOperation (kind : CellTy) : PrepareM Operation := do
     (family.getId ++ Name.mkSimple (sourceName.toString ++ suffix))
   return {
     family, sourceName
-    inputs := #[.raggedArray kind, index, .array kind]
+    inputs := #[.raggedArray (.array kind), index, .array kind]
     result := .array kind
     model? := some {
       native := ⟨(mkCIdent ``Array.getD).raw⟩
@@ -502,17 +523,20 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
       return some (← arrayOperation true, #[left, right])
   | `(Array.replicate $length:term $initial:term) =>
       let initialValue ← value scope initial
-      let kind ← if ← isDefEq initialValue.type.nativeType (mkConst ``Nat) then pure CellTy.nat
-        else if ← isDefEq initialValue.type.nativeType (mkConst ``Bool) then pure CellTy.bool
-        else throwErrorAt initial "Array.replicate currently requires Nat or Bool cells"
-      return some (← arrayReplicateOperation kind, #[length, initial])
+      let array ← resolveNativeType (← mkAppM ``Array #[initialValue.type.nativeType])
+      let operation ← match array with
+        | .array kind => arrayReplicateOperation kind
+        | .arrayProd left right => arrayProdReplicateOperation left right
+        | _ => throwErrorAt initial "Array.replicate requires Nat/Bool cells or pairs of them"
+      return some (operation, #[length, initial])
   | `(Array.getD $values:term $index:term $fallback:term) =>
       let valuesValue ← value scope values
       let operation ← match valuesValue.type with
         | .array kind => arrayGetDOperation kind
         | .arrayProd left right => arrayProdGetDOperation left right
-        | .raggedArray kind => raggedArrayGetDOperation kind
-        | .arrayView _ _ _ => arrayViewGetDOperation names.publicFamily valuesValue.type
+        | .raggedArray (.array kind) => raggedArrayGetDOperation kind
+        | .raggedArray _ | .arrayView _ _ _ =>
+            arrayViewGetDOperation names.publicFamily valuesValue.type
         | _ => throwErrorAt values "Array.getD requires a represented array"
       return some (operation, #[values, index, fallback])
   | `(List.foldl $callback:ident $initial:term $values:term) =>

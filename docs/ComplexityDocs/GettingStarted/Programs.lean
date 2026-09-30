@@ -147,13 +147,21 @@ a checked borrowed slice, followed by ordinary cell reads. Empty rows and
 out-of-bounds fallback arrays keep their ordinary Lean meanings. The example's
 `raggedLookup_correct` states only nested `Array.getD` expressions and uses
 `program_correct`; it contains no descriptor arithmetic or heap decoder.
-Returning a nested input also uses its actual buffers at the final heap.
+Returning a nested scalar input also uses its actual buffers at the final heap.
+
+Rows of Nat/Bool pairs use the same expressions and one shared boundary buffer,
+alongside the existing two payload columns. A row read calls the checked scalar
+row operations on those columns and returns both borrowed slices; the following
+pair lookup performs its actual bounds check and cell reads. Empty rows and the
+complete supplied fallback row retain their ordinary meanings. The
+`intervalWidth_correct` consumer states nested `Array.getD`, pair projections
+and lengths, and again uses `program_correct` without a private layout adapter.
 
 The fixed invocation layout contains all original cells, row boundaries and
 their width requirements. Constructing this layout during execution is not a
 free operation. Row views alias the existing payload, and arbitrary later writes
 need the usual contents-preservation proof. More deeply nested arrays and
-mutable nested-array construction are not provided by this two-level scalar layout.
+mutable nested-array construction are not provided by this two-level column layout.
 
 Arrays of closed records compose their existing scalar and array field layouts.
 For example, a record containing `tag : Nat` and `values : Array Nat` uses a
@@ -168,9 +176,10 @@ The fallback in this example is a nested record before a later scalar field;
 its derived prefix layout composes with the record-array input unchanged.
 
 Defaults containing arrays must themselves have actual represented storage.
-`Array.replicate length initial` for Nat/Bool allocates and initializes that
-storage through the existing allocator, preserving old contents. At length zero
-it creates a real empty object, so an algorithm can construct a fallback record
+`Array.replicate length initial` for Nat/Bool scalars or scalar pairs allocates
+and initializes that storage through the existing allocator, preserving old
+contents. A pair allocates both real columns and retains the first while creating
+the second. At length zero the objects are still real, so an algorithm can construct a fallback record
 without requiring another input array. Its model is ordinary `Array.replicate`;
 allocation and initialization remain part of the compiled computation, not free
 mathematical preprocessing. Composite reads preserve the heap but allocate no

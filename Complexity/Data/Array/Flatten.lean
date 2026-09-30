@@ -36,6 +36,13 @@ def flattenOffsets (rows : Array (Array α)) : Array Nat :=
     rows.flattenOffsets[i] = (rows.extract 0 i).flatten.size := by
   simp [flattenOffsets]
 
+/-- Pointwise element views preserve every row boundary, including empty rows. -/
+@[simp] theorem flattenOffsets_map {β : Type*} (f : α → β) (rows : Array (Array α)) :
+    (rows.map (Array.map f)).flattenOffsets = rows.flattenOffsets := by
+  apply Array.ext (by simp)
+  intro i hx hy
+  simp only [getElem_flattenOffsets, ← map_extract, ← map_flatten, size_map]
+
 /-- The flattened prefix ends at precisely its own length. -/
 theorem extract_flatten_prefix (rows : Array (Array α)) {i : Nat} (h : i ≤ rows.size) :
     rows.flatten.extract 0 (rows.extract 0 i).flatten.size = (rows.extract 0 i).flatten := by

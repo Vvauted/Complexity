@@ -26,8 +26,9 @@ their conjunction by a tuple-equality representation.
 Arrays of supported products and nonempty records reuse their actual field
 columns through one checked view. The resolver builds only array-unzip views
 and pointwise direct-field record embeddings; it installs no arbitrary element
-decoder. Nested scalar-array fields keep the existing ragged layout. Empty
-record/Unit arrays and unsupported nested element layouts remain rejected.
+decoder. Nested arrays with scalar-column payloads keep one shared boundary
+buffer and the existing payload layout. Empty record/Unit arrays, deeper ragged
+payloads and unsupported nested element layouts remain rejected.
 
 Existing raw `Buffer` and `NodeRef` parameters retain an identity observation
 of the handle itself. This is distinct from an array or list contents relation;
@@ -54,7 +55,7 @@ inductive NativeType where
   | list (kind : CellTy)
   | array (kind : CellTy)
   | arrayProd (left right : CellTy)
-  | raggedArray (kind : CellTy)
+  | raggedArray (payload : NativeType)
   | arrayView (element storage : NativeType) (embedding : Expr)
   | prod (left right : NativeType)
   | option (payload : NativeType)
@@ -67,7 +68,7 @@ def NativeType.coreTy : NativeType → Ty
   | .list kind => .option (.node kind)
   | .array kind => .buffer kind
   | .arrayProd left right => .prod (.buffer left) (.buffer right)
-  | .raggedArray kind => .prod (.buffer .nat) (.buffer kind)
+  | .raggedArray payload => .prod (.buffer .nat) payload.coreTy
   | .arrayView _ storage _ => storage.coreTy
   | .prod left right => .prod left.coreTy right.coreTy
   | .option payload => .option payload.coreTy
@@ -87,9 +88,7 @@ def NativeType.nativeType : NativeType → Expr
         (match right with | .nat => mkConst ``Nat | .bool => mkConst ``Bool))
   | .prod left right => mkApp2 (mkConst ``Prod [Level.zero, Level.zero])
       left.nativeType right.nativeType
-  | .raggedArray kind => mkApp (mkConst ``Array [Level.zero])
-      (mkApp (mkConst ``Array [Level.zero])
-        (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool))
+  | .raggedArray payload => mkApp (mkConst ``Array [Level.zero]) payload.nativeType
   | .arrayView element _ _ => mkApp (mkConst ``Array [Level.zero]) element.nativeType
   | .option payload => mkApp (mkConst ``Option [Level.zero]) payload.nativeType
   | .record name _ _ => mkConst name
@@ -119,8 +118,8 @@ def NativeType.representation : NativeType → Expr
   | .prod left right => mkAppN (mkConst ``Representation.prod [Level.zero, Level.zero])
       #[left.nativeType, right.nativeType, coreTypeExpr left.coreTy, coreTypeExpr right.coreTy,
         left.representation, right.representation]
-  | .raggedArray kind => mkApp (mkConst ``Representation.raggedArray)
-      (match kind with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)
+  | .raggedArray payload => mkAppN (mkConst ``Representation.raggedArrayOf [Level.zero])
+      #[payload.nativeType.getAppArgs[0]!, coreTypeExpr payload.coreTy, payload.representation]
   | .arrayView element storage embedding =>
       mkAppN (mkConst ``Representation.comap [Level.zero, Level.zero])
         #[storage.nativeType, mkApp (mkConst ``Array [Level.zero]) element.nativeType,
@@ -146,6 +145,14 @@ abbrev NativeType.isPure := NativeType.isIdentity
 /-- Supported array layouts retain heap-indexed observations. -/
 def NativeType.isArray : NativeType → Bool
   | .array _ | .arrayProd _ _ | .raggedArray _ | .arrayView _ _ _ => true
+  | _ => false
+
+/-- Scalar column layouts can be sliced using one shared array of row boundaries.
+Nested payload boundaries and linked nodes need different row operations. -/
+def NativeType.hasScalarArrayColumns : NativeType → Bool
+  | .array _ | .arrayProd _ _ => true
+  | .arrayView _ storage _ => storage.hasScalarArrayColumns
+  | .prod left right => left.hasScalarArrayColumns && right.hasScalarArrayColumns
   | _ => false
 
 /-- Emit the actual scalar length observation of a supported array layout.
@@ -193,10 +200,11 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if let .app (.const ``Array _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .array .nat
     if ← isDefEq element (mkConst ``Bool) then return .array .bool
-    if let .app (.const ``Array _) inner ← whnf element then
-      if ← isDefEq inner (mkConst ``Nat) then return .raggedArray .nat
-      if ← isDefEq inner (mkConst ``Bool) then return .raggedArray .bool
-      throwError "native nested arrays currently require Nat or Bool payload cells"
+    if let .app (.const ``Array _) _ ← whnf element then
+      let payload ← resolveNativeTypeAux element records structuredProducts
+      unless payload.hasScalarArrayColumns do
+        throwError "native row reads require scalar-column payload arrays"
+      return .raggedArray payload
     if let .app (.app (.const ``Prod _) left) right ← whnf element then
       let kind? (type : Expr) : TermElabM (Option CellTy) := do
         if ← isDefEq type (mkConst ``Nat) then return some .nat
