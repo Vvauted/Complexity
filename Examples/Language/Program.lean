@@ -264,4 +264,49 @@ theorem retainPairs_correct :
     retainPairs.Correct (fun _ => True) (fun values result => result = values) := by
   program_correct NativePairLookup.retain using fun _ => rfl
 
+/-- Nested mathematical arrays retain separate row boundaries and raw payload.
+The fallback arrays are ordinary independently preloaded fields. -/
+structure RaggedLookupInput where
+  values : Array (Array Nat)
+  flags : Array (Array Bool)
+  fallback : Array Nat
+  fallbackFlags : Array Bool
+  row : Nat
+  column : Nat
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+source_program (native) NativeRaggedLookup where
+  def lookup (input : RaggedLookupInput) : Nat := do
+    let row ← input.values.getD input.row input.fallback
+    let flags ← input.flags.getD input.row input.fallbackFlags
+    let enabled ← flags.getD input.column false
+    let result ← row.getD input.column 0
+    if enabled then
+      return result + input.values.size + row.size
+    else
+      return 0
+
+  def retain (values : Array (Array Nat)) : Array (Array Nat) := values
+
+/-- Row selection followed by cell access uses the same typed program boundary. -/
+def raggedLookup : Complexity.Program RaggedLookupInput Nat :=
+  program% NativeRaggedLookup.lookup
+
+/-- Correctness states ordinary nested-array access, with no storage descriptors. -/
+theorem raggedLookup_correct :
+    raggedLookup.Correct (fun _ => True) (fun input result => result =
+      if (input.flags.getD input.row input.fallbackFlags).getD input.column false then
+        (input.values.getD input.row input.fallback).getD input.column 0 +
+          input.values.size + (input.values.getD input.row input.fallback).size
+      else 0) := by
+  program_correct NativeRaggedLookup.lookup using fun _ => rfl
+
+/-- Nested outputs observe the actual returned boundary and payload buffers. -/
+def retainRows : Complexity.Program (Array (Array Nat)) (Array (Array Nat)) :=
+  program% NativeRaggedLookup.retain
+
+theorem retainRows_correct :
+    retainRows.Correct (fun _ => True) (fun rows result => result = rows) := by
+  program_correct NativeRaggedLookup.retain using fun _ => rfl
+
 end Complexity.Examples.TypedProgram

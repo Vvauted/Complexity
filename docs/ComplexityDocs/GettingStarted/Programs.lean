@@ -136,11 +136,30 @@ including aliases, so a later read may reuse the same inputs. The typed-program
 example combines a Boolean mask and a natural array with different possible
 lengths, and proves its `Program.Correct` contract through `program_correct`.
 
+Nested `Array (Array Nat)` and `Array (Array Bool)` inputs use the public
+[row-boundary layout](##Complexity.Program.RaggedArrayInput). The same `.size`
+and `.getD` expressions work: a row read executes two boundary reads and forms
+a checked borrowed slice, followed by ordinary cell reads. Empty rows and
+out-of-bounds fallback arrays keep their ordinary Lean meanings. The example's
+`raggedLookup_correct` states only nested `Array.getD` expressions and uses
+`program_correct`; it contains no descriptor arithmetic or heap decoder.
+Returning a nested input also uses its actual buffers at the final heap.
+
+The fixed invocation layout contains all original cells, row boundaries and
+their width requirements. Constructing this layout during execution is not a
+free operation. Row views alias the existing payload, and arbitrary later writes
+need the usual contents-preservation proof. Arrays of records, more deeply
+nested arrays and mutable nested-array construction are not provided by this
+two-level scalar layout.
+
 The [lookup cost module](##Complexity.Computability.Ram.Compiler.Language.Buffer.GetD)
 derives input-independent bounds from the actual source body and existing
 compiler rules. Its arena bounds compose conditionally with caller readiness;
 these leaf bounds do not by themselves prove a complete program's `TimeO`,
 word-range readiness or input-loading cost.
+The [row-lookup costs](##Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.GetD)
+likewise count the actual boundary reads and checked slice, independently of
+the selected row's length; no payload copying is hidden in that bound.
 
 Self-recursive functions with a checked mathematical model may carry heap-backed
 values. The

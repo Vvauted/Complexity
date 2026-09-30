@@ -66,6 +66,7 @@ inductive Observation where
   | binary (operation : TSyntax `term) (left right : Observation)
   | arraySize (array : Observation)
   | arrayProdSize (array : Observation)
+  | raggedArraySize (array : Observation)
 
 structure RetainedObservation where
   name : Name

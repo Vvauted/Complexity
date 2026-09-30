@@ -155,6 +155,7 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.Realization
 import Complexity.Computability.Ram.Compiler.Language.Buffer.GetD
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.GetD
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.GetD
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Execution
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Scalar
@@ -216,6 +217,7 @@ import Complexity.Computability.Ram.Compiler.Language.Program
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayFunction
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInputResources
+import Complexity.Computability.Ram.Compiler.Language.Program.RaggedArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.Asymptotics
 import Complexity.Computability.Ram.Compiler.Language.Program.Capacity
 import Complexity.Computability.Ram.Compiler.Language.Program.Capacity.Polynomial
@@ -430,6 +432,7 @@ import Complexity.Language.Buffer.Copy.Native
 import Complexity.Language.Buffer.GetD
 import Complexity.Language.Buffer.Prod
 import Complexity.Language.Buffer.Prod.GetD
+import Complexity.Language.Buffer.Ragged.GetD
 import Complexity.Language.Buffer.Map
 import Complexity.Language.Buffer.Map.Program
 import Complexity.Language.Buffer.RepresentedCopy
@@ -490,6 +493,7 @@ import Complexity.Language.List.Uncons.Native
 import Complexity.Language.Rooted
 import Complexity.Language.Representation
 import Complexity.Language.Representation.Array
+import Complexity.Language.Representation.RaggedArray
 import Complexity.Language.Representation.List
 import Complexity.Language.Representation.Preservation
 import Complexity.Language.Representation.Scalar
@@ -550,6 +554,7 @@ import Complexity.Language.Verification.Tactic
 import Complexity.LinearAlgebra.Matrix.Update
 import Complexity.Program.ArrayFunction
 import Complexity.Program.ArrayInput
+import Complexity.Program.RaggedArrayInput
 import Complexity.Program.Basic
 import Complexity.Program.Deriving
 import Complexity.Program.Input

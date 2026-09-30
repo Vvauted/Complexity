@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Language.Syntax.Types
 import Complexity.Language.Syntax.Core
 import Complexity.Language.Representation.List
+import Complexity.Language.Representation.RaggedArray
 import Complexity.Program.Deriving
 import Lean.PrettyPrinter.Delaborator
 
@@ -47,6 +48,7 @@ inductive NativeType where
   | list (kind : CellTy)
   | array (kind : CellTy)
   | arrayProd (left right : CellTy)
+  | raggedArray (kind : CellTy)
   | prod (left right : NativeType)
   | option (payload : NativeType)
   | record (name : Name) (layout : NativeType) (embedding : Expr)
@@ -58,6 +60,7 @@ def NativeType.coreTy : NativeType → Ty
   | .list kind => .option (.node kind)
   | .array kind => .buffer kind
   | .arrayProd left right => .prod (.buffer left) (.buffer right)
+  | .raggedArray kind => .prod (.buffer .nat) (.buffer kind)
   | .prod left right => .prod left.coreTy right.coreTy
   | .option payload => .option payload.coreTy
   | .record _ layout _ => layout.coreTy
@@ -76,6 +79,9 @@ def NativeType.nativeType : NativeType → Expr
         (match right with | .nat => mkConst ``Nat | .bool => mkConst ``Bool))
   | .prod left right => mkApp2 (mkConst ``Prod [Level.zero, Level.zero])
       left.nativeType right.nativeType
+  | .raggedArray kind => mkApp (mkConst ``Array [Level.zero])
+      (mkApp (mkConst ``Array [Level.zero])
+        (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool))
   | .option payload => mkApp (mkConst ``Option [Level.zero]) payload.nativeType
   | .record name _ _ => mkConst name
 
@@ -104,6 +110,8 @@ def NativeType.representation : NativeType → Expr
   | .prod left right => mkAppN (mkConst ``Representation.prod [Level.zero, Level.zero])
       #[left.nativeType, right.nativeType, coreTypeExpr left.coreTy, coreTypeExpr right.coreTy,
         left.representation, right.representation]
+  | .raggedArray kind => mkApp (mkConst ``Representation.raggedArray)
+      (match kind with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)
   | .option payload => mkAppN (mkConst ``Representation.option [Level.zero])
       #[payload.nativeType, coreTypeExpr payload.coreTy, payload.representation]
   | .record name layout embedding =>
@@ -124,7 +132,7 @@ abbrev NativeType.isPure := NativeType.isIdentity
 
 /-- Arrays with either supported layout retain heap-indexed observations. -/
 def NativeType.isArray : NativeType → Bool
-  | .array _ | .arrayProd _ _ => true
+  | .array _ | .arrayProd _ _ | .raggedArray _ => true
   | _ => false
 
 private partial def scalarProduct : Ty → Bool
@@ -152,6 +160,10 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if let .app (.const ``Array _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .array .nat
     if ← isDefEq element (mkConst ``Bool) then return .array .bool
+    if let .app (.const ``Array _) inner ← whnf element then
+      if ← isDefEq inner (mkConst ``Nat) then return .raggedArray .nat
+      if ← isDefEq inner (mkConst ``Bool) then return .raggedArray .bool
+      throwError "native nested arrays currently require Nat or Bool payload cells"
     if let .app (.app (.const ``Prod _) left) right ← whnf element then
       let kind (type : Expr) : TermElabM CellTy := do
         if ← isDefEq type (mkConst ``Nat) then return .nat

@@ -8,6 +8,7 @@ import Complexity.Language.Buffer.Copy.Native
 import Complexity.Language.Buffer.RepresentedCopy
 import Complexity.Language.Buffer.GetD
 import Complexity.Language.Buffer.Prod.GetD
+import Complexity.Language.Buffer.Ragged.GetD
 import Complexity.Language.List.Fold.Native
 import Complexity.Language.List.Cons.Native
 import Complexity.Language.List.Uncons.Native
@@ -323,6 +324,25 @@ private def arrayProdGetDOperation (left right : CellTy) : PrepareM Operation :=
       refinement := declaration "_refines"
       preservingRelation := some (declaration "_eval_exists_preserving") } }
 
+private def raggedArrayGetDOperation (kind : CellTy) : PrepareM Operation := do
+  let family := mkIdent `Complexity.Language.Buffer.Ragged.GetD
+  unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
+    modify fun state => { state with calledFamilies := state.calledFamilies.push family }
+  let index ← resolveType (← `(Nat))
+  let sourceName := match kind with | .nat => `getNat | .bool => `getBool
+  let declaration (suffix : String) := mkCIdent
+    (family.getId ++ Name.mkSimple (sourceName.toString ++ suffix))
+  return {
+    family, sourceName
+    inputs := #[.raggedArray kind, index, .array kind]
+    result := .array kind
+    model? := some {
+      native := ⟨(mkCIdent ``Array.getD).raw⟩
+      equation := none
+      relation := declaration "_eval_exists"
+      refinement := declaration "_refines"
+      preservingRelation := some (declaration "_eval_exists_preserving") } }
+
 private def namedCall? (expression : TSyntax `term) :
     Option (TSyntax `ident × Array (TSyntax `term)) :=
   match expression with
@@ -447,6 +467,7 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
       let operation ← match valuesValue.type with
         | .array kind => arrayGetDOperation kind
         | .arrayProd left right => arrayProdGetDOperation left right
+        | .raggedArray kind => raggedArrayGetDOperation kind
         | _ => throwErrorAt values "Array.getD requires a represented array"
       return some (operation, #[values, index, fallback])
   | `(List.foldl $callback:ident $initial:term $values:term) =>
