@@ -9,6 +9,7 @@ import Complexity.Language.Buffer.RepresentedCopy
 import Complexity.Language.Buffer.GetD
 import Complexity.Language.Buffer.Prod.GetD
 import Complexity.Language.Buffer.Ragged.GetD
+import Complexity.Language.Buffer.Replicate
 import Complexity.Language.List.Fold.Native
 import Complexity.Language.List.Cons.Native
 import Complexity.Language.List.Uncons.Native
@@ -275,6 +276,22 @@ private def arrayOperation (append : Bool) : PrepareM Operation := do
         ``Complexity.Language.Buffer.Copy.append_eval_exists_preserving
         else ``Complexity.Language.Buffer.Copy.copy_eval_exists_preserving)) } }
 
+private def arrayReplicateOperation (kind : CellTy) : PrepareM Operation := do
+  let family := mkIdent `Complexity.Language.Buffer.Replicate
+  unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
+    modify fun state => { state with calledFamilies := state.calledFamilies.push family }
+  let length ← resolveType (← `(Nat))
+  let element ← resolveType (← termOfExpr (match kind with
+    | .nat => mkConst ``Nat | .bool => mkConst ``Bool))
+  let sourceName := match kind with | .nat => `replicateNat | .bool => `replicateBool
+  let declaration (suffix : String) := mkCIdent ((family.getId ++ sourceName).appendAfter suffix)
+  return {
+    family, sourceName, inputs := #[length, element], result := .array kind
+    model? := some {
+      native := ⟨(mkCIdent ``Array.replicate).raw⟩, equation := none
+      relation := declaration "_eval_exists", refinement := declaration "_refines"
+      preservingRelation := some (declaration "_eval_exists_preserving") } }
+
 private def arrayGetDOperation (kind : CellTy) : PrepareM Operation := do
   let family := mkIdent `Complexity.Language.Buffer.GetD
   unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
@@ -343,6 +360,26 @@ private def raggedArrayGetDOperation (kind : CellTy) : PrepareM Operation := do
       refinement := declaration "_refines"
       preservingRelation := some (declaration "_eval_exists_preserving") } }
 
+private def arrayViewGetDOperation (family : TSyntax `ident) (array : NativeType) :
+    PrepareM Operation := do
+  for registration in (← get).arrayReads do
+    if ← sameType registration.array array then return registration.operation
+  let element ← resolveNativeType array.nativeType.getAppArgs[0]!
+  let index ← resolveType (← `(Nat))
+  let operationFamily := mkIdentFrom family
+    (family.getId ++ `Operations ++ Name.mkSimple s!"arrayRead{(← get).arrayReads.size}")
+  let name (suffix : Name) := mkIdentFrom family (operationFamily.getId ++ suffix)
+  let operation : Operation := {
+    family := operationFamily, sourceName := `getD
+    inputs := #[array, index, element], result := element
+    model? := some {
+      native := ⟨(mkCIdent ``Array.getD).raw⟩, equation := none
+      relation := name `getD_eval_exists
+      refinement := name `getD_refines
+      preservingRelation := some (name `getD_eval_exists_preserving) } }
+  modify fun state => { state with arrayReads := state.arrayReads.push ⟨array, operation⟩ }
+  return operation
+
 private def namedCall? (expression : TSyntax `term) :
     Option (TSyntax `ident × Array (TSyntax `term)) :=
   match expression with
@@ -405,6 +442,7 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
   match expression with
   | `(($inner:term)) => canonicalCall? imports scope inner
   | `(Array.append $left:term $right:term) => return some (← `(Array.append $left $right))
+  | `(Array.replicate $length:term $initial:term) => return some (← `(Array.replicate $length $initial))
   | `(Array.getD $values:term $index:term $fallback:term) =>
       return some (← `(Array.getD $values $index $fallback))
   | `($left:term ++ $right:term) =>
@@ -462,12 +500,19 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
   match expression with
   | `(Array.append $left:term $right:term) =>
       return some (← arrayOperation true, #[left, right])
+  | `(Array.replicate $length:term $initial:term) =>
+      let initialValue ← value scope initial
+      let kind ← if ← isDefEq initialValue.type.nativeType (mkConst ``Nat) then pure CellTy.nat
+        else if ← isDefEq initialValue.type.nativeType (mkConst ``Bool) then pure CellTy.bool
+        else throwErrorAt initial "Array.replicate currently requires Nat or Bool cells"
+      return some (← arrayReplicateOperation kind, #[length, initial])
   | `(Array.getD $values:term $index:term $fallback:term) =>
       let valuesValue ← value scope values
       let operation ← match valuesValue.type with
         | .array kind => arrayGetDOperation kind
         | .arrayProd left right => arrayProdGetDOperation left right
         | .raggedArray kind => raggedArrayGetDOperation kind
+        | .arrayView _ _ _ => arrayViewGetDOperation names.publicFamily valuesValue.type
         | _ => throwErrorAt values "Array.getD requires a represented array"
       return some (operation, #[values, index, fallback])
   | `(List.foldl $callback:ident $initial:term $values:term) =>

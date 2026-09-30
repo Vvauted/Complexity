@@ -156,6 +156,7 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.GetD
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.GetD
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.GetD
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Replicate
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Execution
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Scalar
@@ -415,6 +416,7 @@ import Complexity.Computability.Recurrence.Supercritical
 import Complexity.Control.Part
 import Complexity.Control.Part.StateT
 import Complexity.Control.Triple
+import Complexity.Data.Array.Map
 import Complexity.Data.Array.MapIdx
 import Complexity.Data.List.Fold
 import Complexity.Data.List.InsertIdx
@@ -433,6 +435,7 @@ import Complexity.Language.Buffer.GetD
 import Complexity.Language.Buffer.Prod
 import Complexity.Language.Buffer.Prod.GetD
 import Complexity.Language.Buffer.Ragged.GetD
+import Complexity.Language.Buffer.Replicate
 import Complexity.Language.Buffer.Map
 import Complexity.Language.Buffer.Map.Program
 import Complexity.Language.Buffer.RepresentedCopy
@@ -524,6 +527,7 @@ import Complexity.Language.Syntax.Declaration
 import Complexity.Language.Syntax.Imports
 import Complexity.Language.Syntax.Pure
 import Complexity.Language.Syntax.Represented
+import Complexity.Language.Syntax.Represented.ArrayDeclarations
 import Complexity.Language.Syntax.Represented.Basic
 import Complexity.Language.Syntax.Represented.Calls
 import Complexity.Language.Syntax.Represented.Control

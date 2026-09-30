@@ -67,6 +67,7 @@ inductive Observation where
   | arraySize (array : Observation)
   | arrayProdSize (array : Observation)
   | raggedArraySize (array : Observation)
+  | arrayViewSize (type : NativeType) (array : Observation)
 
 structure RetainedObservation where
   name : Name
@@ -125,6 +126,11 @@ structure UnconsRegistration where
 
 structure IsEmptyRegistration where
   kind : CellTy
+  operation : Operation
+
+/-- A concrete composite read assembled from existing column operations. -/
+structure ArrayReadRegistration where
+  array : NativeType
   operation : Operation
 
 structure ValueModel extends BindingModel where
@@ -289,6 +295,7 @@ structure Preparation where
   constructors : Array ConsRegistration := #[]
   deconstructors : Array UnconsRegistration := #[]
   emptinessTests : Array IsEmptyRegistration := #[]
+  arrayReads : Array ArrayReadRegistration := #[]
   functions : Array Function := #[]
   ranges : Array RangeRegistration := #[]
   whiles : Array WhileRegistration := #[]

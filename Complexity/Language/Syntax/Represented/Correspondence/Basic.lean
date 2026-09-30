@@ -90,6 +90,25 @@ def correspondenceHeader (names : DeclarationNames) (fn : Function) :
   return ⟨nativeName, rawEquation, heap, parameters, roots, observations,
     nativeValue, rawAction, relations⟩
 
+/-- Follow the same checked field views as NativeType.arraySizeTerm. Every
+recursive step retains the real column observation in the current heap. -/
+private partial def arraySizeProof (type : NativeType) (observed : TSyntax `term) :
+    TermElabM (TSyntax `term) := do
+  match type with
+  | .array _ => `(Complexity.Language.Buffer.Contents.size_eq $observed)
+  | .arrayProd _ _ => `(Complexity.Language.Representation.arrayProd_size $observed)
+  | .raggedArray _ => `(Complexity.Language.Representation.raggedArray_size $observed)
+  | .arrayView _ (.prod left _) _ =>
+      let first ← `(And.left $observed)
+      let sized ← arraySizeProof left first
+      `(by simpa [Complexity.Language.Representation.arrayUnzip,
+        Function.Embedding.arrayMap, Array.size_map] using $sized)
+  | .arrayView _ storage _ =>
+      let sized ← arraySizeProof storage observed
+      `(by simpa [Complexity.Language.Representation.arrayUnzip,
+        Function.Embedding.arrayMap, Array.size_map] using $sized)
+  | _ => throwError "array size proof requires a supported field-column observation"
+
 private partial def observationProof (observation : Observation) (heap : TSyntax `term)
     (relations : Array RetainedObservation) : TermElabM (TSyntax `term) := do
   match observation with
@@ -128,6 +147,8 @@ private partial def observationProof (observation : Observation) (heap : TSyntax
   | .raggedArraySize array =>
       `(Complexity.Language.Representation.raggedArray_size
         $(← observationProof array heap relations))
+  | .arrayViewSize type array =>
+      arraySizeProof type (← observationProof array heap relations)
 
 def observationAt (argument : Value) (heap : TSyntax `term)
     (relations : Array RetainedObservation) : TermElabM (TSyntax `term) := do
@@ -159,6 +180,9 @@ partial def preservation (type : NativeType) (initial finish shape : TSyntax `te
         `(Complexity.Language.Representation.Preserves.raggedArray
           $(← preservation (.array .nat) initial finish shape contents)
           $(← preservation (.array kind) initial finish shape contents))
+    | .arrayView _ storage embedding =>
+        `(Complexity.Language.Representation.Preserves.comap $(← termOfExpr embedding)
+          $(← preservation storage initial finish shape contents))
     | .prod left right => do
         `(Complexity.Language.Representation.Preserves.prod
           $(← preservation left initial finish shape contents)

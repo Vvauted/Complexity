@@ -23,6 +23,12 @@ Record products retain componentwise relations even when every component is
 scalar, matching the structural field representations rather than replacing
 their conjunction by a tuple-equality representation.
 
+Arrays of supported products and nonempty records reuse their actual field
+columns through one checked view. The resolver builds only array-unzip views
+and pointwise direct-field record embeddings; it installs no arbitrary element
+decoder. Nested scalar-array fields keep the existing ragged layout. Empty
+record/Unit arrays and unsupported nested element layouts remain rejected.
+
 Existing raw `Buffer` and `NodeRef` parameters retain an identity observation
 of the handle itself. This is distinct from an array or list contents relation;
 handle equality supplies no validity, rootedness or bounds proof. Raw handles
@@ -49,6 +55,7 @@ inductive NativeType where
   | array (kind : CellTy)
   | arrayProd (left right : CellTy)
   | raggedArray (kind : CellTy)
+  | arrayView (element storage : NativeType) (embedding : Expr)
   | prod (left right : NativeType)
   | option (payload : NativeType)
   | record (name : Name) (layout : NativeType) (embedding : Expr)
@@ -61,6 +68,7 @@ def NativeType.coreTy : NativeType → Ty
   | .array kind => .buffer kind
   | .arrayProd left right => .prod (.buffer left) (.buffer right)
   | .raggedArray kind => .prod (.buffer .nat) (.buffer kind)
+  | .arrayView _ storage _ => storage.coreTy
   | .prod left right => .prod left.coreTy right.coreTy
   | .option payload => .option payload.coreTy
   | .record _ layout _ => layout.coreTy
@@ -82,6 +90,7 @@ def NativeType.nativeType : NativeType → Expr
   | .raggedArray kind => mkApp (mkConst ``Array [Level.zero])
       (mkApp (mkConst ``Array [Level.zero])
         (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool))
+  | .arrayView element _ _ => mkApp (mkConst ``Array [Level.zero]) element.nativeType
   | .option payload => mkApp (mkConst ``Option [Level.zero]) payload.nativeType
   | .record name _ _ => mkConst name
 
@@ -112,6 +121,10 @@ def NativeType.representation : NativeType → Expr
         left.representation, right.representation]
   | .raggedArray kind => mkApp (mkConst ``Representation.raggedArray)
       (match kind with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)
+  | .arrayView element storage embedding =>
+      mkAppN (mkConst ``Representation.comap [Level.zero, Level.zero])
+        #[storage.nativeType, mkApp (mkConst ``Array [Level.zero]) element.nativeType,
+          coreTypeExpr storage.coreTy, storage.representation, embedding]
   | .option payload => mkAppN (mkConst ``Representation.option [Level.zero])
       #[payload.nativeType, coreTypeExpr payload.coreTy, payload.representation]
   | .record name layout embedding =>
@@ -130,10 +143,30 @@ def NativeType.isIdentity : NativeType → Bool
 about value observation, not a function's effects or successful termination. -/
 abbrev NativeType.isPure := NativeType.isIdentity
 
-/-- Arrays with either supported layout retain heap-indexed observations. -/
+/-- Supported array layouts retain heap-indexed observations. -/
 def NativeType.isArray : NativeType → Bool
-  | .array _ | .arrayProd _ _ | .raggedArray _ => true
+  | .array _ | .arrayProd _ _ | .raggedArray _ | .arrayView _ _ _ => true
   | _ => false
+
+/-- Emit the actual scalar length observation of a supported array layout.
+Product views select their first real column; record views retain the mapped
+array's length. Only the checked unzip/map views built by the resolver use this
+path. This neither decodes elements nor creates a source operation for a host map. -/
+partial def NativeType.arraySizeTerm (type : NativeType) (raw : TSyntax `term) :
+    TermElabM (TSyntax `term) := do
+  match type with
+  | .array _ => `(($raw).$(mkIdent `length):ident)
+  | .arrayProd _ _ =>
+      let column ← `(Prod.fst $raw)
+      `(($column).$(mkIdent `length):ident)
+  | .raggedArray _ =>
+      let column ← `(Prod.fst $raw)
+      let length ← `(($column).$(mkIdent `length):ident)
+      `($length - 1)
+  | .arrayView _ (.prod left _) _ =>
+      left.arraySizeTerm (← `(Prod.fst $raw))
+  | .arrayView _ storage _ => storage.arraySizeTerm raw
+  | _ => throwError "array size requires a supported nonempty field-column layout"
 
 private partial def scalarProduct : Ty → Bool
   | .nat | .bool | .unit => true
@@ -165,12 +198,34 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
       if ← isDefEq inner (mkConst ``Bool) then return .raggedArray .bool
       throwError "native nested arrays currently require Nat or Bool payload cells"
     if let .app (.app (.const ``Prod _) left) right ← whnf element then
-      let kind (type : Expr) : TermElabM CellTy := do
-        if ← isDefEq type (mkConst ``Nat) then return .nat
-        if ← isDefEq type (mkConst ``Bool) then return .bool
-        throwError "native array product fields currently require Nat or Bool"
-      return .arrayProd (← kind left) (← kind right)
-    throwError "native arrays currently contain Nat, Bool or pairs of these scalar types"
+      let kind? (type : Expr) : TermElabM (Option CellTy) := do
+        if ← isDefEq type (mkConst ``Nat) then return some .nat
+        if ← isDefEq type (mkConst ``Bool) then return some .bool
+        return none
+      let leftKind ← kind? left
+      let rightKind ← kind? right
+      if let some leftKind := leftKind then
+        if let some rightKind := rightKind then return .arrayProd leftKind rightKind
+      let leftArray ← resolveNativeTypeAux
+        (← mkAppM ``Array #[left]) records structuredProducts
+      let rightArray ← resolveNativeTypeAux
+        (← mkAppM ``Array #[right]) records structuredProducts
+      let elementType ← resolveNativeTypeAux element records structuredProducts
+      let embedding ← mkAppOptM ``Representation.arrayUnzip #[some left, some right]
+      return .arrayView elementType (.prod leftArray rightArray) embedding
+    if let .const name _ ← whnf element then
+      if (getStructureInfo? (← getEnv) name).isSome then
+        if records.contains name then
+          throwError "recursive native record-array layouts are not supported: {name}"
+        let embedding ← Complexity.Program.Deriving.ensureStructureEmbedding name
+        let embeddingType ← inferType embedding
+        let fieldsType := embeddingType.getAppArgs[1]!
+        let storage ← resolveNativeTypeAux
+          (← mkAppM ``Array #[fieldsType]) (name :: records) true
+        let elementType ← resolveNativeTypeAux element records true
+        let arrayEmbedding ← mkAppM ``Function.Embedding.arrayMap #[embedding]
+        return .arrayView elementType storage arrayEmbedding
+    throwError "native arrays require supported scalar, ragged, product or nonempty record fields"
   if let .app (.const ``Option _) payload := reduced then
     return .option (← resolveNativeTypeAux payload records structuredProducts)
   if let .app (.app (.const ``Prod _) left) right := reduced then

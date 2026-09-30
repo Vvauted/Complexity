@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Program.ArrayInput
+import Complexity.Program.RaggedArrayInput
 import Lean.Elab.Deriving.Basic
 import Lean.EnvExtension
 import Lean.Meta.AppBuilder
@@ -136,6 +137,41 @@ def ensureStructureEmbedding (name : Name) : TermElabM Expr := do
   modifyEnv fun env => structureViewExt.addEntry env name
   return mkConst embeddingName
 
+private def deriveArrayInput (name : Name) (embedding : Expr) (tupleType : Expr) :
+    TermElabM Unit := do
+  let arrayType ← mkAppM ``Array #[tupleType]
+  let .some input ← trySynthInstance (← mkAppM ``Input #[arrayType]) | return
+  let view ← mkAppM ``Function.Embedding.arrayMap #[embedding]
+  let value ← mkAppM ``Input.comap #[input, view]
+  addInterfaceInstance (name ++ `instProgramArrayInput) value
+    "The fixed field-column input of an array of these records."
+  if let .some closed ← trySynthInstance (← mkAppOptM ``Input.PrefixClosed
+      #[some arrayType, some input]) then
+    let value ← mkAppOptM ``Input.PrefixClosed.comap
+      #[none, none, some input, some view, some closed]
+    addInterfaceInstance (name ++ `instProgramArrayInputPrefixClosed) value
+      "Record-array contents survive exact prefixes of the initial heap."
+  let prefixValue ← withLocalDecl `Tail .implicit (mkSort (.succ .zero)) fun tail => do
+    let target ← mkAppM ``Prod #[arrayType, tail]
+    withLocalDecl `input .instImplicit (← mkAppM ``Input #[target]) fun input => do
+      let tailView ← mkAppM ``Function.Embedding.refl #[tail]
+      let fields ← mkAppM ``Function.Embedding.prodMap #[view, tailView]
+      mkLambdaFVars #[tail, input] (← mkAppM ``Input.comap #[input, fields])
+  addInterfaceInstance (name ++ `instProgramArrayInputProd) prefixValue
+    "Prepend the same record-array field layout to any registered input tail."
+  let prefixClosed ← withLocalDecl `Tail .implicit (mkSort (.succ .zero)) fun tail => do
+    let target ← mkAppM ``Prod #[arrayType, tail]
+    withLocalDecl `input .instImplicit (← mkAppM ``Input #[target]) fun input => do
+      withLocalDecl `closed .instImplicit (← mkAppOptM ``Input.PrefixClosed
+          #[some target, some input]) fun closed => do
+        let fields ← mkAppM ``Function.Embedding.prodMap
+          #[view, ← mkAppM ``Function.Embedding.refl #[tail]]
+        let value ← mkAppOptM ``Input.PrefixClosed.comap
+          #[none, none, some input, some fields, some closed]
+        mkLambdaFVars #[tail, input, closed] value
+  addInterfaceInstance (name ++ `instProgramArrayInputProdPrefixClosed) prefixClosed
+    "Record-array prefixes retain observations under exact heap prefixes."
+
 private def deriveInput (name : Name) : TermElabM Unit := do
   let embedding ← ensureStructureEmbedding name
   let type ← inferType embedding
@@ -150,6 +186,7 @@ private def deriveInput (name : Name) : TermElabM Unit := do
       #[some tupleType, some (mkConst name), some input, some embedding, some preserved]
     addInterfaceInstance (name ++ `instProgramInputPrefixClosed) value
       "The record input observation is preserved by an exact extension of its initial heap."
+  deriveArrayInput name embedding tupleType
 
 private def deriveOutput (name : Name) : TermElabM Unit := do
   let embedding ← ensureStructureEmbedding name

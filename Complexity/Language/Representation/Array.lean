@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Representation.Preservation
+import Complexity.Data.Array.Map
 import Init.Data.Array.Zip
 
 /-!

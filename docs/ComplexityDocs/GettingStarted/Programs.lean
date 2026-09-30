@@ -148,9 +148,30 @@ Returning a nested input also uses its actual buffers at the final heap.
 The fixed invocation layout contains all original cells, row boundaries and
 their width requirements. Constructing this layout during execution is not a
 free operation. Row views alias the existing payload, and arbitrary later writes
-need the usual contents-preservation proof. Arrays of records, more deeply
-nested arrays and mutable nested-array construction are not provided by this
-two-level scalar layout.
+need the usual contents-preservation proof. More deeply nested arrays and
+mutable nested-array construction are not provided by this two-level scalar layout.
+
+Arrays of closed records compose their existing scalar and array field layouts.
+For example, a record containing `tag : Nat` and `values : Array Nat` uses a
+scalar column and a ragged column. Deriving `Program.Input` and `Program.RamInput`
+for that element registers its array input too. Reading `readings.getD i fallback`
+executes the real column operations and observes the original record; `.size`
+uses the common row count. `recordLookup_correct` in the typed-program example
+states ordinary record projections and nested lookup, with `program_correct`
+handling the source correspondence. This does not support empty/Unit-only
+record elements, arbitrary element types or arbitrary record-array mutation.
+Input deriving still requires an existing interface for the ordered field tuple:
+in particular, a nested record followed by more fields is not generally supported.
+
+Defaults containing arrays must themselves have actual represented storage.
+`Array.replicate length initial` for Nat/Bool allocates and initializes that
+storage through the existing allocator, preserving old contents. At length zero
+it creates a real empty object, so an algorithm can construct a fallback record
+without requiring another input array. Its model is ordinary `Array.replicate`;
+allocation and initialization remain part of the compiled computation, not free
+mathematical preprocessing. Composite reads preserve the heap but allocate no
+replacement record storage. Whole-program resource proofs remain independent
+of these source correctness and preservation contracts.
 
 The [lookup cost module](##Complexity.Computability.Ram.Compiler.Language.Buffer.GetD)
 derives input-independent bounds from the actual source body and existing

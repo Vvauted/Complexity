@@ -466,6 +466,7 @@ private def rangeBodyFinish (range : RangeRegistration) (site : ActualRangeSite)
 
 private def rangeCaptureNeedsContents : NativeType → Bool
   | .array _ | .arrayProd _ _ | .raggedArray _ => true
+  | .arrayView _ storage _ => rangeCaptureNeedsContents storage
   | .prod left right => rangeCaptureNeedsContents left || rangeCaptureNeedsContents right
   | .option payload => rangeCaptureNeedsContents payload
   | .record _ layout _ => rangeCaptureNeedsContents layout

@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.Syntax.Represented.Preparation
 import Complexity.Language.Syntax.Represented.OperationDeclarations
+import Complexity.Language.Syntax.Represented.ArrayDeclarations
 import Complexity.Language.Syntax.Represented.Declarations
 import Complexity.Language.Syntax.Represented.ModelEquation
 import Complexity.Language.Syntax.Represented.Correspondence.While
@@ -123,11 +124,14 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
       name := `isEmpty
       params := #[(`root, .option (.node registration.kind))]
       result := .bool }]
+  for registration in prepared.arrayReads do
+    emitDeclarations (← liftTermElabM (arrayReadDeclarations registration))
   let rawFunctions ← liftTermElabM (prepared.functions.mapM rawFunction)
   let rawFamily := names.sourceFamily
   let operationFamilies := prepared.folds.map (·.operation.family) ++
     prepared.constructors.map (·.operation.family) ++ prepared.deconstructors.map (·.operation.family) ++
-    prepared.emptinessTests.map (·.operation.family) ++ prepared.calledFamilies
+    prepared.emptinessTests.map (·.operation.family) ++ prepared.arrayReads.map (·.operation.family) ++
+    prepared.calledFamilies
   let actualSites ← Complexity.Language.Syntax.elaborateSourceProgramWithBlockSites
     rawFamily rawFunctions libraries false operationFamilies
   let ranges ← prepared.ranges.mapM fun range => do

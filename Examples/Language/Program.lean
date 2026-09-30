@@ -309,4 +309,34 @@ theorem retainRows_correct :
     retainRows.Correct (fun _ => True) (fun rows result => result = rows) := by
   program_correct NativeRaggedLookup.retain using fun _ => rfl
 
+/-- An ordinary record element with a scalar and an array field. -/
+structure Reading where
+  tag : Nat
+  values : Array Nat
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+/-- The default is a genuine represented record, including its backing array. -/
+structure ReadingInput where
+  readings : Array Reading
+  index : Nat
+  fallback : Reading
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+source_program RecordLookup where
+  def lookup (input : ReadingInput) : Nat := do
+    let selected ← input.readings.getD input.index input.fallback
+    let first ← selected.values.getD 0 0
+    return selected.tag + first + input.readings.size
+
+/-- Record-array reading reuses the same fixed program input, not a task codec. -/
+def recordLookup : Complexity.Program ReadingInput Nat := program% RecordLookup.lookup
+
+/-- The statement retains ordinary record selection and nested array lookup. -/
+theorem recordLookup_correct :
+    recordLookup.Correct (fun _ => True) (fun input result => result =
+      (input.readings.getD input.index input.fallback).tag +
+        (input.readings.getD input.index input.fallback).values.getD 0 0 +
+          input.readings.size) := by
+  program_correct RecordLookup.lookup using fun _ => rfl
+
 end Complexity.Examples.TypedProgram

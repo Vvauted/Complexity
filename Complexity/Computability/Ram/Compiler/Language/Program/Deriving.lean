@@ -34,6 +34,24 @@ private def deriveRamInput (name : Name) : TermElabM Unit := do
       derive Complexity.Program.Input first"
   addInterfaceInstance (name ++ `instProgramRamInput) value
     "The fixed RAM layout of this record's derived mathematical program input."
+  if (← getEnv).contains (name ++ `instProgramArrayInput) then
+    let view ← mkAppM ``Function.Embedding.arrayMap #[embedding]
+    let arrayValue ← mkAppM ``RamInput.comap #[view]
+    addInterfaceInstance (name ++ `instProgramArrayRamInput) arrayValue
+      "The existing physical field-column layout for arrays of this record."
+    let tupleType := (← inferType view).getAppArgs[1]!
+    let prefixValue ← withLocalDecl `Tail .implicit (mkSort (.succ .zero)) fun tail => do
+      let target ← mkAppM ``Prod #[tupleType, tail]
+      withLocalDecl `input .instImplicit (← mkAppM ``Input #[target]) fun input => do
+        withLocalDecl `ram .instImplicit (← mkAppOptM ``RamInput
+            #[some target, some input]) fun ram => do
+          let fields ← mkAppM ``Function.Embedding.prodMap
+            #[view, ← mkAppM ``Function.Embedding.refl #[tail]]
+          let value ← mkAppOptM ``RamInput.comap
+            #[none, none, some input, some ram, some fields]
+          mkLambdaFVars #[tail, input, ram] value
+    addInterfaceInstance (name ++ `instProgramArrayRamInputProd) prefixValue
+      "Reuse the same physical record-array layout before any registered tail."
 
 private def ramInputHandler (names : Array Name) : CommandElabM Bool := do
   let env ← getEnv
