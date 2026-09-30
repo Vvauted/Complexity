@@ -87,6 +87,23 @@ views. For example, `append_list_length` combines `append_list_refines` with
 buffer with the requested prefix and zero padding, retaining all old views.
 It neither moves the original object nor changes an old handle's length.
 
+## Arrays of product elements
+
+[`Representation.arrayProd`](##Complexity.Language.Representation.arrayProd)
+observes an ordinary `Array (α × β)` through two component array representations.
+Both columns correspond to the same full array; mismatched lengths cannot denote
+a truncated zip. The mathematical representation composes recursively and permits
+aliases, but this does not supply arbitrary nested-element operations.
+
+The [scalar-pair read](##Complexity.Language.Buffer.Prod.read_eval) executes two
+real indexed reads and constructs the returned pair, preserving the entire heap.
+Its [compiler bound](##Ram.LanguageCompiler.Buffer.Prod.read_costBound) counts
+the handle projections, reads, pair construction, return and function initialization.
+It requires an in-bounds row; RAM readiness and call overhead remain separate.
+Fixed `Program` layouts and native `Array (α × β)` syntax are not yet integrated.
+Updating independent fields additionally needs separation or a proved alias-aware
+contract: allowing shared columns for reading does not justify arbitrary `Array.set`.
+
 ## Linked-node storage
 
 The List contracts here use `Representation.bufferList`: explicit mathematical

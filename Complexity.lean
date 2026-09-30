@@ -153,6 +153,7 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendReady
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.CostBound
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.Realization
 import Complexity.Computability.Ram.Compiler.Language.Buffer.GetD
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Execution
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Scalar
@@ -426,6 +427,7 @@ import Complexity.Language.Basic
 import Complexity.Language.Buffer.Copy
 import Complexity.Language.Buffer.Copy.Native
 import Complexity.Language.Buffer.GetD
+import Complexity.Language.Buffer.Prod
 import Complexity.Language.Buffer.Map
 import Complexity.Language.Buffer.Map.Program
 import Complexity.Language.Buffer.RepresentedCopy
@@ -485,6 +487,7 @@ import Complexity.Language.List.Uncons
 import Complexity.Language.List.Uncons.Native
 import Complexity.Language.Rooted
 import Complexity.Language.Representation
+import Complexity.Language.Representation.Array
 import Complexity.Language.Representation.List
 import Complexity.Language.Representation.Preservation
 import Complexity.Language.Representation.Scalar
