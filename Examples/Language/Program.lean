@@ -8,6 +8,7 @@ import Complexity.Language.Buffer.Copy
 import Complexity.Language.Syntax.Represented
 import Complexity.Program.Syntax
 import Examples.Language.Allocation
+import Examples.Language.LinkedList
 import Examples.Language.Scalar
 
 /-!
@@ -25,6 +26,8 @@ independent of this source correctness statement.
 The same selector also selects the original effectful allocating `make` without
 requiring a pure model. Its standard state contract proves the ordinary
 `Array.replicate` result through `Correct.of_triple` at the same fixed interface.
+The existing allocating singleton is selected with an ordinary `List Nat`
+result, using the fixed linked-node output representation.
 
 The array-append consumer uses ordinary closed input and output records with
 derived fixed interfaces. Its native source reads record fields and returns a
@@ -66,6 +69,15 @@ theorem replicate_correct :
     · exact ⟨fun _ _ observed => ⟨_, observed, rfl⟩, Std.Do.ExceptConds.entails.refl _⟩
   · intro _ _
     trivial
+
+/-- Select the existing allocating list constructor with its mathematical result type. -/
+def singleton : Complexity.Program Nat (List Nat) :=
+  program% LinkedList.NativeConstruction.singleton
+
+/-- The generated source correspondence observes the newly allocated linked node. -/
+theorem singleton_correct :
+    singleton.Correct (fun _ => True) (fun head result => result = [head]) := by
+  program_correct LinkedList.NativeConstruction.singleton using LinkedList.singleton_eq
 
 /-- Two ordinary arrays, using the shared derived source and RAM input layout. -/
 structure AppendInput where

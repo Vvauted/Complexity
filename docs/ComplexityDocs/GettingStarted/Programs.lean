@@ -49,7 +49,25 @@ The [input instances](##Complexity.Program.Input) and
 its own source object and physical interval; appending an input retains earlier
 object identifiers and contents. Empty arrays also retain distinct identities.
 The shared proof supplies initialization at every admitted word width. Results
-include scalars, arrays, products and options, observed in the actual final heap.
+include scalars, arrays, scalar linked lists, products and options, observed in
+the actual final heap. `List Nat` and `List Bool` use immutable linked nodes,
+not arrays or a free host decoder. Products and options may contain these lists;
+nested lists and lists of records still need general element layouts.
+
+The typed-program example selects the existing linked-list constructor directly:
+
+```lean
+def singleton : Complexity.Program Nat (List Nat) :=
+  program% LinkedList.NativeConstruction.singleton
+
+theorem singleton_correct :
+    singleton.Correct (fun _ => True) (fun head result => result = [head]) := by
+  program_correct LinkedList.NativeConstruction.singleton using LinkedList.singleton_eq
+```
+
+The proof reuses the ordinary list equation. The returned root and its actual
+allocated node satisfy the fixed output representation; this correctness theorem
+does not itself supply a time bound or a fixed list-input layout.
 
 Ordinary closed records can use standard Lean deriving:
 

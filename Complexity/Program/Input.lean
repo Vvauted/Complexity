@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Program.Basic
 import Complexity.Language.ArrayFunction
+import Complexity.Language.Representation.List
 
 /-!
 # Fixed mathematical inputs and outputs
@@ -24,6 +25,7 @@ Output instances only select existing structural representations of the actual
 returned value and final heap. They depend on the result type, not on a proposed
 answer, correctness theorem, or particular input. In particular an array output
 observes return-time contents; it does not establish persistent ownership.
+Scalar list outputs use actual immutable linked nodes and may share tails.
 -/
 
 namespace Complexity.Program
@@ -124,6 +126,16 @@ instance unit : Output Unit where
 instance arrayNat : Output (Array Nat) where
   type := .buffer .nat
   representation := Representation.array .nat
+
+/-- Observe a natural list through the returned root and its actual linked nodes. -/
+instance listNat : Output (List Nat) where
+  type := .option (.node .nat)
+  representation := Representation.list .nat
+
+/-- Observe a Boolean list through the returned root and its actual linked nodes. -/
+instance listBool : Output (List Bool) where
+  type := .option (.node .bool)
+  representation := Representation.list .bool
 
 /-- Observe both fields of an actual product result at the same final heap. -/
 instance prod {α : Type u} {β : Type v} [Output α] [Output β] : Output (α × β) where
