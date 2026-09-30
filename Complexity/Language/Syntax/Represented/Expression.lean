@@ -121,18 +121,22 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
             model := ← `(($(model.model)).length)
             rawModel := ← `(($(model.rawModel)).length)
             observation := .unary (← `(fun (buffer : $type) => buffer.length)) model.observation } } : Value)
-    if let .array _ := record.type then
+    if record.type.isArray then
       unless fieldName == `size || fieldName == ``Array.size do
         throwErrorAt expression "unknown native array field '{fieldName}'"
+      let column (raw : TSyntax `term) : TermElabM (TSyntax `term) := do
+        if let .arrayProd _ _ := record.type then `(Prod.fst $raw) else pure raw
       return ({
         type := ← resolveType (← `(Nat))
-        raw := ← `(($(record.raw)).$(mkIdent `length):ident)
+        raw := ← `(($(← column record.raw)).$(mkIdent `length):ident)
         model? := ← record.model?.mapM fun model => do
           return {
-            rawModel := ← `(($(model.rawModel)).length)
+            rawModel := ← `(($(← column model.rawModel)).length)
             native := ← `(Array.size $(model.native))
             model := ← `(Array.size $(model.model))
-            observation := .arraySize model.observation } } : Value)
+            observation := match record.type with
+              | .arrayProd _ _ => .arrayProdSize model.observation
+              | _ => .arraySize model.observation } } : Value)
     let .record name _ _ := record.type
       | throwErrorAt expression "named field access requires a native record"
     let fields ← recordFields name

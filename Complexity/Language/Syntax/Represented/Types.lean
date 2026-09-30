@@ -46,6 +46,7 @@ inductive NativeType where
   | raw (type : Ty)
   | list (kind : CellTy)
   | array (kind : CellTy)
+  | arrayProd (left right : CellTy)
   | prod (left right : NativeType)
   | option (payload : NativeType)
   | record (name : Name) (layout : NativeType) (embedding : Expr)
@@ -56,6 +57,7 @@ def NativeType.coreTy : NativeType → Ty
   | .raw type => type
   | .list kind => .option (.node kind)
   | .array kind => .buffer kind
+  | .arrayProd left right => .prod (.buffer left) (.buffer right)
   | .prod left right => .prod left.coreTy right.coreTy
   | .option payload => .option payload.coreTy
   | .record _ layout _ => layout.coreTy
@@ -68,6 +70,10 @@ def NativeType.nativeType : NativeType → Expr
       (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool)
   | .array kind => mkApp (mkConst ``Array [Level.zero])
       (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool)
+  | .arrayProd left right => mkApp (mkConst ``Array [Level.zero])
+      (mkApp2 (mkConst ``Prod [Level.zero, Level.zero])
+        (match left with | .nat => mkConst ``Nat | .bool => mkConst ``Bool)
+        (match right with | .nat => mkConst ``Nat | .bool => mkConst ``Bool))
   | .prod left right => mkApp2 (mkConst ``Prod [Level.zero, Level.zero])
       left.nativeType right.nativeType
   | .option payload => mkApp (mkConst ``Option [Level.zero]) payload.nativeType
@@ -87,6 +93,14 @@ def NativeType.representation : NativeType → Expr
       (match kind with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)
   | .array kind => mkApp (mkConst ``Representation.array)
       (match kind with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)
+  | .arrayProd left right => mkAppN (mkConst ``Representation.arrayProd [Level.zero, Level.zero])
+      #[(match left with | .nat => mkConst ``Nat | .bool => mkConst ``Bool),
+        (match right with | .nat => mkConst ``Nat | .bool => mkConst ``Bool),
+        coreTypeExpr (.buffer left), coreTypeExpr (.buffer right),
+        mkApp (mkConst ``Representation.array)
+          (match left with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool),
+        mkApp (mkConst ``Representation.array)
+          (match right with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)]
   | .prod left right => mkAppN (mkConst ``Representation.prod [Level.zero, Level.zero])
       #[left.nativeType, right.nativeType, coreTypeExpr left.coreTy, coreTypeExpr right.coreTy,
         left.representation, right.representation]
@@ -107,6 +121,11 @@ def NativeType.isIdentity : NativeType → Bool
 /-- Compatibility name for the identity-representation test. This property is
 about value observation, not a function's effects or successful termination. -/
 abbrev NativeType.isPure := NativeType.isIdentity
+
+/-- Arrays with either supported layout retain heap-indexed observations. -/
+def NativeType.isArray : NativeType → Bool
+  | .array _ | .arrayProd _ _ => true
+  | _ => false
 
 private partial def scalarProduct : Ty → Bool
   | .nat | .bool | .unit => true
@@ -133,7 +152,13 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if let .app (.const ``Array _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .array .nat
     if ← isDefEq element (mkConst ``Bool) then return .array .bool
-    throwError "native arrays currently contain Nat or Bool cells"
+    if let .app (.app (.const ``Prod _) left) right ← whnf element then
+      let kind (type : Expr) : TermElabM CellTy := do
+        if ← isDefEq type (mkConst ``Nat) then return .nat
+        if ← isDefEq type (mkConst ``Bool) then return .bool
+        throwError "native array product fields currently require Nat or Bool"
+      return .arrayProd (← kind left) (← kind right)
+    throwError "native arrays currently contain Nat, Bool or pairs of these scalar types"
   if let .app (.const ``Option _) payload := reduced then
     return .option (← resolveNativeTypeAux payload records structuredProducts)
   if let .app (.app (.const ``Prod _) left) right := reduced then

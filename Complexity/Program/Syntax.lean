@@ -169,6 +169,26 @@ private structure PreparedProgram where
   program : Expr
   entry : PreparedEntry
 
+-- Fixed layouts may flatten a product-array field into two columns, while the
+-- native observation groups those columns together. Reuse only the existing
+-- represented facts, rearranging conjunctions at the actual packed value/heap.
+private partial def observationConjuncts (proof : Expr) : MetaM (Array Expr) := do
+  let type ← whnf (← inferType proof)
+  if type.isAppOfArity ``And 2 then
+    return (← observationConjuncts (← mkAppM ``And.left #[proof])) ++
+      (← observationConjuncts (← mkAppM ``And.right #[proof]))
+  return #[proof]
+
+private partial def assembleObservation (expected : Expr) (facts : Array Expr) : MetaM Expr := do
+  for fact in facts do
+    if ← isDefEq (← inferType fact) expected then return fact
+  let target ← whnf expected
+  if target.isAppOfArity ``And 2 then
+    let first ← assembleObservation target.getAppArgs[0]! facts
+    let second ← assembleObservation target.getAppArgs[1]! facts
+    return ← mkAppM ``And.intro #[first, second]
+  throwError "the fixed input observation does not supply the packed field relation {expected}"
+
 private def preparePacking (name : TSyntax `ident) (expected : Expr)
     (information : Language.Syntax.FunctionInfo)
     (mathematical : Language.Syntax.MathematicalFunctionInfo) :
@@ -226,7 +246,7 @@ private def preparePacking (name : TSyntax `ident) (expected : Expr)
     let represented ← mkAppOptM ``Input.represented #[some α, some input, some x]
     let proof ← if ← isDefEq (← inferType represented) required then pure represented
       else
-        try withoutErrToSorry <| elabTermAndSynthesize (← `(by rfl)) (some required)
+        try assembleObservation required (← observationConjuncts represented)
         catch _ =>
           throwError "the fixed preloaded input does not establish the native argument \
             representation after executable packing"

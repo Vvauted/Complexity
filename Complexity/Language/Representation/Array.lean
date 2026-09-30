@@ -67,4 +67,12 @@ theorem arrayProd_lengths {left right : CellTy}
   exact ⟨by simpa [arrayUnzip] using observed.1.size_eq.symm,
     by simpa [arrayUnzip] using observed.2.size_eq.symm⟩
 
+/-- The ordinary row count is the first column's actual view length; the
+representation also forces the second column to have that same extent. -/
+theorem arrayProd_size {left right : CellTy}
+    {xs : Array (CellValue left × CellValue right)}
+    {value : Buffer left × Buffer right} {heap : Heap}
+    (observed : (arrayProd (array left) (array right)).Rel xs value heap) :
+    xs.size = value.1.length := (arrayProd_lengths observed).1.symm
+
 end Complexity.Language.Representation

@@ -25,7 +25,7 @@ namespace Complexity.Program.RamInput
 open Language Ram Ram.LanguageCompiler
 open Ram.LanguageCompiler.ArrayFunction
 
-universe u
+universe u v t
 
 /-- Raw input cells and the already reserved structural extent fix the width
 needed when another array is appended. No candidate computation supplies them. -/
@@ -195,5 +195,19 @@ instance arrayBool : RamInput (Array Bool) where
   arena := fun xs w width => appendEntry_arena (kind := .bool)
     (empty_arenaRep (words := arrayWords (kind := .bool) 1 xs #[]) width) xs
     (arrayWords_cell_fits width) (arrayWords_capacity width)
+
+/-- Product arrays reuse their actual preloaded column arenas and width scale.
+No new memory representation or uncharged runtime transformation is assumed. -/
+instance arrayProd {α : Type u} {β : Type v}
+    [Input (Array α × Array β)] [RamInput (Array α × Array β)] :
+    RamInput (Array (α × β)) :=
+  RamInput.comap Representation.arrayUnzip
+
+/-- A product-array prefix preserves the proved physical layout of its columns
+and tail, including object identities, empty arrays and all stored input words. -/
+instance arrayProdProd {α : Type u} {β : Type v} {γ : Type t}
+    [Input (Array α × Array β × γ)] [RamInput (Array α × Array β × γ)] :
+    RamInput (Array (α × β) × γ) :=
+  RamInput.comap Input.arrayProdPrefix
 
 end Complexity.Program.RamInput

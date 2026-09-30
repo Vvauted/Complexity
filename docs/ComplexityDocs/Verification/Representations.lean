@@ -100,9 +100,28 @@ real indexed reads and constructs the returned pair, preserving the entire heap.
 Its [compiler bound](##Ram.LanguageCompiler.Buffer.Prod.read_costBound) counts
 the handle projections, reads, pair construction, return and function initialization.
 It requires an in-bounds row; RAM readiness and call overhead remain separate.
-Fixed `Program` layouts and native `Array (α × β)` syntax are not yet integrated.
+Fixed `Program` input and output layouts compose the actual column layouts.
+`Input`/`RamInput` deriving accepts record fields such as `Array (Nat × Nat)`;
+the supplied source and physical representations refer to the same preloaded
+columns, not an executable preprocessing pass.
+
+The represented frontend accepts arrays of pairs whose components are `Nat`
+or `Bool`. Ordinary `.size` observes the first column's proved common length.
+[`Array.getD`](##Complexity.Language.Buffer.Prod.GetD) checks that length before
+reading either column, returning the complete fallback pair out of bounds.
+Its source correspondence preserves all prior contents, including aliases;
+the [compiled bound](##Ram.LanguageCompiler.Buffer.Prod.GetD) uses the larger
+branch, including the bounds check and function initialization.
+
+The [typed consumer](##Complexity.Examples.TypedProgram.pairLookup_correct)
+uses record fields and ordinary array mathematics. `program%` inserts actual
+field-packing instructions and automatically rearranges the existing input
+observations; that packing is real source code, not a free cost conversion.
+Returning a pair array observes the actual returned column handles.
 Updating independent fields additionally needs separation or a proved alias-aware
 contract: allowing shared columns for reading does not justify arbitrary `Array.set`.
+Nested element operations and arbitrary pair-array allocation/copying are not
+provided merely by the compositional mathematical representation.
 
 ## Linked-node storage
 

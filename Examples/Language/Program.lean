@@ -201,4 +201,67 @@ theorem lookup_correct :
       else input.fallback) := by
   program_correct NativeLookup.lookup using nativeLookup_eq
 
+/-- Pair-valued arrays remain ordinary fields; their fixed layout has two real
+columns per array, including when an array is empty. -/
+structure PairLookupInput where
+  values : Array (Nat × Nat)
+  flags : Array (Bool × Bool)
+  index : Nat
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+source_program (native) NativePairLookup where
+  def lookup (input : PairLookupInput) : Nat := do
+    let selected ← input.values.getD input.index (0, 0)
+    let flags ← Array.getD input.flags input.index (false, false)
+    if flags.1 && flags.2 then
+      return selected.1 + selected.2 + input.values.size
+    else
+      return 0
+
+  def natBool (values : Array (Nat × Bool)) : Nat := do
+    let selected ← values.getD 0 (0, false)
+    if selected.2 then
+      return selected.1
+    else
+      return 0
+
+  def boolNat (values : Array (Bool × Nat)) : Nat := do
+    let selected ← values.getD 0 (false, 0)
+    if selected.1 then
+      return selected.2
+    else
+      return 0
+
+  def retain (values : Array (Nat × Nat)) : Array (Nat × Nat) := values
+
+/-- Both heap-backed column pairs survive successive reads and record packing. -/
+def pairLookup : Complexity.Program PairLookupInput Nat := program% NativePairLookup.lookup
+
+/-- The contract mentions only the original ordinary arrays, not their columns. -/
+theorem pairLookup_correct :
+    pairLookup.Correct (fun _ => True) (fun input result => result =
+      if (input.flags.getD input.index (false, false)).1 &&
+          (input.flags.getD input.index (false, false)).2 then
+        (input.values.getD input.index (0, 0)).1 +
+          (input.values.getD input.index (0, 0)).2 + input.values.size
+      else 0) := by
+  program_correct NativePairLookup.lookup using fun _ => rfl
+
+/-- Mixed scalar column kinds use the same fixed input selection. -/
+def firstEnabled : Complexity.Program (Array (Nat × Bool)) Nat :=
+  program% NativePairLookup.natBool
+
+/-- Column order is preserved, including when the Boolean column comes first. -/
+def enabledFirst : Complexity.Program (Array (Bool × Nat)) Nat :=
+  program% NativePairLookup.boolNat
+
+/-- Returned pair arrays are observed from their actual two-column handles. -/
+def retainPairs : Complexity.Program (Array (Nat × Nat)) (Array (Nat × Nat)) :=
+  program% NativePairLookup.retain
+
+/-- Returning an input view preserves the complete ordinary array value. -/
+theorem retainPairs_correct :
+    retainPairs.Correct (fun _ => True) (fun values result => result = values) := by
+  program_correct NativePairLookup.retain using fun _ => rfl
+
 end Complexity.Examples.TypedProgram

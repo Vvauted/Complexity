@@ -7,6 +7,7 @@ import Complexity.Language.Syntax.Represented.Expression
 import Complexity.Language.Buffer.Copy.Native
 import Complexity.Language.Buffer.RepresentedCopy
 import Complexity.Language.Buffer.GetD
+import Complexity.Language.Buffer.Prod.GetD
 import Complexity.Language.List.Fold.Native
 import Complexity.Language.List.Cons.Native
 import Complexity.Language.List.Uncons.Native
@@ -297,6 +298,31 @@ private def arrayGetDOperation (kind : CellTy) : PrepareM Operation := do
         | .nat => ``Complexity.Language.Buffer.GetD.getNat_eval_exists_preserving
         | .bool => ``Complexity.Language.Buffer.GetD.getBool_eval_exists_preserving)) } }
 
+private def arrayProdGetDOperation (left right : CellTy) : PrepareM Operation := do
+  let family := mkIdent `Complexity.Language.Buffer.Prod.GetD
+  unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
+    modify fun state => { state with calledFamilies := state.calledFamilies.push family }
+  let index ← resolveType (← `(Nat))
+  let scalarType (kind : CellTy) := match kind with
+    | .nat => mkConst ``Nat | .bool => mkConst ``Bool
+  let element ← resolveType (← termOfExpr
+    (← mkAppM ``Prod #[scalarType left, scalarType right]))
+  let sourceName := match left, right with
+    | .nat, .nat => `getNatNat | .nat, .bool => `getNatBool
+    | .bool, .nat => `getBoolNat | .bool, .bool => `getBoolBool
+  let declaration (suffix : String) := mkCIdent
+    (family.getId ++ Name.mkSimple (sourceName.toString ++ suffix))
+  return {
+    family, sourceName
+    inputs := #[.arrayProd left right, index, element]
+    result := element
+    model? := some {
+      native := ⟨(mkCIdent ``Array.getD).raw⟩
+      equation := none
+      relation := declaration "_eval_exists"
+      refinement := declaration "_refines"
+      preservingRelation := some (declaration "_eval_exists_preserving") } }
+
 private def namedCall? (expression : TSyntax `term) :
     Option (TSyntax `ident × Array (TSyntax `term)) :=
   match expression with
@@ -336,7 +362,7 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
   if let `($head:term $arguments:term*) := expression then
     if let some (receiver, `getD) := rawFieldAccess? head then
       let receiverValue? ← try pure (some (← value scope receiver)) catch _ => pure none
-      if let some { type := .array _, .. } := receiverValue? then
+      if receiverValue?.any (fun receiver => receiver.type.isArray) then
         unless arguments.size == 2 do
           throwErrorAt expression "array.getD requires an index and a default value"
         return some (← `(Array.getD $receiver $(arguments[0]!) $(arguments[1]!)))
@@ -418,9 +444,11 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
       return some (← arrayOperation true, #[left, right])
   | `(Array.getD $values:term $index:term $fallback:term) =>
       let valuesValue ← value scope values
-      let .array kind := valuesValue.type
-        | throwErrorAt values "Array.getD requires a represented array"
-      return some (← arrayGetDOperation kind, #[values, index, fallback])
+      let operation ← match valuesValue.type with
+        | .array kind => arrayGetDOperation kind
+        | .arrayProd left right => arrayProdGetDOperation left right
+        | _ => throwErrorAt values "Array.getD requires a represented array"
+      return some (operation, #[values, index, fallback])
   | `(List.foldl $callback:ident $initial:term $values:term) =>
       return some (← foldOperation names.publicFamily imports callback, #[initial, values])
   | `(List.cons $head:term $tail:term) =>

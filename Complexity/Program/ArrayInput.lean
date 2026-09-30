@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Program.Input
+import Complexity.Language.Representation.Array
 
 /-!
 # Compositional preloaded array inputs
@@ -25,7 +26,7 @@ namespace Complexity.Program.Input
 
 open Language
 
-universe u v
+universe u v w
 
 /-- The registered input observation survives exact preservation of every old
 heap object. This is an additional property, not a condition on arbitrary inputs. -/
@@ -186,6 +187,24 @@ instance arrayNatProd {β : Type v} [Input β] [PrefixClosed β] : Input (Array 
 instance arrayBoolProd {β : Type v} [Input β] [PrefixClosed β] : Input (Array Bool × β) :=
   consArray .bool inferInstance
 
+/-- Fixed product-element arrays reuse the two preloaded column layouts.
+This splits only the invocation data, not an executable preprocessing step. -/
+instance arrayProd {α : Type u} {β : Type v} [Input (Array α × Array β)] :
+    Input (Array (α × β)) :=
+  Input.comap inferInstance Representation.arrayUnzip
+
+/-- Expose both columns of an array prefix while retaining the following data. -/
+def arrayProdPrefix {α : Type u} {β : Type v} {γ : Type w} :
+    (Array (α × β) × γ) ↪ Array α × Array β × γ :=
+  (Representation.arrayUnzip.prodMap (Function.Embedding.refl γ)).trans
+    (Equiv.prodAssoc (Array α) (Array β) γ).toEmbedding
+
+/-- Product-element array fields compose with the same fixed scalar/array tail
+layouts. Every column uses the existing real preloaded object convention. -/
+instance arrayProdProd {α : Type u} {β : Type v} {γ : Type w}
+    [Input (Array α × Array β × γ)] : Input (Array (α × β) × γ) :=
+  Input.comap inferInstance arrayProdPrefix
+
 namespace PrefixClosed
 
 instance arrayBool : PrefixClosed (Array Bool) where
@@ -206,15 +225,35 @@ instance arrayNatProd {β : Type v} [Input β] [PrefixClosed β] :
 instance arrayBoolProd {β : Type v} [Input β] [PrefixClosed β] :
     PrefixClosed (Array Bool × β) := consArray .bool inferInstance
 
+instance arrayProd {α : Type u} {β : Type v}
+    [Input (Array α × Array β)] [PrefixClosed (Array α × Array β)] :
+    PrefixClosed (Array (α × β)) :=
+  PrefixClosed.comap inferInstance Representation.arrayUnzip
+
+instance arrayProdProd {α : Type u} {β : Type v} {γ : Type w}
+    [Input (Array α × Array β × γ)] [PrefixClosed (Array α × Array β × γ)] :
+    PrefixClosed (Array (α × β) × γ) :=
+  PrefixClosed.comap inferInstance Input.arrayProdPrefix
+
 end PrefixClosed
 
 end Complexity.Program.Input
 
 namespace Complexity.Program.Output
 
+universe u v
+
 /-- Observe the returned Boolean buffer through its actual final-heap contents. -/
 instance arrayBool : Output (Array Bool) where
   type := .buffer .bool
   representation := Language.Representation.array .bool
+
+/-- Product-element outputs observe both actual returned columns at the final
+heap. Equal lengths follow from observing one array, not from truncating zip. -/
+instance arrayProd {α : Type u} {β : Type v} [Output (Array α)] [Output (Array β)] :
+    Output (Array (α × β)) where
+  type := .prod (Output.type (Array α)) (Output.type (Array β))
+  representation := Language.Representation.arrayProd
+    (Output.representation (β := Array α)) (Output.representation (β := Array β))
 
 end Complexity.Program.Output

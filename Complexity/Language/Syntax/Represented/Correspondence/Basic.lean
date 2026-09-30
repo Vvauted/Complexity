@@ -122,6 +122,9 @@ private partial def observationProof (observation : Observation) (heap : TSyntax
         $(← observationProof right heap relations))
   | .arraySize array =>
       `(Complexity.Language.Buffer.Contents.size_eq $(← observationProof array heap relations))
+  | .arrayProdSize array =>
+      `(Complexity.Language.Representation.arrayProd_size
+        $(← observationProof array heap relations))
 
 def observationAt (argument : Value) (heap : TSyntax `term)
     (relations : Array RetainedObservation) : TermElabM (TSyntax `term) := do
@@ -145,6 +148,10 @@ partial def preservation (type : NativeType) (initial finish shape : TSyntax `te
         `(by
           intro values view observed
           exact $contents view values observed)
+    | .arrayProd left right =>
+        `(Complexity.Language.Representation.Preserves.arrayProd
+          $(← preservation (.array left) initial finish shape contents)
+          $(← preservation (.array right) initial finish shape contents))
     | .prod left right => do
         `(Complexity.Language.Representation.Preserves.prod
           $(← preservation left initial finish shape contents)
