@@ -121,6 +121,24 @@ every legal input, independently of machine and resource conditions. -/
 def Correct (p : Program α β) (valid : α → Prop) (post : α → β → Prop) : Prop :=
   ∀ x, valid x → ∃ y, p.Returns x y ∧ post x y
 
+/-- Restrict the legal inputs and weaken the mathematical postcondition without
+changing the implementation, its termination proof or its actual returned value. -/
+theorem Correct.mono {p : Program α β} {valid valid' : α → Prop}
+    {post post' : α → β → Prop} (correct : p.Correct valid post)
+    (inputs : ∀ x, valid' x → valid x)
+    (outputs : ∀ x y, valid' x → post x y → post' x y) :
+    p.Correct valid' post' := by
+  intro x legal
+  obtain ⟨y, returned, property⟩ := correct x (inputs x legal)
+  exact ⟨y, returned, outputs x y legal property⟩
+
+/-- A full-domain correctness proof also proves any mathematical subtask.
+No runtime test or second source execution is introduced. -/
+theorem Correct.mono_valid {p : Program α β} {valid valid' : α → Prop}
+    {post : α → β → Prop} (correct : p.Correct valid post)
+    (inputs : ∀ x, valid' x → valid x) : p.Correct valid' post :=
+  correct.mono inputs (fun _ _ _ property => property)
+
 /-- A return contract describes any actual evaluation of the same invocation,
 including its actual final heap, rather than another execution witness. -/
 theorem Returns.result_of_eval {p : Program α β} {x : α} {y : β}

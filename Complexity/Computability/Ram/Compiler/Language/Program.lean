@@ -143,6 +143,38 @@ def TimeO (program : Complexity.Program α β) (valid : α → Prop)
       ∃ depth, ∃ execution : program.Execution x w depth,
         execution.result.steps ≤ bound (size x)
 
+/-- State a possibly multivariate time target directly on the mathematical
+input, such as `(x.vertices + x.edges) * (1 + Nat.log2 (x.vertices + 1))`.
+This is the existing uniform execution bound with the target expression as
+its scale and a linear envelope, not another cost or execution semantics.
+The task fixes `growth`; evaluating it here supplies no runtime advice.
+As with `TimeO`, finite legal domains cannot distinguish asymptotic classes. -/
+abbrev TimeOOn (program : Complexity.Program α β) (valid : α → Prop)
+    (growth : α → Nat) : Prop :=
+  program.TimeO valid growth id
+
+/-- Restrict the mathematical input domain and weaken an asymptotic target.
+The same width constant, envelope and actual executions witness the result. -/
+theorem TimeO.mono {program : Complexity.Program α β}
+    {valid valid' : α → Prop} {size : α → Nat} {growth growth' : Nat → Nat}
+    (time : program.TimeO valid size growth)
+    (inputs : ∀ x, valid' x → valid x)
+    (growthBound : Asymptotics.IsBigO Filter.atTop
+      (fun n => (growth n : ℝ)) (fun n => (growth' n : ℝ))) :
+    program.TimeO valid' size growth' := by
+  obtain ⟨overhead, bound, asymptotic, runs⟩ := time
+  exact ⟨overhead, bound, asymptotic.trans growthBound,
+    fun x legal => runs x (inputs x legal)⟩
+
+/-- Reuse a full-domain time certificate on a mathematical subtask, retaining
+the original machine-width policy, target and same-program execution. -/
+theorem TimeO.mono_valid {program : Complexity.Program α β}
+    {valid valid' : α → Prop} {size : α → Nat} {growth : Nat → Nat}
+    (time : program.TimeO valid size growth)
+    (inputs : ∀ x, valid' x → valid x) : program.TimeO valid' size growth := by
+  obtain ⟨overhead, bound, asymptotic, runs⟩ := time
+  exact ⟨overhead, bound, asymptotic, fun x legal => runs x (inputs x legal)⟩
+
 /-- The runtime obligation includes existence; it is not conditional on a
 successful run or on a candidate-supplied capacity precondition. -/
 theorem TimeO.runs {program : Complexity.Program α β}

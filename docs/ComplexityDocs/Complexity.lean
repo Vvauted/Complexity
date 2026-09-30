@@ -13,6 +13,31 @@ A useful complexity proof has two parts: show what work the program performs, th
 that work mathematically. The compiler and operation contracts supply the first connection;
 ordinary Lean functions and mathlib supply the sums, recurrences and asymptotics.
 
+## State a task over mathematical inputs
+
+For a fixed `solve : Complexity.Program Query Answer`, state successful
+correctness as `solve.Correct legal post` and time independently as
+`solve.TimeO legal size growth`. Ordinary records and arrays use the library's
+fixed input/output representations; a task need not serialize every field into
+a single natural-number buffer or make the contestant prove a private decoder.
+
+For several size parameters, `solve.TimeOOn legal target` lets `target : Query → Nat`
+state the whole expression directly. For example, a graph target can be
+`fun q => (q.vertices + q.edges) * (1 + Nat.log2 (q.vertices + 1))`.
+This abbreviates the same uniform RAM-execution predicate with a linear
+envelope over that expression. It retains one width constant and real halted
+executions at every admitted width; target evaluation is not a free operation
+available to the submitted program. Use an unbounded legal input family if the
+task is meant to distinguish asymptotic classes. The preloaded-input boundary
+still excludes external input loading, not allocations or output construction
+performed by the program itself.
+
+Full-domain proofs restrict to subtasks with `correct.mono_valid inputs` and
+`time.mono_valid inputs`, where `inputs : ∀ x, subtask x → legal x` is an ordinary
+mathematical implication. `Correct.mono` additionally weakens a postcondition;
+`TimeO.mono` composes a supplied mathlib `IsBigO` bound. These rules reuse the
+same implementation and executions, without repeating compiler connections.
+
 ## Infer structural costs of a high-level program
 
 For `source_program`, the [compiler-derived cost rules](##Complexity.Computability.Ram.Compiler.Language.CostBound)
