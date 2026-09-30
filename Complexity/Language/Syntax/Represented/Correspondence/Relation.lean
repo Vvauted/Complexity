@@ -487,6 +487,13 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
       simp (config := { failIfUnchanged := false }) only [Id.run, Id.instMonad, Bind.bind, Pure.pure,
         ExceptT.bind, ExceptT.bindCont, ExceptT.pure, ExceptT.mk, ExceptT.run,
         StateT.bind, StateT.pure, Part.bind_some, $branchRules,*] at $executed:ident))
+    -- Earlier scalar argument rewrites also affect captured record fields in
+    -- later branches. Normalize both sides of the execution rewrite alike.
+    unless scalarEqualities.isEmpty do
+      let rules ← scalarEqualities.mapM fun equality =>
+        `(Lean.Parser.Tactic.simpLemma| $equality:term)
+      tactics := tactics.push (← `(tactic|
+        simp (config := { failIfUnchanged := false }) only [$rules,*] at $executed:ident ⊢))
     tactics := tactics.push (← `(tactic| rw [$executed:ident]))
     tactics := tactics.push (← normalizeAction)
     unless rangeFixedFacts.isEmpty do
@@ -563,7 +570,7 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
   let executed ← `(by first | rfl | simp only [$executionRules,*] <;> rfl)
   let observed ← `(by
     simpa (config := { implicitDefEqProofs := false }) only
-      [Id.run, Id.instMonad, Pure.pure, Bind.bind, $branchRules,*] using $observed)
+      [Id.run, Id.instMonad, Pure.pure, Bind.bind, $executionRules,*] using $observed)
   tactics := tactics.push (← `(tactic|
     exact ⟨$result, $currentHeap, $executed, $observed, $heapPost⟩))
   return tactics

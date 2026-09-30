@@ -165,4 +165,40 @@ theorem appendInOrder_correct :
         else input.2.left ++ input.2.right) := by
   program_correct NativeAppend.appendInOrder using nativeAppendInOrder_eq
 
+/-- Two observed arrays and ordinary lookup parameters; the Boolean mask may
+have a different length from the values array. -/
+structure LookupInput where
+  values : Array Nat
+  enabled : Array Bool
+  index : Nat
+  fallback : Nat
+  deriving Complexity.Program.Input, Complexity.Program.RamInput
+
+source_program (native) NativeLookup where
+  def lookup (input : LookupInput) : Nat := do
+    let enabled ← input.enabled.getD input.index false
+    let selected ← Array.getD input.values input.index input.fallback
+    if enabled then
+      return selected
+    else
+      return input.fallback
+
+/-- Defaulted reads use ordinary array mathematics, including missing mask
+entries and out-of-bounds value indices. -/
+theorem nativeLookup_eq (input : LookupInput) :
+    NativeLookup.lookup input =
+      if input.enabled.getD input.index false then input.values.getD input.index input.fallback
+      else input.fallback := rfl
+
+/-- The fixed interface selects the same two real buffer reads. -/
+def lookup : Complexity.Program LookupInput Nat := program% NativeLookup.lookup
+
+/-- No index bound or private heap adapter is needed in the mathematical contract.
+The generated correspondence preserves the first read's heap for the second. -/
+theorem lookup_correct :
+    lookup.Correct (fun _ => True) (fun input result => result =
+      if input.enabled.getD input.index false then input.values.getD input.index input.fallback
+      else input.fallback) := by
+  program_correct NativeLookup.lookup using nativeLookup_eq
+
 end Complexity.Examples.TypedProgram

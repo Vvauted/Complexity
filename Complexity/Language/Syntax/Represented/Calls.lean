@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Language.Syntax.Represented.Expression
 import Complexity.Language.Buffer.Copy.Native
 import Complexity.Language.Buffer.RepresentedCopy
+import Complexity.Language.Buffer.GetD
 import Complexity.Language.List.Fold.Native
 import Complexity.Language.List.Cons.Native
 import Complexity.Language.List.Uncons.Native
@@ -272,6 +273,30 @@ private def arrayOperation (append : Bool) : PrepareM Operation := do
         ``Complexity.Language.Buffer.Copy.append_eval_exists_preserving
         else ``Complexity.Language.Buffer.Copy.copy_eval_exists_preserving)) } }
 
+private def arrayGetDOperation (kind : CellTy) : PrepareM Operation := do
+  let family := mkIdent `Complexity.Language.Buffer.GetD
+  unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
+    modify fun state => { state with calledFamilies := state.calledFamilies.push family }
+  let index ← resolveType (← `(Nat))
+  let element ← resolveType (← termOfExpr (match kind with
+    | .nat => mkConst ``Nat | .bool => mkConst ``Bool))
+  return {
+    family, sourceName := match kind with | .nat => `getNat | .bool => `getBool
+    inputs := #[.array kind, index, element]
+    result := element
+    model? := some {
+      native := ⟨(mkCIdent ``Array.getD).raw⟩
+      equation := none
+      relation := mkCIdent (match kind with
+        | .nat => ``Complexity.Language.Buffer.GetD.getNat_eval_exists
+        | .bool => ``Complexity.Language.Buffer.GetD.getBool_eval_exists)
+      refinement := mkCIdent (match kind with
+        | .nat => ``Complexity.Language.Buffer.GetD.getNat_refines
+        | .bool => ``Complexity.Language.Buffer.GetD.getBool_refines)
+      preservingRelation := some (mkCIdent (match kind with
+        | .nat => ``Complexity.Language.Buffer.GetD.getNat_eval_exists_preserving
+        | .bool => ``Complexity.Language.Buffer.GetD.getBool_eval_exists_preserving)) } }
+
 private def namedCall? (expression : TSyntax `term) :
     Option (TSyntax `ident × Array (TSyntax `term)) :=
   match expression with
@@ -308,6 +333,13 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
           (← get).localHeaders.any (fun header => header.name.getId == called.getId) then
         return some expression
   if rawCallSyntax expression then return some expression
+  if let `($head:term $arguments:term*) := expression then
+    if let some (receiver, `getD) := rawFieldAccess? head then
+      let receiverValue? ← try pure (some (← value scope receiver)) catch _ => pure none
+      if let some { type := .array _, .. } := receiverValue? then
+        unless arguments.size == 2 do
+          throwErrorAt expression "array.getD requires an index and a default value"
+        return some (← `(Array.getD $receiver $(arguments[0]!) $(arguments[1]!)))
   if let `($called:ident) := expression then
     if let .str receiverName "uncons" := called.getId then
       unless receiverName == `List do
@@ -327,6 +359,8 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
   match expression with
   | `(($inner:term)) => canonicalCall? imports scope inner
   | `(Array.append $left:term $right:term) => return some (← `(Array.append $left $right))
+  | `(Array.getD $values:term $index:term $fallback:term) =>
+      return some (← `(Array.getD $values $index $fallback))
   | `($left:term ++ $right:term) =>
       let leftValue ← value scope left
       if let .array .nat := leftValue.type then return some (← `(Array.append $left $right))
@@ -382,6 +416,11 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
   match expression with
   | `(Array.append $left:term $right:term) =>
       return some (← arrayOperation true, #[left, right])
+  | `(Array.getD $values:term $index:term $fallback:term) =>
+      let valuesValue ← value scope values
+      let .array kind := valuesValue.type
+        | throwErrorAt values "Array.getD requires a represented array"
+      return some (← arrayGetDOperation kind, #[values, index, fallback])
   | `(List.foldl $callback:ident $initial:term $values:term) =>
       return some (← foldOperation names.publicFamily imports callback, #[initial, values])
   | `(List.cons $head:term $tail:term) =>

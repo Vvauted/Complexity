@@ -126,6 +126,22 @@ conditions and direct calls to imported pure source functions use the same
 source correspondence. The typed-program example combines these operations;
 it does not supply a second record implementation or a private import bridge.
 
+`Array Nat` and `Array Bool` also support `values.getD index fallback`, including
+record receivers such as `input.values.getD index fallback`, and the fully
+qualified `Array.getD values index fallback`. This calls a bounds-checking source
+function: an in-bounds access reads the actual cell, and an out-of-bounds access
+returns the supplied default. The mathematical proof uses ordinary `Array.getD`;
+no index proof is required. Reading preserves all existing array observations,
+including aliases, so a later read may reuse the same inputs. The typed-program
+example combines a Boolean mask and a natural array with different possible
+lengths, and proves its `Program.Correct` contract through `program_correct`.
+
+The [lookup cost module](##Complexity.Computability.Ram.Compiler.Language.Buffer.GetD)
+derives input-independent bounds from the actual source body and existing
+compiler rules. Its arena bounds compose conditionally with caller readiness;
+these leaf bounds do not by themselves prove a complete program's `TimeO`,
+word-range readiness or input-loading cost.
+
 Self-recursive functions with a checked mathematical model may carry heap-backed
 values. The
 [linked-list example](##Examples.Language.LinkedList) allocates one node, passes
