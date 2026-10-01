@@ -10,6 +10,7 @@ import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TraceTimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.ScheduledTraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Buffer
 
@@ -180,6 +181,32 @@ can describe the complete interaction. Existence of one accepted trace is not
 a guarantee against every choice of a nondeterministic or adaptive adversary.
 Keep an independent source-correctness proposition using the same protocol;
 the compiled-time bound and an executable streaming adapter are separate work.
+
+## Later public announcements
+
+A long-lived process can start before the sizes of its later jobs are announced.
+For such a process, an empty initial configuration cannot determine enough word
+space for all future jobs. `ScheduledTraceTimeO` and `ScheduledTraceTimeOOn`
+combine the existing finite `historyWidth` policy with reply-constrained traces.
+The interface fixes a public announcement schedule and its raw words separately
+from the hidden environment. Neither the schedule nor that environment is an
+argument to initialization: the actual initial heap and memory still come only
+from the registered configuration.
+
+The protocol acceptance relation must bind actual Start events to that schedule
+and subsequent feedback to actual replies. At a fixed configuration and width,
+`ofInput_history_independent` gives identical initial memories for different
+schedules. The requirement covers every admitted width, with current-request
+fitting and actual accepted executions as conclusions. Candidate-generated
+queries, answer values, hidden inputs and implementation-chosen padding must
+not be used as admission words. `ScheduledTraceTimeO.source` preserves acceptance
+when projecting the same RAM trace to source.
+
+This admits finite runs on sufficiently large fixed-word machines. It does not
+implement dynamically growing words or supply future announcements to the
+source. Use one `Session.Runs` for an entire persistent process, not a fresh
+initialization for each job. The actual calls for new announcements, terminal
+answers and all intervening feedback remain part of the same instruction count.
 
 ## Query and terminal replies
 
