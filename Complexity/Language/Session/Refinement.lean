@@ -138,6 +138,39 @@ theorem Starts.deterministic
   have values := Except.ok.inj (congrArg Prod.fst same)
   exact ⟨(Equiv.cast _).injective values, congrArg Prod.snd same⟩
 
+/-- Any two successful traces from the same actual state and heap have the same
+replies, including their return-time heaps, and the same final observation. -/
+theorem Run.deterministic
+    {state finish₁ finish₂ : Value session.stateTy} {heap finalHeap₁ finalHeap₂ : Heap}
+    {inputs : List (Env request)} {replies₁ replies₂ : List (Value response × Heap)}
+    (first : session.Run state heap inputs replies₁ finish₁ finalHeap₁)
+    (second : session.Run state heap inputs replies₂ finish₂ finalHeap₂) :
+    replies₁ = replies₂ ∧ finish₁ = finish₂ ∧ finalHeap₁ = finalHeap₂ := by
+  induction first generalizing replies₂ finish₂ finalHeap₂ with
+  | nil =>
+      cases second
+      exact ⟨rfl, rfl, rfl⟩
+  | cons called rest ih =>
+      cases second with
+      | cons called' rest' =>
+          obtain ⟨rfl, rfl, rfl⟩ := called.deterministic called'
+          obtain ⟨rfl, rfl, rfl⟩ := ih rest'
+          exact ⟨rfl, rfl, rfl⟩
+
+/-- Initialization and all subsequent actual steps have unique observations.
+This aligns an independently proved source postcondition with a costed run. -/
+theorem Runs.deterministic
+    {args : Env configuration} {heap finalHeap₁ finalHeap₂ : Heap}
+    {finish₁ finish₂ : Value session.stateTy} {inputs : List (Env request)}
+    {replies₁ replies₂ : List (Value response × Heap)}
+    (first : session.Runs args heap inputs replies₁ finish₁ finalHeap₁)
+    (second : session.Runs args heap inputs replies₂ finish₂ finalHeap₂) :
+    replies₁ = replies₂ ∧ finish₁ = finish₂ ∧ finalHeap₁ = finalHeap₂ := by
+  obtain ⟨state₁, heap₁, start₁, rest₁⟩ := first
+  obtain ⟨state₂, heap₂, start₂, rest₂⟩ := second
+  obtain ⟨rfl, rfl⟩ := start₁.deterministic start₂
+  exact rest₁.deterministic rest₂
+
 /-- Attach a proved initialization to the same finite source refinement.
 The supplied start includes its actual heap, not a reconstructed model state. -/
 theorem StepRefines.runs

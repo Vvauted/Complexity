@@ -7,6 +7,7 @@ import Complexity.Language.Session
 import Complexity.Language.Session.Refinement
 import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
+import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Buffer
 
 /-!
@@ -103,6 +104,31 @@ request bounds, without repeating the trace induction in each consumer.
 These resource rules currently use a fixed admissible-request domain and an
 invariant closed under all those requests. They do not infer that a finite
 protocol continues to accept requests after its terminal state.
+
+## Uniform callback-time requirements
+
+`Session.TimeO` and `Session.TimeOOn` use the existing fixed `Program.Input` and
+`RamInput` configuration layout. `State.ofInput` constructs its represented
+starting memory before initialization; neither the candidate nor the future
+request history chooses that memory. The global width multiplier and ordinary
+mathlib `IsBigO` envelope follow `Program.TimeO`.
+
+For every legal history and every configuration-admitted width, the requirement
+asks for current-request word-range proofs and actual initialized RAM invocations
+within the envelope. Code, stack and allocation facts are obligations of those
+executions; none of these facts is an extra task precondition. In this interface
+the configuration fixes the width
+scale, so requests must fit that policy; an unbounded stream of arbitrary new
+integers or heap-backed external inputs needs a different input protocol.
+
+The fixed request encoder presents only the current public ports. The history
+and the mathematical size expression are proof data, not source arguments.
+Independent source correctness applies to the same costed trace: `Runs.source`
+projects that trace, and source `Runs.deterministic` aligns it with any successful
+source witness. An executable streaming adapter is not needed to state this
+preloaded-callback requirement; it is needed for a separate runtime/I/O claim.
+
+## Operation and transport boundaries
 
 For mutable buffers, `ArenaMeasured.read` and `ArenaMeasured.write` consume the
 actual successful heap-operation equations and finite-word facts. The write

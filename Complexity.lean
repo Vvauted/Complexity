@@ -260,6 +260,7 @@ import Complexity.Computability.Ram.Compiler.Language.Representation
 import Complexity.Computability.Ram.Compiler.Language.RepresentedFunction
 import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
+import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Simulation
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 import Complexity.Computability.Ram.Compiler.Language.TimeBound
