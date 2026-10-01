@@ -8,6 +8,7 @@ import Complexity.Language.Session.Refinement
 import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Buffer
 
 /-!
@@ -127,6 +128,33 @@ Independent source correctness applies to the same costed trace: `Runs.source`
 projects that trace, and source `Runs.deterministic` aligns it with any successful
 source witness. An executable streaming adapter is not needed to state this
 preloaded-callback requirement; it is needed for a separate runtime/I/O claim.
+
+## Separate initialization and request bounds
+
+Some protocols admit arbitrarily large scalar requests after a fixed
+configuration. `Session.historyWidth` extends the usual logarithmic scale with
+the fixed raw request words. This is a finite-history machine-admission policy,
+not a source input or preprocessing step. At a fixed configuration and width,
+`ofInput_history_independent` proves that the complete initial memory is identical
+for different histories. The source cannot inspect the width policy, and the
+requirement covers every sufficiently large width. This does not implement an
+infinite stream with dynamically growing words or load external heap references.
+
+`Session.PhaseTimeO` has independent global envelopes for initialization and each
+request. `PhaseTimeOOn` accepts their mathematical growth expressions directly:
+for example, a setup expression depending on the configuration size and a
+constant request expression. A constant expression gives one global latency
+bound, independent of configuration, request values, history and width. A bound
+only on the complete history would not prevent expensive deferred setup in the
+first callback.
+
+The underlying RAM `BoundedRun` retains each real invocation and its individual
+bound; `BoundedRuns` separately bounds its actual initializer. Their `run` and
+`runs` erasures preserve the existing unbounded trace and exact step count.
+Their `steps_le` lemmas recover the summed bound without exchanging budget
+between phases. As with `TimeO`, request fitting, capacity and termination are
+conclusions for every legal history. The fixed raw-word presentation is chosen
+by the protocol author and must not encode answers or candidate-selected padding.
 
 ## Operation and transport boundaries
 
