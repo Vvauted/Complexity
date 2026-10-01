@@ -160,6 +160,7 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.GetD
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.Replicate
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.GetD
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.GetD.Ready
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.Extract
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.Extract.Ready
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.Nested

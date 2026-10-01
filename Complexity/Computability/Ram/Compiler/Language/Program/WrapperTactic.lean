@@ -142,8 +142,12 @@ private def inputRanges : TacticM Unit := withMainContext do
       let proof ← Term.exprToSyntax proof
       let name := mkIdent (← mkFreshUserName `inputRange)
       evalTactic (← `(tactic| have $name:ident := $proof))
+      Ram.LanguageCompiler.Tactic.normalizeSourceCoordinates
+        #[``Ram.LanguageCompiler.ValueFits] (some (← `(Lean.Parser.Tactic.location| at $name:ident)))
 
 private def finishLeaves : TacticM Unit := do
+  unless (← getGoals).isEmpty do
+    evalTactic (← `(tactic| all_goals try first | assumption | rfl | trivial))
   unless (← getGoals).isEmpty do
     Ram.LanguageCompiler.Tactic.normalizeSourceCoordinates
       #[``cast_eq, ``and_true, ``true_and]
@@ -167,6 +171,16 @@ private partial def observedEqualities (proof : Lean.Expr) : MetaM (Array Lean.E
   let right ← observedEqualities (← mkAppM ``And.right #[proof])
   return left ++ right
 
+private def normalizeObservations : TacticM Unit := withMainContext do
+  let mut equations := #[]
+  for declaration in ← getLCtx do
+    for proof in ← observedEqualities (mkFVar declaration.fvarId) do
+      let proof ← Term.exprToSyntax proof
+      equations := equations.push (← `(Lean.Parser.Tactic.simpLemma| $proof:term))
+  unless equations.isEmpty do
+    evalTactic (← `(tactic|
+      simp (config := { failIfUnchanged := false }) only [$equations,*]))
+
 private def normalizeCallEntry : TacticM Unit := withMainContext do
   liftMetaTactic1 fun goal => do
     let target ← instantiateMVars (← goal.getType)
@@ -177,14 +191,24 @@ private def normalizeCallEntry : TacticM Unit := withMainContext do
     let entry ← mkAppM ``Language.State.mk #[locals, heap]
     goal.replaceTargetDefEq (mkAppN target.getAppFn (fields.set! 9 entry))
   Ram.LanguageCompiler.Tactic.normalizeSourceCoordinates #[``cast_eq]
-  let mut equations := #[]
-  for declaration in ← getLCtx do
-    for proof in ← observedEqualities (mkFVar declaration.fvarId) do
-      let proof ← Term.exprToSyntax proof
-      equations := equations.push (← `(Lean.Parser.Tactic.simpLemma| $proof:term))
-  unless equations.isEmpty do
-    evalTactic (← `(tactic|
-      simp (config := { failIfUnchanged := false }) only [$equations,*]))
+  normalizeObservations
+
+/-- Expose scalar equations from a newly introduced callee observation. Their
+source result types reduce to the ordinary types expected by arithmetic tactics;
+the operation, its heap and unrelated hypotheses are not unfolded. -/
+private def introduceMeasured : TacticM Unit := do
+  let (introduced, goal) ← (← getMainGoal).intro1
+  replaceMainGoal [goal]
+  withMainContext do
+    for proof in ← observedEqualities (mkFVar introduced) do
+      let equality ← inferType proof
+      let fields := equality.getAppArgs
+      let type ← whnf fields[0]!
+      unless type.isConstOf ``Nat || type.isConstOf ``Bool do continue
+      let proposition := mkAppN equality.getAppFn (fields.set! 0 type)
+      let goal ← (← getMainGoal).assert (← mkFreshUserName `callObservation) proposition proof
+      let (_, goal) ← goal.intro1
+      replaceMainGoal [goal]
 
 private def measuredCertificate? (certificates : Array (TSyntax `term))
     (targetProgram fn args continuation entry : Lean.Expr) : TacticM Bool := do
@@ -218,7 +242,7 @@ private partial def measured (certificates : Array (TSyntax `term)) : TacticM Un
     withMainContext do
       let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
       if target.isForall then
-        evalTactic (← `(tactic| intro))
+        introduceMeasured
         measured certificates
       else if target.isAppOf ``Ram.LanguageCompiler.ArenaMeasured then
         let statement ← Ram.LanguageCompiler.Tactic.exposeStatement 7
@@ -234,7 +258,7 @@ private partial def measured (certificates : Array (TSyntax `term)) : TacticM Un
         else if #[``Language.Stmt.letPrim, ``Language.Stmt.ret, ``Language.Stmt.skip,
             ``Language.Stmt.assign, ``Language.Stmt.seq, ``Language.Stmt.ite,
             ``Language.Stmt.matchOption].any statement.isAppOf then
-          evalTactic (← `(tactic| ram_source_arena_step))
+          Ram.LanguageCompiler.Arena.Tactic.stepWith (measured certificates)
           Ram.LanguageCompiler.Tactic.onGoals (measured certificates)
       else if target.isAppOf ``Exists then
         Tactic.tryCatchRestore (do
@@ -243,12 +267,26 @@ private partial def measured (certificates : Array (TSyntax `term)) : TacticM Un
       else if target.isAppOf ``And then
         evalTactic (← `(tactic| constructor))
         Ram.LanguageCompiler.Tactic.onGoals (measured certificates)
-      else
+      else if target.isAppOf ``Ram.LanguageCompiler.EnvFits ||
+          target.isAppOf ``Ram.LanguageCompiler.PrimFits ||
+          target.isAppOf ``Ram.LanguageCompiler.ValueFits then
+        Ram.LanguageCompiler.Tactic.normalizeSourceCoordinates
+          #[``Ram.LanguageCompiler.EnvFits.cons_iff, ``Ram.LanguageCompiler.EnvFits.empty,
+            ``Ram.LanguageCompiler.PrimFits, ``Ram.LanguageCompiler.ValueFits,
+            ``and_true, ``true_and]
         evalTactic (← `(tactic|
-          simp (config := { failIfUnchanged := false }) only [cast_eq]))
-        unless (← getGoals).isEmpty do
-          evalTactic (← `(tactic| ram_source_arena_step))
-        finishLeaves
+          all_goals
+            (repeat' apply And.intro) <;>
+              first
+              | with_reducible assumption
+              | exact Nat.two_pow_pos _
+              | exact Nat.one_lt_two_pow (Nat.ne_of_gt (by assumption))
+              | skip))
+      else
+        Ram.LanguageCompiler.Tactic.normalizeSourceCoordinates
+          #[``cast_eq, ``Language.Control.returned.injEq, ``exists_eq_left',
+            ``exists_eq', ``Nat.add_zero, ``and_true, ``true_and]
+        evalTactic (← `(tactic| all_goals try first | with_reducible assumption | rfl | trivial))
 
 private structure CostCertificate where
   proof : TSyntax `term
@@ -424,6 +462,8 @@ syntax "program_wrapper_cost" "[" wrapperCostCertificate,* "]" : tactic
 
 elab_rules : tactic
   | `(tactic| program_wrapper_measured [$certificates:term,*]) => focus do
+      evalTactic (← `(tactic|
+        simp (config := { failIfUnchanged := false }) only [Complexity.Program.args, cast_eq]))
       inputRanges
       measured certificates.getElems
   | `(tactic| program_wrapper_cost [$certificates:wrapperCostCertificate,*]) => focus do

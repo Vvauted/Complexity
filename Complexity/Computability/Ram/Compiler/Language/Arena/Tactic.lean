@@ -151,48 +151,51 @@ private def optionMatch (statement target : Lean.Expr) : TacticM Unit := do
         | refine Ram.LanguageCompiler.ArenaMeasured.matchSome
             (by first | rfl | assumption) ?_ ?_)))
 
-/-- Apply only structural measured-execution rules, leaving calls and mathematical
-observations intact. Non-propositional metavariables are never filled by search. -/
-private partial def step : TacticM Unit := do
+/-- Compose the structural measured-execution rules with a supplied leaf pass.
+Calls remain intact, and non-propositional metavariables are never filled by search.
+Clients can normalize their own proof coordinates without duplicating these rules. -/
+partial def stepWith (normalizeLeaf : TacticM Unit) : TacticM Unit := do
   unless (← getGoals).isEmpty do
     withMainContext do
       let target := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
       unless ← isProp target do return
       if target.isForall then
         evalTactic (← `(tactic| intro))
-        step
+        stepWith normalizeLeaf
       else if target.isAppOf ``Ram.LanguageCompiler.ArenaMeasured then
         let statement ← Ram.LanguageCompiler.Tactic.exposeStatement 7
         if statement.isAppOf ``Complexity.Language.Stmt.skip then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.ArenaMeasured.skip))
-          Ram.LanguageCompiler.Tactic.onGoals step
+          Ram.LanguageCompiler.Tactic.onGoals (stepWith normalizeLeaf)
         else if statement.isAppOf ``Complexity.Language.Stmt.assign then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.ArenaMeasured.assign))
-          Ram.LanguageCompiler.Tactic.onGoals step
+          Ram.LanguageCompiler.Tactic.onGoals (stepWith normalizeLeaf)
         else if statement.isAppOf ``Complexity.Language.Stmt.ret then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.ArenaMeasured.ret))
-          Ram.LanguageCompiler.Tactic.onGoals step
+          Ram.LanguageCompiler.Tactic.onGoals (stepWith normalizeLeaf)
         else if statement.isAppOf ``Complexity.Language.Stmt.letPrim then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.ArenaMeasured.letPrim))
-          Ram.LanguageCompiler.Tactic.onGoals step
+          Ram.LanguageCompiler.Tactic.onGoals (stepWith normalizeLeaf)
         else if statement.isAppOf ``Complexity.Language.Stmt.seq then
           evalTactic (← `(tactic| apply Ram.LanguageCompiler.ArenaMeasured.seq))
-          Ram.LanguageCompiler.Tactic.onGoals step
+          Ram.LanguageCompiler.Tactic.onGoals (stepWith normalizeLeaf)
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
           conditional statement target
-          Ram.LanguageCompiler.Tactic.onGoals step
+          Ram.LanguageCompiler.Tactic.onGoals (stepWith normalizeLeaf)
         else if statement.isAppOf ``Complexity.Language.Stmt.matchOption then
           optionMatch statement target
-          Ram.LanguageCompiler.Tactic.onGoals step
+          Ram.LanguageCompiler.Tactic.onGoals (stepWith normalizeLeaf)
       else
-        normalizeLeaves
+        normalizeLeaf
         -- Normal completion can expose a sequential continuation after reducing
         -- its control match. Re-enter only structural goals, not unchanged math.
         Ram.LanguageCompiler.Tactic.onGoals do
           withMainContext do
             let next := (← instantiateMVars (← getMainTarget)).consumeMData.headBeta.consumeMData
             if next.isForall || next.isAppOf ``Ram.LanguageCompiler.ArenaMeasured then
-              step
+              stepWith normalizeLeaf
+
+private def step : TacticM Unit := stepWith normalizeLeaves
 
 /-- Carry an existing source proof through the same bindings and sequences as
 the measured goal. Keep the next fragment's proof named instead of unfolding it. -/

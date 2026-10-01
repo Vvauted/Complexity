@@ -200,6 +200,17 @@ an explicit alias-aware update proof.
 ## Canonical nested-array intervals
 
 Canonical ragged storage retains a boundary buffer and a flattened payload.
+For a scalar row, defaulted selection has shared
+[natural](##Ram.LanguageCompiler.Buffer.Ragged.GetD.getNat_arenaMeasured) and
+[Boolean](##Ram.LanguageCompiler.Buffer.Ragged.GetD.getBool_arenaMeasured)
+readiness contracts. The actual operation reads two boundaries and borrows a
+checked payload slice, or returns the whole fallback out of bounds. It preserves
+the exact heap and cursor and performs no allocation or payload copy. Its
+[descriptor observation](##Ram.LanguageCompiler.Buffer.Ragged.GetD.getView_contents)
+and [length range](##Ram.LanguageCompiler.Buffer.Ragged.GetD.getView_length_fits)
+feed subsequent scalar reads, including empty rows and aliased fallback views.
+They do not implement a free runtime conversion of mathematical arrays.
+
 The [interval extraction](##Complexity.Language.Buffer.Ragged.Extract) operation
 reads the two endpoints, copies the selected boundaries minus their first
 offset, and borrows the corresponding payload slice. The mathematical result
@@ -277,6 +288,14 @@ Boolean read, natural read, branch, packing and call overhead are all counted.
 at each call boundary. It does not assume arbitrary calls preserve memory.
 The input arrays are preloaded: this theorem does not give free parsing or
 array construction, nor does it establish constant-time allocating row reads.
+
+The existing [nested record lookup](##Complexity.Examples.TypedProgram.raggedLookup_timeO)
+also has a complete constant-time invocation theorem. It composes two borrowed
+row reads, two scalar reads, its selected branch and final additions, including
+the generated packing and calls. The fixed width policy supplies the additional
+bits for the sum; neither in-bounds indices nor extra element-range promises
+are added to the mathematical domain. This is not the allocating three-level
+row operation described above.
 
 Ordinary composite `Array.getD`
 threads this changed heap through subsequent column reads. Its generated proof
