@@ -219,6 +219,22 @@ also counts both endpoint reads, both borrowed slices, the real imported call
 and function setup. Its affine bound uses `stop + 1 - start` boundary cells,
 not the number of payload cells; the Boolean extractor has the same interface.
 
+The [rebasing readiness](##Ram.LanguageCompiler.BufferRebase.copy_arenaMeasured)
+reuses the source loop's correctness and termination, adding the ranges of the
+actual reads, subtraction and writes. Its cursor grows by exactly the input
+length, and all old contents observations survive. Natural subtraction may
+truncate at zero; the worker does not assume every cell exceeds the base.
+The [extractor readiness](##Ram.LanguageCompiler.Buffer.Ragged.Extract.extractNat_arenaMeasured)
+composes both endpoint reads and borrowed slices with that actual allocating
+call. Natural and Boolean payloads retain ordinary `Array.extract` at the final
+heap and reserve exactly `stop + 1 - start` cells, including the sentinel for
+an empty interval. Boundary-buffer and flattened-payload lengths must fit the
+selected word width, and the arena must have the stated remaining capacity.
+Payload values are neither read nor copied, so they need no value-range premise.
+These measured witnesses reuse the actual compiler count without choosing a
+budget; the cost certificates above bound that same execution. Physical launch
+conditions and complete caller `Program.TimeO` proofs remain separate.
+
 The [three-level row operation](##Complexity.Language.Buffer.Ragged.Nested)
 uses that extractor for in-bounds natural or Boolean rows. Out of bounds it
 returns the entire supplied fallback without allocation. Both branches preserve
