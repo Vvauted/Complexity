@@ -105,15 +105,15 @@ require a core definition or a proved implementation, representation contract
 and cost connection. Ghost values and proofs cannot decide runtime branches
 unless the corresponding computation is present in the program.
 
-The represented frontend's `Int` addition, subtraction, negation and ordered
+The represented frontend's `Int` addition, subtraction, multiplication, negation and ordered
 comparisons call the existing `Scalar.Int.Implementation` bodies with their
 checked mathematical observations and unchanged-heap frames. Subtraction is
 negation followed by addition; non-strict comparison uses less-than and Boolean
 negation. Strict expression positions and known value arguments share ordered
 call extraction, preserving mutable assignments and original control boundaries.
 Expected types flow through binding/result annotations, callee signatures and
-supported literal constructors. No Nat-variable coercion, signed multiplication,
-division, remainder or equality operation is implied. Calls under short-circuit
+supported literal constructors. No Nat-variable coercion, signed division,
+remainder or equality operation is implied. Calls under short-circuit
 Boolean operators remain outside this extraction pass. These are actual source
 calls, not new RAM primitives or a free arbitrary-precision arithmetic model.
 

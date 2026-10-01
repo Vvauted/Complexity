@@ -7,6 +7,7 @@ import Complexity.Language.Scalar.Int
 import Complexity.Computability.Ram.Compiler.Language.FunctionExecution
 import Complexity.Computability.Ram.Compiler.Language.CostBound
 import Complexity.Computability.Ram.Compiler.Language.Tactic
+import Mathlib.Tactic.Linarith
 
 /-!
 # Compiling the source integer operations
@@ -18,8 +19,9 @@ stores its absolute value minus one.
 
 The range proofs cover every executed intermediate of those source bodies.
 Negation may increment its natural field, and addition of two negative values
-materializes the sum of their fields plus one. A positive word width is also
-required for booleans. These are bounded-word implementations of mathematical
+materializes the sum of their fields plus one. Multiplication bounds the
+product of incremented fields, covering every sign and zero branch. A positive
+word width is also required for booleans. These are bounded-word implementations of mathematical
 integer operations, not constant-time arbitrary-precision arithmetic.
 
 Uniform body budgets below are inferred from existing proved compiler cost
@@ -110,13 +112,15 @@ theorem add_costBound :
 /-- These concrete source bodies neither mutate nor allocate source heap data. -/
 theorem program_noHeapWrites : ∀ fn, NoHeapWrites (Implementation.program.body fn) := by
   intro fn
-  refine Fin.cases ?_ (Fin.cases ?_ (Fin.cases ?_ (fun i => Fin.elim0 i))) fn
+  refine Fin.cases ?_ (Fin.cases ?_ (Fin.cases ?_ (Fin.cases ?_ (fun i => Fin.elim0 i)))) fn
   · change NoHeapWrites Implementation.negateBody
     simp [Implementation.negateBody, NoHeapWrites]
   · change NoHeapWrites Implementation.lessBody
     simp [Implementation.lessBody, NoHeapWrites]
   · change NoHeapWrites Implementation.addBody
     simp [Implementation.addBody, NoHeapWrites]
+  · change NoHeapWrites Implementation.mulBody
+    simp [Implementation.mulBody, NoHeapWrites]
 
 /-- The actual outer calling convention and final halt augment the inferred
 body bound; this definition is not a separate operation-price table. -/
@@ -245,6 +249,75 @@ theorem add_execute_le {w heapLimit : Nat} (a b : Int)
   obtain ⟨outcome, property, bounded⟩ :=
     (add_realizable capacity.positive).execute_le
       (Complexity.Language.Scalar.Int.add_total a b) add_costBound launch room ⟨rfl, rfl⟩ trivial
+  exact ⟨outcome, property.1, property.2,
+    outcome.observes_of_noHeapWrites program_noHeapWrites, bounded⟩
+
+/-- The product of incremented fields bounds every sign branch, including
+both input fields and the natural products before negative-result adjustment. -/
+theorem mul_realizable {w : Nat} (hw : 0 < w) :
+    FunctionRealizable Implementation.program w 0 Implementation.mulId
+      (fun args _ => (args.head.2 + 1) * (args.tail.head.2 + 1) < 2 ^ w) := by
+  have booleanFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt hw)
+  ram_source_realize (left right)
+  all_goals (try split_ifs) <;>
+    simp only [Nat.add_mul, Nat.mul_add, Nat.mul_one, Nat.one_mul] at * <;> omega
+
+/-- Infer a uniform bound from the actual multiplication body, not an integer
+operation price. All sign and zero branches belong to the same program. -/
+def mulBodyCost : { bound : Nat //
+    ∀ (left right : Bool × Nat) (heap : Heap),
+      StmtCostBound Implementation.program Implementation.mulBody
+        ⟨Env.cons (τ := .prod .bool .nat) left
+          (Env.cons (τ := .prod .bool .nat) right Env.empty), heap⟩ bound } := ⟨_, by
+  intro left right heap
+  ram_source_cost_step⟩
+
+theorem mul_costBound :
+    FunctionCostBound Implementation.program Implementation.mulId (fun _ _ => True)
+      (fun _ _ => mulBodyCost.val + 2) := by
+  ram_source_cost_intro (left right)
+  intro heap _
+  exact mulBodyCost.property left right heap
+
+/-- Include the actual calling convention and final halt in the inferred bound. -/
+def mulSteps : Nat :=
+  LocalCompiler.Function.callSteps (programControl Implementation.program)
+    (lowerFunc Implementation.program Implementation.mulId) (mulBodyCost.val + 2) + 1
+
+/-- The exact integer product and inferred instruction bound concern one halted
+RAM invocation. Word capacity includes all intermediate products, not just the
+possibly zero result. Input loading is outside this preloaded-call boundary. -/
+theorem mul_execute_le {w heapLimit : Nat} (a b : Int)
+    (initialHeap : Heap) (entry : Source.State w) (placement : Nat → Word w)
+    (capacity : FunctionCapacity Implementation.program Implementation.mulId w 0 heapLimit)
+    (memory : HeapRep placement heapLimit initialHeap entry)
+    (room : ((Representation.intEquiv a).2 + 1) *
+      ((Representation.intEquiv b).2 + 1) < 2 ^ w) :
+    ∃ outcome : FunctionExecution Implementation.program Implementation.mulId
+        heapLimit placement
+        (Env.cons (τ := .prod .bool .nat) (Representation.intEquiv a)
+          (Env.cons (τ := .prod .bool .nat) (Representation.intEquiv b) Env.empty))
+        initialHeap entry,
+      Representation.int.Rel (a * b) outcome.value outcome.heap ∧
+      outcome.heap = initialHeap ∧
+      Source.State.Observes heapLimit 0 entry outcome.result.state ∧
+      outcome.result.steps ≤ mulSteps := by
+  let args : Env [.prod .bool .nat, .prod .bool .nat] :=
+    Env.cons (Representation.intEquiv a) (Env.cons (Representation.intEquiv b) Env.empty)
+  have booleanFits : 1 < 2 ^ w := Nat.one_lt_two_pow (Nat.ne_of_gt capacity.positive)
+  have leftFits : (Representation.intEquiv a).2 < 2 ^ w := by nlinarith
+  have rightFits : (Representation.intEquiv b).2 < 2 ^ w := by nlinarith
+  have arguments : EnvFits w args := by
+    refine EnvFits.cons (τ := .prod .bool .nat)
+      (EnvFits.cons (τ := .prod .bool .nat) (EnvFits.empty w)
+        (Representation.intEquiv b) ?_) (Representation.intEquiv a) ?_
+    all_goals simp only [ValueFits]
+    all_goals (try split_ifs) <;> constructor <;> omega
+  let launch : FunctionLaunch Implementation.program Implementation.mulId
+      0 heapLimit placement args initialHeap entry := ⟨capacity, arguments, memory⟩
+  obtain ⟨outcome, property, bounded⟩ :=
+    (mul_realizable capacity.positive).execute_le
+      (Complexity.Language.Scalar.Int.mul_total a b) mul_costBound launch room ⟨rfl, rfl⟩ trivial
   exact ⟨outcome, property.1, property.2,
     outcome.observes_of_noHeapWrites program_noHeapWrites, bounded⟩
 

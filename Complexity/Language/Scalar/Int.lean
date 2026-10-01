@@ -9,6 +9,7 @@ import Complexity.Language.Eval.Verification
 import Complexity.Language.Buffer.Copy
 import Complexity.Language.RepresentedFunction
 import Mathlib.Tactic.SplitIfs
+import Mathlib.Tactic.Ring
 
 /-!
 # Source implementations of native integer operations
@@ -17,8 +18,8 @@ The same `source_program` declaration generates each native mathematical
 observation and its independently interpreted source body. Integer values use
 `Representation.int`: a negative pair `(true, n)` means `-(n + 1)`.
 
-There is no `Int` primitive or arbitrary native callback. Negation, comparison
-and addition below consist of existing natural arithmetic, comparisons,
+There is no `Int` primitive or arbitrary native callback. Negation, comparison,
+addition and multiplication consist of existing natural arithmetic, comparisons,
 branches and product operations. The source correctness theorems require no
 time budget or selected RAM width. Realization of every executed natural
 intermediate and the costs of the actual lowered instructions remain separate
@@ -68,6 +69,48 @@ source_program (pure) Implementation where
           return (false, left.2 - right.2 - 1)
       else
         return (false, left.2 + right.2)
+
+  def mul (left : Bool × Nat) (right : Bool × Nat) : Bool × Nat := do
+    if left.1 then
+      if right.1 then
+        return (false, (left.2 + 1) * (right.2 + 1))
+      else
+        if right.2 == 0 then
+          return (false, 0)
+        else
+          return (true, (left.2 + 1) * right.2 - 1)
+    else
+      if right.1 then
+        if left.2 == 0 then
+          return (false, 0)
+        else
+          return (true, left.2 * (right.2 + 1) - 1)
+      else
+        return (false, left.2 * right.2)
+
+/-- The same natural multiplication computes the product of the represented
+integers, with an explicit zero branch in each mixed-sign case. -/
+theorem mul_decode (left right : Bool × Nat) :
+    intEquiv.symm (Implementation.mul left right) =
+      intEquiv.symm left * intEquiv.symm right := by
+  rcases left with ⟨leftSign, leftMagnitude⟩
+  rcases right with ⟨rightSign, rightMagnitude⟩
+  cases leftSign <;> cases rightSign <;>
+    simp [Implementation.mul, Id.run, Id.instMonad, Representation.intEquiv,
+      Int.negSucc_eq] <;>
+    (try split_ifs) <;>
+    simp_all (config := { failIfUnchanged := false })
+  · have positive : 1 ≤ leftMagnitude * (rightMagnitude + 1) :=
+      Nat.mul_pos (Nat.pos_of_ne_zero ‹_›) (by omega)
+    rw [Int.ofNat_sub positive]
+    simp only [Int.natCast_mul, Int.natCast_add, Int.natCast_one]
+    ring
+  · have positive : 1 ≤ (leftMagnitude + 1) * rightMagnitude :=
+      Nat.mul_pos (by omega) (Nat.pos_of_ne_zero ‹_›)
+    rw [Int.ofNat_sub positive]
+    simp only [Int.natCast_mul, Int.natCast_add, Int.natCast_one]
+    ring
+  · ring
 
 /-- The real source negation agrees with native integer negation after decoding. -/
 theorem negate_decode (value : Bool × Nat) :
@@ -306,5 +349,71 @@ theorem less_refines : RepresentedFunction.Refines Implementation.program Implem
   refine ⟨decide (a.1 < a.2), heap, ?_, rfl⟩
   rw [Implementation.less_observe]
   exact less_eval a.1 a.2 args.head args.tail.head heap observed.1 observed.2
+
+/-- Multiplication agrees with native integer multiplication. -/
+theorem mul_correct (a b : Int) :
+    Implementation.mul (intEquiv a) (intEquiv b) = intEquiv (a * b) := by
+  apply intEquiv.symm.injective
+  simpa using mul_decode (intEquiv a) (intEquiv b)
+
+/-- Multiplication has the stated integer result and leaves its actual heap unchanged. -/
+theorem mul_total (a b : Int) :
+    Implementation.mul_contract
+      (fun left right heap =>
+        Representation.int.Rel a left heap ∧ Representation.int.Rel b right heap)
+      (fun _ _ heap result finish =>
+        Representation.int.Rel (a * b) result finish ∧ finish = heap) := by
+  apply (Implementation.mul_total_iff _ _).mpr
+  intro left right heap represented
+  refine ⟨Implementation.mul left right, heap,
+    congrFun (Implementation.mul_action_eq_pure left right) heap, ?_, rfl⟩
+  apply (Representation.int_rel_iff_decode _ _ _).mpr
+  rw [mul_decode, (Representation.int_rel_iff_decode _ _ _).mp represented.1,
+    (Representation.int_rel_iff_decode _ _ _).mp represented.2]
+
+/-- Multiplication observes the original source action on represented integers. -/
+theorem mul_eval (a b : Int) (left right : Bool × Nat) (heap : Heap)
+    (first : Representation.int.Rel a left heap)
+    (second : Representation.int.Rel b right heap) :
+    Implementation.mul_action left right heap =
+      Part.some (.ok (intEquiv.toEmbedding (a * b)), heap) := by
+  change intEquiv a = left at first
+  change intEquiv b = right at second
+  subst left right
+  rw [Implementation.mul_action_eq_pure, mul_correct]
+  rfl
+
+/-- Multiplication preserves all existing array contents and heap shape. -/
+theorem mul_eval_exists_preserving (a b : Int) (left right : Bool × Nat) (heap : Heap)
+    (first : Representation.int.Rel a left heap)
+    (second : Representation.int.Rel b right heap) :
+    ∃ returned finish, Implementation.mul_action left right heap = Part.some (.ok returned, finish) ∧
+      Representation.int.Rel (a * b) returned finish ∧ heap.ShapeExtends finish ∧
+      Buffer.PreservesContents heap finish :=
+  ⟨_, heap, mul_eval a b left right heap first second, rfl, Heap.ShapeExtends.refl heap,
+    fun {_} _ _ contents => contents⟩
+
+/-- Multiplication retains the actual result and final heap. -/
+theorem mul_eval_exists (a b : Int) (left right : Bool × Nat) (heap : Heap)
+    (first : Representation.int.Rel a left heap)
+    (second : Representation.int.Rel b right heap) :
+    ∃ returned finish, Implementation.mul_action left right heap = Part.some (.ok returned, finish) ∧
+      Representation.int.Rel (a * b) returned finish ∧ heap.ShapeExtends finish := by
+  obtain ⟨returned, finish, executed, related, shape, _⟩ :=
+    mul_eval_exists_preserving a b left right heap first second
+  exact ⟨returned, finish, executed, related, shape⟩
+
+/-- Multiplication refines the same encoded source entry. -/
+theorem mul_refines : RepresentedFunction.Refines Implementation.program Implementation.mulId
+    (FunctionRepresentation.ofResult
+      (ArgumentRepresentation.cons Representation.int
+        (ArgumentRepresentation.single Representation.int))
+      (fun _ => Representation.int)) (fun _ => True) (fun a : Int × Int => a.1 * a.2) := by
+  intro a _
+  apply FunctionTotal.iff_eval.mpr
+  intro args heap observed
+  refine ⟨intEquiv (a.1 * a.2), heap, ?_, rfl⟩
+  rw [Implementation.mul_observe]
+  exact mul_eval a.1 a.2 args.head args.tail.head heap observed.1 observed.2
 
 end Complexity.Language.Scalar.Int

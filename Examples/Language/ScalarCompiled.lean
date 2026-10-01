@@ -690,4 +690,22 @@ def signedDistanceCost : { bound : Nat //
       Signed.imports.Complexity.Language.Scalar.Int.Implementation.embedding
       Ram.LanguageCompiler.Scalar.Int.less_costBound))]⟩
 
+/-- The squared-distance caller pays for the actual subtraction and product
+implementations, with a bound inferred independently of their arguments. -/
+def signedSquaredDistanceCost : { bound : Nat //
+    FunctionCostBound Signed.program Signed.squaredDistanceId (fun _ _ => True)
+      (fun _ _ => bound + 2) } := ⟨_, by
+  ram_source_cost_intro (left right)
+  intro heap _
+  ram_source_cost_step using [
+    (ram_source_imported% (FunctionCostBound.renameCalls
+      Signed.imports.Complexity.Language.Scalar.Int.Implementation.embedding
+      Ram.LanguageCompiler.Scalar.Int.negate_costBound)),
+    (ram_source_imported% (FunctionCostBound.renameCalls
+      Signed.imports.Complexity.Language.Scalar.Int.Implementation.embedding
+      Ram.LanguageCompiler.Scalar.Int.add_costBound)),
+    (ram_source_imported% (FunctionCostBound.renameCalls
+      Signed.imports.Complexity.Language.Scalar.Int.Implementation.embedding
+      Ram.LanguageCompiler.Scalar.Int.mul_costBound))]⟩
+
 end Complexity.Language.Examples.Scalar

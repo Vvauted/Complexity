@@ -201,6 +201,10 @@ source_program Signed where
     else
       return delta
 
+  def squaredDistance (left : Int) (right : Int) : Int := do
+    let delta := left - right
+    return delta * delta
+
 /-- Ordinary integer subtraction and absolute value describe the actual signed
 source calls. The algorithm proof does not mention their sign/magnitude fields. -/
 theorem signed_distance_eq (left right : Int) :
@@ -220,5 +224,19 @@ theorem signed_distance_total :
   apply Signed.distance_refines.of_math
   intro input _
   exact signed_distance_eq input.1 input.2
+
+/-- Multiplication reuses the ordinary integer square, not a proof about the
+two natural fields used by its implementation. -/
+theorem signed_squaredDistance_eq (left right : Int) :
+    Signed.squaredDistance_model left right = (left - right) ^ 2 := by
+  simp [Signed.squaredDistance_model, pow_two, sub_eq_add_neg]
+
+theorem signed_squaredDistance_total :
+    RepresentedFunction.Total Signed.program Signed.squaredDistanceId
+      Signed.squaredDistance_representation (fun _ => True)
+      (fun input value => value = (input.1 - input.2) ^ 2) := by
+  apply Signed.squaredDistance_refines.of_math
+  intro input _
+  exact signed_squaredDistance_eq input.1 input.2
 
 end Complexity.Language.Examples.Scalar

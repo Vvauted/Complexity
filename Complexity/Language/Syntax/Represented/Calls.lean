@@ -464,6 +464,7 @@ private def integerOperation (sourceName : Name) : PrepareM Operation := do
   let comparison := sourceName == `less
   let native ← if unary then `(fun (value : Int) => -value)
     else if comparison then `(fun (left right : Int) => decide (left < right))
+    else if sourceName == `mul then `(fun (left right : Int) => left * right)
     else `(fun (left right : Int) => left + right)
   let result ← if comparison then resolveType (← `(Bool)) else pure NativeType.int
   return {
@@ -583,7 +584,7 @@ private partial def integerExpression (imports : ImportedPrograms) (scope : List
       `($left / $right) | `($left % $right) =>
       return (← integerExpression imports scope left) || (← integerExpression imports scope right)
   | `(-$inner) => integerExpression imports scope inner
-  | `(Int.add $_ $_) | `(Int.neg $_) => return true
+  | `(Int.add $_ $_) | `(Int.mul $_ $_) | `(Int.neg $_) => return true
   | _ =>
       try return (match (← value scope expression).type with | .int => true | _ => false)
       catch _ => return false
@@ -630,6 +631,11 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
           (← integerExpression imports scope left) || (← integerExpression imports scope right) then
         return some (← `(Int.add $left $right))
       return none
+  | `($left * $right) =>
+      if expected.any (fun type => match type with | .int => true | _ => false) ||
+          (← integerExpression imports scope left) || (← integerExpression imports scope right) then
+        return some (← `(Int.mul $left $right))
+      return none
   | `(-$_number:num) => return none
   | `(-$inner) =>
       if expected.any (fun type => match type with | .int => true | _ => false) ||
@@ -645,6 +651,7 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
         return some (← `(Int.lt $right $left))
       return none
   | `(Int.add $left $right) => return some (← `(Int.add $left $right))
+  | `(Int.mul $left $right) => return some (← `(Int.mul $left $right))
   | `(Int.neg $inner) => return some (← `(Int.neg $inner))
   | `(Int.lt $left $right) => return some (← `(Int.lt $left $right))
   | `(Array.append $left:term $right:term) => return some (← `(Array.append $left $right))
@@ -705,6 +712,7 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
       return some (operation, arguments)
   match expression with
   | `(Int.add $left $right) => return some (← integerOperation `add, #[left, right])
+  | `(Int.mul $left $right) => return some (← integerOperation `mul, #[left, right])
   | `(Int.neg $inner) => return some (← integerOperation `negate, #[inner])
   | `(Int.lt $left $right) => return some (← integerOperation `less, #[left, right])
   | `(Array.append $left:term $right:term) =>

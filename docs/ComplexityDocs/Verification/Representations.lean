@@ -60,7 +60,7 @@ These are explicit proved certificates, not typeclass inference or new syntax.
 ## Signed scalar expressions
 
 The default `source_program` frontend uses ordinary `Int` parameters and
-results for addition, subtraction, negation and ordered comparisons. These
+results for addition, subtraction, multiplication, negation and ordered comparisons. These
 select the existing [integer source operations](##Complexity.Language.Scalar.Int),
 not host-side arithmetic callbacks. For example:
 
@@ -84,13 +84,19 @@ reverses its operands. Conditional calls stay in their selected branches;
 a while guard is evaluated again on every iteration.
 
 Literal arithmetic uses known binding, result and callee-parameter types;
-it does not silently coerce a `Nat` variable to `Int`. Signed multiplication,
-division, remainder and equality syntax are not provided by this connection.
+it does not silently coerce a `Nat` variable to `Int`. Signed division,
+remainder and equality syntax are not provided by this connection.
 Calls beneath `&&`/`||` are not lifted out of their short-circuit branches.
 The existing [RAM implementation](##Ram.LanguageCompiler.Scalar.Int)
 charges the same source bodies, including sign branches and intermediates.
 The scalar consumer's `signedDistanceCost` composes their existing certificates
 to infer a uniform bound for this same caller, including its actual instructions.
+Likewise, `Signed.squaredDistance` returns `delta * delta`; its ordinary
+mathematical theorem states `(left - right) ^ 2`, and `signedSquaredDistanceCost`
+composes the same subtraction and multiplication implementations. Multiplication
+needs a word bound on the product of incremented representation fields, covering
+intermediates even when the final result is zero. This is bounded-word integer
+arithmetic, not a constant-time arbitrary-precision multiplication primitive.
 Word ranges, call overhead and a complete caller's resource bound remain
 separate proof obligations; correctness is not conditional on a time budget.
 
