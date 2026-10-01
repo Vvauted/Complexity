@@ -228,6 +228,7 @@ import Complexity.Computability.Ram.Compiler.Language.Program.Deriving
 import Complexity.Computability.Ram.Compiler.Language.Program.Input
 import Complexity.Computability.Ram.Compiler.Language.Program.IntInput
 import Complexity.Computability.Ram.Compiler.Language.Program.OptionArrayInput
+import Complexity.Computability.Ram.Compiler.Language.Program.StringInput
 import Complexity.Computability.Ram.Compiler.Language.Program.Packing
 import Complexity.Computability.Ram.Compiler.Language.Program.Time
 import Complexity.Computability.Ram.Compiler.Language.Program.Wrapper
@@ -508,6 +509,7 @@ import Complexity.Language.Representation.RaggedArray
 import Complexity.Language.Representation.List
 import Complexity.Language.Representation.Preservation
 import Complexity.Language.Representation.Scalar
+import Complexity.Language.Representation.String
 import Complexity.Language.RepresentedFunction
 import Complexity.Language.Scalar.Int
 import Complexity.Language.Rooted.Execution
@@ -573,6 +575,7 @@ import Complexity.Program.Deriving
 import Complexity.Program.Input
 import Complexity.Program.IntInput
 import Complexity.Program.OptionArrayInput
+import Complexity.Program.StringInput
 import Complexity.Program.Packing
 import Complexity.Program.Syntax
 import Complexity.Tactic.Ram.Array

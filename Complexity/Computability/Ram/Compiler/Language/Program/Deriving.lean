@@ -9,6 +9,7 @@ import Complexity.Computability.Ram.Compiler.Language.Program.CharInput
 import Complexity.Computability.Ram.Compiler.Language.Program.IntInput
 import Complexity.Computability.Ram.Compiler.Language.Program.OptionArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.RaggedArrayInput
+import Complexity.Computability.Ram.Compiler.Language.Program.StringInput
 
 /-!
 # Deriving fixed RAM inputs for records and enumerations

@@ -196,6 +196,29 @@ Nested arrays of optional elements do not yet have a generated row reader.
 Reading permits aliases; updating separate columns still needs separation or
 an explicit alias-aware update proof.
 
+## String input and observation
+
+[`Representation.string`](##Complexity.Language.Representation.string) keeps
+ordinary Lean `String` values while storing their complete Unicode scalar
+sequence in a contiguous natural buffer. It retains embedded null characters
+and does not restrict or compress an application's alphabet. The descriptor
+counts characters, not UTF-8 bytes; a character index cannot be substituted for
+Lean's `String.Pos.Raw` byte position.
+
+The fixed [`StringInput`](##Complexity.Program.StringInput) interfaces support
+strings, arrays of strings and prefixes of other registered input fields.
+Arrays use the existing shared row-boundary/payload layout, retaining empty
+rows. `Input`/`RamInput` record deriving can therefore retain fields of type
+`Array String` instead of asking authors to replace their mathematical inputs.
+Output observations use the same layouts at the actual final heap.
+
+These are invocation and observation interfaces, not frontend string-operation
+support or free `String.toList` conversions. Character access, allocation and
+string expressions still need checked source implementations. Reading a row
+whose payload itself has row boundaries is also separate work: a slice of
+nonzero-based inner boundaries cannot be called a canonical zero-based row
+without a justified representation or an actual, charged rebasing operation.
+
 ## Linked-node storage
 
 The List contracts here use `Representation.bufferList`: explicit mathematical

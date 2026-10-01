@@ -8,6 +8,7 @@ import Complexity.Program.CharInput
 import Complexity.Program.IntInput
 import Complexity.Program.OptionArrayInput
 import Complexity.Program.RaggedArrayInput
+import Complexity.Program.StringInput
 import Lean.Elab.Deriving.Basic
 import Lean.EnvExtension
 import Lean.Meta.AppBuilder
