@@ -259,6 +259,7 @@ import Complexity.Computability.Ram.Compiler.Language.Scalar.Int
 import Complexity.Computability.Ram.Compiler.Language.Representation
 import Complexity.Computability.Ram.Compiler.Language.RepresentedFunction
 import Complexity.Computability.Ram.Compiler.Language.Session
+import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.Simulation
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 import Complexity.Computability.Ram.Compiler.Language.TimeBound
@@ -528,6 +529,7 @@ import Complexity.Language.Representation.Scalar
 import Complexity.Language.Representation.String
 import Complexity.Language.RepresentedFunction
 import Complexity.Language.Session
+import Complexity.Language.Session.Refinement
 import Complexity.Language.Scalar.Int
 import Complexity.Language.Rooted.Execution
 import Complexity.Language.Semantics

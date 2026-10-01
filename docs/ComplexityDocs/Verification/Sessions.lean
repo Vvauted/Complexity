@@ -4,7 +4,9 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Session
+import Complexity.Language.Session.Refinement
 import Complexity.Computability.Ram.Compiler.Language.Session
+import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Buffer
 
 /-!
@@ -49,6 +51,22 @@ contract over any finite list of admissible requests, without a time budget.
 `Session.Run.append` joins traces at their actual intermediate heap, and
 `Session.Run.length` gives one reply per successful request.
 
+For an ordinary mathematical transition `step : State → Request → Reply × State`,
+`Session.StepRefines` relates its state to the actual source value and heap. Prove
+one step using that relation and the reply's existing `Representation`.
+`StepRefines.runs` then relates the complete source history to `Session.modelRun`,
+which is Lean's left-to-right `List.mapM` in `StateM`, used only as a proof model.
+Neither the model state nor the future request list becomes a source argument.
+The state relation can retain ghost invariants without requiring a unique runtime
+encoding of mathematical state.
+
+`Session.ValidInputs` checks admissibility at each mathematical state. A protocol
+with a bounded number of requests can retain the remaining count as a ghost;
+its contract need not promise another successful step after completion.
+`StepRefines.post_of_runs` gives the same observations for an already supplied
+actual trace. In particular, use the source projection of a RAM trace to attach
+correctness to that very computation, not a separately selected witness.
+
 Replies are paired with their own return-time heap, so mathematical observations
 can use the contents that existed when the reply was produced. These proof-level
 heaps do not copy or freeze runtime storage. A returned reference may still
@@ -75,6 +93,16 @@ The cost index sums the actual complete preloaded invocation counts.
 `Run.append` adds these counts while retaining the real boundary memory.
 Each invocation still needs the existing word-range, heap, stack and readiness
 conditions; source totality alone does not supply finite machine capacity.
+
+`Run.exists_le_of_step` composes a supplied invariant and per-request invocation
+bound over a finite history. Each step premise must produce a real execution,
+preserve the invariant at `State.ofExecution`, and bound that execution's count.
+`Runs.exists_le_of_step` includes an actual initializer and its instruction count,
+even for an empty history. This gives the initializer's count plus the sum of the
+request bounds, without repeating the trace induction in each consumer.
+These resource rules currently use a fixed admissible-request domain and an
+invariant closed under all those requests. They do not infer that a finite
+protocol continues to accept requests after its terminal state.
 
 For mutable buffers, `ArenaMeasured.read` and `ArenaMeasured.write` consume the
 actual successful heap-operation equations and finite-word facts. The write
