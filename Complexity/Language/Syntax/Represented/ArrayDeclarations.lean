@@ -46,6 +46,15 @@ private def relationTerm (type : NativeType) (value actual heap : TSyntax `term)
   let core ← termOfExpr (coreTypeExpr type.coreTy)
   `(($representation : Complexity.Language.Representation $native $core).Rel $value $actual $heap)
 
+/-- Project the planner's pure column coordinates without constructing a pair
+only to immediately project it again. Actual column reads remain source calls. -/
+private partial def projectColumn (value : TSyntax `term) (first : Bool) :
+    TermElabM (TSyntax `term) := do
+  match value with
+  | `(($inner:term)) => projectColumn inner first
+  | `(($left:term, $right:term)) => return if first then left else right
+  | _ => if first then `(($value).1) else `(($value).2)
+
 /-- Only the resolver's column and record views are unfolded here. An arbitrary
 injective view alone would not justify an executable element reader. -/
 private partial def readPlan (array result : NativeType) (path : String)
@@ -64,13 +73,13 @@ private partial def readPlan (array result : NativeType) (path : String)
       | _ => throwError "array column result must retain its product layout"
     let first ← readPlan left leftResult (path ++ "L")
       (← `(($rows).map Prod.fst)) index (← `(($fallback).1))
-      (← `(($storage).1)) (← `(($defaultView).1)) heap
+      (← projectColumn storage true) (← projectColumn defaultView true) heap
       (← `(And.left $observed))
       (← if result.isIdentity then `(congrArg Prod.fst $defaultObserved)
         else `(And.left $defaultObserved))
     let second ← readPlan right rightResult (path ++ "R")
       (← `(($rows).map Prod.snd)) index (← `(($fallback).2))
-      (← `(($storage).2)) (← `(($defaultView).2)) heap
+      (← projectColumn storage false) (← projectColumn defaultView false) heap
       (← `(And.right $observed))
       (← if result.isIdentity then `(congrArg Prod.snd $defaultObserved)
         else `(And.right $defaultObserved))
@@ -191,14 +200,18 @@ private partial def readPlan (array result : NativeType) (path : String)
           returned := selected, related := ← `(show $scalarRelation from rfl) }
   | .raggedArray payload => do
       let pairRows (left right : NativeType) : TermElabM ReadPlan := do
+        let offsets ← projectColumn storage true
+        let columns ← projectColumn storage false
+        let leftColumns ← projectColumn columns true
+        let rightColumns ← projectColumn columns false
         let first ← readPlan (.raggedArray left) left (path ++ "L")
           (← `(($rows).map (Array.map Prod.fst))) index (← `(($fallback).map Prod.fst))
-          (← `((($storage).1, ($storage).2.1))) (← `(($defaultView).1)) heap
+          (← `(($offsets, $leftColumns))) (← projectColumn defaultView true) heap
           (← `(Complexity.Language.Representation.raggedArrayOf_fst $observed))
           (← `(And.left $defaultObserved))
         let second ← readPlan (.raggedArray right) right (path ++ "R")
           (← `(($rows).map (Array.map Prod.snd))) index (← `(($fallback).map Prod.snd))
-          (← `((($storage).1, ($storage).2.2))) (← `(($defaultView).2)) heap
+          (← `(($offsets, $rightColumns))) (← projectColumn defaultView false) heap
           (← `(Complexity.Language.Representation.raggedArrayOf_snd $observed))
           (← `(And.right $defaultObserved))
         let returned ← `(($(first.returned), $(second.returned)))
