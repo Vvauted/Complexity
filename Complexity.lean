@@ -157,6 +157,7 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.GetD
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.Replicate
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.GetD
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Rebase
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Replicate
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Execution
@@ -442,6 +443,9 @@ import Complexity.Language.Buffer.Prod.GetD
 import Complexity.Language.Buffer.Prod.Int
 import Complexity.Language.Buffer.Prod.Replicate
 import Complexity.Language.Buffer.Ragged.GetD
+import Complexity.Language.Buffer.Ragged.Extract
+import Complexity.Language.Buffer.Ragged.Nested
+import Complexity.Language.Buffer.Rebase
 import Complexity.Language.Buffer.Replicate
 import Complexity.Language.Buffer.Map
 import Complexity.Language.Buffer.Map.Program

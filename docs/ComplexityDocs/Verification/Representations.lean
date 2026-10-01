@@ -197,6 +197,34 @@ Nested arrays of optional elements do not yet have a generated row reader.
 Reading permits aliases; updating separate columns still needs separation or
 an explicit alias-aware update proof.
 
+## Canonical nested-array intervals
+
+Canonical ragged storage retains a boundary buffer and a flattened payload.
+The [interval extraction](##Complexity.Language.Buffer.Ragged.Extract) operation
+reads the two endpoints, copies the selected boundaries minus their first
+offset, and borrows the corresponding payload slice. The mathematical result
+is ordinary `Array.extract`; its source contract requires ordered, in-bounds
+indices. Even an empty interval retains one zero sentinel. It does not clamp
+invalid indices or pretend that an absolute boundary slice is already rebased.
+
+[`Rebase.copy`](##Complexity.Language.Buffer.Rebase.copy) performs that actual
+allocation, read/subtract/write loop. Its
+[compiler cost](##Ram.LanguageCompiler.BufferRebase.copy_arenaCostBound) includes
+initialized allocation, copying, call dispatch and function setup, with an
+affine envelope in the number of boundary cells. This conditional cost needs
+an actual ready arena execution; it does not itself establish word ranges,
+capacity, the enclosing extractor's total cost or `Program.TimeO`.
+
+The [three-level row operation](##Complexity.Language.Buffer.Ragged.Nested)
+uses that extractor for in-bounds natural or Boolean rows. Out of bounds it
+returns the entire supplied fallback without allocation. Both branches preserve
+every old contents observation; the payload remains aliased mutable storage.
+In bounds, the actual final heap contains new boundaries and the operation is
+not a constant-time borrowed row lookup. Ordinary composite `Array.getD`
+frontend integration still needs to thread this changed heap through subsequent
+column reads and their observations. These source operations do not claim that
+arbitrary-depth high-level access or nested mutation is already supported.
+
 ## Strings and character-indexed operations
 
 [`Representation.string`](##Complexity.Language.Representation.string) keeps
