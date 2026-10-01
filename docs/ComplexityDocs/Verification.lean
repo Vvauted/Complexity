@@ -10,6 +10,7 @@ import ComplexityDocs.Verification.Ram.Automation
 import ComplexityDocs.Verification.Ram.Contracts
 import ComplexityDocs.Verification.Ram.Models
 import ComplexityDocs.Verification.Representations
+import ComplexityDocs.Verification.Sessions
 import ComplexityDocs.Verification.Source
 import ComplexityDocs.Verification.State
 
@@ -30,6 +31,7 @@ Both views describe the same declared implementation.
 - [Represented data and collection contracts](ComplexityDocs/Verification/Representations.html)
 - [Proving linked-list programs](ComplexityDocs/Verification/Lists.html)
 - [Mutable state, scratch scopes and calls](ComplexityDocs/Verification/State.html)
+- [Persistent sessions](ComplexityDocs/Verification/Sessions.html)
 - [Source loops and recursion](ComplexityDocs/Verification/Loops.html)
 - [Connecting source proofs to RAM](ComplexityDocs/Verification/Compilation.html)
 
