@@ -267,6 +267,7 @@ import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.Prepared
 import Complexity.Computability.Ram.Compiler.Language.Session.PreparedTraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.PreparedHistoryTimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.PreparedWorstCaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.ScheduledTraceTimeBound

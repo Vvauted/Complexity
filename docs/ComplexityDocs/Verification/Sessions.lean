@@ -17,6 +17,7 @@ import Complexity.Computability.Ram.Compiler.Language.Session.ScheduledTraceTime
 import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.PreparedTraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.PreparedHistoryTimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.PreparedWorstCaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Buffer
 
 /-!
@@ -264,6 +265,40 @@ can describe the complete interaction. Existence of one accepted trace is not
 a guarantee against every choice of a nondeterministic or adaptive adversary.
 Keep an independent source-correctness proposition using the same protocol;
 the compiled-time bound and an executable streaming adapter are separate work.
+
+## All legal environment choices
+
+`PreparedWorstCaseTimeO` and `PreparedWorstCaseTimeOOn` constrain every permitted
+complete source trace, instead of asking for one accepted RAM trace. The client
+first states total source correctness for its protocol: for example, a collect
+operation must continue successfully for every legally ordered reply. This must
+include termination and nonempty legal environment choices; saying only that
+already-successful executions are correct is not sufficient.
+
+The resource requirement then quantifies every successful prepared source trace
+accepted by that fixed protocol. At every admitted word width, it requires actual
+RAM preparation and callbacks with exactly the same inputs, replies and their
+return-time heaps, final source state and final source heap. One global bound
+applies to all these traces. An inexpensive branch cannot replace an expensive
+one, and an arbitrary time allowance does not establish source termination.
+`PreparedWorstCaseTimeO.realizes` obtains a RAM execution for any given accepted
+source execution; it does not create a source execution from a resource bound.
+
+`Session.widthWith` extends the configuration's logarithmic admission scale with
+author-fixed raw external words. An external size may be unknown to the source:
+for example, a hidden structure can grow while the public initial configuration
+stays fixed. Those words are not initializer arguments, an initial heap, or
+computed answers. `ofInput_widthWith_independent` gives definitionally identical
+initial memories at the same configuration and width, regardless of which scale
+words justified admission. The source has no operation to inspect this policy;
+moreover, the same independently given source trace must work at every admitted
+width. This is a sufficiently large fixed-word machine convention, not a way to
+reveal hidden values or dynamically grow machine words during execution.
+
+The existing history-width interface reuses the same admission bound without
+changing its raw request words or source inputs. Both prepared time interfaces
+still sum actual preloaded invocations and do not implement external transport,
+register saving or a continuously running interactive driver.
 
 ## Later public announcements
 

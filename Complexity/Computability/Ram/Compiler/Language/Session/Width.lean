@@ -6,9 +6,9 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 
 /-!
-# Word width for finite histories of online scalar requests
+# Word width for external scales and finite request histories
 
-A fixed public word presentation extends the configuration's usual logarithmic
+A protocol-fixed raw word presentation extends the configuration's usual logarithmic
 scale with the raw request values and their total word count. This list is proof-side
 machine admission data, not a source input, an initial heap or preprocessing.
 It is chosen by the interface author, before the candidate; it must not contain
@@ -29,6 +29,33 @@ universe u v
 variable {α : Type u} [Complexity.Program.Input α] [Complexity.Program.RamInput α]
 variable {ι : Type v}
 
+/-- Extend configuration admission with protocol-fixed raw scale words. These
+words are proof data, not additional initializer arguments or heap contents.
+They may describe an external size unknown to the source; the source semantics
+cannot inspect the word width. The protocol fixes them before the candidate. -/
+def widthWith (overhead : Nat) (x : α) (words : Array Nat) : Nat :=
+  ArrayFunction.width overhead (Complexity.Program.RamInput.words x ++ words)
+
+/-- Additional admission words retain the existing configuration-arena bound. -/
+theorem widthWith_base {overhead w : Nat} {x : α} {words : Array Nat}
+    (admitted : widthWith overhead x words ≤ w) :
+    1 + Ram.LanguageCompiler.ArrayFunction.inputWordWidth
+      (Complexity.Program.RamInput.words x) ≤ w := by
+  have configBound := Ram.LanguageCompiler.ArrayFunction.inputWordWidth_append_left
+    (Complexity.Program.RamInput.words x) words
+  exact (Nat.add_le_add_left configBound 1).trans
+    ((ArrayFunction.width_base overhead
+      (Complexity.Program.RamInput.words x ++ words)).trans admitted)
+
+/-- At a fixed configuration and width, external scale data does not change
+any initial memory. Different admission proofs are not runtime inputs. -/
+theorem ofInput_widthWith_independent {overhead₁ overhead₂ w : Nat}
+    {x : α} {words₁ words₂ : Array Nat}
+    (first : widthWith overhead₁ x words₁ ≤ w)
+    (second : widthWith overhead₂ x words₂ ≤ w) :
+    Ram.LanguageCompiler.Session.State.ofInput x w (widthWith_base first) =
+      Ram.LanguageCompiler.Session.State.ofInput x w (widthWith_base second) := rfl
+
 /-- Raw configuration and request words used only to fix the machine-width scale.
 The source initial memory continues to contain only the configuration. -/
 def historyWords (requestWords : ι → Array Nat) (x : α) (inputs : List ι) : Array Nat :=
@@ -46,12 +73,9 @@ theorem historyWidth_base {overhead w : Nat} {requestWords : ι → Array Nat}
     {x : α} {inputs : List ι}
     (admitted : historyWidth overhead requestWords x inputs ≤ w) :
     1 + Ram.LanguageCompiler.ArrayFunction.inputWordWidth
-      (Complexity.Program.RamInput.words x) ≤ w := by
-  have configBound := Ram.LanguageCompiler.ArrayFunction.inputWordWidth_append_left
-    (Complexity.Program.RamInput.words x)
-    (inputs.flatMap fun input => (requestWords input).toList).toArray
-  exact (Nat.add_le_add_left configBound 1).trans
-    ((ArrayFunction.width_base overhead (historyWords requestWords x inputs)).trans admitted)
+      (Complexity.Program.RamInput.words x) ≤ w :=
+  widthWith_base (words := (inputs.flatMap fun input => (requestWords input).toList).toArray)
+    admitted
 
 /-- Every finite history has an admitted width for every fixed multiplier. -/
 theorem exists_historyWidth (overhead : Nat) (requestWords : ι → Array Nat)
