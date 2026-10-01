@@ -8,6 +8,7 @@ import Complexity.Language.Session.Refinement
 import Complexity.Program.SumOutput
 import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
+import Complexity.Computability.Ram.Compiler.Language.List.Prepare
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.ScheduledTraceTimeBound
@@ -108,6 +109,29 @@ request bounds, without repeating the trace induction in each consumer.
 These resource rules currently use a fixed admissible-request domain and an
 invariant closed under all those requests. They do not infer that a finite
 protocol continues to accept requests after its terminal state.
+
+## Preparing current linked inputs
+
+Heap-backed feedback cannot be supplied by a pure request encoder: its nodes
+must exist in the current memory. `Ram.LanguageCompiler.List.Prepare.Run`
+records real compiled `List.Cons` invocations from a retained `Session.State`.
+The tail is prepared before the head, preserving input order and allowing an
+existing linked suffix to be shared. Every intermediate world comes directly
+from `State.ofExecution`, not a freshly initialized heap.
+
+`Prepare.exists_le` constructs this preparation from scalar word ranges and
+capacity. It allocates exactly three words per new node and bounds the actual
+invocation sum by the input length times the existing compiled constructor
+bound. `Run.observed` retains the complete old object prefix and placements,
+so existing arrays, aliases and linked roots remain valid. `Run.retained_words`
+preserves the encoding of any old rooted state value.
+
+This is a preparation component, not yet an extended session trace relation.
+Ordinary `Session.Run.cons` has no intervening environment allocation and must
+not be reused unchanged to claim otherwise. External traversal, scalar loading,
+transport and driver control remain outside these preloaded calls. In particular,
+placement stability does not implement saving old state registers across the
+constructor calls. The native host input loaders are a separate backend boundary.
 
 ## Uniform callback-time requirements
 
