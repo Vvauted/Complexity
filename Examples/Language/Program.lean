@@ -70,6 +70,16 @@ theorem replicate_correct :
   · intro _ _
     trivial
 
+/-- The same allocating program has its exact input-dependent Vector result;
+the source implementation and its array storage are not changed. -/
+theorem replicate_correctVector :
+    replicate.CorrectVector (fun _ => True) Prod.fst
+      (fun input result => result = Vector.replicate input.1 input.2) := by
+  apply Complexity.Program.CorrectVector.iff_returns.mpr
+  intro input legal
+  obtain ⟨values, returned, rfl⟩ := replicate_correct input legal
+  exact ⟨Vector.replicate input.1 input.2, returned, rfl⟩
+
 /-- Select the existing allocating list constructor with its mathematical result type. -/
 def singleton : Complexity.Program Nat (List Nat) :=
   program% LinkedList.NativeConstruction.singleton
@@ -401,6 +411,14 @@ def missingInts : Complexity.Program Nat (Array Int) := program% SignedArrays.mi
 theorem missingInts_correct :
     missingInts.Correct (fun _ => True) (fun length result => result = Array.replicate length (-1)) := by
   program_correct SignedArrays.missing using fun _ => rfl
+
+/-- The existing source proof command also checks the vector length obligation;
+it does not need a second program declaration or a vector decoder. -/
+theorem missingInts_correctVector :
+    missingInts.CorrectVector (fun _ => True) id
+      (fun length result => result = Vector.replicate length (-1)) := by
+  program_correct SignedArrays.missing using fun length _ =>
+    ⟨(show (Array.replicate length (-1)).size = length from Array.size_replicate ..), rfl⟩
 
 /-- A signed field composes with the other columns of a nominal record. -/
 structure SignedReading where

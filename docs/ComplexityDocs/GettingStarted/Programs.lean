@@ -43,6 +43,19 @@ correctness is the ordinary `Array.replicate` result. `Correct.of_triple` reuses
 its standard `Std.Do.Triple` contract and the actual final-heap array observation;
 no alternate pure implementation or pointer decoder is supplied.
 
+For an answer whose length depends on the input, keep its mathematical type as
+`Vector γ (length input)` and use `solve.CorrectVector isLegal length post`.
+Here `solve : Program α (Array γ)` still returns the actual array. The shared
+contract requires that array's length to equal `length input` and passes the
+resulting vector to `post`; it never pads, truncates or copies the result.
+`CorrectVector.iff_returns` exposes the same `Returns` witness, and
+`CorrectVector.result_of_eval` identifies its actual final-heap observation.
+The typed-program example proves `Vector.replicate` for the existing allocating
+program; the signed variant uses the unchanged `program_correct` command.
+Time bounds remain `solve.TimeO` or `solve.TimeOOn` on that same program. This
+proof interface does not add source-level dependent types or supply unsupported
+array element layouts, such as arrays of optional values.
+
 The [input instances](##Complexity.Program.Input) and
 [array composition](##Complexity.Program.ArrayInput) supply scalars and multiple
 `Array Nat` or `Array Bool` arguments in right-associated tuples. Each array has

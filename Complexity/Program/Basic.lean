@@ -20,6 +20,10 @@ without word ranges, storage capacity or a proposed time bound. Input loading
 and any later copying or conversion require their own executable implementation
 and accounting; selecting a preloaded invocation does not establish heap
 independence or persistent ownership of returned mutable storage.
+
+`Program.CorrectVector` permits an input-indexed length in a mathematical
+postcondition on an array-returning program. Its length proof belongs to the
+contract; observing the vector adds no copying, padding or result conversion.
 -/
 
 namespace Complexity
@@ -216,6 +220,52 @@ theorem Correct.of_refines {p : Program α β} {valid : α → Prop} {post : α 
       p.functionRepresentation valid function)
     (mathematics : ∀ x, valid x → post x (function x)) : p.Correct valid post :=
   Correct.of_total (refinement.of_math mathematics)
+
+/-- State a length-indexed vector postcondition on the same actual array return.
+The length equality is required, not enforced by padding or truncation. The
+underlying program and its independent resource bounds are unchanged. -/
+def CorrectVector {γ : Type v} [Output (Array γ)] (p : Program α (Array γ))
+    (valid : α → Prop) (length : α → Nat)
+    (post : (x : α) → Vector γ (length x) → Prop) : Prop :=
+  p.Correct valid (fun x values => ∃ size : values.size = length x, post x ⟨values, size⟩)
+
+/-- The dependent result contains exactly the array observed at return time,
+with only its proved length added to the mathematical value. -/
+theorem CorrectVector.iff_returns {γ : Type v} [Output (Array γ)]
+    {p : Program α (Array γ)} {valid : α → Prop} {length : α → Nat}
+    {post : (x : α) → Vector γ (length x) → Prop} :
+    p.CorrectVector valid length post ↔
+      ∀ x, valid x → ∃ result : Vector γ (length x),
+        p.Returns x result.toArray ∧ post x result := by
+  constructor
+  · intro correct x legal
+    obtain ⟨values, returned, size, property⟩ := correct x legal
+    exact ⟨⟨values, size⟩, returned, property⟩
+  · intro correct x legal
+    obtain ⟨⟨values, size⟩, returned, property⟩ := correct x legal
+    exact ⟨values, returned, size, property⟩
+
+/-- Restrict inputs without changing the exact vector output or execution. -/
+theorem CorrectVector.mono_valid {γ : Type v} [Output (Array γ)]
+    {p : Program α (Array γ)} {valid valid' : α → Prop} {length : α → Nat}
+    {post : (x : α) → Vector γ (length x) → Prop}
+    (correct : p.CorrectVector valid length post)
+    (inputs : ∀ x, valid' x → valid x) : p.CorrectVector valid' length post :=
+  Correct.mono_valid correct inputs
+
+/-- A dependent vector contract observes the same returned value and actual
+final heap of any successful evaluation of this invocation. -/
+theorem CorrectVector.result_of_eval {γ : Type v} [Output (Array γ)]
+    {p : Program α (Array γ)} {valid : α → Prop} {length : α → Nat}
+    {post : (x : α) → Vector γ (length x) → Prop}
+    (correct : p.CorrectVector valid length post) {x : α} (legal : valid x)
+    {value : Language.Value p.signatures[p.fn].result} {heap : Language.Heap}
+    (evaluated : p.source.eval p.fn (p.args x) (Input.heap x) =
+      Part.some (.ok value, heap)) :
+    ∃ result : Vector γ (length x),
+      p.resultRepresentation.Rel result.toArray value heap ∧ post x result := by
+  obtain ⟨result, returned, property⟩ := CorrectVector.iff_returns.mp correct x legal
+  exact ⟨result, returned.result_of_eval evaluated, property⟩
 
 end Program
 
