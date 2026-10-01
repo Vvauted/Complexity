@@ -470,7 +470,7 @@ private def rangeCaptureNeedsContents : NativeType → Bool
   | .prod left right => rangeCaptureNeedsContents left || rangeCaptureNeedsContents right
   | .option payload => rangeCaptureNeedsContents payload
   | .record _ layout _ => rangeCaptureNeedsContents layout
-  | .pure _ | .raw _ | .int | .list _ => false
+  | .pure _ | .raw _ | .int | .scalar _ _ | .list _ => false
 
 /-- Recover immutable mathematical captures from observations of the same
 actual slots in the current heap. These facts are available to the function's

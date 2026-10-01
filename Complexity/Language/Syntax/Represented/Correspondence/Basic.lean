@@ -22,6 +22,19 @@ open Lean.Parser.Term
 
 namespace Internal
 
+/-- The core's Boolean negation branch returns the selected value in the same
+heap. This is proof normalization of that action, not a change to its code. -/
+private theorem boolean_not_action (condition : Bool) (heap : Heap) :
+    (@ite (ExceptT Fault (StateT Heap Part) Bool) (condition = true) inferInstance
+      (StateT.pure (.ok false)) (StateT.pure (.ok true))) heap =
+        Part.some (.ok (!condition), heap) := by
+  cases condition <;> rfl
+
+/-- Head-specific form of `pure_bind` for already unfolded source actions. -/
+private theorem state_pure_bind {α β : Type} (value : α) (next : α → StateT Heap Part β) :
+    StateT.bind (StateT.pure value) next = next value :=
+  pure_bind value next
+
 def normalizeAction : TermElabM (TSyntax `tactic) :=
   `(tactic| simp (config := { failIfUnchanged := false }) only
     [Id.run, Id.instMonad, Bind.bind, Pure.pure, Functor.map,
@@ -29,6 +42,14 @@ def normalizeAction : TermElabM (TSyntax `tactic) :=
     ExceptT.bind, ExceptT.bindCont, ExceptT.pure, ExceptT.mk, ExceptT.run,
     StateT.bind, StateT.pure, StateT.map, Part.bind_some, Part.map_some,
     Bool.false_eq_true, reduceCtorEq, ↓reduceIte, Option.elim_none, Option.elim_some])
+
+/-- Collapse a lowered Boolean return only after the trace's actual calls and
+branches have been consumed; their execution equations retain their shape. -/
+def normalizeReturnedAction : TermElabM (TSyntax `tactic) := do
+  let branches ← `(tactic| simp (config := { failIfUnchanged := false }) only
+    [state_pure_bind, ExceptT.bindCont, boolean_not_action])
+  let actions ← normalizeAction
+  `(tactic| $branches:tactic <;> $actions:tactic <;> $branches:tactic)
 
 /-- Restrict conditional distribution to the action's bind, rather than
 distributing arbitrary curried applications during canonicalization. -/
@@ -139,6 +160,11 @@ private partial def observationProof (observation : Observation) (heap : TSyntax
   | .binary operation left right =>
       `(congrArg₂ $operation $(← observationProof left heap relations)
         $(← observationProof right heap relations))
+  | .encodedEq embedding unequal left right =>
+      let theoremName := mkCIdent (if unequal then ``Representation.ofEmbedding_decide_ne
+        else ``Representation.ofEmbedding_decide_eq)
+      `($theoremName:ident $embedding $(← observationProof left heap relations)
+        $(← observationProof right heap relations))
   | .arraySize array =>
       `(Complexity.Language.Buffer.Contents.size_eq $(← observationProof array heap relations))
   | .arrayProdSize array =>
@@ -161,7 +187,7 @@ partial def preservation (type : NativeType) (initial finish shape : TSyntax `te
   let coreType ← termOfExpr (coreTypeExpr type.coreTy)
   let represented ← termOfExpr type.representation
   let proof ← match type with
-    | .pure _ | .raw _ | .int => `(by
+    | .pure _ | .raw _ | .int | .scalar _ _ => `(by
         intro a sourceValue observed
         exact observed)
     | .list kind => do
@@ -282,7 +308,8 @@ def compositionTactics (header : CorrespondenceHeader) (model : FunctionModel) :
         rw [$(header.rawEquation):ident]
         simp only [Id.run, Id.instMonad, pure_bind, bind_pure, bind_assoc,
           bind_conditional, bind_optionMatch, Bool.false_eq_true, reduceCtorEq,
-          ↓reduceIte, Option.elim_none, Option.elim_some]
+          ↓reduceIte, Option.elim_none, Option.elim_some,
+          ne_eq, decide_eq_true_eq, not_decide_eq_true, ite_not]
         all_goals repeat' first
           | rfl
           | (split <;> simp_all only [Option.some.injEq, reduceCtorEq,

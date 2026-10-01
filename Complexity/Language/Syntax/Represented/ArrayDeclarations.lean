@@ -84,6 +84,12 @@ private partial def readPlan (array result : NativeType) (path : String)
   match array with
   | .arrayView element columns _ =>
       match element with
+      | .scalar _ embedding => do
+          let view ← termOfExpr embedding
+          let layout ← resolveType (← `(Nat))
+          let inner ← readPlan columns layout path (← `(($rows).map $view)) index
+            (← `($view $fallback)) storage defaultView heap observed defaultObserved
+          return { inner with related := ← checked inner.returned inner.related }
       | .int => do
           let view := mkCIdent ``Representation.intEquiv
           let layout ← resolveType (← `(Bool × Nat))
@@ -175,7 +181,7 @@ private partial def readPlan (array result : NativeType) (path : String)
                 (← `(Complexity.Language.Representation.raggedArrayOf_map
                   $columnRep (Equiv.toEmbedding $view:ident) $observed)) defaultObserved
               return { inner with related := ← checked inner.returned inner.related }
-          | .record _ _ embedding => do
+          | .record _ _ embedding | .scalar _ embedding => do
               let view ← termOfExpr embedding
               let columnRep ← termOfExpr columns.representation
               let inner ← readPlan (.raggedArray columns) columns path
@@ -326,13 +332,16 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
   return #[source.raw, evaluation.raw, relationDecl.raw, preservingDecl.raw,
     representationDecl.raw, refinement.raw]
 
-/-- Transport a real initialized allocator through the resolver's direct record
-embedding. No source wrapper, executable map or new cost convention is added. -/
+/-- Transport a real initialized allocator through a checked scalar or direct
+record view. No source wrapper, executable map or new cost convention is added. -/
 def arrayReplicateDeclarations (registration : ArrayReplicateRegistration) :
     TermElabM (Array Syntax) := do
   let array := registration.operation.result
-  let .arrayView element@(.record _ _ embedding) storage _ := array
-    | throwError "record replication requires a direct field embedding"
+  let .arrayView element storage _ := array
+    | throwError "replication requires a checked scalar or direct field view"
+  let embedding ← match element with
+    | .record _ _ embedding | .scalar _ embedding => pure embedding
+    | _ => throwError "replication requires a checked scalar or direct field view"
   let name (suffix : Name) := mkIdentFrom registration.contracts
     (registration.contracts.getId ++ suffix)
   let base := registration.base

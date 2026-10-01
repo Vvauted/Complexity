@@ -256,6 +256,11 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
           return {
             native := ← `(some $(model.native)), model := ← `(some $(model.model))
             rawModel := ← `(some $(model.rawModel)), observation := .some model.observation } }
+  | `($character:char) =>
+      let raw := quote character.getChar.toNat
+      return {
+        type := ← resolveType (← `(Char)), raw
+        model? := some { native := stx, model := stx, rawModel := raw } }
   | `($number:num) =>
       if let some .int := expected then
         let raw ← `((false, $number:num))
@@ -313,6 +318,24 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
   | `($left ≥ $right) | `($left >= $right) => comparison left right fun a b => `($a ≥ $b)
   | `($left == $right) | `($left = $right) | `($left != $right) | `($left ≠ $right) =>
       let leftValue ← value scope left
+      if let .scalar _ embedding := leftValue.type then
+        let rightValue ← value scope right (some leftValue.type)
+        expect right leftValue.type rightValue.type
+        let unequal := match stx with | `($_ != $_) | `($_ ≠ $_) => true | _ => false
+        let raw ← if unequal then `($(leftValue.raw) != $(rightValue.raw))
+          else `($(leftValue.raw) == $(rightValue.raw))
+        let compare (a b : TSyntax `term) :=
+          if unequal then `(decide ($a ≠ $b)) else `(decide ($a = $b))
+        return {
+          type := ← resolveType (← `(Bool)), raw
+          model? := ← mapModelsM leftValue.model? rightValue.model? fun left right => do
+            let observed := Observation.encodedEq (← termOfExpr embedding) unequal
+              left.observation right.observation
+            return {
+              native := ← compare left.native right.native
+              model := ← compare left.model right.model
+              rawModel := ← compare left.rawModel right.rawModel
+              observation := observed } }
       let input ← if ← isDefEq leftValue.type.nativeType (mkConst ``Bool) then `(Bool) else `(Nat)
       match stx with
       | `($_ == $_) | `($_ = $_) =>

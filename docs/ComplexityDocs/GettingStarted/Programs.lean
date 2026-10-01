@@ -7,6 +7,7 @@ import Complexity
 import Examples.Language.LinkedList
 import Examples.Language.Program
 import Examples.Language.ProgramCompiled
+import Examples.Language.Characters
 
 /-!
 # Correctness-and-complexity tasks
@@ -85,6 +86,18 @@ consumer-written input-packing proofs.
 The same source functions retain their existing cost certificates. This does
 not yet publish general signed arithmetic syntax or infer a complete caller's
 RAM readiness and time bound.
+
+[Character inputs](##Complexity.Program.CharInput) keep ordinary `Char` values,
+arrays and supported record fields. The layout uses Unicode scalar codes rather
+than bytes or a task-specific alphabet; invalid codes observe no character.
+`source_program` supports character literals, equality/inequality, `Array.size`,
+defaulted reads and initialized replication of character arrays. Nested reads
+borrow the selected character row without copying its contents.
+The [character example](##Examples.Language.Characters) reads a nested grid with
+an internally allocated empty fallback and compares the result with a non-ASCII
+literal. Its `program_correct` proofs use ordinary character/array propositions.
+The real natural-cell operations and their heap frames are reused. This is not
+general string support or automatic inference of a whole-program RAM time bound.
 
 The typed-program example selects the existing linked-list constructor directly:
 

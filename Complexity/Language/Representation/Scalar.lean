@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.Representation
 import Init.Data.UInt.Lemmas
+import Init.Data.Char.Lemmas
 import Mathlib.Data.ZMod.Basic
 
 /-!
@@ -26,6 +27,40 @@ followed by `Nat.mod` must also represent the product and the modulus.
 -/
 
 namespace Complexity.Language.Representation
+
+/-- Characters retain their standard Unicode scalar value, not a byte or an
+application-specific alphabet index. Invalid code points represent no character. -/
+def charEmbedding : Char ↪ Nat :=
+  ⟨Char.toNat, Function.LeftInverse.injective Char.ofNat_toNat⟩
+
+/-- A character occupies one natural source field. The observation does not
+implement a host decoder or make arbitrary natural arithmetic character-safe. -/
+def char : Representation Char .nat := ofEmbedding charEmbedding
+
+@[simp] theorem char_rel (character : Char) (value : Nat) (heap : Heap) :
+    char.Rel character value heap ↔ character.toNat = value := Iff.rfl
+
+/-- Equality of observed scalar values is decided by equality of their actual
+natural codes. This gives no implementation to an arbitrary encoding function. -/
+theorem ofEmbedding_decide_eq {α : Type*} [DecidableEq α] (embedding : α ↪ Nat)
+    {left right : α} {x y : Nat} {heap : Heap}
+    (hl : (ofEmbedding (τ := .nat) embedding).Rel left x heap)
+    (hr : (ofEmbedding (τ := .nat) embedding).Rel right y heap) :
+    decide (left = right) = decide (x = y) := by
+  change embedding left = x at hl
+  change embedding right = y at hr
+  simp only [← hl, ← hr, embedding.injective.eq_iff]
+
+/-- Inequality is transported by the same scalar observation, independently
+of the implementation of `DecidableEq` on the mathematical type. -/
+theorem ofEmbedding_decide_ne {α : Type*} [DecidableEq α] (embedding : α ↪ Nat)
+    {left right : α} {x y : Nat} {heap : Heap}
+    (hl : (ofEmbedding (τ := .nat) embedding).Rel left x heap)
+    (hr : (ofEmbedding (τ := .nat) embedding).Rel right y heap) :
+    decide (left ≠ right) = decide (x ≠ y) := by
+  change embedding left = x at hl
+  change embedding right = y at hr
+  simp only [ne_eq, ← hl, ← hr, embedding.injective.eq_iff]
 
 /-- The constructor layout of native integers, with no redundant negative zero. -/
 def intEquiv : Int ≃ Bool × Nat where

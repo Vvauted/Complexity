@@ -51,6 +51,8 @@ open Lean.Parser.Term
 or a nominal record observed through its checked field embedding. -/
 inductive NativeType where
   | pure (type : PureType)
+  /-- Only resolver-recognized canonical scalar codes, never arbitrary free host encodings. -/
+  | scalar (type embedding : Expr)
   | int
   | raw (type : Ty)
   | list (kind : CellTy)
@@ -65,6 +67,7 @@ inductive NativeType where
 /-- The existing source type implementing this native mathematical view. -/
 def NativeType.coreTy : NativeType → Ty
   | .pure type => type.coreTy
+  | .scalar _ _ => .nat
   | .int => .prod .bool .nat
   | .raw type => type
   | .list kind => .option (.node kind)
@@ -79,6 +82,7 @@ def NativeType.coreTy : NativeType → Ty
 /-- The ordinary Lean type, retaining each record's nominal identity. -/
 def NativeType.nativeType : NativeType → Expr
   | .pure type => type.nativeType
+  | .scalar type _ => type
   | .int => mkConst ``Int
   | .raw type => mkApp (mkConst ``Value) (coreTypeExpr type)
   | .list kind => mkApp (mkConst ``List [Level.zero])
@@ -101,6 +105,8 @@ composes existing relations; it neither reconstructs a record from an arbitrary
 handle nor changes the heap at which its contents are observed. -/
 def NativeType.representation : NativeType → Expr
   | .pure type => type.representation
+  | .scalar type embedding => mkAppN (mkConst ``Representation.ofEmbedding [Level.zero])
+      #[type, coreTypeExpr .nat, embedding]
   | .int => mkConst ``Representation.int
   | .raw type =>
       let nativeType := mkApp (mkConst ``Value) (coreTypeExpr type)
@@ -191,6 +197,8 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if type.hasFVar || type.hasMVar then
     throwError "native source types must be closed and fully inferred"
   let reduced ← whnf type
+  if ← isDefEq reduced (mkConst ``Char) then
+    return .scalar (mkConst ``Char) (mkConst ``Representation.charEmbedding)
   if ← isDefEq reduced (mkConst ``Int) then return .int
   if let .app (.const name _) kind := reduced then
     if name == ``Buffer || name == ``NodeRef then
@@ -205,6 +213,10 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if let .app (.const ``Array _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .array .nat
     if ← isDefEq element (mkConst ``Bool) then return .array .bool
+    if ← isDefEq element (mkConst ``Char) then
+      let embedding : Expr := mkConst ``Representation.charEmbedding
+      return .arrayView (.scalar (mkConst ``Char) embedding) (.array .nat)
+        (← mkAppM ``Function.Embedding.arrayMap #[embedding])
     if ← isDefEq element (mkConst ``Int) then
       let embedding ← mkAppM ``Function.Embedding.arrayMap
         #[← mkAppM ``Equiv.toEmbedding #[mkConst ``Representation.intEquiv]]

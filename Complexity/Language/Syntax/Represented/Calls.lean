@@ -338,12 +338,15 @@ private def arrayProdReplicateOperation (left right : CellTy) : PrepareM Operati
       relation := declaration "_eval_exists", refinement := declaration "_refines"
       preservingRelation := some (declaration "_eval_exists_preserving") } }
 
-private def arrayRecordReplicateOperation (family : TSyntax `ident) (array : NativeType) :
+private def arrayViewReplicateOperation (family : TSyntax `ident) (array : NativeType) :
     PrepareM Operation := do
   for registration in (← get).arrayReplicates do
     if ← sameType registration.operation.result array then return registration.operation
-  let .arrayView element@(.record _ _ _) storage _ := array
+  let .arrayView element storage _ := array
     | throwError "array replication requires a supported initialized column layout"
+  match element with
+  | .record _ _ _ | .scalar _ _ => pure ()
+  | _ => throwError "array replication requires a checked scalar or direct field view"
   let base ← match storage with
     | .array kind => arrayReplicateOperation kind
     | .arrayProd left right => arrayProdReplicateOperation left right
@@ -573,7 +576,8 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
         | .array kind => arrayReplicateOperation kind
         | .arrayProd left right => arrayProdReplicateOperation left right
         | .arrayView .int _ _ => arrayIntOperation true
-        | .arrayView (.record _ _ _) _ _ => arrayRecordReplicateOperation names.publicFamily array
+        | .arrayView (.record _ _ _) _ _ | .arrayView (.scalar _ _) _ _ =>
+            arrayViewReplicateOperation names.publicFamily array
         | _ => throwErrorAt initial "Array.replicate requires supported scalar, pair or record columns"
       return some (operation, #[length, initial])
   | `(Array.getD $values:term $index:term $fallback:term) =>

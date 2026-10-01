@@ -64,6 +64,7 @@ inductive Observation where
   | some (payload : Observation)
   | unary (operation : TSyntax `term) (argument : Observation)
   | binary (operation : TSyntax `term) (left right : Observation)
+  | encodedEq (embedding : TSyntax `term) (unequal : Bool) (left right : Observation)
   | arraySize (array : Observation)
   | arrayProdSize (array : Observation)
   | raggedArraySize (array : Observation)

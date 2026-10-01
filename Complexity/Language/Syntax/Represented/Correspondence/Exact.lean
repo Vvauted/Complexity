@@ -212,11 +212,12 @@ partial def exactTrace (trace : Array Trace) (returnedValue : Value)
   let proof ← `(congrArg (fun (value : $type) =>
     Part.some ((Except.ok value : Except Complexity.Language.Fault $type), $heap))
     (show $value = $raw from $equality).symm)
+  tactics := tactics.push (← normalizeReturnedAction)
   tactics := tactics.push (← `(tactic|
     first
     | rfl
     | exact $proof
-    | simpa only [$resultRules,*] using $proof))
+    | simpa only [ne_eq, decide_not, $resultRules,*] using $proof))
   tactics.mapM fun tactic => `(tactic| all_goals $tactic:tactic)
 
 end Internal

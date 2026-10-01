@@ -567,7 +567,9 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
   let scalarFacts ← scalarEqualities.mapM fun equality =>
     `(Lean.Parser.Tactic.simpLemma| $equality:term)
   let executionRules := scalarFacts ++ branchRules
-  let executed ← `(by first | rfl | simp only [$executionRules,*] <;> rfl)
+  let normalize ← normalizeReturnedAction
+  let finish ← `(tactic| simp only [ne_eq, decide_not, $executionRules,*] <;> rfl)
+  let executed ← `(by first | rfl | ($normalize:tactic <;> $finish:tactic))
   let observed ← `(by
     simpa (config := { implicitDefEqProofs := false }) only
       [Id.run, Id.instMonad, Pure.pure, Bind.bind, $executionRules,*] using $observed)
