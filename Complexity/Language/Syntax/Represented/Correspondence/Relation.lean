@@ -494,7 +494,9 @@ partial def relationTrace (trace : Array Trace) (returnedValue : Value)
         `(Lean.Parser.Tactic.simpLemma| $equality:term)
       tactics := tactics.push (← `(tactic|
         simp (config := { failIfUnchanged := false }) only [$rules,*] at $executed:ident ⊢))
-    tactics := tactics.push (← `(tactic| rw [$executed:ident]))
+    -- Model notation uses typeclass operations while core primitives name the
+    -- same functions directly. Unfold instances, without expanding callees.
+    tactics := tactics.push (← `(tactic| rw (transparency := .instances) [$executed:ident]))
     tactics := tactics.push (← normalizeAction)
     unless rangeFixedFacts.isEmpty do
       let rules ← rangeFixedFacts.mapM fun fact => `(Lean.Parser.Tactic.simpLemma| $fact:term)
