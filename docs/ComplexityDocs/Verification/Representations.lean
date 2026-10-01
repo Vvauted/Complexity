@@ -244,7 +244,18 @@ not a constant-time borrowed row lookup. Its
 [callable cost](##Ram.LanguageCompiler.Buffer.Ragged.Nested.getNat_arenaCostBound)
 has a proved linear envelope in the selected row's length, including its final
 sentinel; out-of-bounds selection has a fixed envelope independent of the
-fallback's length. The reusable
+fallback's length. The
+[measured row read](##Ram.LanguageCompiler.Buffer.Ragged.Nested.getNat_arenaMeasured)
+follows that same bounds check and imported extractor. Its exact allocation is
+the selected row's length plus one sentinel in bounds, and zero out of bounds,
+even when the supplied fallback is nonempty. The Boolean reader has the same
+contract. The corresponding
+[resource contract](##Ram.LanguageCompiler.Buffer.Ragged.Nested.getNat_arenaResources)
+derives size ranges from the caller's argument ranges and relates readiness to
+that caller's actual source execution. Both the mathematical result and preserved
+old aliases refer to the final heap. Physical placement and enough remaining
+arena capacity are still caller obligations, not consequences of a cost bound.
+The reusable
 [read and slice rules](##Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Buffer)
 retain the actual access equations through allocating continuations. They
 neither assert successful access nor manufacture arena readiness.

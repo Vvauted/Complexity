@@ -162,6 +162,7 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.GetD
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.Extract
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.Extract.Ready
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.Nested
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.Nested.Ready
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Rebase
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Rebase.Ready
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Rebase.Realization
