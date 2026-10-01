@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.Session
 import Complexity.Language.Session.Refinement
+import Complexity.Language.Session.Prepared
 import Complexity.Program.SumOutput
 import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
@@ -13,6 +14,7 @@ import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.ScheduledTraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.PreparedTraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Buffer
 
 /-!
@@ -126,12 +128,35 @@ bound. `Run.observed` retains the complete old object prefix and placements,
 so existing arrays, aliases and linked roots remain valid. `Run.retained_words`
 preserves the encoding of any old rooted state value.
 
-This is a preparation component, not yet an extended session trace relation.
-Ordinary `Session.Run.cons` has no intervening environment allocation and must
-not be reused unchanged to claim otherwise. External traversal, scalar loading,
-transport and driver control remain outside these preloaded calls. In particular,
-placement stability does not implement saving old state registers across the
-constructor calls. The native host input loaders are a separate backend boundary.
+The source `List.Prepare.Run` records the same constructor calls without a RAM
+budget; `exists_run` establishes their totality. RAM `Run.source` projects the
+actual preparation to that source relation.
+
+`Session.PreparedRun` interleaves a protocol-fixed current preparation with the
+selected step, retaining the state value and using the preparation's actual
+final heap. Its RAM counterpart uses the corresponding physical memory and
+adds preparation and callback invocation counts. Prepared arguments must fit
+that machine. `PreparedRuns` includes the one actual initializer, and source
+erasure retains every intermediate heap and return-time reply.
+
+For ordinary mathematical transitions, `PreparedStepRefines` proves the step
+after each actual preparation. The state relation must be transported using
+the concrete preparation's frame; arbitrary invariants do not survive heap
+extension automatically. Its `run` and `runs` theorems reuse `modelRun` and
+source preparation totality, without a resource premise.
+
+`PreparedTraceTimeO` and `PreparedTraceTimeOOn` constrain the same accepted
+prepared RAM trace, using public configuration width and global mathlib bounds.
+The client fixes the preparation relation and must back its prices with actual
+executions, such as `List.Prepare.Run`; a candidate-selected annotation or
+arbitrary relation is not a loader implementation. The concrete source
+correspondence also projects this accepted trace to source.
+
+Ordinary `Session.Run` still has no intervening allocation and is unchanged.
+External traversal, scalar loading, transport and driver control remain outside
+these preloaded calls. Placement stability does not implement saving old state
+registers across constructor calls. The native host input loaders are a
+separate backend boundary.
 
 ## Uniform callback-time requirements
 

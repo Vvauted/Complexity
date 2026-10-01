@@ -263,6 +263,8 @@ import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Bounded
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.Prepared
+import Complexity.Computability.Ram.Compiler.Language.Session.PreparedTraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.ScheduledTraceTimeBound
@@ -518,6 +520,7 @@ import Complexity.Language.Linking.Verification
 import Complexity.Language.List.Basic
 import Complexity.Language.List.Cons
 import Complexity.Language.List.Cons.Native
+import Complexity.Language.List.Prepare
 import Complexity.Language.List.Fold.Basic
 import Complexity.Language.List.Fold.Native
 import Complexity.Language.List.Fold.Program
@@ -537,6 +540,7 @@ import Complexity.Language.Representation.String
 import Complexity.Language.RepresentedFunction
 import Complexity.Language.Session
 import Complexity.Language.Session.Refinement
+import Complexity.Language.Session.Prepared
 import Complexity.Language.Scalar.Int
 import Complexity.Language.Rooted.Execution
 import Complexity.Language.Semantics

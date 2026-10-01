@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Language.List.Cons
 import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Language.Heap.Prefix
+import Complexity.Language.List.Prepare
 
 /-!
 # Preparing a current linked input in retained RAM memory
@@ -48,6 +49,15 @@ inductive Run : _root_.List (CellValue kind) → Option (NodeRef kind) →
         (steps + outcome.result.steps)
 
 variable {kind}
+
+/-- Erase machine evidence to the same actual source constructor invocations. -/
+theorem Run.source {values : _root_.List (CellValue kind)}
+    {tail root : Option (NodeRef kind)} {current finish : Session.State w heapLimit}
+    {steps : Nat} (run : Run kind values tail current root finish steps) :
+    Complexity.Language.List.Prepare.Run kind values tail current.heap root finish.heap := by
+  induction run with
+  | nil => exact .nil _ _
+  | cons rest outcome ih => exact .cons ih outcome.source
 
 /-- The prepared root observes the original mathematical list, while every old
 object and placement is retained. This also frames overlapping old arrays. -/
