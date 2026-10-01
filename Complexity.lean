@@ -263,6 +263,7 @@ import Complexity.Computability.Ram.Compiler.Language.Session.Bounded
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.TraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.Width
 import Complexity.Computability.Ram.Compiler.Language.Simulation
 import Complexity.Computability.Ram.Compiler.Language.Tactic

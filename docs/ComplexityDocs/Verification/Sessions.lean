@@ -8,6 +8,7 @@ import Complexity.Language.Session.Refinement
 import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.TraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Buffer
 
@@ -155,6 +156,29 @@ Their `steps_le` lemmas recover the summed bound without exchanging budget
 between phases. As with `TimeO`, request fitting, capacity and termination are
 conclusions for every legal history. The fixed raw-word presentation is chosen
 by the protocol author and must not encode answers or candidate-selected padding.
+
+## Feedback determined by actual replies
+
+For a closed-loop protocol, a legal next request can depend on the preceding
+reply. `Session.TraceTimeO` and `TraceTimeOOn` bind a fixed acceptance predicate
+to the requests and actual return-time replies of the same costed RAM trace.
+The predicate can require current-state feedback, valid actions and stopping
+at the first successful terminal state. It must describe those rules explicitly;
+an arbitrary externally supplied feedback list is not a closed loop.
+
+The environment type may depend on the public configuration. Each legal hidden
+initial environment is quantified independently, but it is never an input to the
+source initializer or to the word-width policy. Only the public configuration
+creates the initial memory. Request fitting and real executions remain
+conclusions at every admitted width. `TraceTimeO.source` projects that very RAM
+trace to source, preserving its acceptance evidence.
+
+This is an accepted-trace requirement, not another evaluator or a price for the
+judge's computation. For a fixed deterministic environment, causal acceptance
+can describe the complete interaction. Existence of one accepted trace is not
+a guarantee against every choice of a nondeterministic or adaptive adversary.
+Keep an independent source-correctness proposition using the same protocol;
+the compiled-time bound and an executable streaming adapter are separate work.
 
 ## Operation and transport boundaries
 
