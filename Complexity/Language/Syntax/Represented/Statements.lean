@@ -91,6 +91,53 @@ private def completionRangeModel (captured : Array Binding)
     (outcome.1, $embedding outcome.2))
   return (nativeResult, embedding, mutableStep, initialMutable)
 
+/-- Name one strict subcall before re-entering the ordinary statement pass.
+The returned binding keeps its mutable/assignment kind; only a conditional's
+guard is visited here, never either unselected body. -/
+private def hoistElement? (names : DeclarationNames) (imports : ImportedPrograms)
+    (scope : List Binding) (resultType : NativeType) (kind : BindingKind)
+    (element : TSyntax `doElem) : PrepareM (Option (List (TSyntax `doElem))) := do
+  let extract (expression : TSyntax `term) (expected : Option NativeType) (root : Bool)
+      (rebuild : TSyntax `term → TermElabM (TSyntax `doElem)) :
+      PrepareM (Option (List (TSyntax `doElem))) := do
+    let some (called, replace) ← hoistValueCall? names imports scope expression expected root
+      | return none
+    let temporary := mkIdent (← mkFreshUserName `sourceValue)
+    let call ← `(doElem| let $temporary:ident ← $called:term)
+    return some [call, ← rebuild (← replace ⟨temporary.raw⟩)]
+  let binding (name : TSyntax `ident) (annotation : Option (TSyntax `term))
+      (expression : TSyntax `term) (action : Bool) :
+      PrepareM (Option (List (TSyntax `doElem))) := do
+    let rebuild (expression : TSyntax `term) : TermElabM (TSyntax `doElem) := do
+      if action then
+        match kind with
+        | .assignment => `(doElem| $name:ident ← $expression:term)
+        | .mutable => `(doElem| let mut $name:ident $[: $annotation:term]? ← $expression:term)
+        | .immutable => `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term)
+      else
+        match kind with
+        | .assignment => `(doElem| $name:ident := $expression:term)
+        | .mutable => `(doElem| let mut $name:ident $[: $annotation:term]? := $expression:term)
+        | .immutable => `(doElem| let $name:ident $[: $annotation:term]? := $expression:term)
+    if let some (guard, yes, no) := conditionalParts? expression then
+      return ← extract guard none true fun guard => do
+        rebuild (← `(if $guard then $yes else $no))
+    extract expression (← annotation.mapM fun type => return ← resolveType type) false rebuild
+  match element with
+  | `(doElem| let $name:ident $[: $annotation:term]? := $expression:term) =>
+      binding name annotation expression false
+  | `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term) =>
+      binding name annotation expression true
+  | `(doElem| return $expression:term) =>
+      extract expression (some resultType) false fun expression => `(doElem| return $expression:term)
+  | `(doElem| if $guard:term then $yes:doSeq else $no:doSeq) =>
+      extract guard none true fun guard => `(doElem| if $guard:term then $yes:doSeq else $no:doSeq)
+  | `(doElem| if $guard:term then $yes:doSeq) =>
+      extract guard none true fun guard => `(doElem| if $guard:term then $yes:doSeq)
+  | `(doElem| $expression:term) =>
+      extract expression none false fun expression => `(doElem| $expression:term)
+  | _ => return none
+
 partial def sequence (names : DeclarationNames)
     (imports : ImportedPrograms) (resultType : NativeType)
     (scope : List Binding) (elements : List (TSyntax `doElem))
@@ -342,6 +389,9 @@ partial def sequence (names : DeclarationNames)
       let type ← termOfExpr previous.type.nativeType
       let normalized ← `(doElem| let $name:ident : $type ← $rhs:doElem)
       return ← sequence names imports resultType scope (normalized :: rest) .assignment allowFallthrough localReturn completion returnState
+    if let some expanded ← hoistElement? names imports scope resultType bindingKind element then
+      return ← sequence names imports resultType scope (expanded ++ rest)
+        .immutable allowFallthrough localReturn completion returnState
     if let `(doElem| with_scratch do $body:doSeq) := element then
       let body ← sequence names imports resultType scope (getDoElems body).toList .immutable true localReturn completion returnState
       let bodySyntax : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (body.raw.map (·.raw))⟩
@@ -1098,18 +1148,20 @@ partial def sequence (names : DeclarationNames)
             else `(doElem| let $name:ident $[: $annotation:term]? := $expression:term)
           return ← sequence names imports resultType scope
             (initial :: bindings.toList ++ rest) .immutable allowFallthrough localReturn completion returnState
-        let canonical ← canonicalCall? imports scope expression
+        let expected ← annotation.mapM fun type => return ← resolveType type
+        let canonical ← canonicalCall? imports scope expression expected
+        if let some (called, rebuild) ← hoistValueCall? names imports scope expression expected false then
+          let name := mkIdent (← mkFreshUserName `sourceValue)
+          let called ← `(doElem| let $name:ident ← $called:term)
+          let expression ← rebuild ⟨name.raw⟩
+          let rewritten ← if action then `(doElem| let $pattern:term ← $expression:term)
+            else `(doElem| let $pattern:term := $expression:term)
+          return ← sequence names imports resultType scope (called :: rewritten :: rest)
+            .immutable allowFallthrough localReturn completion returnState
         if !action then
           if let some call := canonical then
             let rewritten ← `(doElem| let $pattern:term ← $call:term)
             return ← sequence names imports resultType scope (rewritten :: rest)
-              .immutable allowFallthrough localReturn completion returnState
-          if let some (called, rebuild) ← hoistValueCall? imports scope expression then
-            let name := mkIdent (← mkFreshUserName `sourceValue)
-            let called ← `(doElem| let $name:ident ← $called:term)
-            let expression ← rebuild ⟨name.raw⟩
-            let rewritten ← `(doElem| let $pattern:term := $expression:term)
-            return ← sequence names imports resultType scope (called :: rewritten :: rest)
               .immutable allowFallthrough localReturn completion returnState
           let result ← value scope expression (← annotation.mapM fun stx => return ← resolveType stx)
           return ← install result.type expression
@@ -1136,18 +1188,10 @@ partial def sequence (names : DeclarationNames)
         return ← install (← resolveType (← rawTypeTerm type)) expression
     match element with
     | `(doElem| let $name:ident $[: $annotation:term]? := $expression:term) =>
-        if let some call ← canonicalCall? imports scope expression then
+        let expected ← annotation.mapM fun type => return ← resolveType type
+        if let some call ← canonicalCall? imports scope expression expected then
           let binding ← `(doElem| let $name:ident $[: $annotation:term]? ← $call:term)
           return ← sequence names imports resultType scope (binding :: rest) bindingKind allowFallthrough localReturn completion returnState
-        if let some (called, rebuild) ← hoistValueCall? imports scope expression then
-          let temporary := mkIdent (← mkFreshUserName `sourceValue)
-          let call ← `(doElem| let $temporary:ident ← $called:term)
-          let rewritten ← rebuild ⟨temporary.raw⟩
-          let binding ← match bindingKind with
-            | .assignment => `(doElem| $name:ident := $rewritten:term)
-            | .mutable => `(doElem| let mut $name:ident $[: $annotation:term]? := $rewritten:term)
-            | .immutable => `(doElem| let $name:ident $[: $annotation:term]? := $rewritten:term)
-          return ← sequence names imports resultType scope (call :: binding :: rest) .immutable allowFallthrough localReturn completion returnState
         let result ← value scope expression (← annotation.mapM fun stx => return ← resolveType stx)
         if let some annotation := annotation then expect annotation (← resolveType annotation) result.type
         let rawType ← rawTypeTerm result.type.coreTy
@@ -1159,8 +1203,8 @@ partial def sequence (names : DeclarationNames)
           (← result.model?.mapM fun model =>
             `(doElem| let $name:ident : $nativeType := $(model.native))) (some #[]) rest
     | `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term) =>
-        let expression := (← canonicalCall? imports scope expression).getD expression
         let expected ← annotation.mapM fun stx => return ← resolveType stx
+        let expression := (← canonicalCall? imports scope expression expected).getD expression
         let operation? ← operationCall? names imports scope expression expected
         let some (operation, arguments) := operation? | do
           let raw ← match expression with
@@ -1198,18 +1242,11 @@ partial def sequence (names : DeclarationNames)
         return ← sequence names imports resultType scope (returned :: rest)
           .immutable allowFallthrough localReturn completion returnState
     | `(doElem| return $expression:term) =>
-        if let some called ← canonicalCall? imports scope expression then
+        if let some called ← canonicalCall? imports scope expression (some resultType) then
           let temporary := mkIdent (← mkFreshUserName `sourceResult)
           let nativeType ← termOfExpr resultType.nativeType
           let call ← `(doElem| let $temporary:ident : $nativeType ← $called:term)
           let returned ← `(doElem| return $temporary:ident)
-          return ← sequence names imports resultType scope (call :: returned :: rest)
-            .immutable allowFallthrough localReturn completion returnState
-        if let some (called, rebuild) ← hoistValueCall? imports scope expression then
-          let temporary := mkIdent (← mkFreshUserName `sourceResult)
-          let call ← `(doElem| let $temporary:ident ← $called:term)
-          let rewritten ← rebuild ⟨temporary.raw⟩
-          let returned ← `(doElem| return $rewritten:term)
           return ← sequence names imports resultType scope (call :: returned :: rest)
             .immutable allowFallthrough localReturn completion returnState
         let result ← value scope expression (some resultType)

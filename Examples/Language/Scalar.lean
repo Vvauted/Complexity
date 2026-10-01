@@ -193,4 +193,32 @@ theorem structured_range_sum_total :
   intro input _
   exact structured_range_sum_eq input.1 input.2.1 input.2.2.1 input.2.2.2
 
+source_program Signed where
+  def distance (left : Int) (right : Int) : Int := do
+    let delta := left - right
+    if delta ≤ 0 then
+      return -delta
+    else
+      return delta
+
+/-- Ordinary integer subtraction and absolute value describe the actual signed
+source calls. The algorithm proof does not mention their sign/magnitude fields. -/
+theorem signed_distance_eq (left right : Int) :
+    Signed.distance_model left right = |left - right| := by
+  simp only [Signed.distance_model, Id.run, pure, sub_eq_add_neg]
+  split_ifs with nonpositive
+  · have bound : left + -right ≤ 0 := by simpa using nonpositive
+    exact (abs_of_nonpos bound).symm
+  · have bound : 0 < left + -right := by simpa using nonpositive
+    exact (abs_of_nonneg (le_of_lt bound)).symm
+
+/-- Generated correspondence transfers the mathematical equation to the same
+source function, independently of word bounds or an instruction budget. -/
+theorem signed_distance_total :
+    RepresentedFunction.Total Signed.program Signed.distanceId Signed.distance_representation
+      (fun _ => True) (fun input value => value = |input.1 - input.2|) := by
+  apply Signed.distance_refines.of_math
+  intro input _
+  exact signed_distance_eq input.1 input.2
+
 end Complexity.Language.Examples.Scalar

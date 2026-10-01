@@ -6,6 +6,8 @@ Authors: vvauted
 import Complexity.Language.Representation.Scalar
 import Complexity.Language.Syntax.Core
 import Complexity.Language.Eval.Verification
+import Complexity.Language.Buffer.Copy
+import Complexity.Language.RepresentedFunction
 import Mathlib.Tactic.SplitIfs
 
 /-!
@@ -176,5 +178,133 @@ theorem add_total (a b : Int) :
   apply (Representation.int_rel_iff_decode _ _ _).mpr
   rw [add_decode, (Representation.int_rel_iff_decode _ _ _).mp represented.1,
     (Representation.int_rel_iff_decode _ _ _).mp represented.2]
+
+/-- Negation observes the same source action on any represented integer. -/
+theorem negate_eval (a : Int) (value : Bool × Nat) (heap : Heap)
+    (observed : Representation.int.Rel a value heap) :
+    Implementation.negate_action value heap =
+      Part.some (.ok (intEquiv.toEmbedding (-a)), heap) := by
+  change intEquiv a = value at observed
+  subst value
+  rw [Implementation.negate_action_eq_pure, negate_correct]
+  rfl
+
+/-- Addition observes the original source body, including both sign branches. -/
+theorem add_eval (a b : Int) (left right : Bool × Nat) (heap : Heap)
+    (first : Representation.int.Rel a left heap)
+    (second : Representation.int.Rel b right heap) :
+    Implementation.add_action left right heap =
+      Part.some (.ok (intEquiv.toEmbedding (a + b)), heap) := by
+  change intEquiv a = left at first
+  change intEquiv b = right at second
+  subst left right
+  rw [Implementation.add_action_eq_pure, add_correct]
+  rfl
+
+/-- Signed comparison is an actual source call with a Boolean observation. -/
+theorem less_eval (a b : Int) (left right : Bool × Nat) (heap : Heap)
+    (first : Representation.int.Rel a left heap)
+    (second : Representation.int.Rel b right heap) :
+    Implementation.less_action left right heap = Part.some (.ok (decide (a < b)), heap) := by
+  change intEquiv a = left at first
+  change intEquiv b = right at second
+  subst left right
+  rw [Implementation.less_action_eq_pure, less_correct]
+  rfl
+
+/-- Negation does not change any existing heap observation. -/
+theorem negate_eval_exists_preserving (a : Int) (value : Bool × Nat) (heap : Heap)
+    (observed : Representation.int.Rel a value heap) :
+    ∃ returned finish, Implementation.negate_action value heap = Part.some (.ok returned, finish) ∧
+      Representation.int.Rel (-a) returned finish ∧ heap.ShapeExtends finish ∧
+      Buffer.PreservesContents heap finish :=
+  ⟨_, heap, negate_eval a value heap observed, rfl, Heap.ShapeExtends.refl heap,
+    fun {_} _ _ contents => contents⟩
+
+/-- Addition preserves old arrays as well as heap shape. -/
+theorem add_eval_exists_preserving (a b : Int) (left right : Bool × Nat) (heap : Heap)
+    (first : Representation.int.Rel a left heap)
+    (second : Representation.int.Rel b right heap) :
+    ∃ returned finish, Implementation.add_action left right heap = Part.some (.ok returned, finish) ∧
+      Representation.int.Rel (a + b) returned finish ∧ heap.ShapeExtends finish ∧
+      Buffer.PreservesContents heap finish :=
+  ⟨_, heap, add_eval a b left right heap first second, rfl, Heap.ShapeExtends.refl heap,
+    fun {_} _ _ contents => contents⟩
+
+/-- Comparison preserves old arrays as well as heap shape. -/
+theorem less_eval_exists_preserving (a b : Int) (left right : Bool × Nat) (heap : Heap)
+    (first : Representation.int.Rel a left heap)
+    (second : Representation.int.Rel b right heap) :
+    ∃ returned finish, Implementation.less_action left right heap = Part.some (.ok returned, finish) ∧
+      Representation.bool.Rel (decide (a < b)) returned finish ∧ heap.ShapeExtends finish ∧
+      Buffer.PreservesContents heap finish :=
+  ⟨_, heap, less_eval a b left right heap first second, rfl, Heap.ShapeExtends.refl heap,
+    fun {_} _ _ contents => contents⟩
+
+/-- The ordinary negation call retains its actual result and final heap. -/
+theorem negate_eval_exists (a : Int) (value : Bool × Nat) (heap : Heap)
+    (observed : Representation.int.Rel a value heap) :
+    ∃ returned finish, Implementation.negate_action value heap = Part.some (.ok returned, finish) ∧
+      Representation.int.Rel (-a) returned finish ∧ heap.ShapeExtends finish := by
+  obtain ⟨returned, finish, executed, related, shape, _⟩ :=
+    negate_eval_exists_preserving a value heap observed
+  exact ⟨returned, finish, executed, related, shape⟩
+
+/-- The ordinary addition call retains its actual result and final heap. -/
+theorem add_eval_exists (a b : Int) (left right : Bool × Nat) (heap : Heap)
+    (first : Representation.int.Rel a left heap)
+    (second : Representation.int.Rel b right heap) :
+    ∃ returned finish, Implementation.add_action left right heap = Part.some (.ok returned, finish) ∧
+      Representation.int.Rel (a + b) returned finish ∧ heap.ShapeExtends finish := by
+  obtain ⟨returned, finish, executed, related, shape, _⟩ :=
+    add_eval_exists_preserving a b left right heap first second
+  exact ⟨returned, finish, executed, related, shape⟩
+
+/-- The ordinary comparison call retains its actual result and final heap. -/
+theorem less_eval_exists (a b : Int) (left right : Bool × Nat) (heap : Heap)
+    (first : Representation.int.Rel a left heap)
+    (second : Representation.int.Rel b right heap) :
+    ∃ returned finish, Implementation.less_action left right heap = Part.some (.ok returned, finish) ∧
+      Representation.bool.Rel (decide (a < b)) returned finish ∧ heap.ShapeExtends finish := by
+  obtain ⟨returned, finish, executed, related, shape, _⟩ :=
+    less_eval_exists_preserving a b left right heap first second
+  exact ⟨returned, finish, executed, related, shape⟩
+
+/-- Native negation refines the same encoded source entry. -/
+theorem negate_refines : RepresentedFunction.Refines Implementation.program Implementation.negateId
+    (FunctionRepresentation.ofResult (ArgumentRepresentation.single Representation.int)
+      (fun _ => Representation.int)) (fun _ => True) (fun a : Int => -a) := by
+  intro a _
+  apply FunctionTotal.iff_eval.mpr
+  intro args heap observed
+  refine ⟨intEquiv (-a), heap, ?_, rfl⟩
+  rw [Implementation.negate_observe]
+  exact negate_eval a args.head heap observed
+
+/-- Native addition refines the same encoded source entry. -/
+theorem add_refines : RepresentedFunction.Refines Implementation.program Implementation.addId
+    (FunctionRepresentation.ofResult
+      (ArgumentRepresentation.cons Representation.int
+        (ArgumentRepresentation.single Representation.int))
+      (fun _ => Representation.int)) (fun _ => True) (fun a : Int × Int => a.1 + a.2) := by
+  intro a _
+  apply FunctionTotal.iff_eval.mpr
+  intro args heap observed
+  refine ⟨intEquiv (a.1 + a.2), heap, ?_, rfl⟩
+  rw [Implementation.add_observe]
+  exact add_eval a.1 a.2 args.head args.tail.head heap observed.1 observed.2
+
+/-- Native comparison refines the same encoded source entry. -/
+theorem less_refines : RepresentedFunction.Refines Implementation.program Implementation.lessId
+    (FunctionRepresentation.ofResult
+      (ArgumentRepresentation.cons Representation.int
+        (ArgumentRepresentation.single Representation.int))
+      (fun _ => Representation.bool)) (fun _ => True) (fun a : Int × Int => decide (a.1 < a.2)) := by
+  intro a _
+  apply FunctionTotal.iff_eval.mpr
+  intro args heap observed
+  refine ⟨decide (a.1 < a.2), heap, ?_, rfl⟩
+  rw [Implementation.less_observe]
+  exact less_eval a.1 a.2 args.head args.tail.head heap observed.1 observed.2
 
 end Complexity.Language.Scalar.Int

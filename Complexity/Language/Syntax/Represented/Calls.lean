@@ -17,6 +17,7 @@ import Complexity.Language.List.Cons.Native
 import Complexity.Language.List.Uncons.Native
 import Complexity.Language.List.IsEmpty.Native
 import Complexity.Language.List.Int
+import Complexity.Language.Scalar.Int
 
 /-!
 # Represented calls and operation selection
@@ -453,6 +454,28 @@ private def arrayProdGetDOperation (left right : CellTy) : PrepareM Operation :=
       refinement := declaration "_refines"
       preservingRelation := some (declaration "_eval_exists_preserving") } }
 
+private def integerOperation (sourceName : Name) : PrepareM Operation := do
+  let family := mkIdent `Complexity.Language.Scalar.Int.Implementation
+  unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
+    modify fun state => { state with calledFamilies := state.calledFamilies.push family }
+  let declaration (suffix : String) := mkCIdent
+    ((`Complexity.Language.Scalar.Int ++ sourceName).appendAfter suffix)
+  let unary := sourceName == `negate
+  let comparison := sourceName == `less
+  let native ← if unary then `(fun (value : Int) => -value)
+    else if comparison then `(fun (left right : Int) => decide (left < right))
+    else `(fun (left right : Int) => left + right)
+  let result ← if comparison then resolveType (← `(Bool)) else pure NativeType.int
+  return {
+    family, sourceName
+    actionName := some ((family.getId ++ sourceName).appendAfter "_action")
+    inputs := if unary then #[.int] else #[.int, .int]
+    result
+    model? := some {
+      native, equation := some (declaration "_eval")
+      relation := declaration "_eval_exists", refinement := declaration "_refines"
+      preservingRelation := some (declaration "_eval_exists_preserving") } }
+
 private def arrayIntOperation (replicate : Bool) : PrepareM Operation := do
   let family := mkIdent (if replicate then `Complexity.Language.Buffer.Prod.Replicate
     else `Complexity.Language.Buffer.Prod.GetD)
@@ -537,8 +560,36 @@ private def rawCallSyntax (expression : TSyntax `term) : Bool := Id.run do
   let some (_, field) := rawFieldAccess? head | return false
   return field == `get || field == `slice || field == `read || field == `set
 
+/-- Propagate an existing signed operand through strict arithmetic syntax.
+Numerals alone retain their expected type; this does not coerce Nat variables. -/
+private partial def integerExpression (imports : ImportedPrograms) (scope : List Binding)
+    (expression : TSyntax `term) : PrepareM Bool := do
+  if let some (called, _) := namedCall? expression then
+    unless scope.any (fun binding => binding.name.getId == called.getId) do
+      if let some operation := (← get).current.filter (·.sourceName == called.getId) then
+        return (match operation.result with | .int => true | _ => false)
+      if let some fn := (← get).functions.find? (·.name.getId == called.getId) then
+        return (match fn.result with | .int => true | _ => false)
+      if let some header := (← get).localHeaders.find? (·.name.getId == called.getId) then
+        return (match header.result with | .int => true | _ => false)
+      if let some operation ← findImportedOperation? imports called then
+        return (match operation.result with | .int => true | _ => false)
+  match expression with
+  | `(($inner:term)) => integerExpression imports scope inner
+  | `(($_inner:term : $type:term)) =>
+      return (match ← resolveType type with | .int => true | _ => false)
+  | `(-$_number:num) => return true
+  | `($left + $right) | `($left - $right) | `($left * $right) |
+      `($left / $right) | `($left % $right) =>
+      return (← integerExpression imports scope left) || (← integerExpression imports scope right)
+  | `(-$inner) => integerExpression imports scope inner
+  | `(Int.add $_ $_) | `(Int.neg $_) => return true
+  | _ =>
+      try return (match (← value scope expression).type with | .int => true | _ => false)
+      catch _ => return false
+
 partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
-    (expression : TSyntax `term) :
+    (expression : TSyntax `term) (expected : Option NativeType := none) :
     PrepareM (Option (TSyntax `term)) := do
   if let some (called, _) := namedCall? expression then
     unless scope.any (fun binding => binding.name.getId == called.getId) do
@@ -571,7 +622,31 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
           (← findImportedOperation? imports called).isSome then
         return some expression
   match expression with
-  | `(($inner:term)) => canonicalCall? imports scope inner
+  | `(($inner:term)) => canonicalCall? imports scope inner expected
+  | `(($inner:term : $type:term)) =>
+      canonicalCall? imports scope inner (some (← resolveType type))
+  | `($left + $right) =>
+      if expected.any (fun type => match type with | .int => true | _ => false) ||
+          (← integerExpression imports scope left) || (← integerExpression imports scope right) then
+        return some (← `(Int.add $left $right))
+      return none
+  | `(-$_number:num) => return none
+  | `(-$inner) =>
+      if expected.any (fun type => match type with | .int => true | _ => false) ||
+          (← integerExpression imports scope inner) then
+        return some (← `(Int.neg $inner))
+      return none
+  | `($left < $right) =>
+      if (← integerExpression imports scope left) || (← integerExpression imports scope right) then
+        return some (← `(Int.lt $left $right))
+      return none
+  | `($left > $right) =>
+      if (← integerExpression imports scope left) || (← integerExpression imports scope right) then
+        return some (← `(Int.lt $right $left))
+      return none
+  | `(Int.add $left $right) => return some (← `(Int.add $left $right))
+  | `(Int.neg $inner) => return some (← `(Int.neg $inner))
+  | `(Int.lt $left $right) => return some (← `(Int.lt $left $right))
   | `(Array.append $left:term $right:term) => return some (← `(Array.append $left $right))
   | `(Array.replicate $length:term $initial:term) => return some (← `(Array.replicate $length $initial))
   | `(Array.getD $values:term $index:term $fallback:term) =>
@@ -629,6 +704,9 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
     if let some operation ← localOperation? names called true then
       return some (operation, arguments)
   match expression with
+  | `(Int.add $left $right) => return some (← integerOperation `add, #[left, right])
+  | `(Int.neg $inner) => return some (← integerOperation `negate, #[inner])
+  | `(Int.lt $left $right) => return some (← integerOperation `less, #[left, right])
   | `(Array.append $left:term $right:term) =>
       return some (← arrayOperation true, #[left, right])
   | `(Array.replicate $length:term $initial:term) =>
@@ -763,39 +841,115 @@ partial def markRawElements (elements : Array (TSyntax `doElem)) :
           ((← markRawElements (getDoElems no)).map (·.raw))⟩
         `(doElem| if source_raw_value% ($guard) then $yes:doSeq else $no:doSeq)
     | _ => throwErrorAt element "unexpected statement produced by raw operand normalization"
-/-- Extract one actual call from transparent value constructors. Branches and
-callbacks are deliberately not traversed: hoisting must not execute unselected code. -/
-partial def hoistValueCall? (imports : ImportedPrograms) (scope : List Binding)
-    (expression : TSyntax `term) :
+/-- Extract the leftmost actual call from strict value positions. Branches,
+short-circuit operands and callbacks are not traversed. `includeRoot = false`
+prepares call arguments without extracting the enclosing invocation again. -/
+partial def hoistValueCall? (names : DeclarationNames) (imports : ImportedPrograms)
+    (scope : List Binding) (expression : TSyntax `term)
+    (expected : Option NativeType := none) (includeRoot : Bool := true) :
     PrepareM (Option (TSyntax `term × (TSyntax `term → TermElabM (TSyntax `term)))) := do
+  let hoist (expression : TSyntax `term) (expected : Option NativeType) (includeRoot : Bool) :=
+    hoistValueCall? names imports scope expression expected includeRoot
+  let binary (left right : TSyntax `term) (input : Option NativeType)
+      (rebuild : TSyntax `term → TSyntax `term → TermElabM (TSyntax `term)) :
+      PrepareM (Option (TSyntax `term × (TSyntax `term → TermElabM (TSyntax `term)))) := do
+    if let some (called, replace) ← hoist left input true then
+      return some (called, fun value => do rebuild (← replace value) right)
+    if let some (called, replace) ← hoist right input true then
+      return some (called, fun value => do rebuild left (← replace value))
+    return none
+  let signed (left right : TSyntax `term) := do
+    return expected.any (fun type => match type with | .int => true | _ => false) ||
+      (← integerExpression imports scope left) || (← integerExpression imports scope right)
   match expression with
   | `(($inner:term)) =>
-      if let some (called, rebuild) ← hoistValueCall? imports scope inner then
+      if let some (called, rebuild) ← hoist inner expected includeRoot then
         return some (called, fun value => do `(($(← rebuild value))))
   | `(($inner:term : $type:term)) =>
-      if let some (called, rebuild) ← hoistValueCall? imports scope inner then
+      if let some (called, rebuild) ← hoist inner (some (← resolveType type)) includeRoot then
         return some (called, fun value => do `(($(← rebuild value) : $type)))
+  | `(-$_number:num) => return none
+  | `(-$inner) =>
+      if let some (called, rebuild) ← hoist inner expected true then
+        return some (called, fun value => do `(-$(← rebuild value)))
+  | `(!$inner) =>
+      if let some (called, rebuild) ← hoist inner (some (← resolveType (← `(Bool)))) true then
+        return some (called, fun value => do `(!$(← rebuild value)))
+  | `($left + $right) | `($left - $right) | `($left * $right) |
+      `($left / $right) | `($left % $right) | `($left < $right) |
+      `($left > $right) | `($left ≤ $right) | `($left <= $right) |
+      `($left ≥ $right) | `($left >= $right) =>
+      let isSigned ← signed left right
+      let input ← if isSigned then pure NativeType.int else resolveType (← `(Nat))
+      let rebuild (a b : TSyntax `term) : TermElabM (TSyntax `term) :=
+        match expression with
+        | `($_ + $_) => `($a + $b)
+        | `($_ - $_) => `($a - $b)
+        | `($_ * $_) => `($a * $b)
+        | `($_ / $_) => `($a / $b)
+        | `($_ % $_) => `($a % $b)
+        | `($_ < $_) => `($a < $b)
+        | `($_ > $_) => `($a > $b)
+        | `($_ ≤ $_) | `($_ <= $_) => `($a ≤ $b)
+        | _ => `($a ≥ $b)
+      if let some extracted ← binary left right (some input) rebuild then return some extracted
+      if isSigned then
+        -- Operands have been visited in source order before reversing a comparison
+        -- or expanding subtraction into its two genuine source calls.
+        match expression with
+        | `($_ - $_) => return ← hoist (← `(Int.add $left (Int.neg $right))) expected includeRoot
+        | `($_ ≤ $_) | `($_ <= $_) =>
+            return ← hoist (← `(!(Int.lt $right $left))) expected includeRoot
+        | `($_ ≥ $_) | `($_ >= $_) =>
+            return ← hoist (← `(!(Int.lt $left $right))) expected includeRoot
+        | _ => pure ()
   | `({ $fields:structInstField,* }) =>
       let fields := fields.getElems
+      let metadata ← match expected with
+        | some (.record name _ _) => recordFields name
+        | _ => pure #[]
       for index in [:fields.size] do
         let field := fields[index]!
         if let `(structInstField| $name:ident := $inner:term) := field then
-          if let some (called, rebuild) ← hoistValueCall? imports scope inner then
+          let input := (metadata.find? (·.name == name.getId)).map (·.type)
+          if let some (called, rebuild) ← hoist inner input true then
             return some (called, fun value => do
               let updated ← `(structInstField| $name:ident := $(← rebuild value))
               let fields := fields.set! index updated
               `({ $fields:structInstField,* }))
   | `(($left:term, $right:term)) =>
-      if let some (called, rebuild) ← hoistValueCall? imports scope left then
+      let components ← match expected with
+        | some (.prod left right) => pure (some (left, right))
+        | some type =>
+            if type.nativeType.isAppOfArity ``Prod 2 then do
+              let arguments := type.nativeType.getAppArgs
+              pure (some (← resolveNativeType arguments[0]!, ← resolveNativeType arguments[1]!))
+            else pure none
+        | none => pure none
+      if let some (called, rebuild) ← hoist left (components.map (·.1)) true then
         return some (called, fun value => do `(($(← rebuild value), $right)))
-      if let some (called, rebuild) ← hoistValueCall? imports scope right then
+      if let some (called, rebuild) ← hoist right (components.map (·.2)) true then
         return some (called, fun value => do `(($left, $(← rebuild value))))
   | `(some $inner:term) =>
-      if let some (called, rebuild) ← hoistValueCall? imports scope inner then
+      let payload := expected.bind fun | .option payload => some payload | _ => none
+      if let some (called, rebuild) ← hoist inner payload true then
         return some (called, fun value => do `(some $(← rebuild value)))
   | _ => pure ()
-  if let some called ← canonicalCall? imports scope expression then
-    return some (called, fun value => pure value)
+  if let some called ← canonicalCall? imports scope expression expected then
+    -- The operation signature supplies literal types. A fold's named callback
+    -- is not a value argument and must not be called with zero parameters.
+    let selected ← try operationCall? names imports scope called expected catch _ => pure none
+    let (head, arguments) ← match called with
+      | `(List.foldl $callback:ident $initial:term $values:term) =>
+          pure (← `(List.foldl $callback:ident), #[initial, values])
+      | `($head:term $arguments:term*) => pure (head, arguments)
+      | _ => pure (called, #[])
+    for index in [:arguments.size] do
+      let input := selected.bind fun (operation, _) => operation.inputs[index]?
+      if let some (nested, rebuild) ← hoist arguments[index]! input true then
+        return some (nested, fun value => do
+          pure (Lean.Syntax.mkApp head (arguments.set! index (← rebuild value))))
+    if includeRoot then return some (called, fun value => pure value)
   return none
 
 end Internal

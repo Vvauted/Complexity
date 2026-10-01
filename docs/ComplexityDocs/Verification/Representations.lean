@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity
 import Examples.Language.LinkedList
 import Examples.Language.ProgramCompiled
+import Examples.Language.ScalarCompiled
 import Examples.Language.Traversal
 
 /-!
@@ -55,6 +56,43 @@ The array rule needs only a mathematical length bound and establishes descriptor
 `ValueFits`, not element ranges, rooting, address bounds or allocation capacity.
 Products use both observations at the same heap and permit shared storage.
 These are explicit proved certificates, not typeclass inference or new syntax.
+
+## Signed scalar expressions
+
+The default `source_program` frontend uses ordinary `Int` parameters and
+results for addition, subtraction, negation and ordered comparisons. These
+select the existing [integer source operations](##Complexity.Language.Scalar.Int),
+not host-side arithmetic callbacks. For example:
+
+```lean
+source_program Signed where
+  def distance (left : Int) (right : Int) : Int := do
+    let delta := left - right
+    if delta ≤ 0 then
+      return -delta
+    else
+      return delta
+```
+
+The [checked scalar consumer](##Complexity.Language.Examples.Scalar.signed_distance_eq)
+proves `Signed.distance_model left right = |left - right|` with ordinary
+integer facts; generated `_refines` transfers it to the actual source function.
+Subtraction invokes negation and addition. `<`, `>`, `≤`/`<=` and `≥`/`>=`
+reuse the comparison call and, where needed, Boolean negation. Strict nested
+operands are evaluated from left to right, including before a comparison
+reverses its operands. Conditional calls stay in their selected branches;
+a while guard is evaluated again on every iteration.
+
+Literal arithmetic uses known binding, result and callee-parameter types;
+it does not silently coerce a `Nat` variable to `Int`. Signed multiplication,
+division, remainder and equality syntax are not provided by this connection.
+Calls beneath `&&`/`||` are not lifted out of their short-circuit branches.
+The existing [RAM implementation](##Ram.LanguageCompiler.Scalar.Int)
+charges the same source bodies, including sign branches and intermediates.
+The scalar consumer's `signedDistanceCost` composes their existing certificates
+to infer a uniform bound for this same caller, including its actual instructions.
+Word ranges, call overhead and a complete caller's resource bound remain
+separate proof obligations; correctness is not conditional on a time budget.
 
 ## Contiguous arrays and copying
 

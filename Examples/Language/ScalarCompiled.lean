@@ -13,6 +13,7 @@ import Complexity.Computability.Ram.Compiler.Language.Tactic
 import Complexity.Computability.Ram.Compiler.Language.Linking.Tactic
 import Complexity.Computability.Ram.Compiler.Language.LocalsTactic
 import Complexity.Computability.Ram.Compiler.Language.RepresentedFunction
+import Complexity.Computability.Ram.Compiler.Language.Scalar.Int
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Execution
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Scalar
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Asymptotics
@@ -669,5 +670,24 @@ theorem structured_range_sum_execute_le {w heapLimit : Nat} {placement : Nat →
       ⟨sumFits, cursorFits, strideFits, stopFits, limitFits⟩ rfl trivial
   subst value
   exact ⟨outcome, represented, bounded⟩
+
+/-- Infer a uniform bound for the same signed-distance caller from its actual
+integer callees. Sign branches, intermediate bindings and call overhead are
+counted by the existing compiler rules, not assigned mathematical prices. -/
+def signedDistanceCost : { bound : Nat //
+    FunctionCostBound Signed.program Signed.distanceId (fun _ _ => True)
+      (fun _ _ => bound + 2) } := ⟨_, by
+  ram_source_cost_intro (left right)
+  intro heap _
+  ram_source_cost_step using [
+    (ram_source_imported% (FunctionCostBound.renameCalls
+      Signed.imports.Complexity.Language.Scalar.Int.Implementation.embedding
+      Ram.LanguageCompiler.Scalar.Int.negate_costBound)),
+    (ram_source_imported% (FunctionCostBound.renameCalls
+      Signed.imports.Complexity.Language.Scalar.Int.Implementation.embedding
+      Ram.LanguageCompiler.Scalar.Int.add_costBound)),
+    (ram_source_imported% (FunctionCostBound.renameCalls
+      Signed.imports.Complexity.Language.Scalar.Int.Implementation.embedding
+      Ram.LanguageCompiler.Scalar.Int.less_costBound))]⟩
 
 end Complexity.Language.Examples.Scalar
