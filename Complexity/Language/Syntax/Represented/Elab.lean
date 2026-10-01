@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.Syntax.Represented.Preparation
 import Complexity.Language.Syntax.Represented.OperationDeclarations
+import Complexity.Language.Syntax.Represented.ListDeclarations
 import Complexity.Language.Syntax.Represented.ArrayDeclarations
 import Complexity.Language.Syntax.Represented.Declarations
 import Complexity.Language.Syntax.Represented.ModelEquation
@@ -128,12 +129,21 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
     emitDeclarations (← liftTermElabM (arrayReadDeclarations registration))
   for registration in prepared.arrayReplicates do
     emitDeclarations (← liftTermElabM (arrayReplicateDeclarations registration))
+  for registration in prepared.productLists do
+    emitDeclarations (← liftTermElabM (productListDeclarations registration))
   let rawFunctions ← liftTermElabM (prepared.functions.mapM rawFunction)
   let rawFamily := names.sourceFamily
   let operationFamilies := prepared.folds.map (·.operation.family) ++
     prepared.constructors.map (·.operation.family) ++ prepared.deconstructors.map (·.operation.family) ++
     prepared.emptinessTests.map (·.operation.family) ++ prepared.arrayReads.map (·.operation.family) ++
-    prepared.calledFamilies
+    prepared.productLists.map (·.operation.family) ++ prepared.calledFamilies
+  -- Composite helpers already contain their callees. Import only operations
+  -- actually named by the final source, including calls in nested branches and
+  -- loops; copying every transitive helper inflates the linked signature table.
+  let operationFamilies ← operationFamilies.filterM fun operationFamily => do
+    let (_, headers) ← getProgramInfo operationFamily
+    return headers.any fun header => rawFunctions.any fun function =>
+      function.raw.hasIdent (operationFamily.getId ++ header.name)
   let actualSites ← Complexity.Language.Syntax.elaborateSourceProgramWithBlockSites
     rawFamily rawFunctions libraries false operationFamilies
   let ranges ← prepared.ranges.mapM fun range => do

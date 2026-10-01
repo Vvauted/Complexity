@@ -276,7 +276,7 @@ source_program (native) NativeRecursive where
       return tail
     return result
     termination_by count
-    decreasing_by simp_all +zetaDelta; omega
+    decreasing_by simp_all +zetaDelta
 
 /-- Recursive calls receive the actually allocated tail. Ordinary induction
 proves the native equation; generated correspondence handles every represented
@@ -418,7 +418,10 @@ theorem repeatAppend_copies (count : Nat) (chunkValues : Array Nat) (initialValu
   intro actualCount chunk initial heap
   rw [ArrayRangeNative.Source.repeatAppend_eq]
   mvcgen [loopSpec]
-  refine ⟨by simp_all [modelRel, mkModel, payloadRel], ?_⟩
+  refine ⟨by
+    rename_i state entry
+    rcases entry with ⟨rfl, rfl, chunkObserved, initialObserved⟩
+    exact ⟨rfl, initialObserved, initialObserved, chunkObserved, rfl⟩, ?_⟩
   intro finalModel output finish represented valid stopped
   have observed := model_rel_state represented
   have empty : model_remaining finalModel = 0 := by

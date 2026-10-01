@@ -129,6 +129,15 @@ structure IsEmptyRegistration where
   kind : CellTy
   operation : Operation
 
+/-- Compose actual field-chain calls for a product-list operation. -/
+structure ProductListRegistration where
+  construct : Bool
+  list : NativeType
+  element : NativeType
+  left : Operation
+  right : Operation
+  operation : Operation
+
 /-- A concrete composite read assembled from existing column operations. -/
 structure ArrayReadRegistration where
   array : NativeType
@@ -302,6 +311,7 @@ structure Preparation where
   constructors : Array ConsRegistration := #[]
   deconstructors : Array UnconsRegistration := #[]
   emptinessTests : Array IsEmptyRegistration := #[]
+  productLists : Array ProductListRegistration := #[]
   arrayReads : Array ArrayReadRegistration := #[]
   arrayReplicates : Array ArrayReplicateRegistration := #[]
   functions : Array Function := #[]

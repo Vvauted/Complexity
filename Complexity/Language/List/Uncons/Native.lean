@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.List.Uncons
+import Complexity.Language.Buffer.Copy
 
 /-!
 # Native observations of one actual list decomposition
@@ -55,5 +56,20 @@ theorem eval_exists (kind : CellTy) (values : List (CellValue kind))
     eval_exists_heap_eq kind values root heap observed
   subst finish
   exact ⟨returned, heap, evaluated, related, Heap.ShapeExtends.refl heap⟩
+
+/-- Decomposition retains all mutable contents because its actual heap is unchanged. -/
+theorem eval_exists_preserving (kind : CellTy) (values : List (CellValue kind))
+    (root : Option (NodeRef kind)) (heap : Heap)
+    (observed : (Representation.list kind).Rel values root heap) :
+    ∃ returned finish,
+      unconsEval kind root heap = Part.some (.ok returned, finish) ∧
+      (resultRepresentation kind).Rel
+        (values.head?.map (fun head => (head, values.tail))) returned finish ∧
+      heap.ShapeExtends finish ∧ Buffer.PreservesContents heap finish := by
+  obtain ⟨returned, finish, evaluated, related, unchanged⟩ :=
+    eval_exists_heap_eq kind values root heap observed
+  subst finish
+  exact ⟨returned, heap, evaluated, related, Heap.ShapeExtends.refl heap,
+    fun {_} _ _ contents => contents⟩
 
 end Complexity.Language.List.Uncons

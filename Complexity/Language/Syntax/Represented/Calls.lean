@@ -215,7 +215,8 @@ private def consOperation (family : TSyntax `ident) (kind : CellTy) : PrepareM O
       native := ⟨(mkCIdent ``List.cons).raw⟩
       equation := none
       relation := mkIdentFrom family (operationFamily.getId ++ `cons_rel)
-      refinement := mkIdentFrom family (operationFamily.getId ++ `cons_refines) } }
+      refinement := mkIdentFrom family (operationFamily.getId ++ `cons_refines)
+      preservingRelation := some (mkIdentFrom family (operationFamily.getId ++ `cons_rel_preserving)) } }
   modify fun state => { state with constructors := state.constructors.push ⟨kind, operation⟩ }
   return operation
 
@@ -251,9 +252,46 @@ private def unconsOperation (family : TSyntax `ident) (kind : CellTy) : PrepareM
     model? := some {
       native, equation := none
       relation := mkIdentFrom family (operationFamily.getId ++ `uncons_rel)
-      refinement := mkIdentFrom family (operationFamily.getId ++ `uncons_refines) } }
+      refinement := mkIdentFrom family (operationFamily.getId ++ `uncons_refines)
+      preservingRelation := some (mkIdentFrom family (operationFamily.getId ++ `uncons_rel_preserving)) } }
   modify fun state => { state with deconstructors := state.deconstructors.push ⟨kind, operation⟩ }
   return operation
+
+private partial def linkedOperation (family : TSyntax `ident) (construct : Bool)
+    (list : NativeType) : PrepareM Operation := do
+  match list with
+  | .list kind =>
+      if construct then consOperation family kind else unconsOperation family kind
+  | .listView .int _ _ => signedListOperation construct
+  | .listView element (.prod leftList rightList) _ =>
+      for registered in (← get).productLists do
+        if registered.construct == construct &&
+            (← isDefEq registered.list.nativeType list.nativeType) &&
+            (← isDefEq registered.element.representation element.representation) then
+          return registered.operation
+      let left ← linkedOperation family construct leftList
+      let right ← linkedOperation family construct rightList
+      let index := (← get).productLists.size
+      let operationFamily := mkIdentFrom family
+        (family.getId ++ `Operations ++ Name.mkSimple ("productList" ++ toString index))
+      let sourceName := if construct then `cons else `uncons
+      let declaration (suffix : String) := mkIdentFrom family
+        ((operationFamily.getId ++ sourceName).appendAfter suffix)
+      let listType ← termOfExpr list.nativeType
+      let native ← if construct then pure (⟨(mkCIdent ``List.cons).raw⟩ : TSyntax `term)
+        else `(fun (values : $listType) => values.head?.map (fun head => (head, values.tail)))
+      let operation : Operation := {
+        family := operationFamily, sourceName
+        inputs := if construct then #[element, list] else #[list]
+        result := if construct then list else .option (.prod element list)
+        model? := some {
+          native, equation := none, relation := declaration "_rel"
+          refinement := declaration "_refines"
+          preservingRelation := some (declaration "_rel_preserving") } }
+      modify fun state => { state with
+        productLists := state.productLists.push ⟨construct, list, element, left, right, operation⟩ }
+      return operation
+  | _ => throwError "linked operations require supported scalar or product field chains"
 
 private def isEmptyOperation (family : TSyntax `ident) (kind : CellTy) : PrepareM Operation := do
   if let some registered := (← get).emptinessTests.find? (fun registered => registered.kind == kind) then
@@ -626,17 +664,11 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
             pure (some type)
         | _ => pure none
       let tailValue ← value scope tail tailType
-      let operation ← match tailValue.type with
-        | .list kind => consOperation names.publicFamily kind
-        | .listView .int _ _ => signedListOperation true
-        | _ => throwErrorAt tail "List.cons requires a represented list tail"
+      let operation ← linkedOperation names.publicFamily true tailValue.type
       return some (operation, #[head, tail])
   | `(List.uncons $values:term) =>
       let valuesValue ← value scope values
-      let operation ← match valuesValue.type with
-        | .list kind => unconsOperation names.publicFamily kind
-        | .listView .int _ _ => signedListOperation false
-        | _ => throwErrorAt values "List.uncons requires a represented list"
+      let operation ← linkedOperation names.publicFamily false valuesValue.type
       return some (operation, #[values])
   | `(List.isEmpty $values:term) =>
       let valuesValue ← value scope values

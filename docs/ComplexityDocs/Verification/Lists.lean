@@ -10,6 +10,7 @@ import Examples.Language.LinkedListCompiled
 import Examples.Language.LinkedListComposition
 import Examples.Language.LinkedListFoldAllocation
 import Examples.Language.LinkedListViewsCompiled
+import Examples.Language.ProductLists
 
 /-!
 # Proving linked-list programs
@@ -73,6 +74,38 @@ folds of both old and new lists are exercised by the existing linked-list
 consumer. Allocation is not an unchanged-heap action, a runtime decoder or a
 free mathematical operation. The traversal operation library and general
 element layouts are still incomplete.
+
+## Product elements
+
+The same `[]`, `::` and two-branch list match also support `Int` and recursively
+nested products of `Nat`, `Bool` and `Int`. For example:
+
+```lean
+source_program Linked where
+  def singleton (head : Int × Nat) : List (Int × Nat) := do
+    return head :: []
+
+def singleton : Complexity.Program (Int × Nat) (List (Int × Nat)) :=
+  program% Linked.singleton
+
+theorem singleton_correct :
+    singleton.Correct (fun _ => True) (fun head result => result = [head]) := by
+  program_correct Linked.singleton using fun _ => rfl
+```
+
+The [checked product-list consumer](##Examples.Language.ProductLists) also
+constructs and matches nested products, shares existing tails, and reads a
+retained array after list allocation. Product elements use synchronized linked
+field chains, not contiguous arrays or a free conversion from a mathematical
+list. Canonical integers use sign and magnitude chains. Each constructor and
+reader invokes its actual child operations; heap frames compose from their
+proved contracts.
+
+`pairConsBodyCost` infers a constant bound for the actual three-node constructor
+and wrapper instructions from the existing RAM callee bounds. This conditional
+statement bound does not supply caller readiness, capacity, input loading or a
+complete `Program.TimeO` theorem. Product-list `foldl` and `isEmpty` frontend
+operations and general node payloads remain separate work.
 
 ## Branches and matching
 

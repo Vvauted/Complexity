@@ -68,6 +68,17 @@ their checked signatures and relational observations, so the same callback is
 available for both a direct call and an actual fold. This extends the native
 function boundary, not the node element layout or dynamic-closure semantics.
 
+The [product-list consumer](../../Examples/Language/ProductLists.lean) extends
+ordinary `[]`, `::` and list matching to recursively nested products of `Nat`,
+`Bool` and canonical `Int`. Synchronized field chains reuse the real scalar
+and signed constructors/readers. Generated contracts retain shared tails and
+existing mutable-array contents through actual intermediate heaps. Correctness
+uses ordinary List equations; the same helper's conditional RAM body bound
+composes existing leaf costs. This is not arbitrary node payload support,
+product-list fold automation, fixed RAM input loading or a complete caller bound.
+Automatic imports include helpers directly named in the final source; each
+helper retains its own transitive callees. Explicit user imports are unchanged.
+
 ## Mathematical views, branches and recursion
 
 The common preparation pass accepts ordinary mathematical List parameters and

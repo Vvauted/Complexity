@@ -243,7 +243,15 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
         #[some (mkConst ``Bool), some (mkConst ``Nat)]
       let embedding ← mkAppM ``Function.Embedding.trans #[fields, unzip]
       return .listView .int (.prod (.list .bool) (.list .nat)) embedding
-    throwError "native linked lists currently support Nat, Bool and canonical Int elements"
+    if let .app (.app (.const ``Prod _) left) right ← whnf element then
+      let leftList ← resolveNativeTypeAux
+        (← mkAppM ``List #[left]) records structuredProducts
+      let rightList ← resolveNativeTypeAux
+        (← mkAppM ``List #[right]) records structuredProducts
+      let elementType ← resolveNativeTypeAux element records structuredProducts
+      let embedding ← mkAppOptM ``Representation.listUnzip #[some left, some right]
+      return .listView elementType (.prod leftList rightList) embedding
+    throwError "native linked lists require Nat, Bool, Int or products of supported elements"
   if let .app (.const ``Array _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .array .nat
     if ← isDefEq element (mkConst ``Bool) then return .array .bool

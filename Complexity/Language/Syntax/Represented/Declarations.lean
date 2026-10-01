@@ -189,7 +189,11 @@ def relationDeclaration (names : DeclarationNames) (fn : Function)
       else `(Complexity.Language.Heap.ShapeExtends.refl $heap:ident)
     return ← declaration #[← `(tactic|
       exact ⟨$value, $heap:ident, $correct, $related, $frame⟩)]
-  if fn.preservesArrays && !preserveArrays then
+  -- Keep the ordinary published range contracts available as well as their
+  -- stronger array-preserving variants. Straight-line and recursive proofs can
+  -- reuse the stronger function theorem directly.
+  if fn.preservesArrays && !preserveArrays &&
+      (model.recursive || !model.calls.any Trace.containsRange) then
     let strong := fieldName family fn.name "_action_rel_native_preserving"
     let mut applied := fn.parameters.map (fun parameter => (⟨parameter.name.raw⟩ : TSyntax `term))
     for parameter in fn.parameters do

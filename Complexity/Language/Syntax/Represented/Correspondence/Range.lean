@@ -407,8 +407,8 @@ private def rangeBodyFinish (range : RangeRegistration) (site : ActualRangeSite)
       `(And.intro
         (Complexity.Language.Heap.ShapeExtends.trans $frameShape $(context.shape))
         (fun {kind} buffer values observed =>
-          $(context.contents) (kind := kind) buffer values
-            ($frameContents (kind := kind) buffer values observed)))
+          $(context.contents) buffer values
+            ($frameContents buffer values observed)))
     else `(Complexity.Language.Heap.ShapeExtends.trans $frameShape $(context.shape))
   let scalarFacts ← context.scalarEqualities.mapM fun equality =>
     `(Lean.Parser.Tactic.simpLemma| $equality:term)

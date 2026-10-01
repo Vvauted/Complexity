@@ -284,6 +284,17 @@ def consDeclarations (registration : ConsRegistration) : TermElabM (Array Syntax
           (Complexity.Language.Representation.list $kind).Rel (head :: values) returned finish ∧
           heap.ShapeExtends finish := by
       exact Complexity.Language.List.Cons.eval_exists $kind head values tail heap observed)).raw
+  let preserving := name `cons_rel_preserving
+  declarations := declarations.push (← `(command|
+    theorem $preserving:ident (head : $headType) (values : List $headType)
+        (tail : Option (Complexity.Language.NodeRef $kind)) (heap : Complexity.Language.Heap)
+        (observed : (Complexity.Language.Representation.list $kind).Rel values tail heap) :
+        ∃ returned finish,
+          $cons:ident head tail heap = Part.some (.ok returned, finish) ∧
+          (Complexity.Language.Representation.list $kind).Rel (head :: values) returned finish ∧
+          heap.ShapeExtends finish ∧ Complexity.Language.Buffer.PreservesContents heap finish := by
+      exact Complexity.Language.List.Cons.eval_exists_preserving
+        $kind head values tail heap observed)).raw
   declarations := declarations.push (← `(command|
     theorem $(operationModel.refinement):ident : Complexity.Language.RepresentedFunction.Refines
         $program:ident $consId:ident (Complexity.Language.List.Cons.representation $kind)
@@ -334,6 +345,17 @@ def unconsDeclarations (registration : UnconsRegistration) : TermElabM (Array Sy
             (values.head?.map (fun head => (head, values.tail))) returned finish ∧
           heap.ShapeExtends finish := by
       exact Complexity.Language.List.Uncons.eval_exists $kind values root heap observed)).raw
+  let preserving := name `uncons_rel_preserving
+  declarations := declarations.push (← `(command|
+    theorem $preserving:ident (values : List $headType)
+        (root : Option (Complexity.Language.NodeRef $kind)) (heap : Complexity.Language.Heap)
+        (observed : (Complexity.Language.Representation.list $kind).Rel values root heap) :
+        ∃ returned finish,
+          $uncons:ident root heap = Part.some (.ok returned, finish) ∧
+          (Complexity.Language.List.Uncons.resultRepresentation $kind).Rel
+            (values.head?.map (fun head => (head, values.tail))) returned finish ∧
+          heap.ShapeExtends finish ∧ Complexity.Language.Buffer.PreservesContents heap finish := by
+      exact Complexity.Language.List.Uncons.eval_exists_preserving $kind values root heap observed)).raw
   declarations := declarations.push (← `(command|
     theorem $(operationModel.refinement):ident : Complexity.Language.RepresentedFunction.Refines
         $program:ident $unconsId:ident (Complexity.Language.List.Uncons.representation $kind)
