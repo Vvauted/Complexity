@@ -19,6 +19,7 @@ An ordinary record can use `deriving Complexity.Program.Input` or
 a right-associated product and reuse the existing fixed field interfaces.
 They generate `programView`, `programView_injective` and `programEmbedding`
 once, shared by both handlers and the separate RAM input handler.
+Supported field-column array layouts also induce fixed record-array interfaces.
 
 The field view only projects existing data. It does not execute a host-side
 algorithm, load inputs, select a desired answer, or register source-language
@@ -206,6 +207,16 @@ private def deriveOutput (name : Name) : TermElabM Unit := do
   let value ← mkAppOptM ``Output.mk #[some (mkConst name), some resultType, some representation]
   addInterfaceInstance (name ++ `instProgramOutput) value
     "Observe this record through its fields at the actual returned value and final heap."
+  let arrayType ← mkAppM ``Array #[tupleType]
+  if let .some output ← trySynthInstance (← mkAppM ``Output #[arrayType]) then
+    let view ← mkAppM ``Function.Embedding.arrayMap #[embedding]
+    let resultType ← mkAppOptM ``Output.type #[some arrayType, some output]
+    let representation ← mkAppOptM ``Output.representation #[some arrayType, some output]
+    let representation ← mkAppM ``Language.Representation.comap #[representation, view]
+    let recordArray ← mkAppM ``Array #[mkConst name]
+    let value ← mkAppOptM ``Output.mk #[some recordArray, some resultType, some representation]
+    addInterfaceInstance (name ++ `instProgramArrayOutput) value
+      "Observe an array of these records through its actual returned field columns."
 
 private def inputHandler (names : Array Name) : CommandElabM Bool := do
   let env ← getEnv

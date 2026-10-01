@@ -154,6 +154,17 @@ instances reuse the same ordered layout; no field needs to be moved to the end
 just because it is a record. This is input registration, not extra runtime copying.
 Prepared source supports field projection, construction and returned records with
 array fields; natural-array `++` uses an actual allocation and copying call.
+For a closed record with one scalar field or two scalar fields (`Nat`/`Bool`),
+`Array.replicate length initial` reuses the existing initialized column allocator.
+The generated contract observes the original record array and preserves prior
+contents; it adds no executable map or uncharged host preprocessing. This also
+allows internal empty record arrays for default values, without adding those
+defaults to the task input. The typed-program example proves replication and
+empty-array lookup with the ordinary `program_correct` interface. More general
+record initializers, including array-valued fields, still need allocating operations.
+`deriving Complexity.Program.Output` also registers the record-array output
+when its field-column array already has a fixed output interface. This observes
+the actual returned columns; it does not allocate or decode them at runtime.
 Branch results may also contain arrays: the selected branch supplies the actual
 record, and a common continuation executes once. A return in such a value branch
 finishes that block, not its caller; actual result-slot operations are included

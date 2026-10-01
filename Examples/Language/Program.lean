@@ -319,6 +319,39 @@ theorem retainRows_correct :
     retainRows.Correct (fun _ => True) (fun rows result => result = rows) := by
   program_correct NativeRaggedLookup.retain using fun _ => rfl
 
+/-- A nominal scalar-pair element, not a user-written storage encoding. -/
+structure TaggedValue where
+  tag : Nat
+  enabled : Bool
+  deriving Complexity.Program.Input, Complexity.Program.RamInput, Complexity.Program.Output
+
+source_program RecordAllocation where
+  def replicate (input : Nat × TaggedValue) : Array TaggedValue := do
+    return Array.replicate input.1 input.2
+
+  def emptyLookup (index : Nat) : Nat := do
+    let values := Array.replicate 0 ({ tag := 7, enabled := true } : TaggedValue)
+    let selected ← values.getD index ({ tag := 11, enabled := false } : TaggedValue)
+    return selected.tag
+
+/-- The real initialized pair allocator retains the ordinary record-array result. -/
+def repeatRecord : Complexity.Program (Nat × TaggedValue) (Array TaggedValue) :=
+  program% RecordAllocation.replicate
+
+theorem repeatRecord_correct :
+    repeatRecord.Correct (fun _ => True)
+      (fun input result => result = Array.replicate input.1 input.2) := by
+  program_correct RecordAllocation.replicate using fun _ => rfl
+
+/-- Empty construction and lookup need no extra fallback-array input. -/
+def emptyRecordLookup : Complexity.Program Nat Nat := program% RecordAllocation.emptyLookup
+
+theorem emptyRecordLookup_correct :
+    emptyRecordLookup.Correct (fun _ => True) (fun _ result => result = 11) := by
+  program_correct RecordAllocation.emptyLookup using fun index => by
+    change ((#[] : Array TaggedValue).getD index { tag := 11, enabled := false }).tag = 11
+    simp
+
 /-- An ordinary record element with a scalar and an array field. -/
 structure Reading where
   tag : Nat

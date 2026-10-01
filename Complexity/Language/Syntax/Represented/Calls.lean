@@ -338,6 +338,31 @@ private def arrayProdReplicateOperation (left right : CellTy) : PrepareM Operati
       relation := declaration "_eval_exists", refinement := declaration "_refines"
       preservingRelation := some (declaration "_eval_exists_preserving") } }
 
+private def arrayRecordReplicateOperation (family : TSyntax `ident) (array : NativeType) :
+    PrepareM Operation := do
+  for registration in (← get).arrayReplicates do
+    if ← sameType registration.operation.result array then return registration.operation
+  let .arrayView element@(.record _ _ _) storage _ := array
+    | throwError "array replication requires a supported initialized column layout"
+  let base ← match storage with
+    | .array kind => arrayReplicateOperation kind
+    | .arrayProd left right => arrayProdReplicateOperation left right
+    | _ => throwError "record array replication currently requires one scalar or a scalar pair"
+  let contracts := mkIdentFrom family
+    (family.getId ++ `Operations ++ Name.mkSimple s!"arrayReplicate{(← get).arrayReplicates.size}")
+  let name (suffix : Name) := mkIdentFrom family (contracts.getId ++ suffix)
+  let length ← resolveType (← `(Nat))
+  let operation : Operation := { base with
+    inputs := #[length, element], result := array
+    model? := some {
+      native := ⟨(mkCIdent ``Array.replicate).raw⟩, equation := none
+      relation := name `replicate_eval_exists
+      refinement := name `replicate_refines
+      preservingRelation := some (name `replicate_eval_exists_preserving) } }
+  modify fun state => { state with
+    arrayReplicates := state.arrayReplicates.push ⟨contracts, base, operation⟩ }
+  return operation
+
 private def arrayProdGetDOperation (left right : CellTy) : PrepareM Operation := do
   let family := mkIdent `Complexity.Language.Buffer.Prod.GetD
   unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
@@ -548,7 +573,8 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
         | .array kind => arrayReplicateOperation kind
         | .arrayProd left right => arrayProdReplicateOperation left right
         | .arrayView .int _ _ => arrayIntOperation true
-        | _ => throwErrorAt initial "Array.replicate requires Nat/Bool cells, scalar pairs or Int"
+        | .arrayView (.record _ _ _) _ _ => arrayRecordReplicateOperation names.publicFamily array
+        | _ => throwErrorAt initial "Array.replicate requires supported scalar, pair or record columns"
       return some (operation, #[length, initial])
   | `(Array.getD $values:term $index:term $fallback:term) =>
       let valuesValue ← value scope values

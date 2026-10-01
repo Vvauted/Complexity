@@ -133,6 +133,12 @@ structure ArrayReadRegistration where
   array : NativeType
   operation : Operation
 
+/-- A nominal record observation of an existing initialized column allocator. -/
+structure ArrayReplicateRegistration where
+  contracts : TSyntax `ident
+  base : Operation
+  operation : Operation
+
 structure ValueModel extends BindingModel where
   native : TSyntax `term
 
@@ -296,6 +302,7 @@ structure Preparation where
   deconstructors : Array UnconsRegistration := #[]
   emptinessTests : Array IsEmptyRegistration := #[]
   arrayReads : Array ArrayReadRegistration := #[]
+  arrayReplicates : Array ArrayReplicateRegistration := #[]
   functions : Array Function := #[]
   ranges : Array RangeRegistration := #[]
   whiles : Array WhileRegistration := #[]

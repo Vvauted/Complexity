@@ -126,6 +126,8 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
       result := .bool }]
   for registration in prepared.arrayReads do
     emitDeclarations (← liftTermElabM (arrayReadDeclarations registration))
+  for registration in prepared.arrayReplicates do
+    emitDeclarations (← liftTermElabM (arrayReplicateDeclarations registration))
   let rawFunctions ← liftTermElabM (prepared.functions.mapM rawFunction)
   let rawFamily := names.sourceFamily
   let operationFamilies := prepared.folds.map (·.operation.family) ++

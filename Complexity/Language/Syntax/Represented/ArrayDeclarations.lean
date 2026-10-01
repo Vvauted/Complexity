@@ -6,10 +6,11 @@ Authors: vvauted
 import Complexity.Language.Syntax.Represented.Basic
 import Complexity.Language.Buffer.GetD
 import Complexity.Language.Buffer.Ragged.GetD
+import Complexity.Language.Buffer.Prod.Replicate
 import Complexity.Language.Eval.Simp
 
 /-!
-# Composite array reads
+# Composite array operations and observations
 
 Assemble a concrete source function from existing scalar and ragged column
 reads. Products and checked record field views only describe how these actual
@@ -17,6 +18,10 @@ reads are combined. Generated theorems retain the unchanged heap and observe
 the original Lean element, including the entire supplied out-of-bounds default.
 The generated source body, including every column call, is compiled normally;
 the representation is not an executable or uncharged mathematical decoder.
+
+Scalar-record replication instead reuses an existing initialized allocator
+directly, transporting its result and preservation contracts through the same
+checked field view without generating another source body.
 -/
 
 namespace Complexity.Language.Syntax.Represented.Internal
@@ -320,5 +325,90 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
       exact execution)
   return #[source.raw, evaluation.raw, relationDecl.raw, preservingDecl.raw,
     representationDecl.raw, refinement.raw]
+
+/-- Transport a real initialized allocator through the resolver's direct record
+embedding. No source wrapper, executable map or new cost convention is added. -/
+def arrayReplicateDeclarations (registration : ArrayReplicateRegistration) :
+    TermElabM (Array Syntax) := do
+  let array := registration.operation.result
+  let .arrayView element@(.record _ _ embedding) storage _ := array
+    | throwError "record replication requires a direct field embedding"
+  let name (suffix : Name) := mkIdentFrom registration.contracts
+    (registration.contracts.getId ++ suffix)
+  let base := registration.base
+  let sourceName := base.family.getId ++ base.sourceName
+  let source := mkCIdent sourceName
+  let sourcePreserving := mkCIdent (sourceName.appendAfter "_eval_exists_preserving")
+  let sourceObserve := mkCIdent (sourceName.appendAfter "_observe")
+  let signatures := mkCIdent (base.family.getId ++ `signatures)
+  let program := mkCIdent (base.family.getId ++ `program)
+  let functionId := mkCIdent (sourceName.appendAfter "Id")
+  let initialType ← termOfExpr element.nativeType
+  let resultType ← termOfExpr array.nativeType
+  let rawInitial ← actualTypeTerm element.coreTy
+  let view ← termOfExpr embedding
+  let initialRep ← `(($(← termOfExpr element.representation) :
+    Complexity.Language.Representation $initialType $(← termOfExpr (coreTypeExpr element.coreTy))))
+  let resultRep ← `(($(← termOfExpr array.representation) :
+    Complexity.Language.Representation $resultType $(← termOfExpr (coreTypeExpr array.coreTy))))
+  let storageRep ← `(($(← termOfExpr storage.representation) :
+    Complexity.Language.Representation $(← termOfExpr storage.nativeType)
+      $(← termOfExpr (coreTypeExpr storage.coreTy))))
+  let preserving := name `replicate_eval_exists_preserving
+  let relation := name `replicate_eval_exists
+  let representation := name `representation
+  let refines := name `replicate_refines
+  let preservingDecl ← `(command|
+    theorem $preserving:ident (length : Nat) (initial : $initialType)
+        (value : $rawInitial) (heap : Complexity.Language.Heap)
+        (observed : ($initialRep).Rel initial value heap) :
+        ∃ returned finish,
+          $source:ident length value heap = Part.some (.ok returned, finish) ∧
+          ($resultRep).Rel (Array.replicate length initial) returned finish ∧
+          Complexity.Language.Heap.ShapeExtends heap finish ∧
+          Complexity.Language.Buffer.PreservesContents heap finish := by
+      have same : $view initial = value := by
+        simpa only [Complexity.Language.Representation.comap_rel,
+          Complexity.Language.Representation.prod_rel,
+          Complexity.Language.Representation.ofEmbedding_rel, Prod.ext_iff] using observed
+      rw [← same]
+      obtain ⟨returned, finish, executed, related, shape, preserved⟩ :=
+        $sourcePreserving:ident length ($view initial) heap
+      refine ⟨returned, finish, executed, ?_, shape, preserved⟩
+      change ($storageRep).Rel ((Array.replicate length initial).map $view) returned finish
+      simpa only [Array.map_replicate] using related)
+  let relationDecl ← `(command|
+    theorem $relation:ident (length : Nat) (initial : $initialType)
+        (value : $rawInitial) (heap : Complexity.Language.Heap)
+        (observed : ($initialRep).Rel initial value heap) :
+        ∃ returned finish,
+          $source:ident length value heap = Part.some (.ok returned, finish) ∧
+          ($resultRep).Rel (Array.replicate length initial) returned finish ∧
+          Complexity.Language.Heap.ShapeExtends heap finish := by
+      obtain ⟨returned, finish, executed, related, shape, _⟩ :=
+        $preserving:ident length initial value heap observed
+      exact ⟨returned, finish, executed, related, shape⟩)
+  let representationDecl ← `(command|
+    def $representation:ident : Complexity.Language.FunctionRepresentation
+        (Nat × $initialType) (fun _ => $resultType) $signatures:ident[$functionId:ident] :=
+      Complexity.Language.FunctionRepresentation.ofResult
+        (Complexity.Language.ArgumentRepresentation.cons Complexity.Language.Representation.nat
+          (Complexity.Language.ArgumentRepresentation.single $initialRep))
+        (fun _ => $resultRep))
+  let refinement ← `(command|
+    theorem $refines:ident : Complexity.Language.RepresentedFunction.Refines
+        $program:ident $functionId:ident $representation:ident (fun _ => True)
+        (fun input => Array.replicate input.1 input.2) := by
+      intro input _
+      apply Complexity.Language.FunctionTotal.iff_eval.mpr
+      intro args heap observed
+      rcases observed with ⟨length, initial⟩
+      change input.1 = args.head at length
+      obtain ⟨returned, finish, executed, related, _⟩ :=
+        $relation:ident input.1 input.2 args.tail.head heap initial
+      refine ⟨returned, finish, ?_, related⟩
+      rw [$sourceObserve:ident, ← length]
+      exact executed)
+  return #[preservingDecl.raw, relationDecl.raw, representationDecl.raw, refinement.raw]
 
 end Complexity.Language.Syntax.Represented.Internal
