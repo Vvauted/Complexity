@@ -137,6 +137,18 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
             model := ← `(($(model.model)).length)
             rawModel := ← `(($(model.rawModel)).length)
             observation := .unary (← `(fun (buffer : $type) => buffer.length)) model.observation } } : Value)
+    if let .string := record.type then
+      unless fieldName == `length || fieldName == ``String.length do
+        throwErrorAt expression "unknown native string field '{fieldName}'"
+      return ({
+        type := ← resolveType (← `(Nat))
+        raw := ← `(($(record.raw)).$(mkIdent `length):ident)
+        model? := ← record.model?.mapM fun model => do
+          return {
+            native := ← `(String.length $(model.native))
+            model := ← `(String.length $(model.model))
+            rawModel := ← `(($(model.rawModel)).length)
+            observation := .stringLength model.observation } } : Value)
     if record.type.isArray then
       unless fieldName == `size || fieldName == ``Array.size do
         throwErrorAt expression "unknown native array field '{fieldName}'"
@@ -383,6 +395,8 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
         let type ← resolveNativeType (mkConst constructor.induct)
         return ← constructRecord type arguments
       if arguments.size == 1 then
+        if name == ``String.length then
+          return ← projectRecord arguments[0]! name
         if let some _ := (← getEnv).getProjectionFnInfo? name then
           return ← projectRecord arguments[0]! name
       throwError "unsupported native call in a value; name source operations with `let`"

@@ -515,6 +515,7 @@ import Complexity.Language.Scalar.Int
 import Complexity.Language.Rooted.Execution
 import Complexity.Language.Semantics
 import Complexity.Language.State
+import Complexity.Language.String
 import Complexity.Language.Syntax
 import Complexity.Language.Syntax.Core
 import Complexity.Language.Syntax.Core.Basic

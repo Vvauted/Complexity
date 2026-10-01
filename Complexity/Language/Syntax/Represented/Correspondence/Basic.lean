@@ -178,6 +178,9 @@ private partial def observationProof (observation : Observation) (heap : TSyntax
         $(← observationProof right heap relations))
   | .arraySize array =>
       `(Complexity.Language.Buffer.Contents.size_eq $(← observationProof array heap relations))
+  | .stringLength value =>
+      `(Complexity.Language.Representation.string_length
+        $(← observationProof value heap relations))
   | .arrayProdSize array =>
       `(Complexity.Language.Representation.arrayProd_size
         $(← observationProof array heap relations))
@@ -213,6 +216,10 @@ partial def preservation (type : NativeType) (initial finish shape : TSyntax `te
         `(Complexity.Language.Representation.Preserves.arrayProd
           $(← preservation (.array left) initial finish shape contents)
           $(← preservation (.array right) initial finish shape contents))
+    | .string =>
+        `(Complexity.Language.Representation.Preserves.comap
+          Complexity.Language.Representation.stringEmbedding
+          $(← preservation (.array .nat) initial finish shape contents))
     | .raggedArray payload =>
         `(Complexity.Language.Representation.Preserves.raggedArrayOf
           $(← preservation (.array .nat) initial finish shape contents)

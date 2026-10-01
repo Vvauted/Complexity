@@ -167,7 +167,7 @@ partial def hasEncoding : NativeType → Bool
   | .prod left right => hasEncoding left && hasEncoding right
   | .option payload => hasEncoding payload
   | .record _ layout _ => hasEncoding layout
-  | .array _ | .arrayProd _ _ | .raggedArray _ | .arrayView _ _ _ |
+  | .string | .array _ | .arrayProd _ _ | .raggedArray _ | .arrayView _ _ _ |
       .list _ | .listView _ _ _ => false
 
 /-- Compose the existing checked encodings of scalars, products, options and
@@ -216,9 +216,9 @@ partial def encoding : NativeType → TermElabM Encoding
         embedding := ← mkAppM ``Function.Embedding.trans #[view, inner.embedding]
         relation := ← mkAppM ``comap_rel
           #[layout.representation, view, inner.embedding, inner.relation] }
-  | .array _ | .arrayProd _ _ | .raggedArray _ | .arrayView _ _ _ |
+  | .string | .array _ | .arrayProd _ _ | .raggedArray _ | .arrayView _ _ _ |
       .list _ | .listView _ _ _ =>
-      throwError "a pure source import cannot encode a heap-backed array or linked list"
+      throwError "a pure source import cannot encode a heap-backed string, array or linked list"
 
 private structure Parameter where
   name : TSyntax `ident

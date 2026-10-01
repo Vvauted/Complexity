@@ -38,6 +38,21 @@ def stringEmbedding : String ↪ Array Nat :=
   change (value.toList.toArray.map Char.toNat).size = value.length
   simp only [Array.size_map, List.size_toArray, String.length_toList]
 
+/-- Defaulted character lookup agrees with a real read of the code-point array. -/
+theorem stringEmbedding_getD (value : String) (index : Nat) (fallback : Char) :
+    (stringEmbedding value).getD index fallback.toNat =
+      (value.toList.getD index fallback).toNat := by
+  change (value.toList.toArray.map Char.toNat).getD index fallback.toNat = _
+  rw [Array.getD_map]
+  simp [List.getD_eq_getElem?_getD]
+
+/-- Repeated characters have exactly the existing initialized-buffer contents. -/
+theorem stringEmbedding_replicate (length : Nat) (initial : Char) :
+    stringEmbedding (String.ofList (List.replicate length initial)) =
+      Array.replicate length initial.toNat := by
+  change ((String.ofList (List.replicate length initial)).toList.toArray.map Char.toNat) = _
+  simp only [String.toList_ofList, List.toArray_replicate, Array.map_replicate]
+
 /-- Observe the complete string in the actual buffer at the current heap. -/
 def string : Representation String (.buffer .nat) :=
   (array .nat).comap stringEmbedding

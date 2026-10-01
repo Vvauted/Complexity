@@ -7,6 +7,7 @@ import Complexity
 import Examples.Language.LinkedList
 import Examples.Language.ProgramCompiled
 import Examples.Language.ScalarCompiled
+import Examples.Language.Strings
 import Examples.Language.Traversal
 
 /-!
@@ -196,7 +197,7 @@ Nested arrays of optional elements do not yet have a generated row reader.
 Reading permits aliases; updating separate columns still needs separation or
 an explicit alias-aware update proof.
 
-## String input and observation
+## Strings and character-indexed operations
 
 [`Representation.string`](##Complexity.Language.Representation.string) keeps
 ordinary Lean `String` values while storing their complete Unicode scalar
@@ -212,12 +213,34 @@ rows. `Input`/`RamInput` record deriving can therefore retain fields of type
 `Array String` instead of asking authors to replace their mathematical inputs.
 Output observations use the same layouts at the actual final heap.
 
-These are invocation and observation interfaces, not frontend string-operation
-support or free `String.toList` conversions. Character access, allocation and
-string expressions still need checked source implementations. Reading a row
-whose payload itself has row boundaries is also separate work: a slice of
-nonzero-based inner boundaries cannot be called a canonical zero-based row
-without a justified representation or an actual, charged rebasing operation.
+The frontend accepts `text.length`/`String.length text`,
+`text.toList.getD index fallback` and
+`String.ofList (List.replicate length character)`. The character lookup fuses
+the complete expression into the existing bounds check and code-point read;
+it does not materialize an intermediate linked list or provide a standalone
+`String.toList` conversion. Repetition invokes the real initialized allocator,
+including at length zero. The empty literal `""` uses that zero-length allocation;
+nonempty literals and arbitrary `String.ofList` are not yet supported.
+
+`Array String.getD` reads the actual row boundaries and returns a borrowed view,
+or the complete supplied String fallback out of bounds. All correspondence
+proofs retain the actual heap and preserve prior string/array contents across
+these reads and allocations, including aliases. Shape extension alone would
+not justify preserving mutable contents.
+
+The [String consumer](##Complexity.Examples.Strings) uses `program_correct`
+to state ordinary equations for lookup, length, repeated construction and a
+record containing string rows. Its `replicateBodyCost_linear` composes the
+existing allocator certificate through the actual caller, counting initialized
+cells and wrapper instructions. It is conditional on arena readiness, not a
+complete `Program.TimeO` or native CPU-cost theorem. Word ranges and capacity
+remain separate from source correctness.
+
+General string mutation, mixed-character construction and deeper row access
+remain open. In particular, a row whose payload itself has row boundaries
+cannot be returned as canonical zero-based storage merely by slicing nonzero
+inner offsets; it needs a justified borrowed representation or an actual,
+charged rebasing operation.
 
 ## Linked-node storage
 

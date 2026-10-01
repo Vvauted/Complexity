@@ -142,7 +142,7 @@ def totalDeclaration? (names : DeclarationNames) (fn : Function) :
 -- Use this distinction only to retain the old shape-only range proof entry;
 -- the stronger function correspondence remains the primary proof.
 private def needsContentsFrame : NativeType → Bool
-  | .array _ | .arrayProd .. | .raggedArray _ | .arrayView .. => true
+  | .string | .array _ | .arrayProd .. | .raggedArray _ | .arrayView .. => true
   | .prod left right => needsContentsFrame left || needsContentsFrame right
   | .option payload | .record _ payload _ | .listView _ payload _ => needsContentsFrame payload
   | _ => false

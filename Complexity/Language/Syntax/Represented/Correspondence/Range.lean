@@ -465,7 +465,7 @@ private def rangeBodyFinish (range : RangeRegistration) (site : ActualRangeSite)
       ⟨$returnedObserved, $cursorObserved, $fixed:ident, $nextFrame⟩, $completedObserved⟩)]
 
 private def rangeCaptureNeedsContents : NativeType → Bool
-  | .array _ | .arrayProd _ _ | .raggedArray _ => true
+  | .string | .array _ | .arrayProd _ _ | .raggedArray _ => true
   | .arrayView _ storage _ | .listView _ storage _ => rangeCaptureNeedsContents storage
   | .prod left right => rangeCaptureNeedsContents left || rangeCaptureNeedsContents right
   | .option payload => rangeCaptureNeedsContents payload

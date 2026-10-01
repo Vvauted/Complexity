@@ -7,6 +7,7 @@ import Complexity.Language.Syntax.Types
 import Complexity.Language.Syntax.Core
 import Complexity.Language.Representation.List
 import Complexity.Language.Representation.RaggedArray
+import Complexity.Language.Representation.String
 import Complexity.Program.Deriving
 import Complexity.Program.ListOutput
 import Lean.PrettyPrinter.Delaborator
@@ -45,6 +46,11 @@ still has no default source value for a result join.
 Integer lists use the canonical sign/magnitude observation over two synchronized
 linked field chains. Their empty roots, constructors and head/tail reads retain
 the same mathematical list; a list view is not a free heap decoder.
+
+Strings use contiguous Unicode code-point buffers, and string arrays use the
+existing shared row boundaries. These are not Lean's UTF-8 storage fields.
+String length and registered character operations retain their ordinary models;
+the representation alone does not implement arbitrary String/List conversions.
 -/
 
 namespace Complexity.Language.Syntax.Represented
@@ -59,6 +65,7 @@ inductive NativeType where
   /-- Only resolver-recognized canonical scalar codes, never arbitrary free host encodings. -/
   | scalar (type embedding : Expr)
   | int
+  | string
   | raw (type : Ty)
   | list (kind : CellTy)
   /-- A resolver-selected mathematical list view of real linked field storage. -/
@@ -76,6 +83,7 @@ def NativeType.coreTy : NativeType → Ty
   | .pure type => type.coreTy
   | .scalar _ _ => .nat
   | .int => .prod .bool .nat
+  | .string => .buffer .nat
   | .raw type => type
   | .list kind => .option (.node kind)
   | .listView _ storage _ => storage.coreTy
@@ -92,6 +100,7 @@ def NativeType.nativeType : NativeType → Expr
   | .pure type => type.nativeType
   | .scalar type _ => type
   | .int => mkConst ``Int
+  | .string => mkConst ``String
   | .raw type => mkApp (mkConst ``Value) (coreTypeExpr type)
   | .list kind => mkApp (mkConst ``List [Level.zero])
       (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool)
@@ -117,6 +126,7 @@ def NativeType.representation : NativeType → Expr
   | .scalar type embedding => mkAppN (mkConst ``Representation.ofEmbedding [Level.zero])
       #[type, coreTypeExpr .nat, embedding]
   | .int => mkConst ``Representation.int
+  | .string => mkConst ``Representation.string
   | .raw type =>
       let nativeType := mkApp (mkConst ``Value) (coreTypeExpr type)
       let embedding := mkApp (mkConst ``Function.Embedding.refl [Level.zero]) nativeType
@@ -227,6 +237,7 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   let reduced ← whnf type
   if let some scalar ← canonicalScalar? reduced then return scalar
   if ← isDefEq reduced (mkConst ``Int) then return .int
+  if ← isDefEq reduced (mkConst ``String) then return .string
   if let .app (.const name _) kind := reduced then
     if name == ``Buffer || name == ``NodeRef then
       let cellKind ← if ← isDefEq kind (mkConst ``CellTy.nat) then pure CellTy.nat
@@ -255,6 +266,9 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if let .app (.const ``Array _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .array .nat
     if ← isDefEq element (mkConst ``Bool) then return .array .bool
+    if ← isDefEq element (mkConst ``String) then
+      return .arrayView .string (.raggedArray (.array .nat))
+        (← mkAppM ``Function.Embedding.arrayMap #[mkConst ``Representation.stringEmbedding])
     if let some scalar@(.scalar _ embedding) ← canonicalScalar? element then
       return .arrayView scalar (.array .nat)
         (← mkAppM ``Function.Embedding.arrayMap #[embedding])

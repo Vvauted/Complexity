@@ -66,6 +66,7 @@ inductive Observation where
   | binary (operation : TSyntax `term) (left right : Observation)
   | encodedEq (embedding : TSyntax `term) (unequal : Bool) (left right : Observation)
   | arraySize (array : Observation)
+  | stringLength (value : Observation)
   | arrayProdSize (array : Observation)
   | raggedArraySize (array : Observation)
   | arrayViewSize (type : NativeType) (array : Observation)

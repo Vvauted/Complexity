@@ -18,6 +18,7 @@ import Complexity.Language.List.Uncons.Native
 import Complexity.Language.List.IsEmpty.Native
 import Complexity.Language.List.Int
 import Complexity.Language.Scalar.Int
+import Complexity.Language.String
 
 /-!
 # Represented calls and operation selection
@@ -535,6 +536,29 @@ private def arrayViewGetDOperation (family : TSyntax `ident) (array : NativeType
   modify fun state => { state with arrayReads := state.arrayReads.push ⟨array, operation⟩ }
   return operation
 
+/-- String observations reuse real buffer operations and their existing costs. -/
+private def stringOperation (replicate : Bool) : PrepareM Operation := do
+  let family := mkIdent (if replicate then `Complexity.Language.Buffer.Replicate
+    else `Complexity.Language.Buffer.GetD)
+  unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
+    modify fun state => { state with calledFamilies := state.calledFamilies.push family }
+  let count ← resolveType (← `(Nat))
+  let character ← resolveType (← `(Char))
+  let contract := if replicate then `replicate else `getD
+  let declaration (suffix : String) := mkCIdent
+    ((`Complexity.Language.String ++ contract).appendAfter suffix)
+  let native ← if replicate then
+      `(fun (length : Nat) (initial : Char) => String.ofList (List.replicate length initial))
+    else `(fun (value : String) (index : Nat) (fallback : Char) => value.toList.getD index fallback)
+  return {
+    family, sourceName := if replicate then `replicateNat else `getNat
+    inputs := if replicate then #[count, character] else #[.string, count, character]
+    result := if replicate then .string else character
+    model? := some {
+      native, equation := none, relation := declaration "_eval_exists"
+      refinement := declaration "_refines"
+      preservingRelation := some (declaration "_eval_exists_preserving") } }
+
 private def namedCall? (expression : TSyntax `term) :
     Option (TSyntax `ident × Array (TSyntax `term)) :=
   match expression with
@@ -601,6 +625,13 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
   if rawCallSyntax expression then return some expression
   if let `($head:term $arguments:term*) := expression then
     if let some (receiver, `getD) := rawFieldAccess? head then
+      if let some (text, `toList) := rawFieldAccess? receiver then
+        let receiverValue? ← try pure (some (← value scope text)) catch _ => pure none
+        if receiverValue?.any (fun receiver => match receiver.type with
+            | .string => true | _ => false) then
+          unless arguments.size == 2 do
+            throwErrorAt expression "string.toList.getD requires an index and a default character"
+          return some (← `(List.getD (String.toList $text) $(arguments[0]!) $(arguments[1]!)))
       let receiverValue? ← try pure (some (← value scope receiver)) catch _ => pure none
       if receiverValue?.any (fun receiver => receiver.type.isArray) then
         unless arguments.size == 2 do
@@ -654,6 +685,14 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
   | `(Int.mul $left $right) => return some (← `(Int.mul $left $right))
   | `(Int.neg $inner) => return some (← `(Int.neg $inner))
   | `(Int.lt $left $right) => return some (← `(Int.lt $left $right))
+  | `(List.getD (String.toList $text) $index $fallback) =>
+      return some (← `(List.getD (String.toList $text) $index $fallback))
+  | `(String.ofList (List.replicate $length $initial)) =>
+      return some (← `(String.ofList (List.replicate $length $initial)))
+  | `($literal:str) =>
+      if literal.getString.isEmpty then
+        return some (← `(String.ofList (List.replicate 0 '0')))
+      throwErrorAt expression "nonempty string literals require source character construction"
   | `(Array.append $left:term $right:term) => return some (← `(Array.append $left $right))
   | `(Array.replicate $length:term $initial:term) => return some (← `(Array.replicate $length $initial))
   | `(Array.getD $values:term $index:term $fallback:term) =>
@@ -715,6 +754,10 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
   | `(Int.mul $left $right) => return some (← integerOperation `mul, #[left, right])
   | `(Int.neg $inner) => return some (← integerOperation `negate, #[inner])
   | `(Int.lt $left $right) => return some (← integerOperation `less, #[left, right])
+  | `(List.getD (String.toList $text) $index $fallback) =>
+      return some (← stringOperation false, #[text, index, fallback])
+  | `(String.ofList (List.replicate $length $initial)) =>
+      return some (← stringOperation true, #[length, initial])
   | `(Array.append $left:term $right:term) =>
       return some (← arrayOperation true, #[left, right])
   | `(Array.replicate $length:term $initial:term) =>
@@ -949,16 +992,26 @@ partial def hoistValueCall? (names : DeclarationNames) (imports : ImportedProgra
     -- The operation signature supplies literal types. A fold's named callback
     -- is not a value argument and must not be called with zero parameters.
     let selected ← try operationCall? names imports scope called expected catch _ => pure none
-    let (head, arguments) ← match called with
+    let prepared : Array (TSyntax `term) ×
+        (Array (TSyntax `term) → TermElabM (TSyntax `term)) ← match called with
+      | `(List.getD (String.toList $text) $index $fallback) =>
+          pure (#[text, index, fallback], fun args =>
+            `(List.getD (String.toList $(args[0]!)) $(args[1]!) $(args[2]!)))
+      | `(String.ofList (List.replicate $length $initial)) =>
+          pure (#[length, initial], fun args =>
+            `(String.ofList (List.replicate $(args[0]!) $(args[1]!))))
       | `(List.foldl $callback:ident $initial:term $values:term) =>
-          pure (← `(List.foldl $callback:ident), #[initial, values])
-      | `($head:term $arguments:term*) => pure (head, arguments)
-      | _ => pure (called, #[])
+          let head ← `(List.foldl $callback:ident)
+          pure (#[initial, values], fun args => pure (Lean.Syntax.mkApp head args))
+      | `($head:term $arguments:term*) =>
+          pure (arguments, fun args => pure (Lean.Syntax.mkApp head args))
+      | _ => pure (#[], fun _ => pure called)
+    let (arguments, rebuild) := prepared
     for index in [:arguments.size] do
       let input := selected.bind fun (operation, _) => operation.inputs[index]?
-      if let some (nested, rebuild) ← hoist arguments[index]! input true then
+      if let some (nested, replace) ← hoist arguments[index]! input true then
         return some (nested, fun value => do
-          pure (Lean.Syntax.mkApp head (arguments.set! index (← rebuild value))))
+          rebuild (arguments.set! index (← replace value)))
     if includeRoot then return some (called, fun value => pure value)
   return none
 

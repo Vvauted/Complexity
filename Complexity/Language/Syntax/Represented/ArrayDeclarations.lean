@@ -108,6 +108,11 @@ private partial def readPlan (array result : NativeType) (path : String)
           let inner ← readPlan columns layout path (← `(($rows).map $view:ident)) index
             (← `($view:ident $fallback)) storage defaultView heap observed defaultObserved
           return { inner with related := ← checked inner.returned inner.related }
+      | .string => do
+          let view := mkCIdent ``Representation.stringEmbedding
+          let inner ← readPlan columns (.array .nat) path (← `(($rows).map $view:ident)) index
+            (← `($view:ident $fallback)) storage defaultView heap observed defaultObserved
+          return { inner with related := ← checked inner.returned inner.related }
       | .option payload => do
           let (initialDefault, rawDefault) ← payload.optionColumnDefault
           let packed := mkIdent (Name.mkSimple ("packedDefault" ++ path))
