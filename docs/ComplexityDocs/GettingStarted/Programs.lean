@@ -101,6 +101,10 @@ their canonical Boolean/natural constructor fields: `(true, n)` means `-(n + 1)`
 so `-1` remains distinct from zero. Arrays use two actual equal-length columns;
 the [RAM input layout](##Complexity.Computability.Ram.Compiler.Language.Program.IntInput)
 retains both columns, extents and width requirements.
+Nested `Array (Array Int)` outputs share one row-boundary buffer with those
+same two integer columns. `retainSignedRows_correct` states ordinary equality
+of the returned nested array, including empty rows and negative entries.
+This observation does not copy rows or make construction and mutation free.
 The [integer operation contracts](##Complexity.Language.Buffer.Prod.Int) reuse
 the existing pair reader and initialized allocator, proving ordinary signed
 `Array.getD` and `Array.replicate` observations, including negative defaults.

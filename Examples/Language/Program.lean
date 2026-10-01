@@ -490,11 +490,21 @@ source_program SignedRows where
     let row := input.rows.getD input.index input.fallback
     return row.getD 0 (-1)
 
+  def retain (rows : Array (Array Int)) : Array (Array Int) := rows
+
 def signedRowFirst : Complexity.Program SignedRowsInput Int := program% SignedRows.first
 
 theorem signedRowFirst_correct :
     signedRowFirst.Correct (fun _ => True)
       (fun input result => result = (input.rows.getD input.index input.fallback).getD 0 (-1)) := by
   program_correct SignedRows.first using fun _ => rfl
+
+/-- Signed nested results retain every row, including empty rows and negative values. -/
+def retainSignedRows : Complexity.Program (Array (Array Int)) (Array (Array Int)) :=
+  program% SignedRows.retain
+
+theorem retainSignedRows_correct :
+    retainSignedRows.Correct (fun _ => True) (fun rows result => result = rows) := by
+  program_correct SignedRows.retain using fun _ => rfl
 
 end Complexity.Examples.TypedProgram

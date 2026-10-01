@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Program.ArrayInput
 import Complexity.Language.Representation.Array.Int
+import Complexity.Language.Representation.RaggedArray
 
 /-!
 # Fixed integer inputs and outputs
@@ -77,6 +78,12 @@ instance int : Output Int where
 instance arrayInt : Output (Array Int) where
   type := .prod (.buffer .bool) (.buffer .nat)
   representation := Representation.arrayInt
+
+/-- Nested integer rows share one boundary buffer and the canonical integer
+columns. This observes existing returned storage; it does not copy rows. -/
+instance raggedArrayInt : Output (Array (Array Int)) where
+  type := .prod (.buffer .nat) (.prod (.buffer .bool) (.buffer .nat))
+  representation := Representation.raggedArrayOf Representation.arrayInt
 
 end Output
 
