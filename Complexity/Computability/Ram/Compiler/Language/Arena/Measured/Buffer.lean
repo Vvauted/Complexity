@@ -6,11 +6,11 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured
 
 /-!
-# Measured buffer reads and borrowed slices
+# Measured buffer reads, writes and borrowed slices
 
 Successful source operations retain their actual values or descriptors in the
 continuation. The existing readiness and cost constructors supply finite-word
-conditions and compiler counts. Neither operation allocates; any later cursor
+conditions and compiler counts. None of these operations allocates; any later cursor
 growth belongs to the actual continuation.
 -/
 
@@ -41,6 +41,23 @@ theorem read {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ 
     ArenaReady.read (loaded := loaded) bufferFits indexFits valueFits ready,
     ArenaExecutionCost.read (loaded := loaded) (bufferFits := bufferFits)
       (indexFits := indexFits) (valueFits := valueFits) cost, outcome⟩
+
+/-- Write the proved source cell and retain the actual updated heap. The cursor
+is unchanged; aliasing and frames are properties of this same write equation. -/
+theorem write {kind : CellTy} {buffer : Atom Γ (.buffer kind)} {index : Atom Γ .nat}
+    {value : Atom Γ kind.toTy} {heap : Heap}
+    (written : entry.heap.write (buffer.eval entry.locals) (index.eval entry.locals)
+      (kind.ofValue (value.eval entry.locals)) = .ok heap)
+    (bufferFits : ValueFits w (buffer.eval entry.locals))
+    (indexFits : index.eval entry.locals < 2 ^ w)
+    (valueFits : ValueFits w (value.eval entry.locals))
+    (outcome : post ⟨entry.locals, heap⟩ .normal cursor writeCodeSize) :
+    ArenaMeasured program w heapLimit depth (.write buffer index value) post entry cursor := by
+  exact ⟨⟨entry.locals, heap⟩, .normal, cursor, writeCodeSize,
+    Complexity.Language.Exec.write written,
+    ArenaReady.write (written := written) bufferFits indexFits valueFits,
+    ArenaExecutionCost.write (written := written) (bufferFits := bufferFits)
+      (indexFits := indexFits) (valueFits := valueFits), outcome⟩
 
 /-- Borrow the actual successful slice without copying its cells or changing the
 arena cursor. Placement conditions remain separate from descriptor word ranges. -/

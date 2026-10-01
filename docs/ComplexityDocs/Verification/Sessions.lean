@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session
+import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Buffer
 
 /-!
 # Persistent sessions
@@ -74,6 +75,12 @@ The cost index sums the actual complete preloaded invocation counts.
 `Run.append` adds these counts while retaining the real boundary memory.
 Each invocation still needs the existing word-range, heap, stack and readiness
 conditions; source totality alone does not supply finite machine capacity.
+
+For mutable buffers, `ArenaMeasured.read` and `ArenaMeasured.write` consume the
+actual successful heap-operation equations and finite-word facts. The write
+rule exposes the updated heap and the existing compiler's instruction count;
+ordinary sequence composition then continues from that heap, without assuming
+that aliases retain their old contents or that a store is free.
 
 These bounds include each invocation's call/return wrapper and final halt.
 They do **not** include initial arena bootstrap, host input preparation, result
