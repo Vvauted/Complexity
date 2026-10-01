@@ -10,11 +10,13 @@ import Complexity.Program.SumOutput
 import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.List.Prepare
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Prepare
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.ScheduledTraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.PreparedTraceTimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.PreparedHistoryTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Arena.Measured.Buffer
 
 /-!
@@ -112,7 +114,7 @@ These resource rules currently use a fixed admissible-request domain and an
 invariant closed under all those requests. They do not infer that a finite
 protocol continues to accept requests after its terminal state.
 
-## Preparing current linked inputs
+## Preparing current heap-backed inputs
 
 Heap-backed feedback cannot be supplied by a pure request encoder: its nodes
 must exist in the current memory. `Ram.LanguageCompiler.List.Prepare.Run`
@@ -157,6 +159,38 @@ External traversal, scalar loading, transport and driver control remain outside
 these preloaded calls. Placement stability does not implement saving old state
 registers across constructor calls. The native host input loaders are a
 separate backend boundary.
+
+For natural arrays, `Buffer.Prepare.Run` uses the existing initialized buffer
+allocator followed by one real scalar-write invocation per cell. Its source
+relation is total for every finite array, including an empty array. The RAM
+relation threads the complete actual memory through allocation and every write;
+its `source` projection retains that same preparation. `Run.observed` gives the
+original ordinary array and preserves exact old objects and their placements.
+Consequently a later input can be loaded without reconstructing private state
+or invalidating contents of previously retained views.
+
+The actual preparation count is affine in the current array length. It includes
+initialized allocation, every scalar write and their invocation wrappers.
+`exists_le` constructs the executions from word ranges and available arena
+space. These are helper assumptions for realization, not additional legality
+conditions that a task may silently impose on its inputs. Array traversal and
+transport into the scalar ports remain external, just as for linked inputs.
+
+`PreparedHistoryTimeO` and `PreparedHistoryTimeOOn` combine this preparation
+boundary with the finite raw-request `historyWidth` policy. They are useful
+when initialization has no size-bearing configuration but subsequent external
+requests contain arbitrarily large current arrays or integers. The protocol
+fixes the preparation, raw admission words, legal histories, reply property and
+growth expression. Only the declared configuration enters the initial memory;
+each request is prepared at its own call boundary. The bound covers one actual
+initialized RAM history, including all preparations and callbacks, and its
+postcondition observes the replies of that very history. The `source` theorem
+projects the same accepted execution without imposing a source-level budget.
+
+This is a total-history bound: it allows initialization or cleanup charges to
+be amortized across calls. Use the phase interface below when each callback
+needs its own latency bound. Fixed external histories are not adaptive games,
+and neither prepared interface supplies a continuously running I/O driver.
 
 ## Uniform callback-time requirements
 

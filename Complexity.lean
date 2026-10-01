@@ -169,6 +169,7 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.Rebase
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Rebase.Ready
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Rebase.Realization
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Replicate
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Prepare
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Execution
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map.Scalar
@@ -265,6 +266,7 @@ import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.Session.PhaseTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.Prepared
 import Complexity.Computability.Ram.Compiler.Language.Session.PreparedTraceTimeBound
+import Complexity.Computability.Ram.Compiler.Language.Session.PreparedHistoryTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.TraceTimeBound
 import Complexity.Computability.Ram.Compiler.Language.Session.ScheduledTraceTimeBound
@@ -469,6 +471,7 @@ import Complexity.Language.Buffer.Ragged.Extract
 import Complexity.Language.Buffer.Ragged.Nested
 import Complexity.Language.Buffer.Rebase
 import Complexity.Language.Buffer.Replicate
+import Complexity.Language.Buffer.Prepare
 import Complexity.Language.Buffer.Map
 import Complexity.Language.Buffer.Map.Program
 import Complexity.Language.Buffer.RepresentedCopy

@@ -22,6 +22,24 @@ namespace Complexity.Language
 
 namespace Heap
 
+/-- Updating an object beyond an existing prefix preserves that exact prefix. -/
+theorem objects_prefix_write {old heap finish : Heap} {τ : CellTy} {buffer : Buffer τ}
+    {index : Nat} {value : CellValue τ}
+    (extension : List.IsPrefix old.objects.toList heap.objects.toList)
+    (fresh : old.objects.size ≤ buffer.object)
+    (written : heap.write buffer index value = .ok finish) :
+    List.IsPrefix old.objects.toList finish.objects.toList := by
+  apply List.prefix_iff_getElem?.mpr
+  intro object before
+  have different : object ≠ buffer.object := by
+    simp only [Array.length_toList] at before
+    omega
+  have same : finish.objects[object]? = heap.objects[object]? := by
+    obtain ⟨values, _, _, _, rfl⟩ := write_eq_ok_iff.mp written
+    simp [replace, Ne.symm different]
+  simpa only [Array.getElem?_toList, same] using
+    (List.prefix_iff_getElem?.mp extension object before)
+
 /-- Allocation appends its initialized object without changing any old object. -/
 theorem objects_prefix_alloc (heap : Heap) {τ : CellTy} (length : Nat)
     (initial : CellValue τ) :
