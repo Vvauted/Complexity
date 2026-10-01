@@ -130,6 +130,17 @@ private partial def arraySizeProof (type : NativeType) (observed : TSyntax `term
         Function.Embedding.arrayMap, Array.size_map] using $sized)
   | _ => throwError "array size proof requires a supported field-column observation"
 
+/-- Empty resolver-selected list views reuse the actual absent field roots.
+The generated proof must check against the view's own empty-list observation. -/
+private partial def nilObservation (type : NativeType) (heap : TSyntax `term) :
+    TermElabM (TSyntax `term) := do
+  match type with
+  | .list kind => `(Complexity.Language.Representation.list_nil $(← kindTerm kind) $heap)
+  | .listView _ storage _ => nilObservation storage heap
+  | .prod left right =>
+      `(And.intro $(← nilObservation left heap) $(← nilObservation right heap))
+  | _ => throwError "an empty list requires supported linked field storage"
+
 private partial def observationProof (observation : Observation) (heap : TSyntax `term)
     (relations : Array RetainedObservation) : TermElabM (TSyntax `term) := do
   match observation with
@@ -138,7 +149,7 @@ private partial def observationProof (observation : Observation) (heap : TSyntax
       let some entry := relations.find? (fun entry => entry.name == name)
         | throwError "the value's observation is not available in its current heap"
       pure entry.proof
-  | .nil kind => `(Complexity.Language.Representation.list_nil $(← kindTerm kind) $heap)
+  | .nil type => nilObservation type heap
   | .pair purePair left right =>
       let left ← observationProof left heap relations
       let right ← observationProof right heap relations
@@ -206,7 +217,7 @@ partial def preservation (type : NativeType) (initial finish shape : TSyntax `te
         `(Complexity.Language.Representation.Preserves.raggedArrayOf
           $(← preservation (.array .nat) initial finish shape contents)
           $(← preservation payload initial finish shape contents))
-    | .arrayView _ storage embedding =>
+    | .arrayView _ storage embedding | .listView _ storage embedding =>
         `(Complexity.Language.Representation.Preserves.comap $(← termOfExpr embedding)
           $(← preservation storage initial finish shape contents))
     | .prod left right => do

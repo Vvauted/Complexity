@@ -57,7 +57,7 @@ structure Parameter where
 inductive Observation where
   | refl
   | named (name : Name)
-  | nil (kind : CellTy)
+  | nil (type : NativeType)
   | pair (purePair : Bool) (left right : Observation)
   | projection (purePair : Bool) (first : Bool) (pair : Observation)
   | none (payload : NativeType)

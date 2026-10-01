@@ -65,6 +65,19 @@ theorem unconsInt_eval_exists_heap_eq (values : List Int)
       Representation.int, Representation.listInt, Representation.comap,
       Equiv.listEquivOfEquiv]
 
+/-- Reading signed nodes leaves all previous mutable contents unchanged. -/
+theorem unconsInt_eval_exists_preserving (values : List Int)
+    (roots : Option (NodeRef .bool) × Option (NodeRef .nat)) (heap : Heap)
+    (observed : Representation.listInt.Rel values roots heap) :
+    ∃ returned finish,
+      unconsBoolNat roots heap = Part.some (.ok returned, finish) ∧
+      (Representation.int.prod Representation.listInt).option.Rel
+        (values.head?.map (fun head => (head, values.tail))) returned finish ∧
+      heap.ShapeExtends finish ∧ Buffer.PreservesContents heap finish := by
+  obtain ⟨returned, executed, related⟩ := unconsInt_eval_exists_heap_eq values roots heap observed
+  exact ⟨returned, heap, executed, related, Heap.ShapeExtends.refl heap,
+    fun {_} _ _ contents => contents⟩
+
 /-- The ordinary signed reader retains the usual represented-call heap frame. -/
 theorem unconsInt_eval_exists (values : List Int)
     (roots : Option (NodeRef .bool) × Option (NodeRef .nat)) (heap : Heap)

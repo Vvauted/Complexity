@@ -9,6 +9,7 @@ import Examples.Language.Program
 import Examples.Language.ProgramCompiled
 import Examples.Language.Characters
 import Examples.Language.Enumerations
+import Examples.Language.SignedLists
 import Complexity.Program.ListOutput
 import Complexity.Language.List.Int
 import Complexity.Computability.Ram.Compiler.Language.List.Prod
@@ -83,9 +84,15 @@ and reading, preserving old contents and sharing the original tails.
 Their [RAM bounds](##Complexity.Computability.Ram.Compiler.Language.List.Prod)
 come from those same source bodies. Node operations compose through
 `ram_source_arena_cost`; capacity, word ranges and readiness remain separate.
-Use these focused imports. This is fixed output and operation support, not yet
-ordinary signed-list `::`/pattern syntax, fixed list inputs or a complete caller
-time theorem.
+`source_program` accepts ordinary signed `[]`, `head :: tail` and List matches.
+The [integer-list example](##Examples.Language.SignedLists) proves ordinary
+singleton/empty results and retains an array observation through construction
+and decomposition. Expected return/binding types disambiguate literals, so
+`return 1 :: []` in a `List Int` function needs no raw representation annotation.
+These are real linked operations, not mathematical list evaluation at runtime.
+Fixed list inputs, signed `foldl`/`isEmpty` frontend operations and a complete
+caller time theorem remain separate. Use focused imports for the operation and
+RAM cost contracts.
 
 [Signed inputs](##Complexity.Program.IntInput) retain ordinary `Int` and `Array Int`
 at the fixed task boundary, including record fields and outputs. Scalars use

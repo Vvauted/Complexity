@@ -16,6 +16,7 @@ import Complexity.Language.List.Fold.Native
 import Complexity.Language.List.Cons.Native
 import Complexity.Language.List.Uncons.Native
 import Complexity.Language.List.IsEmpty.Native
+import Complexity.Language.List.Int
 
 /-!
 # Represented calls and operation selection
@@ -217,6 +218,24 @@ private def consOperation (family : TSyntax `ident) (kind : CellTy) : PrepareM O
       refinement := mkIdentFrom family (operationFamily.getId ++ `cons_refines) } }
   modify fun state => { state with constructors := state.constructors.push ⟨kind, operation⟩ }
   return operation
+
+private def signedListOperation (construct : Bool) : PrepareM Operation := do
+  let family := mkIdent `Complexity.Language.List.Prod.Operations
+  unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
+    modify fun state => { state with calledFamilies := state.calledFamilies.push family }
+  let list ← resolveType (← `(List Int))
+  let contract := if construct then `consInt else `unconsInt
+  let declaration (suffix : String) := mkCIdent ((family.getId ++ contract).appendAfter suffix)
+  let native ← if construct then pure (⟨(mkCIdent ``List.cons).raw⟩ : TSyntax `term)
+    else `(fun (values : List Int) => values.head?.map (fun head => (head, values.tail)))
+  return {
+    family, sourceName := if construct then `consBoolNat else `unconsBoolNat
+    inputs := if construct then #[.int, list] else #[list]
+    result := if construct then list else .option (.prod .int list)
+    model? := some {
+      native, equation := none, relation := declaration "_eval_exists"
+      refinement := declaration "_refines"
+      preservingRelation := some (declaration "_eval_exists_preserving") } }
 
 private def unconsOperation (family : TSyntax `ident) (kind : CellTy) : PrepareM Operation := do
   if let some registered := (← get).deconstructors.find? (fun registered => registered.kind == kind) then
@@ -561,7 +580,7 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
 /-- Checked local models take precedence over their precollected source-only
 headers; all local names take precedence over intrinsic spellings. -/
 def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
-    (scope : List Binding) (expression : TSyntax `term) :
+    (scope : List Binding) (expression : TSyntax `term) (expected : Option NativeType := none) :
     PrepareM (Option (Operation × Array (TSyntax `term))) := do
   if let some (called, arguments) := namedCall? expression then
     if let some operation ← localOperation? names called true then
@@ -594,15 +613,26 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
   | `(List.foldl $callback:ident $initial:term $values:term) =>
       return some (← foldOperation names.publicFamily imports callback, #[initial, values])
   | `(List.cons $head:term $tail:term) =>
-      let tailValue ← value scope tail
-      let .list kind := tailValue.type
-        | throwErrorAt tail "List.cons requires a represented list tail"
-      return some (← consOperation names.publicFamily kind, #[head, tail])
+      let tailType : Option NativeType ← if expected.any (·.isList) then pure expected else
+        match tail with
+        | `([]) => do
+            let head ← value scope head
+            let type ← resolveNativeType (← mkAppM ``List #[head.type.nativeType])
+            pure (some type)
+        | _ => pure none
+      let tailValue ← value scope tail tailType
+      let operation ← match tailValue.type with
+        | .list kind => consOperation names.publicFamily kind
+        | .listView .int _ _ => signedListOperation true
+        | _ => throwErrorAt tail "List.cons requires a represented list tail"
+      return some (operation, #[head, tail])
   | `(List.uncons $values:term) =>
       let valuesValue ← value scope values
-      let .list kind := valuesValue.type
-        | throwErrorAt values "List.uncons requires a represented list"
-      return some (← unconsOperation names.publicFamily kind, #[values])
+      let operation ← match valuesValue.type with
+        | .list kind => unconsOperation names.publicFamily kind
+        | .listView .int _ _ => signedListOperation false
+        | _ => throwErrorAt values "List.uncons requires a represented list"
+      return some (operation, #[values])
   | `(List.isEmpty $values:term) =>
       let valuesValue ← value scope values
       let .list kind := valuesValue.type

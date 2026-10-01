@@ -199,13 +199,6 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
   | `(($expression:term)) => value scope expression expected
   | `(($expression:term : $type:term)) =>
       let expected ← resolveType type
-      if let .list kind := expected then
-        if let `([]) := expression then
-          return {
-            type := expected, raw := ← `(none)
-            model? := some {
-              native := stx
-              model := stx, rawModel := ← `(none), observation := .nil kind } }
       if let .option payload := expected then
         if let `(none) := expression then
           return {
@@ -216,6 +209,15 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
       let result ← value scope expression (some expected)
       expect type expected result.type
       return result
+  | `([]) =>
+      let some type := expected
+        | throwErrorAt stx "an empty list needs its result, parameter or binding type"
+      unless type.isList do throwErrorAt stx "expected a supported linked-list type"
+      let raw ← rawDefaultTerm type.coreTy
+      let native ← `(([] : $(← termOfExpr type.nativeType)))
+      return {
+        type, raw, model? := some {
+          native, model := native, rawModel := raw, observation := .nil type } }
   | `(none) | `(Option.none) | `(.none) =>
       let some (.option payload) := expected
         | throwErrorAt stx "none requires an optional result, parameter or binding type"

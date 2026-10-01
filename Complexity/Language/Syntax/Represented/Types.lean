@@ -8,6 +8,7 @@ import Complexity.Language.Syntax.Core
 import Complexity.Language.Representation.List
 import Complexity.Language.Representation.RaggedArray
 import Complexity.Program.Deriving
+import Complexity.Program.ListOutput
 import Lean.PrettyPrinter.Delaborator
 
 /-!
@@ -40,6 +41,10 @@ projections, calls and their preservation proofs remain the responsibility of
 the represented frontend. In particular, recognizing an array type does not
 make mathematical array operations executable, and an unguarded heap reference
 still has no default source value for a result join.
+
+Integer lists use the canonical sign/magnitude observation over two synchronized
+linked field chains. Their empty roots, constructors and head/tail reads retain
+the same mathematical list; a list view is not a free heap decoder.
 -/
 
 namespace Complexity.Language.Syntax.Represented
@@ -56,6 +61,8 @@ inductive NativeType where
   | int
   | raw (type : Ty)
   | list (kind : CellTy)
+  /-- A resolver-selected mathematical list view of real linked field storage. -/
+  | listView (element storage : NativeType) (embedding : Expr)
   | array (kind : CellTy)
   | arrayProd (left right : CellTy)
   | raggedArray (payload : NativeType)
@@ -71,6 +78,7 @@ def NativeType.coreTy : NativeType → Ty
   | .int => .prod .bool .nat
   | .raw type => type
   | .list kind => .option (.node kind)
+  | .listView _ storage _ => storage.coreTy
   | .array kind => .buffer kind
   | .arrayProd left right => .prod (.buffer left) (.buffer right)
   | .raggedArray payload => .prod (.buffer .nat) payload.coreTy
@@ -87,6 +95,7 @@ def NativeType.nativeType : NativeType → Expr
   | .raw type => mkApp (mkConst ``Value) (coreTypeExpr type)
   | .list kind => mkApp (mkConst ``List [Level.zero])
       (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool)
+  | .listView element _ _ => mkApp (mkConst ``List [Level.zero]) element.nativeType
   | .array kind => mkApp (mkConst ``Array [Level.zero])
       (match kind with | .nat => mkConst ``Nat | .bool => mkConst ``Bool)
   | .arrayProd left right => mkApp (mkConst ``Array [Level.zero])
@@ -115,6 +124,10 @@ def NativeType.representation : NativeType → Expr
         #[nativeType, coreTypeExpr type, embedding]
   | .list kind => mkApp (mkConst ``Representation.list)
       (match kind with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)
+  | .listView element storage embedding =>
+      mkAppN (mkConst ``Representation.comap [Level.zero, Level.zero])
+        #[storage.nativeType, mkApp (mkConst ``List [Level.zero]) element.nativeType,
+          coreTypeExpr storage.coreTy, storage.representation, embedding]
   | .array kind => mkApp (mkConst ``Representation.array)
       (match kind with | .nat => mkConst ``CellTy.nat | .bool => mkConst ``CellTy.bool)
   | .arrayProd left right => mkAppN (mkConst ``Representation.arrayProd [Level.zero, Level.zero])
@@ -151,6 +164,11 @@ def NativeType.isIdentity : NativeType → Bool
 /-- Compatibility name for the identity-representation test. This property is
 about value observation, not a function's effects or successful termination. -/
 abbrev NativeType.isPure := NativeType.isIdentity
+
+/-- Linked observations retain their actual chain operations when matched. -/
+def NativeType.isList : NativeType → Bool
+  | .list _ | .listView _ _ _ => true
+  | _ => false
 
 /-- Supported array layouts retain heap-indexed observations. -/
 def NativeType.isArray : NativeType → Bool
@@ -218,7 +236,14 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if let .app (.const ``List _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .list .nat
     if ← isDefEq element (mkConst ``Bool) then return .list .bool
-    throwError "native linked lists currently contain Nat or Bool cells"
+    if ← isDefEq element (mkConst ``Int) then
+      let fields ← mkAppM ``Equiv.toEmbedding
+        #[← mkAppM ``Equiv.listEquivOfEquiv #[mkConst ``Representation.intEquiv]]
+      let unzip ← mkAppOptM ``Representation.listUnzip
+        #[some (mkConst ``Bool), some (mkConst ``Nat)]
+      let embedding ← mkAppM ``Function.Embedding.trans #[fields, unzip]
+      return .listView .int (.prod (.list .bool) (.list .nat)) embedding
+    throwError "native linked lists currently support Nat, Bool and canonical Int elements"
   if let .app (.const ``Array _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .array .nat
     if ← isDefEq element (mkConst ``Bool) then return .array .bool

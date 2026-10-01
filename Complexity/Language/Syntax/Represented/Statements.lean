@@ -663,7 +663,7 @@ partial def sequence (names : DeclarationNames)
         | $first:term => $firstBody:doSeq
         | $second:term => $secondBody:doSeq) := element then
       let discriminant ← value scope matched
-      if let .list _ := discriminant.type then
+      if discriminant.type.isList then
         let (nilBody, head, tail, consBody) ←
           if isNilPattern first then do
             let some (head, tail) := consNames? second
@@ -877,7 +877,7 @@ partial def sequence (names : DeclarationNames)
         let some annotation := annotation
           | throwErrorAt name "a native match binding requires an explicit result type"
         let discriminant ← value scope matched
-        if let .list _ := discriminant.type then
+        if discriminant.type.isList then
           let (nilBody, head, tail, consBody) ←
             if isNilPattern first then do
               let some (head, tail) := consNames? second
@@ -1160,7 +1160,8 @@ partial def sequence (names : DeclarationNames)
             `(doElem| let $name:ident : $nativeType := $(model.native))) (some #[]) rest
     | `(doElem| let $name:ident $[: $annotation:term]? ← $expression:term) =>
         let expression := (← canonicalCall? imports scope expression).getD expression
-        let operation? ← operationCall? names imports scope expression
+        let expected ← annotation.mapM fun stx => return ← resolveType stx
+        let operation? ← operationCall? names imports scope expression expected
         let some (operation, arguments) := operation? | do
           let raw ← match expression with
             | `(source_raw_value% ($raw)) => pure raw
@@ -1197,6 +1198,13 @@ partial def sequence (names : DeclarationNames)
         return ← sequence names imports resultType scope (returned :: rest)
           .immutable allowFallthrough localReturn completion returnState
     | `(doElem| return $expression:term) =>
+        if let some called ← canonicalCall? imports scope expression then
+          let temporary := mkIdent (← mkFreshUserName `sourceResult)
+          let nativeType ← termOfExpr resultType.nativeType
+          let call ← `(doElem| let $temporary:ident : $nativeType ← $called:term)
+          let returned ← `(doElem| return $temporary:ident)
+          return ← sequence names imports resultType scope (call :: returned :: rest)
+            .immutable allowFallthrough localReturn completion returnState
         if let some (called, rebuild) ← hoistValueCall? imports scope expression then
           let temporary := mkIdent (← mkFreshUserName `sourceResult)
           let call ← `(doElem| let $temporary:ident ← $called:term)
