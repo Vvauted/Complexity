@@ -79,6 +79,12 @@ product-list fold automation, fixed RAM input loading or a complete caller bound
 Automatic imports include helpers directly named in the final source; each
 helper retains its own transitive callees. Explicit user imports are unchanged.
 
+Generated source equations use Lean's existing atom/argument constructor equations
+rather than expand their dependent matchers at every call site. Composition compares
+bind continuations before trying whole-action definitional equality, keeping
+named callees folded through mixed record reads and list matches. These are
+proof-construction changes; source bodies, heap contracts and costs are unchanged.
+
 Finite ranges with array-backed captures keep their contents-preserving round
 contracts. Immutable-only ranges also retain shape-only contracts for existing
 resource proofs. Bounds read through record fields use the proved input

@@ -114,10 +114,10 @@ def equationDeclaration (family programName : TSyntax `ident)
     -- The semantic and native Option eliminators can have different motives.
     -- Compare actual bind results and branches without unfolding any callee.
     all_goals repeat' first
-      | rfl
-      | (split <;> simp_all only [Option.some.injEq, reduceCtorEq])
       | (apply bind_congr; intro value)
       | (apply congrFun; apply bind_congr; intro value)
+      | rfl
+      | (split <;> simp_all only [Option.some.injEq, reduceCtorEq])
       | (congr 1; funext value)
     all_goals rfl)
   for param in fn.params.reverse do

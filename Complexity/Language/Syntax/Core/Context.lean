@@ -300,9 +300,14 @@ def viewSimpArgs : MacroM (Array (TSyntax ``Lean.Parser.Tactic.simpLemma)) :=
     ``Complexity.Language.Env.equivUnit_apply, ``Complexity.Language.Env.equivUnit_symm_apply,
     ``Complexity.Language.Env.head, ``Complexity.Language.Env.get_tail]
 
+/-- Constructor equations avoid reducing dependent atom/argument matchers over
+the caller's growing local context and imported signature table. -/
 def valueSimpArgs : MacroM (Array (TSyntax ``Lean.Parser.Tactic.simpLemma)) :=
-  constantSimpArgs #[``Complexity.Language.Atom.eval, ``Complexity.Language.Prim.eval,
-    ``Complexity.Language.Args.eval, ``Complexity.Language.CellTy.toValue,
+  constantSimpArgs #[``Complexity.Language.Atom.eval.eq_1,
+    ``Complexity.Language.Atom.eval.eq_2, ``Complexity.Language.Atom.eval.eq_3,
+    ``Complexity.Language.Atom.eval.eq_4, ``Complexity.Language.Prim.eval,
+    ``Complexity.Language.Args.eval.eq_1, ``Complexity.Language.Args.eval.eq_2,
+    ``Complexity.Language.CellTy.toValue,
     ``Complexity.Language.CellTy.ofValue, ``Complexity.Language.Env.cons_here,
     ``Complexity.Language.Env.cons_there, ``Complexity.Language.Env.head_cons,
     ``Complexity.Language.Env.tail_cons, ``Complexity.Language.Env.get_tail,

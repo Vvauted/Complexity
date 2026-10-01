@@ -322,6 +322,8 @@ def compositionTactics (header : CorrespondenceHeader) (model : FunctionModel) :
           ↓reduceIte, Option.elim_none, Option.elim_some,
           ne_eq, decide_eq_true_eq, not_decide_eq_true, ite_not]
         all_goals repeat' first
+          -- Compare continuations before defeq can expand a shared callee.
+          | (apply bind_congr; intro value)
           | rfl
           | (split <;> simp_all only [Option.some.injEq, reduceCtorEq,
               Option.elim_none, Option.elim_some])
