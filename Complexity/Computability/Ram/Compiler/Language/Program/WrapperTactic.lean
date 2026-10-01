@@ -21,6 +21,11 @@ Existing `Program.extend` and `Program.link` constructions supply checked table
 embeddings; function names, record fields and argument counts are not special
 cased. Unsupported loops remain proof obligations.
 
+At measured call boundaries, actual state projections and proved local
+equalities reuse prior callee observations. Exact unchanged-heap/cursor facts
+can therefore feed the next call without unfolding that operation's body;
+no preservation fact is assumed for an arbitrary call.
+
 A cost index may be supplied with `at`. Without it, only the actual source
 environment or its ordinary right-associated value tuple is reconstructed and
 checked against the certificate's argument function. Mathematical data are not
@@ -151,6 +156,36 @@ private def recordCosts (embedding : Embedding) (fn : Lean.Expr) : TacticM Unit 
     let name := mkIdent (← mkFreshUserName `wrapperCallCost)
     evalTactic (← `(tactic| have $name:ident := $equation))
 
+/-- Reuse exact observations of previous calls at the next call boundary.
+Only equalities already proved in the local context are projected; in particular,
+an arbitrary callee is never assumed to preserve the heap or allocation cursor. -/
+private partial def observedEqualities (proof : Lean.Expr) : MetaM (Array Lean.Expr) := do
+  let type := (← instantiateMVars (← inferType proof)).consumeMData.headBeta.consumeMData
+  if type.isAppOf ``Eq then return #[proof]
+  unless type.isAppOf ``And do return #[]
+  let left ← observedEqualities (← mkAppM ``And.left #[proof])
+  let right ← observedEqualities (← mkAppM ``And.right #[proof])
+  return left ++ right
+
+private def normalizeCallEntry : TacticM Unit := withMainContext do
+  liftMetaTactic1 fun goal => do
+    let target ← instantiateMVars (← goal.getType)
+    let fields := target.getAppArgs
+    let entry := fields[9]!
+    let locals ← mkAppM ``Language.State.locals #[entry]
+    let heap ← mkAppM ``Language.State.heap #[entry]
+    let entry ← mkAppM ``Language.State.mk #[locals, heap]
+    goal.replaceTargetDefEq (mkAppN target.getAppFn (fields.set! 9 entry))
+  Ram.LanguageCompiler.Tactic.normalizeSourceCoordinates #[``cast_eq]
+  let mut equations := #[]
+  for declaration in ← getLCtx do
+    for proof in ← observedEqualities (mkFVar declaration.fvarId) do
+      let proof ← Term.exprToSyntax proof
+      equations := equations.push (← `(Lean.Parser.Tactic.simpLemma| $proof:term))
+  unless equations.isEmpty do
+    evalTactic (← `(tactic|
+      simp (config := { failIfUnchanged := false }) only [$equations,*]))
+
 private def measuredCertificate? (certificates : Array (TSyntax `term))
     (targetProgram fn args continuation entry : Lean.Expr) : TacticM Bool := do
   for certificate in certificates do
@@ -188,6 +223,9 @@ private partial def measured (certificates : Array (TSyntax `term)) : TacticM Un
       else if target.isAppOf ``Ram.LanguageCompiler.ArenaMeasured then
         let statement ← Ram.LanguageCompiler.Tactic.exposeStatement 7
         if statement.isAppOf ``Language.Stmt.call then
+          normalizeCallEntry
+          let target ← instantiateMVars (← getMainTarget)
+          let statement ← Ram.LanguageCompiler.Tactic.exposeStatement 7
           let fields := statement.getAppArgs
           unless ← measuredCertificate? certificates target.getAppArgs[1]!
               fields[3]! fields[4]! fields[5]! target.getAppArgs[9]! do

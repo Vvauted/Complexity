@@ -259,6 +259,25 @@ The reusable
 [read and slice rules](##Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Buffer)
 retain the actual access equations through allocating continuations. They
 neither assert successful access nor manufacture arena readiness.
+Scalar defaulted reads have reusable
+[natural](##Ram.LanguageCompiler.Buffer.GetD.getNat_arenaMeasured) and
+[Boolean](##Ram.LanguageCompiler.Buffer.GetD.getBool_arenaMeasured) readiness
+contracts. They follow the actual bounds check and preserve the exact heap and
+cursor; only the selected natural cell needs a value-range proof. For the
+registered input heap,
+[read ranges](##Complexity.Program.RamInput.getD_fits) follow from its existing
+RAM representation, without unfolding a record's encoding or adding element
+bounds to the mathematical input condition. Later writes still need their own
+preservation or realization argument.
+
+The existing [record lookup](##Complexity.Examples.TypedProgram.lookup_timeO)
+now has a complete constant-time `Program.TimeO` invocation theorem. Its actual
+Boolean read, natural read, branch, packing and call overhead are all counted.
+`program_wrapper_measured` reuses proved intermediate heap/cursor equalities
+at each call boundary. It does not assume arbitrary calls preserve memory.
+The input arrays are preloaded: this theorem does not give free parsing or
+array construction, nor does it establish constant-time allocating row reads.
+
 Ordinary composite `Array.getD`
 threads this changed heap through subsequent column reads. Its generated proof
 transports unread columns and the complete fallback to that heap, then preserves

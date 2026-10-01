@@ -155,6 +155,7 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendReady
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.CostBound
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.Realization
 import Complexity.Computability.Ram.Compiler.Language.Buffer.GetD
+import Complexity.Computability.Ram.Compiler.Language.Buffer.GetD.Ready
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.GetD
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.Replicate
@@ -228,6 +229,7 @@ import Complexity.Computability.Ram.Compiler.Language.Program
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayFunction
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInputResources
+import Complexity.Computability.Ram.Compiler.Language.Program.InputResources
 import Complexity.Computability.Ram.Compiler.Language.Program.RaggedArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.Asymptotics
 import Complexity.Computability.Ram.Compiler.Language.Program.Capacity

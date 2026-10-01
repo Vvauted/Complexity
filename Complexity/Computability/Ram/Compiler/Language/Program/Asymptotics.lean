@@ -174,7 +174,8 @@ elab_rules : tactic
           let proof ← elabTerm stx none
           let (type, _) ← Meta.dsimp (← inferType proof) context
           pure (proof, type)
-      evalTactic (← `(tactic| dsimp only [id, Function.comp]))
+      evalTactic (← `(tactic|
+        dsimp (config := { failIfUnchanged := false }) only [id, Function.comp]))
       compose proofs
 
 end AsymptoticsTactic
