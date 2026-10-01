@@ -841,6 +841,7 @@ def rangeRelationProof (range : RangeRegistration) (initialValue : Value)
     ← `(tactic| let $startEqual:ident : $entryCursor = $(startModel.model) := Eq.symm $startObserved),
     ← `(tactic| let $stopEqual:ident : $frozenStop = $(stopModel.model) := Eq.symm $stopObserved),
     ← `(tactic| let $strideEqual:ident : $frozenStride = $(strideModel.model) := Eq.symm $strideObserved),
+    ← `(tactic| dsimp +zetaDelta only at $startEqual:ident $stopEqual:ident $strideEqual:ident),
     ← `(tactic| have $positive:ident : 0 < $(strideModel.model) := by
       simp (config := { zetaDelta := true, failIfUnchanged := false }) only [Nat.add_eq] <;> omega),
     ← `(tactic| let $stateRel:ident := $relationBody),

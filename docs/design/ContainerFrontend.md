@@ -79,6 +79,11 @@ product-list fold automation, fixed RAM input loading or a complete caller bound
 Automatic imports include helpers directly named in the final source; each
 helper retains its own transitive callees. Explicit user imports are unchanged.
 
+Finite ranges with array-backed captures keep their contents-preserving round
+contracts. Immutable-only ranges also retain shape-only contracts for existing
+resource proofs. Bounds read through record fields use the proved input
+observations after normalizing their local aliases; the source loop is unchanged.
+
 ## Mathematical views, branches and recursion
 
 The common preparation pass accepts ordinary mathematical List parameters and

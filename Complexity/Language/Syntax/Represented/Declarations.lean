@@ -138,6 +138,31 @@ def totalDeclaration? (names : DeclarationNames) (fn : Function) :
       $tactics:tactic*)).raw
 
 
+-- Shape extension alone frames immutable observations, but not array contents.
+-- Use this distinction only to retain the old shape-only range proof entry;
+-- the stronger function correspondence remains the primary proof.
+private def needsContentsFrame : NativeType → Bool
+  | .array _ | .arrayProd .. | .raggedArray _ | .arrayView .. => true
+  | .prod left right => needsContentsFrame left || needsContentsFrame right
+  | .option payload | .record _ payload _ | .listView _ payload _ => needsContentsFrame payload
+  | _ => false
+
+private partial def traceNeedsContentsFrame (ranges : Array RangeRegistration) : Trace → Bool
+  | .call invocation => invocation.arguments.any (fun value => needsContentsFrame value.type) ||
+      needsContentsFrame invocation.result.type
+  | .conditional _ yes no _ _ result => needsContentsFrame result.type ||
+      yes.any (traceNeedsContentsFrame ranges) || no.any (traceNeedsContentsFrame ranges)
+  | .optionMatch _ payload absent present _ _ result => needsContentsFrame payload.type ||
+      needsContentsFrame result.type || absent.any (traceNeedsContentsFrame ranges) ||
+      present.any (traceNeedsContentsFrame ranges)
+  | .valueBlock body _ result => needsContentsFrame result.type ||
+      body.any (traceNeedsContentsFrame ranges)
+  | .range tag arguments result _ => needsContentsFrame result.type ||
+      arguments.any (fun value => needsContentsFrame value.type) ||
+      (ranges.find? (fun range => range.tag == tag)).any (fun range =>
+        range.captured.any (fun binding => needsContentsFrame binding.type) ||
+        range.body.any (traceNeedsContentsFrame ranges))
+
 def relationDeclaration (names : DeclarationNames) (fn : Function)
     (model : FunctionModel) (preserveArrays : Bool := false)
     (ranges : Array RangeRegistration := #[]) : TermElabM Syntax := do
@@ -189,11 +214,12 @@ def relationDeclaration (names : DeclarationNames) (fn : Function)
       else `(Complexity.Language.Heap.ShapeExtends.refl $heap:ident)
     return ← declaration #[← `(tactic|
       exact ⟨$value, $heap:ident, $correct, $related, $frame⟩)]
-  -- Keep the ordinary published range contracts available as well as their
-  -- stronger array-preserving variants. Straight-line and recursive proofs can
-  -- reuse the stronger function theorem directly.
-  if fn.preservesArrays && !preserveArrays &&
-      (model.recursive || !model.calls.any Trace.containsRange) then
+  -- Keep shape-only range contracts for immutable observations. Array-backed
+  -- captures need the existing preserving contracts even in a read-only loop.
+  let publishShapeRanges := !model.recursive && model.calls.any Trace.containsRange &&
+    !fn.parameters.any (fun parameter => needsContentsFrame parameter.type) &&
+    !needsContentsFrame fn.result && !model.calls.any (traceNeedsContentsFrame ranges)
+  if fn.preservesArrays && !preserveArrays && !publishShapeRanges then
     let strong := fieldName family fn.name "_action_rel_native_preserving"
     let mut applied := fn.parameters.map (fun parameter => (⟨parameter.name.raw⟩ : TSyntax `term))
     for parameter in fn.parameters do
