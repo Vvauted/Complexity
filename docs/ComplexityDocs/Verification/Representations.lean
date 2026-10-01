@@ -167,6 +167,35 @@ contract: allowing shared columns for reading does not justify arbitrary `Array.
 Nested element operations and arbitrary pair-array allocation/copying are not
 provided merely by the compositional mathematical representation.
 
+## Arrays of optional elements
+
+`Array (Option Nat)`, `Array (Option Bool)` and `Array (Option Int)` retain
+ordinary optional values in their mathematical contracts. Their fixed
+[`arrayOption`](##Complexity.Language.Representation.arrayOption) representation
+has a presence column and the existing payload columns; an absent payload is
+canonical, and `none` is distinct from `some 0`. All columns observe the full
+array at the same actual heap, including its length. Integer payloads reuse the
+canonical sign/magnitude columns.
+
+The frontend supports ordinary `Array.replicate`, `.size` and `.getD` for these
+layouts. Generated source code branches to pack the initializer or fallback,
+calls the existing scalar allocators/readers for every column, and branches on
+the read presence flag to return the optional value. These are actual source
+instructions and calls, not free mathematical conversions. Allocation preserves
+existing array contents; a defaulted read preserves the whole heap and returns
+the supplied optional fallback out of bounds.
+
+The [composite-array consumer](##Examples.Language.CompositeArrays) states its
+correctness with ordinary `Array.replicate` and `Array.getD` equations using
+`program_correct`. Its optional natural-array allocator also has an inferred
+linear RAM body bound counting the packing branch and both column calls,
+conditional on actual arena readiness. Fixed `Program` input/output and RAM input layouts use these
+same columns. This does not yet supply optional-element mutation, arbitrary
+heap-backed option payloads or a complete whole-program resource certificate.
+Nested arrays of optional elements do not yet have a generated row reader.
+Reading permits aliases; updating separate columns still needs separation or
+an explicit alias-aware update proof.
+
 ## Linked-node storage
 
 The List contracts here use `Representation.bufferList`: explicit mathematical

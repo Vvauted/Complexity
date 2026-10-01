@@ -262,6 +262,18 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
       let embedding ← mkAppM ``Function.Embedding.arrayMap
         #[← mkAppM ``Equiv.toEmbedding #[mkConst ``Representation.intEquiv]]
       return .arrayView .int (.arrayProd .bool .nat) embedding
+    if let .app (.const ``Option _) payload ← whnf element then
+      let initial ← if ← isDefEq payload (mkConst ``Nat) then pure (mkNatLit 0)
+        else if ← isDefEq payload (mkConst ``Bool) then pure (Lean.mkConst ``Bool.false)
+        else if ← isDefEq payload (mkConst ``Int) then
+          pure (mkApp (mkConst ``Int.ofNat) (mkNatLit 0))
+        else throwError "optional array operations currently require Nat, Bool or Int payloads"
+      let view ← mkAppM ``Representation.optionEmbedding #[initial]
+      let storage ← resolveNativeTypeAux
+        (← mkAppM ``Array #[← mkAppM ``Prod #[mkConst ``Bool, payload]])
+        records structuredProducts
+      return .arrayView (.option (← resolveNativeTypeAux payload records structuredProducts))
+        storage (← mkAppM ``Function.Embedding.arrayMap #[view])
     if let .app (.const ``Array _) _ ← whnf element then
       let payload ← resolveNativeTypeAux element records structuredProducts
       unless payload.hasScalarArrayColumns do
@@ -395,6 +407,18 @@ partial def rawDefaultTerm : Ty → TermElabM (TSyntax `term)
 /-- The actual Lean type of a raw source value. -/
 def actualTypeTerm (type : Ty) : TermElabM (TSyntax `term) := do
   `(Complexity.Language.Value $(← termOfExpr (coreTypeExpr type)))
+
+/-- Canonical absent payloads for the resolver's optional scalar arrays.
+Heap-backed payloads have no invented default object. -/
+def NativeType.optionColumnDefault (payload : NativeType) :
+    TermElabM (TSyntax `term × TSyntax `term) := do
+  match payload with
+  | .pure type => match type.coreTy with
+    | .nat => return (← `(0), ← `(0))
+    | .bool => return (← `(false), ← `(false))
+    | _ => throwError "unsupported optional scalar array payload"
+  | .int => return (← `((0 : Int)), ← `((false, 0)))
+  | _ => throwError "unsupported optional scalar array payload"
 
 /-- Type compatibility is nominal Lean equality, never equality of raw layouts. -/
 def sameType (expected actual : NativeType) : MetaM Bool :=

@@ -37,6 +37,7 @@ private structure ReadPlan where
   sourceValue : TSyntax `term
   returned : TSyntax `term
   related : TSyntax `term
+  splitValues : Array (TSyntax `term) := #[]
 
 private def relationTerm (type : NativeType) (value actual heap : TSyntax `term) :
     TermElabM (TSyntax `term) := do
@@ -81,7 +82,8 @@ private partial def readPlan (array result : NativeType) (path : String)
       proof := first.proof ++ second.proof
       equations := first.equations ++ second.equations
       sourceValue := ← `(($(first.sourceValue), $(second.sourceValue)))
-      returned, related := ← checked returned related }
+      returned, related := ← checked returned related
+      splitValues := first.splitValues ++ second.splitValues }
   match array with
   | .arrayView element columns _ =>
       match element with
@@ -97,6 +99,44 @@ private partial def readPlan (array result : NativeType) (path : String)
           let inner ← readPlan columns layout path (← `(($rows).map $view:ident)) index
             (← `($view:ident $fallback)) storage defaultView heap observed defaultObserved
           return { inner with related := ← checked inner.returned inner.related }
+      | .option payload => do
+          let (initialDefault, rawDefault) ← payload.optionColumnDefault
+          let packed := mkIdent (Name.mkSimple ("packedDefault" ++ path))
+          let unpacked := mkIdent (Name.mkSimple ("unpacked" ++ path))
+          let fields := NativeType.prod (← resolveType (← `(Bool))) payload
+          let rawFields ← rawTypeTerm fields.coreTy
+          let rawResult ← rawTypeTerm result.coreTy
+          let rep ← `(($(← termOfExpr payload.representation) :
+            Complexity.Language.Representation $(← termOfExpr payload.nativeType)
+              $(← termOfExpr (coreTypeExpr payload.coreTy))))
+          let view ← `(Complexity.Language.Representation.optionEmbedding $initialDefault)
+          let inner ← readPlan columns fields path (← `(($rows).map $view)) index
+            (← `($view $fallback)) storage ⟨packed.raw⟩ heap observed
+            (← `(Complexity.Language.Representation.optionEmbedding_rel
+              (payload := $rep) (default := $initialDefault) (rawDefault := $rawDefault)
+              (value := $fallback) (actual := $defaultView) (heap := $heap)
+              (by rfl) $defaultObserved))
+          let returned ← `(Complexity.Language.Representation.optionUnpack $(inner.returned))
+          let relation ← relationTerm result selected returned heap
+          return { inner with
+            body := #[← `(doElem| let mut $packed:ident : $rawFields := (false, $rawDefault)),
+              ← `(doElem| match $defaultView:term with
+                | none => $packed:ident := (false, $rawDefault)
+                | some payload => $packed:ident := (true, payload))] ++ inner.body ++
+              #[← `(doElem| let mut $unpacked:ident : $rawResult := none),
+                ← `(doElem| if ($(inner.sourceValue)).1 then
+                  $unpacked:ident := some ($(inner.sourceValue)).2
+                else
+                  $unpacked:ident := none)]
+            proof := #[← `(tactic| let $packed:ident :=
+              Complexity.Language.Representation.optionEmbedding $rawDefault $defaultView)] ++ inner.proof
+            equations := inner.equations.push packed
+            sourceValue := ⟨unpacked.raw⟩, returned
+            related := ← `(show $relation from
+              Complexity.Language.Representation.optionUnpack_rel
+                (payload := $rep) (default := $initialDefault) (value := $selected)
+                (by simpa only [Array.getD_map] using $(inner.related)))
+            splitValues := inner.splitValues.push defaultView }
       | .record _ layout embedding => do
           let view ← termOfExpr embedding
           let inner ← readPlan columns layout path (← `(($rows).map $view)) index
@@ -251,8 +291,19 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
   let mut proof := plan.proof
   proof := proof.push (← `(tactic| refine ⟨$(plan.returned), ?_, $(plan.related)⟩))
   let simpRules := #[← `(Lean.Parser.Tactic.simpLemma| $equation:ident),
-    ← `(Lean.Parser.Tactic.simpLemma| source_eval)] ++ equations
-  proof := proof.push (← `(tactic| simp only [$simpRules,*]))
+    ← `(Lean.Parser.Tactic.simpLemma| source_eval),
+    ← `(Lean.Parser.Tactic.simpLemma| Complexity.Language.Representation.optionEmbedding_none),
+    ← `(Lean.Parser.Tactic.simpLemma| Complexity.Language.Representation.optionEmbedding_some),
+    ← `(Lean.Parser.Tactic.simpLemma| Complexity.Language.Representation.optionUnpack),
+    ← `(Lean.Parser.Tactic.simpLemma| Option.isSome),
+    ← `(Lean.Parser.Tactic.simpLemma| Option.getD)] ++ equations
+  if plan.splitValues.isEmpty then
+    proof := proof.push (← `(tactic| simp only [$simpRules,*]))
+  else
+    for value in plan.splitValues do
+      proof := proof.push (← `(tactic| all_goals cases $value:term))
+    proof := proof.push (← `(tactic| all_goals simp_all only [$simpRules,*]))
+    proof := proof.push (← `(tactic| all_goals split_ifs <;> simp_all only [$simpRules,*]))
   let evaluation ← `(command|
     theorem $evaluated:ident ($rows:ident : $arrayType) ($index:ident : Nat)
         ($fallback:ident : $resultType) ($storage:ident : $rawArray)

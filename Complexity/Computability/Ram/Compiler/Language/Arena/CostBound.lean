@@ -88,12 +88,14 @@ theorem letPrim {τ : Ty} (value : Prim Γ τ)
   cases cost with
   | letPrim tail => exact Nat.add_le_add_left (body _ _ tail) _
 
-/-- Normal completion resumes at the actual intermediate state and cursor.
+/-- Normal completion exposes the actual first execution to the continuation.
+Facts about preserved locals may therefore be reused even when the heap changes.
 The maximum also covers early return, which skips the continuation entirely. -/
-theorem seq {first second : Complexity.Language.Stmt signatures Γ result}
+theorem seq_of_exec {first second : Complexity.Language.Stmt signatures Γ result}
     {firstBound secondBound : Nat}
     (head : StmtArenaCostBound program w heapLimit depth first entry firstBound)
     (tail : ∀ middle,
+      Complexity.Language.Exec program first entry middle .normal →
       StmtArenaCostBound program w heapLimit depth second middle secondBound) :
     StmtArenaCostBound program w heapLimit depth (.seq first second) entry
       (firstBound + max (2 + secondBound) 3) := by
@@ -101,7 +103,7 @@ theorem seq {first second : Complexity.Language.Stmt signatures Γ result}
   cases cost with
   | seqNormal firstCost secondCost =>
       have bounded := Nat.add_le_add (Nat.add_le_add_right (head _ _ firstCost) 2)
-        (tail _ _ _ secondCost)
+        (tail _ (by assumption) _ _ secondCost)
       calc
         _ ≤ firstBound + (2 + secondBound) := by
           simpa only [Nat.add_assoc] using bounded
@@ -110,6 +112,17 @@ theorem seq {first second : Complexity.Language.Stmt signatures Γ result}
   | seqReturn firstCost =>
       exact (Nat.add_le_add_right (head _ _ firstCost) 3).trans
         (Nat.add_le_add_left (Nat.le_max_right (2 + secondBound) 3) firstBound)
+
+/-- Normal completion resumes at the actual intermediate state and cursor.
+The maximum also covers early return, which skips the continuation entirely. -/
+theorem seq {first second : Complexity.Language.Stmt signatures Γ result}
+    {firstBound secondBound : Nat}
+    (head : StmtArenaCostBound program w heapLimit depth first entry firstBound)
+    (tail : ∀ middle,
+      StmtArenaCostBound program w heapLimit depth second middle secondBound) :
+    StmtArenaCostBound program w heapLimit depth (.seq first second) entry
+      (firstBound + max (2 + secondBound) 3) :=
+  seq_of_exec head (fun middle _ => tail middle)
 
 /-- Each Boolean branch retains its selection equation and its own count.
 The maximum is a uniform bound, not a charge for executing both branches. -/

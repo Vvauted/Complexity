@@ -32,6 +32,7 @@ private structure ReplicatePlan where
   related : TSyntax `term
   shape : TSyntax `term
   contents : TSyntax `term
+  splitValues : Array (TSyntax `term) := #[]
 
 private def replicateRelation (array : NativeType)
     (length initial returned heap : TSyntax `term) : TermElabM (TSyntax `term) := do
@@ -78,7 +79,8 @@ private partial def replicatePlan (array element : NativeType) (path : String)
       shape := ← `(Complexity.Language.Heap.ShapeExtends.trans $(first.shape) $(second.shape))
       contents := ← `(show Complexity.Language.Buffer.PreservesContents $heap $(second.finish)
         from fun {_} view values contents =>
-          $(second.contents) view values ($(first.contents) view values contents)) }
+          $(second.contents) view values ($(first.contents) view values contents))
+      splitValues := first.splitValues ++ second.splitValues }
   match array with
   | .arrayView field columns _ =>
       match field with
@@ -93,6 +95,29 @@ private partial def replicatePlan (array element : NativeType) (path : String)
       | .int =>
           checked (← replicatePlan columns (← resolveType (← `(Bool × Nat))) path length
             (← `(Complexity.Language.Representation.intEquiv $initial)) value heap observed)
+      | .option payload =>
+          let (initialDefault, rawDefault) ← payload.optionColumnDefault
+          let packed := mkIdent (Name.mkSimple ("packed" ++ path))
+          let fields := NativeType.prod (← resolveType (← `(Bool))) payload
+          let rawFields ← rawTypeTerm fields.coreTy
+          let rep ← `(($(← termOfExpr payload.representation) :
+            Complexity.Language.Representation $(← termOfExpr payload.nativeType)
+              $(← termOfExpr (coreTypeExpr payload.coreTy))))
+          let inner ← replicatePlan columns fields path length
+            (← `(Complexity.Language.Representation.optionEmbedding $initialDefault $initial))
+            ⟨packed.raw⟩ heap
+            (← `(Complexity.Language.Representation.optionEmbedding_rel
+              (payload := $rep) (default := $initialDefault) (rawDefault := $rawDefault)
+              (value := $initial) (actual := $value) (heap := $heap) (by rfl) $observed))
+          checked { inner with
+            body := #[← `(doElem| let mut $packed:ident : $rawFields := (false, $rawDefault)),
+              ← `(doElem| match $value:term with
+                | none => $packed:ident := (false, $rawDefault)
+                | some payload => $packed:ident := (true, payload))] ++ inner.body
+            proof := #[← `(tactic| let $packed:ident :=
+              Complexity.Language.Representation.optionEmbedding $rawDefault $value)] ++ inner.proof
+            equations := inner.equations.push packed
+            splitValues := inner.splitValues.push value }
       | _ =>
           let .prod left right := columns
             | throwError "replication requires supported scalar field columns"
@@ -180,8 +205,17 @@ def compositeReplicateDeclarations (registration : ArrayReplicateRegistration) :
     refine ⟨$(plan.returned), $(plan.finish), ?_, $(plan.related), $(plan.shape), $(plan.contents)⟩))
   let equations ← plan.equations.mapM fun equation => `(Lean.Parser.Tactic.simpLemma| $equation:ident)
   let simpRules := #[← `(Lean.Parser.Tactic.simpLemma| $equation:ident),
-    ← `(Lean.Parser.Tactic.simpLemma| source_eval)] ++ equations
-  proof := proof.push (← `(tactic| simp only [$simpRules,*]))
+    ← `(Lean.Parser.Tactic.simpLemma| source_eval),
+    ← `(Lean.Parser.Tactic.simpLemma| Complexity.Language.Representation.optionEmbedding_none),
+    ← `(Lean.Parser.Tactic.simpLemma| Complexity.Language.Representation.optionEmbedding_some),
+    ← `(Lean.Parser.Tactic.simpLemma| Option.isSome),
+    ← `(Lean.Parser.Tactic.simpLemma| Option.getD)] ++ equations
+  if plan.splitValues.isEmpty then
+    proof := proof.push (← `(tactic| simp only [$simpRules,*]))
+  else
+    for value in plan.splitValues do
+      proof := proof.push (← `(tactic| all_goals cases $value:term))
+    proof := proof.push (← `(tactic| all_goals simp_all only [$simpRules,*]))
   let preservingDecl ← `(command|
     theorem $preserving:ident ($length:ident : Nat) ($initial:ident : $initialType)
         $roots:bracketedBinder* ($heap:ident : Complexity.Language.Heap)

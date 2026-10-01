@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Call
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Node
 import Complexity.Computability.Ram.Compiler.Language.Tactic
+import Complexity.Language.Effects
 
 /-!
 # Inferring structural arena cost bounds
@@ -30,6 +31,9 @@ allocation/lookup continuations and measured charges. Loops and unsupported stat
 original named declaration in the remaining goals, so a fragment-specific entry
 can consume their checked contracts without rebuilding source coordinates;
 this pass establishes neither termination nor arena readiness.
+Sequential continuations retain the actual first execution. Mathematical leaves
+may reuse structurally preserved locals through that execution, without assuming
+that the intermediate heap or other locals are unchanged.
 -/
 
 namespace Ram.LanguageCompiler.Arena.CostTactic
@@ -55,11 +59,24 @@ private def inferBound : TacticM Unit := withMainContext do
     #[some arguments[0]!, some arguments[1]!, some bound, some property])
   replaceMainGoal [property.mvarId!]
 
+/-- Reduce only the conclusion's budget before unifying it with a uniform
+inference variable. A projected input may ignore a local payload; that payload
+must remain available for the call's argument equality, not be forced into the
+budget's smaller scope. Only definitional budget simplification is requested;
+cost certificates and source bodies are not explicitly unfolded or repriced. -/
+private def normalizeRuleBudget (proof : Lean.Expr) : MetaM Lean.Expr := do
+  forallTelescope (← inferType proof) fun parameters conclusion => do
+    let conclusion ← instantiateMVars conclusion
+    unless conclusion.isAppOf ``Ram.LanguageCompiler.StmtArenaCostBound do return proof
+    let (budget, _) ← dsimp conclusion.appArg! (← Simp.mkContext)
+    let type ← mkForallFVars parameters (mkApp conclusion.appFn! budget)
+    mkExpectedTypeHint proof type
+
 /-- Keep natural bound parameters as inference variables, while preserving all
 propositional obligations and unrelated goals. No local Nat is selected by search. -/
 private def applyRule (rule : TSyntax `term) : TacticM Unit :=
   evalApplyLikeTactic (fun goal proof => do
-    let generated ← goal.apply proof
+    let generated ← goal.apply (← normalizeRuleBudget proof)
     generated.filterM fun pending => pending.withContext do
       return !(← whnf (← pending.getType)).isConstOf ``Nat) rule.raw
 
@@ -130,6 +147,25 @@ private partial def applyCallee (statement : Lean.Expr)
           if remaining.isEmpty then throw error
           applyCallee statement remaining
 
+/-- Reuse only checked local-preservation facts from actual source executions.
+The simplifier discharges the structural condition for the selected lexical
+variable; assignments to that variable remain opaque, as does the actual heap. -/
+private def normalizePreservedLocals : TacticM Unit := withMainContext do
+  let mut rules : Array (TSyntax ``Lean.Parser.Tactic.simpLemma) := #[]
+  for declaration in ← getLCtx do
+    let type := (← instantiateMVars declaration.type).consumeMData.headBeta.consumeMData
+    if type.isAppOf ``Complexity.Language.Exec then
+      let execution ← Term.exprToSyntax (mkFVar declaration.fvarId)
+      rules := rules.push (← `(Lean.Parser.Tactic.simpLemma|
+        Complexity.Language.Exec.get_eq $execution))
+  unless rules.isEmpty do
+    for rule in Ram.LanguageCompiler.Tactic.sourceCoordinateRules do
+      rules := rules.push (← `(Lean.Parser.Tactic.simpLemma| $(mkCIdent rule):ident))
+    evalTactic (← `(tactic|
+      simp (config := { failIfUnchanged := false })
+        (disch := simp only [Complexity.Language.Stmt.PreservesLocal,
+          Complexity.Language.Var.index]; decide) only [$rules,*]))
+
 /-- Traverse only the actual caller syntax. Bounds arise from public theorems;
 callee bodies, loop invariants and mathematical conditions are not synthesized. -/
 private partial def cost (certificates : List Certificate) : TacticM Unit := do
@@ -151,7 +187,7 @@ private partial def cost (certificates : List Certificate) : TacticM Unit := do
         else if statement.isAppOf ``Complexity.Language.Stmt.letPrim then
           applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.letPrim))
         else if statement.isAppOf ``Complexity.Language.Stmt.seq then
-          applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.seq))
+          applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.seq_of_exec))
         else if statement.isAppOf ``Complexity.Language.Stmt.ite then
           applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.ite_max))
         else if statement.isAppOf ``Complexity.Language.Stmt.matchOption then
@@ -173,6 +209,7 @@ private partial def cost (certificates : List Certificate) : TacticM Unit := do
         Ram.LanguageCompiler.Tactic.onGoals (cost certificates)
       else
         Ram.LanguageCompiler.Tactic.normalizeSourceCoordinates #[``and_true, ``true_and]
+        unless (← getGoals).isEmpty do normalizePreservedLocals
         evalTactic (← `(tactic| all_goals try first | rfl | assumption))
 
 private def start (certificates : List Certificate) : TacticM Unit := focus do

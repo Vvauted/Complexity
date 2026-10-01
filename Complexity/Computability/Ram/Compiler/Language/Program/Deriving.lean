@@ -7,6 +7,7 @@ import Complexity.Program.Deriving
 import Complexity.Computability.Ram.Compiler.Language.Program.ArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.CharInput
 import Complexity.Computability.Ram.Compiler.Language.Program.IntInput
+import Complexity.Computability.Ram.Compiler.Language.Program.OptionArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.RaggedArrayInput
 
 /-!

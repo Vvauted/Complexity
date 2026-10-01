@@ -6,6 +6,7 @@ Authors: vvauted
 import Complexity.Program.ArrayInput
 import Complexity.Program.CharInput
 import Complexity.Program.IntInput
+import Complexity.Program.OptionArrayInput
 import Complexity.Program.RaggedArrayInput
 import Lean.Elab.Deriving.Basic
 import Lean.EnvExtension

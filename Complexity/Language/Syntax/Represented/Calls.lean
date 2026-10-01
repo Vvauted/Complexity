@@ -718,7 +718,9 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
   | `(Array.append $left:term $right:term) =>
       return some (← arrayOperation true, #[left, right])
   | `(Array.replicate $length:term $initial:term) =>
-      let initialValue ← value scope initial
+      let elementType ← expected.filter (·.isArray) |>.mapM fun array =>
+        resolveNativeType array.nativeType.getAppArgs[0]!
+      let initialValue ← value scope initial elementType
       let array ← resolveNativeType (← mkAppM ``Array #[initialValue.type.nativeType])
       let operation ← match array with
         | .array kind => arrayReplicateOperation kind
