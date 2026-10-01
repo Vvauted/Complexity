@@ -9,6 +9,9 @@ import Examples.Language.Program
 import Examples.Language.ProgramCompiled
 import Examples.Language.Characters
 import Examples.Language.Enumerations
+import Complexity.Program.ListOutput
+import Complexity.Language.List.Int
+import Complexity.Computability.Ram.Compiler.Language.List.Prod
 
 /-!
 # Correctness-and-complexity tasks
@@ -68,6 +71,21 @@ include scalars, arrays, scalar linked lists, products and options, observed in
 the actual final heap. `List Nat` and `List Bool` use immutable linked nodes,
 not arrays or a free host decoder. Products and options may contain these lists;
 nested lists and lists of records still need general element layouts.
+
+[Product and integer list outputs](##Complexity.Program.ListOutput) retain
+ordinary `List (α × β)` and `List Int` at the fixed result boundary.
+Supported pair lists use synchronized linked field chains, not arrays; both
+chains must observe projections of the same list, so unequal lengths cannot be
+silently truncated. Integer heads reuse the canonical Boolean/natural fields.
+The [signed operation contracts](##Complexity.Language.List.Int) prove
+ordinary cons and optional head/tail results for actual two-node construction
+and reading, preserving old contents and sharing the original tails.
+Their [RAM bounds](##Complexity.Computability.Ram.Compiler.Language.List.Prod)
+come from those same source bodies. Node operations compose through
+`ram_source_arena_cost`; capacity, word ranges and readiness remain separate.
+Use these focused imports. This is fixed output and operation support, not yet
+ordinary signed-list `::`/pattern syntax, fixed list inputs or a complete caller
+time theorem.
 
 [Signed inputs](##Complexity.Program.IntInput) retain ordinary `Int` and `Array Int`
 at the fixed task boundary, including record fields and outputs. Scalars use

@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Call
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Node
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
 /-!
@@ -24,7 +25,8 @@ The tactic also introduces a bound in a goal of the form
 `{ bound : Nat // ∀ entry, StmtArenaCostBound program w heapLimit depth body entry bound }`.
 That metavariable is determined by the structural proofs, not by numerical
 search or a second instruction-price interpreter. Conditional and option branches
-use the existing maximum rules. Loops and unsupported statements retain their
+use the existing maximum rules. Node construction and reads retain their actual
+allocation/lookup continuations and measured charges. Loops and unsupported statements retain their
 original named declaration in the remaining goals, so a fragment-specific entry
 can consume their checked contracts without rebuilding source coordinates;
 this pass establishes neither termination nor arena readiness.
@@ -154,6 +156,10 @@ private partial def cost (certificates : List Certificate) : TacticM Unit := do
           applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.ite_max))
         else if statement.isAppOf ``Complexity.Language.Stmt.matchOption then
           applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.match_max))
+        else if statement.isAppOf ``Complexity.Language.Stmt.consNode then
+          applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.consNode))
+        else if statement.isAppOf ``Complexity.Language.Stmt.readNode then
+          applyRule (← `(Ram.LanguageCompiler.StmtArenaCostBound.readNode_of_success))
         else if statement.isAppOf ``Complexity.Language.Stmt.call then
           if certificates.isEmpty then
             liftMetaTactic fun goal => do

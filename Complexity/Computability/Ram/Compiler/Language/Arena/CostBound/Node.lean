@@ -6,7 +6,7 @@ Authors: vvauted
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
 
 /-!
-# Arena costs of selected options and actual node reads
+# Arena costs of selected options and actual node operations
 
 These rules retain the source selection and lookup equations. The continuation
 uses the actual stored payload, and its cost is observed on the same execution.
@@ -20,6 +20,21 @@ open Complexity.Language
 variable {signatures : List Signature} {program : Complexity.Language.Program signatures}
 variable {w heapLimit depth : Nat} {Γ : List Ty} {result : Ty}
 variable {entry : Complexity.Language.State Γ} {bound : Nat}
+
+/-- Compose the actual node-allocation charge with its continuation at the
+fresh reference and extended heap. Capacity and ranges remain in readiness. -/
+theorem consNode {kind : CellTy} {head : Atom Γ kind.toTy}
+    {tail : Atom Γ (.option (.node kind))}
+    {continuation : Complexity.Language.Stmt signatures (.node kind :: Γ) result}
+    (body : StmtArenaCostBound program w heapLimit depth continuation
+      (let allocated := entry.heap.cons (kind.ofValue (head.eval entry.locals))
+        (tail.eval entry.locals)
+       Complexity.Language.State.cons allocated.1 ⟨entry.locals, allocated.2⟩) bound) :
+    StmtArenaCostBound program w heapLimit depth (.consNode head tail continuation) entry
+      (consNodeCodeSize + bound) := by
+  intro finish control execution cursor finalCursor ready steps cost
+  cases cost with
+  | consNode next => exact Nat.add_le_add_left (body _ _ next) _
 
 /-- A known absent option charges only its actual absent branch. -/
 theorem match_none {τ : Ty} {value : Atom Γ (.option τ)}
