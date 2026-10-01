@@ -29,8 +29,9 @@ Arrays of supported products and nonempty records reuse their actual field
 columns through one checked view. The resolver builds only array-unzip views
 and pointwise direct-field record embeddings; it installs no arbitrary element
 decoder. Nested arrays with scalar-column payloads keep one shared boundary
-buffer and the existing payload layout. Empty record/Unit arrays, deeper ragged
-payloads and unsupported nested element layouts remain rejected.
+buffer and the existing payload layout. Scalar ragged columns additionally use
+the actual allocating boundary-rebase operation when selected as a row.
+Empty record/Unit arrays and unsupported deeper layouts remain rejected.
 
 Existing raw `Buffer` and `NodeRef` parameters retain an identity observation
 of the handle itself. This is distinct from an array or list contents relation;
@@ -193,6 +194,14 @@ def NativeType.hasScalarArrayColumns : NativeType → Bool
   | .prod left right => left.hasScalarArrayColumns && right.hasScalarArrayColumns
   | _ => false
 
+/-- Row reads compose scalar columns and the implemented one-level ragged
+extractor. Recognizing a deeper representation does not invent an extractor. -/
+def NativeType.hasReadableRowColumns : NativeType → Bool
+  | .array _ | .arrayProd _ _ | .raggedArray (.array _) => true
+  | .arrayView _ storage _ => storage.hasReadableRowColumns
+  | .prod left right => left.hasReadableRowColumns && right.hasReadableRowColumns
+  | _ => false
+
 /-- Emit the actual scalar length observation of a supported array layout.
 Product views select their first real column; record views retain the mapped
 array's length. Only the checked unzip/map views built by the resolver use this
@@ -290,8 +299,8 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
         storage (← mkAppM ``Function.Embedding.arrayMap #[view])
     if let .app (.const ``Array _) _ ← whnf element then
       let payload ← resolveNativeTypeAux element records structuredProducts
-      unless payload.hasScalarArrayColumns do
-        throwError "native row reads require scalar-column payload arrays"
+      unless payload.hasReadableRowColumns do
+        throwError "native row reads require supported scalar or rebased ragged columns"
       return .raggedArray payload
     if let .app (.app (.const ``Prod _) left) right ← whnf element then
       let kind? (type : Expr) : TermElabM (Option CellTy) := do

@@ -430,6 +430,27 @@ private def arrayViewReplicateOperation (family : TSyntax `ident) (array : Nativ
     modify fun state => { state with calledFamilies := state.calledFamilies.push contracts }
   return operation
 
+private def arrayEmptyOperation (family : TSyntax `ident) (array : NativeType) :
+    PrepareM Operation := do
+  unless array.isArray do throwError "#[] requires an array type"
+  for operation in (← get).arrayEmpties do
+    if ← sameType operation.result array then return operation
+  let contracts := mkIdentFrom family
+    (family.getId ++ `Operations ++ Name.mkSimple s!"arrayEmpty{(← get).arrayEmpties.size}")
+  let name (suffix : Name) := mkIdentFrom family (contracts.getId ++ suffix)
+  let type ← termOfExpr array.nativeType
+  let operation : Operation := {
+    family := contracts, sourceName := `empty, inputs := #[], result := array
+    model? := some {
+      native := ← `((#[] : $type)), equation := none
+      relation := name `empty_eval_exists
+      refinement := name `empty_refines
+      preservingRelation := some (name `empty_eval_exists_preserving) } }
+  modify fun state => { state with
+    arrayEmpties := state.arrayEmpties.push operation
+    calledFamilies := state.calledFamilies.push contracts }
+  return operation
+
 private def arrayProdGetDOperation (left right : CellTy) : PrepareM Operation := do
   let family := mkIdent `Complexity.Language.Buffer.Prod.GetD
   unless (← get).calledFamilies.any (fun imported => imported.getId == family.getId) do
@@ -694,6 +715,11 @@ partial def canonicalCall? (imports : ImportedPrograms) (scope : List Binding)
         return some (← `(String.ofList (List.replicate 0 '0')))
       throwErrorAt expression "nonempty string literals require source character construction"
   | `(Array.append $left:term $right:term) => return some (← `(Array.append $left $right))
+  | `(#[]) =>
+      let some array := expected
+        | throwErrorAt expression "#[] requires an expected array type or a type annotation"
+      let type ← termOfExpr array.nativeType
+      return some (← `((#[] : $type)))
   | `(Array.replicate $length:term $initial:term) => return some (← `(Array.replicate $length $initial))
   | `(Array.getD $values:term $index:term $fallback:term) =>
       return some (← `(Array.getD $values $index $fallback))
@@ -751,6 +777,8 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
       return some (operation, arguments)
   match expression with
   | `(Int.add $left $right) => return some (← integerOperation `add, #[left, right])
+  | `((#[] : $type:term)) =>
+      return some (← arrayEmptyOperation names.publicFamily (← resolveType type), #[])
   | `(Int.mul $left $right) => return some (← integerOperation `mul, #[left, right])
   | `(Int.neg $inner) => return some (← integerOperation `negate, #[inner])
   | `(Int.lt $left $right) => return some (← integerOperation `less, #[left, right])

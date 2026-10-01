@@ -36,6 +36,15 @@ def flattenOffsets (rows : Array (Array α)) : Array Nat :=
     rows.flattenOffsets[i] = (rows.extract 0 i).flatten.size := by
   simp [flattenOffsets]
 
+/-- Even an empty collection of rows retains its final zero boundary. -/
+@[simp] theorem flattenOffsets_empty :
+    (#[] : Array (Array α)).flattenOffsets = #[0] := by
+  apply Array.ext (by simp)
+  intro i hx hy
+  have index : i = 0 := by simpa using hx
+  subst i
+  simp [flattenOffsets]
+
 /-- Pointwise element views preserve every row boundary, including empty rows. -/
 @[simp] theorem flattenOffsets_map {β : Type*} (f : α → β) (rows : Array (Array α)) :
     (rows.map (Array.map f)).flattenOffsets = rows.flattenOffsets := by

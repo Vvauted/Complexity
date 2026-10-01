@@ -15,6 +15,8 @@ column. Recursive product/record views reuse their fixed representation, not
 an executable host map. The generated proof retains every intermediate heap,
 frames earlier columns across later allocations, and preserves old contents.
 Source wrappers and calls are compiled normally and have real costs.
+Empty arrays use the same allocators, including one zero boundary at every
+ragged level. They require no fabricated initializer for a heap-backed element.
 -/
 
 namespace Complexity.Language.Syntax.Represented.Internal
@@ -268,6 +270,133 @@ def compositeReplicateDeclarations (registration : ArrayReplicateRegistration) :
       refine ⟨returned, finish, ?_, related⟩
       rw [$observe:ident, ← length]
       $adjust:tactic
+      exact executed)
+  return #[source.raw, preservingDecl.raw, relationDecl.raw, representationDecl.raw, refinement.raw]
+
+private partial def emptyColumns (array : NativeType) : TermElabM (TSyntax `term) := do
+  match array with
+  | .prod left right => `(($(← emptyColumns left), $(← emptyColumns right)))
+  | _ => `((#[] : $(← termOfExpr array.nativeType)))
+
+private partial def emptyPlan (array : NativeType) (path : String)
+    (heap : TSyntax `term) : TermElabM ReplicatePlan := do
+  let checked (plan : ReplicatePlan) : TermElabM ReplicatePlan := do
+    let rep ← termOfExpr array.representation
+    let native ← termOfExpr array.nativeType
+    let core ← termOfExpr (coreTypeExpr array.coreTy)
+    let empty ← emptyColumns array
+    return { plan with related := ← `(show
+      ($rep : Complexity.Language.Representation $native $core).Rel
+        $empty $(plan.returned) $(plan.finish) from by
+      have initialized := $(plan.related)
+      simpa only [Complexity.Language.Representation.comap_rel,
+        Complexity.Language.Representation.prod_rel,
+        Complexity.Language.Representation.arrayProd_rel,
+        Complexity.Language.Representation.raggedArrayOf_rel,
+        Complexity.Language.Representation.arrayUnzip, Function.Embedding.arrayMap,
+        Function.Embedding.coeFn_mk, Array.map_empty, Array.flatten_empty,
+        Array.flattenOffsets_empty, Array.replicate_zero, Array.replicate_succ]
+        using initialized) }
+  let join (left : NativeType) (first second : ReplicatePlan) : TermElabM ReplicatePlan := do
+    let frame ← preservation left first.finish second.finish second.shape (some second.contents)
+    checked {
+      body := first.body ++ second.body
+      proof := first.proof ++ second.proof
+      equations := first.equations ++ second.equations
+      sourceValue := ← `(($(first.sourceValue), $(second.sourceValue)))
+      returned := ← `(($(first.returned), $(second.returned)))
+      finish := second.finish
+      related := ← `(And.intro ($frame $(first.related)) $(second.related))
+      shape := ← `(Complexity.Language.Heap.ShapeExtends.trans $(first.shape) $(second.shape))
+      contents := ← `(show Complexity.Language.Buffer.PreservesContents $heap $(second.finish)
+        from fun {_} view values contents =>
+          $(second.contents) view values ($(first.contents) view values contents)) }
+  let pair (left right : NativeType) : TermElabM ReplicatePlan := do
+    let first ← emptyPlan left (path ++ "L") heap
+    let second ← emptyPlan right (path ++ "R") first.finish
+    join left first second
+  match array with
+  | .arrayView _ columns _ => checked (← emptyPlan columns path heap)
+  | .arrayProd left right => pair (.array left) (.array right)
+  | .prod left right => pair left right
+  | .raggedArray payload =>
+      let scalar ← resolveType (← `(Nat))
+      let first ← replicatePlan (.array .nat) scalar (path ++ "L")
+        (← `(1)) (← `(0)) (← `(0)) heap (← `(rfl))
+      let second ← emptyPlan payload (path ++ "R") first.finish
+      join (.array .nat) first second
+  | .array kind =>
+      let scalar ← resolveType (← match kind with | .nat => `(Nat) | .bool => `(Bool))
+      let initial ← match kind with | .nat => `(0) | .bool => `(false)
+      checked (← replicatePlan array scalar path (← `(0)) initial initial heap (← `(rfl)))
+  | _ => throwError "empty array construction requires supported array columns"
+
+/-- Lower ordinary empty-array syntax to actual canonical column allocations. -/
+def arrayEmptyDeclarations (operation : Operation) : TermElabM (Array Syntax) := do
+  let array := operation.result
+  let family := operation.family
+  let name (suffix : Name) := mkIdentFrom family (family.getId ++ suffix)
+  let heap := mkIdent `heap
+  let plan ← emptyPlan array "" ⟨heap.raw⟩
+  let body := plan.body.push (← `(doElem| return $(plan.sourceValue)))
+  let sequence : TSyntax ``doSeq := ⟨Lean.Elab.Term.Do.mkDoSeq (body.map (·.raw))⟩
+  let declaration : ParsedDeclaration := {
+    name := mkIdent `empty, params := #[], result := ← rawTypeTerm array.coreTy
+    body := ← `(do $sequence:doSeq)
+    termination := ← `(Lean.Parser.Termination.suffix|) }
+  let function ← liftMacroM declaration.toSyntax
+  let allocators := mkIdent `Complexity.Language.Buffer.Replicate
+  let source ← `(command| source_program% $family:ident importing $allocators:ident where
+    $function:sourceFunction)
+  let resultType ← termOfExpr array.nativeType
+  let resultRep ← `(($(← termOfExpr array.representation) :
+    Complexity.Language.Representation $resultType $(← termOfExpr (coreTypeExpr array.coreTy))))
+  let empty := name `empty
+  let equation := name `empty_eq
+  let preserving := name `empty_eval_exists_preserving
+  let relation := name `empty_eval_exists
+  let mut proof := plan.proof
+  proof := proof.push (← `(tactic|
+    refine ⟨$(plan.returned), $(plan.finish), ?_, $(plan.related), $(plan.shape), $(plan.contents)⟩))
+  let equations ← plan.equations.mapM fun equation => `(Lean.Parser.Tactic.simpLemma| $equation:ident)
+  proof := proof.push (← `(tactic| simp only [$equation:ident, source_eval, $equations,*]))
+  let preservingDecl ← `(command|
+    theorem $preserving:ident ($heap:ident : Complexity.Language.Heap) :
+        ∃ returned finish,
+          $empty:ident $heap:ident = Part.some (.ok returned, finish) ∧
+          ($resultRep).Rel #[] returned finish ∧
+          Complexity.Language.Heap.ShapeExtends $heap:ident finish ∧
+          Complexity.Language.Buffer.PreservesContents $heap:ident finish := by
+      $proof:tactic*)
+  let relationDecl ← `(command|
+    theorem $relation:ident ($heap:ident : Complexity.Language.Heap) :
+        ∃ returned finish,
+          $empty:ident $heap:ident = Part.some (.ok returned, finish) ∧
+          ($resultRep).Rel #[] returned finish ∧
+          Complexity.Language.Heap.ShapeExtends $heap:ident finish := by
+      obtain ⟨returned, finish, executed, related, shape, _⟩ := $preserving:ident $heap:ident
+      exact ⟨returned, finish, executed, related, shape⟩)
+  let signatures := name `signatures
+  let program := name `program
+  let functionId := name `emptyId
+  let observe := name `empty_observe
+  let representation := name `representation
+  let refines := name `empty_refines
+  let representationDecl ← `(command|
+    def $representation:ident : Complexity.Language.FunctionRepresentation
+        Unit (fun _ => $resultType) $signatures:ident[$functionId:ident] :=
+      Complexity.Language.FunctionRepresentation.ofResult
+        Complexity.Language.ArgumentRepresentation.nil (fun _ => $resultRep))
+  let refinement ← `(command|
+    theorem $refines:ident : Complexity.Language.RepresentedFunction.Refines
+        $program:ident $functionId:ident $representation:ident (fun _ => True)
+        (fun _ => #[]) := by
+      intro input _
+      apply Complexity.Language.FunctionTotal.iff_eval.mpr
+      intro args heap _
+      obtain ⟨returned, finish, executed, related, _⟩ := $relation:ident heap
+      refine ⟨returned, finish, ?_, related⟩
+      rw [$observe:ident]
       exact executed)
   return #[source.raw, preservingDecl.raw, relationDecl.raw, representationDecl.raw, refinement.raw]
 

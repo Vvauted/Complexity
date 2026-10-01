@@ -129,6 +129,8 @@ def elaborateWithNames (names : DeclarationNames) (libraries : Array (TSyntax `i
     emitDeclarations (← liftTermElabM (arrayReadDeclarations registration))
   for registration in prepared.arrayReplicates do
     emitDeclarations (← liftTermElabM (arrayReplicateDeclarations registration))
+  for operation in prepared.arrayEmpties do
+    emitDeclarations (← liftTermElabM (arrayEmptyDeclarations operation))
   for registration in prepared.productLists do
     emitDeclarations (← liftTermElabM (productListDeclarations registration))
   let rawFunctions ← liftTermElabM (prepared.functions.mapM rawFunction)

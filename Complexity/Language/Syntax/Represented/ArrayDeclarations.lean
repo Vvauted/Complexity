@@ -7,6 +7,7 @@ import Complexity.Language.Syntax.Represented.Basic
 import Complexity.Language.Syntax.Represented.ArrayReplication
 import Complexity.Language.Buffer.GetD
 import Complexity.Language.Buffer.Ragged.GetD
+import Complexity.Language.Buffer.Ragged.Nested
 import Complexity.Language.Buffer.Prod.Replicate
 import Complexity.Language.Eval.Simp
 
@@ -15,8 +16,10 @@ import Complexity.Language.Eval.Simp
 
 Assemble a concrete source function from existing scalar and ragged column
 reads. Products and checked record field views only describe how these actual
-reads are combined. Generated theorems retain the unchanged heap and observe
+reads are combined. Generated theorems retain every actual return heap and observe
 the original Lean element, including the entire supplied out-of-bounds default.
+Allocating nested-row reads preserve old contents, not the entire heap. Later
+columns and defaults use those frames, as do earlier returned columns.
 The generated source body, including every column call, is compiled normally;
 the representation is not an executable or uncharged mathematical decoder.
 
@@ -37,6 +40,10 @@ private structure ReadPlan where
   sourceValue : TSyntax `term
   returned : TSyntax `term
   related : TSyntax `term
+  finish : TSyntax `term
+  shape : TSyntax `term
+  contents : TSyntax `term
+  sameHeap : Bool := true
   splitValues : Array (TSyntax `term) := #[]
 
 private def relationTerm (type : NativeType) (value actual heap : TSyntax `term) :
@@ -61,8 +68,8 @@ private partial def readPlan (array result : NativeType) (path : String)
     (rows index fallback storage defaultView heap observed defaultObserved : TSyntax `term) :
     TermElabM ReadPlan := do
   let selected ← `(($rows).getD $index $fallback)
-  let checked (returned proof : TSyntax `term) : TermElabM (TSyntax `term) := do
-    let relation ← relationTerm result selected returned heap
+  let checked (returned finish proof : TSyntax `term) : TermElabM (TSyntax `term) := do
+    let relation ← relationTerm result selected returned finish
     `(show $relation from by simpa only [Array.getD_map] using $proof)
   let pair (left right : NativeType) : TermElabM ReadPlan := do
     let (leftResult, rightResult) ← match result with
@@ -77,21 +84,32 @@ private partial def readPlan (array result : NativeType) (path : String)
       (← `(And.left $observed))
       (← if result.isIdentity then `(congrArg Prod.fst $defaultObserved)
         else `(And.left $defaultObserved))
+    let rightFrame ← preservation right heap first.finish first.shape (some first.contents)
+    let defaultFrame ← preservation rightResult heap first.finish first.shape (some first.contents)
     let second ← readPlan right rightResult (path ++ "R")
       (← `(($rows).map Prod.snd)) index (← `(($fallback).2))
-      (← projectColumn storage false) (← projectColumn defaultView false) heap
-      (← `(And.right $observed))
-      (← if result.isIdentity then `(congrArg Prod.snd $defaultObserved)
-        else `(And.right $defaultObserved))
+      (← projectColumn storage false) (← projectColumn defaultView false) first.finish
+      (← `($rightFrame (And.right $observed)))
+      (← `($defaultFrame $(← if result.isIdentity then `(congrArg Prod.snd $defaultObserved)
+        else `(And.right $defaultObserved))))
+    let leftFrame ← preservation leftResult first.finish second.finish second.shape
+      (some second.contents)
+    let firstRelated ← `($leftFrame $(first.related))
     let returned ← `(($(first.returned), $(second.returned)))
-    let related ← if result.isIdentity then `(congrArg₂ Prod.mk $(first.related) $(second.related))
-      else `(And.intro $(first.related) $(second.related))
+    let related ← if result.isIdentity then `(congrArg₂ Prod.mk $firstRelated $(second.related))
+      else `(And.intro $firstRelated $(second.related))
     return {
       body := first.body ++ second.body
       proof := first.proof ++ second.proof
       equations := first.equations ++ second.equations
       sourceValue := ← `(($(first.sourceValue), $(second.sourceValue)))
-      returned, related := ← checked returned related
+      returned, related := ← checked returned second.finish related
+      finish := second.finish
+      shape := ← `(Complexity.Language.Heap.ShapeExtends.trans $(first.shape) $(second.shape))
+      contents := ← `(show Complexity.Language.Buffer.PreservesContents $heap $(second.finish)
+        from fun {_} view values contents =>
+          $(second.contents) view values ($(first.contents) view values contents))
+      sameHeap := first.sameHeap && second.sameHeap
       splitValues := first.splitValues ++ second.splitValues }
   match array with
   | .arrayView element columns _ =>
@@ -101,18 +119,18 @@ private partial def readPlan (array result : NativeType) (path : String)
           let layout ← resolveType (← `(Nat))
           let inner ← readPlan columns layout path (← `(($rows).map $view)) index
             (← `($view $fallback)) storage defaultView heap observed defaultObserved
-          return { inner with related := ← checked inner.returned inner.related }
+          return { inner with related := ← checked inner.returned inner.finish inner.related }
       | .int => do
           let view := mkCIdent ``Representation.intEquiv
           let layout ← resolveType (← `(Bool × Nat))
           let inner ← readPlan columns layout path (← `(($rows).map $view:ident)) index
             (← `($view:ident $fallback)) storage defaultView heap observed defaultObserved
-          return { inner with related := ← checked inner.returned inner.related }
+          return { inner with related := ← checked inner.returned inner.finish inner.related }
       | .string => do
           let view := mkCIdent ``Representation.stringEmbedding
           let inner ← readPlan columns (.array .nat) path (← `(($rows).map $view:ident)) index
             (← `($view:ident $fallback)) storage defaultView heap observed defaultObserved
-          return { inner with related := ← checked inner.returned inner.related }
+          return { inner with related := ← checked inner.returned inner.finish inner.related }
       | .option payload => do
           let (initialDefault, rawDefault) ← payload.optionColumnDefault
           let packed := mkIdent (Name.mkSimple ("packedDefault" ++ path))
@@ -131,7 +149,7 @@ private partial def readPlan (array result : NativeType) (path : String)
               (value := $fallback) (actual := $defaultView) (heap := $heap)
               (by rfl) $defaultObserved))
           let returned ← `(Complexity.Language.Representation.optionUnpack $(inner.returned))
-          let relation ← relationTerm result selected returned heap
+          let relation ← relationTerm result selected returned inner.finish
           return { inner with
             body := #[← `(doElem| let mut $packed:ident : $rawFields := (false, $rawDefault)),
               ← `(doElem| match $defaultView:term with
@@ -155,12 +173,41 @@ private partial def readPlan (array result : NativeType) (path : String)
           let view ← termOfExpr embedding
           let inner ← readPlan columns layout path (← `(($rows).map $view)) index
             (← `($view $fallback)) storage defaultView heap observed defaultObserved
-          return { inner with related := ← checked inner.returned inner.related }
+          return { inner with related := ← checked inner.returned inner.finish inner.related }
       | _ =>
           let .prod left right := columns
             | throwError "unsupported composite array storage"
           pair left right
   | .arrayProd left right => pair (.array left) (.array right)
+  | .raggedArray (.raggedArray (.array kind)) => do
+      let fn := `Complexity.Language.Buffer.Ragged.Nested ++
+        (match kind with | .nat => `getNat | .bool => `getBool)
+      let call := mkIdent fn
+      let evaluated := mkCIdent (fn.appendAfter "_eval_exists_preserving")
+      let named (stem : String) := mkIdent (Name.mkSimple (stem ++ path))
+      let column := named "column"
+      let defaultColumn := named "default"
+      let sourceValue := named "value"
+      let returned := named "returned"
+      let finish := named "finish"
+      let execution := named "execution"
+      let observation := named "observed"
+      let shape := named "shape"
+      let contents := named "contents"
+      let term (name : TSyntax `ident) : TSyntax `term := ⟨name.raw⟩
+      return {
+        body := #[← `(doElem| let $column:ident := $storage),
+          ← `(doElem| let $defaultColumn:ident := $defaultView),
+          ← `(doElem| let $sourceValue:ident ← $call:ident $column:ident $index $defaultColumn:ident)]
+        proof := #[← `(tactic|
+          obtain ⟨$returned:ident, $finish:ident, $execution:ident, $observation:ident,
+              $shape:ident, $contents:ident⟩ :=
+            $evaluated:ident $rows $index $fallback $storage $defaultView $heap
+              $observed $defaultObserved)]
+        equations := #[execution]
+        sourceValue := term sourceValue, returned := term returned, finish := term finish
+        related := ← checked (term returned) (term finish) (term observation)
+        shape := term shape, contents := term contents, sameHeap := false }
   | .array kind | .raggedArray (.array kind) => do
       let ragged := match array with | .raggedArray _ => true | _ => false
       let family := if ragged then `Complexity.Language.Buffer.Ragged.GetD
@@ -188,7 +235,11 @@ private partial def readPlan (array result : NativeType) (path : String)
                 $observed $defaultObserved)]
           equations := #[execution]
           sourceValue := ⟨sourceValue.raw⟩, returned := ⟨returned.raw⟩
-          related := ← checked ⟨returned.raw⟩ ⟨observation.raw⟩ }
+          related := ← checked ⟨returned.raw⟩ heap ⟨observation.raw⟩
+          finish := heap
+          shape := ← `(Complexity.Language.Heap.ShapeExtends.refl $heap)
+          contents := ← `(show Complexity.Language.Buffer.PreservesContents $heap $heap
+            from fun {_} _ _ contents => contents) }
       else
         let same := mkIdent (Name.mkSimple ("defaultEq" ++ path))
         let scalarRelation ← relationTerm result selected selected heap
@@ -202,7 +253,11 @@ private partial def readPlan (array result : NativeType) (path : String)
               rw [← $same:ident]
               exact $evaluated:ident $rows $index $fallback $storage $heap $observed)]
           equations := #[execution], sourceValue := ⟨sourceValue.raw⟩
-          returned := selected, related := ← `(show $scalarRelation from rfl) }
+          returned := selected, related := ← `(show $scalarRelation from rfl)
+          finish := heap
+          shape := ← `(Complexity.Language.Heap.ShapeExtends.refl $heap)
+          contents := ← `(show Complexity.Language.Buffer.PreservesContents $heap $heap
+            from fun {_} _ _ contents => contents) }
   | .raggedArray payload => do
       let pairRows (left right : NativeType) : TermElabM ReadPlan := do
         let offsets ← projectColumn storage true
@@ -214,23 +269,44 @@ private partial def readPlan (array result : NativeType) (path : String)
           (← `(($offsets, $leftColumns))) (← projectColumn defaultView true) heap
           (← `(Complexity.Language.Representation.raggedArrayOf_fst $observed))
           (← `(And.left $defaultObserved))
+        let rightFrame ← preservation (.raggedArray right) heap first.finish first.shape
+          (some first.contents)
+        let defaultFrame ← preservation right heap first.finish first.shape (some first.contents)
         let second ← readPlan (.raggedArray right) right (path ++ "R")
           (← `(($rows).map (Array.map Prod.snd))) index (← `(($fallback).map Prod.snd))
-          (← `(($offsets, $rightColumns))) (← projectColumn defaultView false) heap
-          (← `(Complexity.Language.Representation.raggedArrayOf_snd $observed))
-          (← `(And.right $defaultObserved))
+          (← `(($offsets, $rightColumns))) (← projectColumn defaultView false) first.finish
+          (← `($rightFrame (Complexity.Language.Representation.raggedArrayOf_snd $observed)))
+          (← `($defaultFrame (And.right $defaultObserved)))
+        let leftFrame ← preservation left first.finish second.finish second.shape
+          (some second.contents)
         let returned ← `(($(first.returned), $(second.returned)))
         return {
           body := first.body ++ second.body
           proof := first.proof ++ second.proof
           equations := first.equations ++ second.equations
           sourceValue := ← `(($(first.sourceValue), $(second.sourceValue)))
-          returned, related := ← checked returned
-            (← `(And.intro $(first.related) $(second.related))) }
+          returned, related := ← checked returned second.finish
+            (← `(And.intro ($leftFrame $(first.related)) $(second.related)))
+          finish := second.finish
+          shape := ← `(Complexity.Language.Heap.ShapeExtends.trans $(first.shape) $(second.shape))
+          contents := ← `(show Complexity.Language.Buffer.PreservesContents $heap $(second.finish)
+            from fun {_} view values contents =>
+              $(second.contents) view values ($(first.contents) view values contents))
+          sameHeap := first.sameHeap && second.sameHeap
+          splitValues := first.splitValues ++ second.splitValues }
       match payload with
       | .arrayProd left right => pairRows (.array left) (.array right)
       | .arrayView element columns _ =>
           match element with
+          | .string => do
+              let view := mkCIdent ``Representation.stringEmbedding
+              let columnRep ← termOfExpr columns.representation
+              let inner ← readPlan (.raggedArray columns) columns path
+                (← `(($rows).map (Array.map $view:ident))) index
+                (← `(($fallback).map $view:ident)) storage defaultView heap
+                (← `(Complexity.Language.Representation.raggedArrayOf_map
+                  $columnRep $view:ident $observed)) defaultObserved
+              return { inner with related := ← checked inner.returned inner.finish inner.related }
           | .int => do
               let view := mkCIdent ``Representation.intEquiv
               let columnRep ← termOfExpr columns.representation
@@ -239,7 +315,7 @@ private partial def readPlan (array result : NativeType) (path : String)
                 (← `(($fallback).map $view:ident)) storage defaultView heap
                 (← `(Complexity.Language.Representation.raggedArrayOf_map
                   $columnRep (Equiv.toEmbedding $view:ident) $observed)) defaultObserved
-              return { inner with related := ← checked inner.returned inner.related }
+              return { inner with related := ← checked inner.returned inner.finish inner.related }
           | .record _ _ embedding | .scalar _ embedding => do
               let view ← termOfExpr embedding
               let columnRep ← termOfExpr columns.representation
@@ -248,12 +324,12 @@ private partial def readPlan (array result : NativeType) (path : String)
                 storage defaultView heap
                 (← `(Complexity.Language.Representation.raggedArrayOf_map
                   $columnRep $view $observed)) defaultObserved
-              return { inner with related := ← checked inner.returned inner.related }
+              return { inner with related := ← checked inner.returned inner.finish inner.related }
           | _ =>
               let .prod left right := columns
                 | throwError "unsupported row payload columns"
               pairRows left right
-      | _ => throwError "row payloads require supported scalar array columns"
+      | _ => throwError "row payloads require supported scalar or rebased ragged columns"
   | _ => throwError "this array layout has no executable defaulted element reader"
 
 /-- Emit an actual source reader and checked mathematical/frame contracts. -/
@@ -287,8 +363,10 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
   let function ← liftMacroM declaration.toSyntax
   let scalarReads := mkIdent `Complexity.Language.Buffer.GetD
   let rowReads := mkIdent `Complexity.Language.Buffer.Ragged.GetD
-  let source ← `(command| source_program% $family:ident importing
-    $scalarReads:ident, $rowReads:ident where
+  let nestedReads := mkIdent `Complexity.Language.Buffer.Ragged.Nested
+  let libraries := if plan.sameHeap then #[scalarReads, rowReads]
+    else #[scalarReads, rowReads, nestedReads]
+  let source ← `(command| source_program% $family:ident importing $libraries:ident,* where
       $function:sourceFunction)
   let arrayType ← termOfExpr array.nativeType
   let resultType ← termOfExpr result.nativeType
@@ -305,9 +383,11 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
   let getD := name `getD
   let equation := name `getD_eq
   let evaluated := name `getD_eval
+  let executed := name `getD_eval_preserving
   let equations ← plan.equations.mapM fun equation => `(Lean.Parser.Tactic.simpLemma| $equation:ident)
   let mut proof := plan.proof
-  proof := proof.push (← `(tactic| refine ⟨$(plan.returned), ?_, $(plan.related)⟩))
+  proof := proof.push (← `(tactic| refine
+    ⟨$(plan.returned), $(plan.finish), ?_, $(plan.related), $(plan.shape), $(plan.contents)⟩))
   let simpRules := #[← `(Lean.Parser.Tactic.simpLemma| $equation:ident),
     ← `(Lean.Parser.Tactic.simpLemma| source_eval),
     ← `(Lean.Parser.Tactic.simpLemma| Complexity.Language.Representation.optionEmbedding_none),
@@ -323,13 +403,31 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
     proof := proof.push (← `(tactic| all_goals simp_all only [$simpRules,*]))
     proof := proof.push (← `(tactic| all_goals split_ifs <;> simp_all only [$simpRules,*]))
   let evaluation ← `(command|
-    theorem $evaluated:ident ($rows:ident : $arrayType) ($index:ident : Nat)
+    theorem $executed:ident ($rows:ident : $arrayType) ($index:ident : Nat)
         ($fallback:ident : $resultType) ($storage:ident : $rawArray)
         ($defaultView:ident : $rawResult) ($heap:ident : Complexity.Language.Heap)
         ($observed:ident : $rowsRelated) ($defaultObserved:ident : $fallbackRelated) :
-        ∃ returned, $getD:ident $storage:ident $index:ident $defaultView:ident $heap:ident =
-          Part.some (.ok returned, $heap:ident) ∧ $returnedRelated := by
+        ∃ returned finish, $getD:ident $storage:ident $index:ident $defaultView:ident $heap:ident =
+          Part.some (.ok returned, finish) ∧
+          ($resultRep).Rel (($rows:ident).getD $index:ident $fallback:ident) returned finish ∧
+          Complexity.Language.Heap.ShapeExtends $heap:ident finish ∧
+          Complexity.Language.Buffer.PreservesContents $heap:ident finish := by
       $proof:tactic*)
+  let mut exactEvaluation : Array Syntax := #[]
+  if plan.sameHeap then
+    let exactProof := plan.proof ++
+      #[← `(tactic| refine ⟨$(plan.returned), ?_, $(plan.related)⟩)]
+    let finishProof := proof.extract (plan.proof.size + 1) proof.size
+    let declaration ← `(command|
+      theorem $evaluated:ident ($rows:ident : $arrayType) ($index:ident : Nat)
+          ($fallback:ident : $resultType) ($storage:ident : $rawArray)
+          ($defaultView:ident : $rawResult) ($heap:ident : Complexity.Language.Heap)
+          ($observed:ident : $rowsRelated) ($defaultObserved:ident : $fallbackRelated) :
+          ∃ returned, $getD:ident $storage:ident $index:ident $defaultView:ident $heap:ident =
+            Part.some (.ok returned, $heap:ident) ∧ $returnedRelated := by
+        $exactProof:tactic*
+        $finishProof:tactic*)
+    exactEvaluation := #[declaration.raw]
   let mut roots : Array (TSyntax ``bracketedBinder) := #[]
   let mut observations : Array (TSyntax ``bracketedBinder) := #[]
   let actualDefault ← if result.isIdentity then pure (term fallback) else do
@@ -349,11 +447,10 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
             Part.some (.ok returned, finish) ∧
           ($resultRep).Rel (($rows:ident).getD $index:ident $fallback:ident) returned finish ∧
           Complexity.Language.Heap.ShapeExtends $heap:ident finish := by
-      obtain ⟨returned, execution, related⟩ := $evaluated:ident
+      obtain ⟨returned, finish, execution, related, shape, _⟩ := $executed:ident
         $rows:ident $index:ident $fallback:ident $storage:ident $actualDefault $heap:ident
         $observed:ident $defaultProof
-      exact ⟨returned, $heap:ident, execution, related,
-        Complexity.Language.Heap.ShapeExtends.refl $heap:ident⟩)
+      exact ⟨returned, finish, execution, related, shape⟩)
   let preservingDecl ← `(command|
     theorem $preserving:ident ($rows:ident : $arrayType) ($index:ident : Nat)
         ($fallback:ident : $resultType) ($storage:ident : $rawArray) $roots:bracketedBinder*
@@ -365,12 +462,8 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
           ($resultRep).Rel (($rows:ident).getD $index:ident $fallback:ident) returned finish ∧
           Complexity.Language.Heap.ShapeExtends $heap:ident finish ∧
           Complexity.Language.Buffer.PreservesContents $heap:ident finish := by
-      obtain ⟨returned, execution, related⟩ := $evaluated:ident
-        $rows:ident $index:ident $fallback:ident $storage:ident $actualDefault $heap:ident
-        $observed:ident $defaultProof
-      exact ⟨returned, $heap:ident, execution, related,
-        Complexity.Language.Heap.ShapeExtends.refl $heap:ident,
-        fun {_} _ _ contents => contents⟩)
+      exact $executed:ident $rows:ident $index:ident $fallback:ident
+        $storage:ident $actualDefault $heap:ident $observed:ident $defaultProof)
   let signatures := name `signatures
   let program := name `program
   let getDId := name `getDId
@@ -394,13 +487,13 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
       intro args heap observed
       rcases observed with ⟨contents, index, fallback⟩
       change input.2.1 = args.tail.head at index
-      obtain ⟨returned, execution, result⟩ := $evaluated:ident input.1 input.2.1 input.2.2
+      obtain ⟨returned, finish, execution, result, _⟩ := $executed:ident input.1 input.2.1 input.2.2
         args.head args.tail.tail.head heap contents fallback
-      refine ⟨returned, heap, ?_, result⟩
+      refine ⟨returned, finish, ?_, result⟩
       rw [$observe:ident, ← index]
       exact execution)
-  return #[source.raw, evaluation.raw, relationDecl.raw, preservingDecl.raw,
-    representationDecl.raw, refinement.raw]
+  return #[source.raw, evaluation.raw] ++ exactEvaluation ++
+    #[relationDecl.raw, preservingDecl.raw, representationDecl.raw, refinement.raw]
 
 /-- Transport a real initialized allocator through a checked scalar or direct
 record view. No source wrapper, executable map or new cost convention is added. -/

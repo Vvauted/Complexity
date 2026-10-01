@@ -315,6 +315,7 @@ structure Preparation where
   productLists : Array ProductListRegistration := #[]
   arrayReads : Array ArrayReadRegistration := #[]
   arrayReplicates : Array ArrayReplicateRegistration := #[]
+  arrayEmpties : Array Operation := #[]
   functions : Array Function := #[]
   ranges : Array RangeRegistration := #[]
   whiles : Array WhileRegistration := #[]

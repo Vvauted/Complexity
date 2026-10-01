@@ -221,9 +221,23 @@ returns the entire supplied fallback without allocation. Both branches preserve
 every old contents observation; the payload remains aliased mutable storage.
 In bounds, the actual final heap contains new boundaries and the operation is
 not a constant-time borrowed row lookup. Ordinary composite `Array.getD`
-frontend integration still needs to thread this changed heap through subsequent
-column reads and their observations. These source operations do not claim that
-arbitrary-depth high-level access or nested mutation is already supported.
+threads this changed heap through subsequent column reads. Its generated proof
+transports unread columns and the complete fallback to that heap, then preserves
+earlier returned columns across later allocations. Supported record and product
+views compose these same operations; string grids retain their original strings.
+Unchanged-heap readers keep their exact-heap contracts; allocating readers expose
+their actual final heap. Arbitrary-depth access, nested mutation and automatic
+whole-reader RAM cost certificates remain separate work.
+
+Typed `#[]` expressions construct empty arrays without an element initializer.
+The frontend emits real initialized allocations for scalar and product columns,
+including supported record, scalar-view and ragged layouts. Every ragged level
+allocates its one zero sentinel and constructs its actual empty payload. No
+dummy heap-backed element or extra fallback input is required. The mathematical
+equation is ordinary `#[]`; old array observations survive the actual allocations.
+For example, a record field of type `Array String` can use `let rows : Array String := #[]`.
+This does not implement positive-length replication of heap-backed elements or
+make construction and boundary rebasing free in the RAM cost model.
 
 ## Strings and character-indexed operations
 
