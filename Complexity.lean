@@ -96,6 +96,7 @@ import Complexity.Computability.Ram.Compiler.Language.Arena.Call
 import Complexity.Computability.Ram.Compiler.Language.Arena.CallSequence
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Allocation
+import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Buffer
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Call
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.CallSequence
 import Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Loop
@@ -157,6 +158,8 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.GetD
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Prod.Replicate
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.GetD
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.Extract
+import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.Nested
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Rebase
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Replicate
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Map

@@ -213,14 +213,26 @@ allocation, read/subtract/write loop. Its
 initialized allocation, copying, call dispatch and function setup, with an
 affine envelope in the number of boundary cells. This conditional cost needs
 an actual ready arena execution; it does not itself establish word ranges,
-capacity, the enclosing extractor's total cost or `Program.TimeO`.
+capacity or `Program.TimeO`. The enclosing
+[extractor certificate](##Ram.LanguageCompiler.Buffer.Ragged.Extract.extractNat_arenaCostBound)
+also counts both endpoint reads, both borrowed slices, the real imported call
+and function setup. Its affine bound uses `stop + 1 - start` boundary cells,
+not the number of payload cells; the Boolean extractor has the same interface.
 
 The [three-level row operation](##Complexity.Language.Buffer.Ragged.Nested)
 uses that extractor for in-bounds natural or Boolean rows. Out of bounds it
 returns the entire supplied fallback without allocation. Both branches preserve
 every old contents observation; the payload remains aliased mutable storage.
 In bounds, the actual final heap contains new boundaries and the operation is
-not a constant-time borrowed row lookup. Ordinary composite `Array.getD`
+not a constant-time borrowed row lookup. Its
+[callable cost](##Ram.LanguageCompiler.Buffer.Ragged.Nested.getNat_arenaCostBound)
+has a proved linear envelope in the selected row's length, including its final
+sentinel; out-of-bounds selection has a fixed envelope independent of the
+fallback's length. The reusable
+[read and slice rules](##Complexity.Computability.Ram.Compiler.Language.Arena.CostBound.Buffer)
+retain the actual access equations through allocating continuations. They
+neither assert successful access nor manufacture arena readiness.
+Ordinary composite `Array.getD`
 threads this changed heap through subsequent column reads. Its generated proof
 transports unread columns and the complete fallback to that heap, then preserves
 earlier returned columns across later allocations. Supported record and product
