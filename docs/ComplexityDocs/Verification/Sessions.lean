@@ -5,6 +5,7 @@ Authors: vvauted
 -/
 import Complexity.Language.Session
 import Complexity.Language.Session.Refinement
+import Complexity.Program.SumOutput
 import Complexity.Computability.Ram.Compiler.Language.Session
 import Complexity.Computability.Ram.Compiler.Language.Session.Induction
 import Complexity.Computability.Ram.Compiler.Language.Session.TimeBound
@@ -179,6 +180,23 @@ can describe the complete interaction. Existence of one accepted trace is not
 a guarantee against every choice of a nondeterministic or adaptive adversary.
 Keep an independent source-correctness proposition using the same protocol;
 the compiled-time bound and an executable streaming adapter are separate work.
+
+## Query and terminal replies
+
+`Program.Output (Sum Query Answer)` fixes a reply layout for protocols that
+either issue a query or return a final answer. It reuses `Representation.sum`:
+the existing option/product layout contains exactly one payload. Both-present
+and both-absent values represent no sum, and no absent array needs a default
+allocation. `Output.sum_inl` and `Output.sum_inr` reduce correctness to the
+selected payload's ordinary return-heap observation.
+
+This output instance does not add native `Sum` syntax. Source programs can
+construct the layout with the existing `some`, `none` and pair operations;
+their normal compiler costs remain. A protocol must still specify its initial
+request, subsequent feedback, and terminal condition. In particular, a terminal
+answer can require an actual source call without consuming a query allowance.
+Keep a suspended computation in the actual source state; a mathematical Lean
+continuation is not an executable payload supplied for free.
 
 ## Operation and transport boundaries
 

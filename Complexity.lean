@@ -601,6 +601,7 @@ import Complexity.Program.Input
 import Complexity.Program.IntInput
 import Complexity.Program.OptionArrayInput
 import Complexity.Program.StringInput
+import Complexity.Program.SumOutput
 import Complexity.Program.Packing
 import Complexity.Program.Syntax
 import Complexity.Tactic.Ram.Array
