@@ -10,6 +10,7 @@ import Examples.Language.ProgramCompiled
 import Examples.Language.Characters
 import Examples.Language.Enumerations
 import Examples.Language.SignedLists
+import Examples.Language.CompositeArrays
 import Complexity.Program.ListOutput
 import Complexity.Language.List.Int
 import Complexity.Computability.Ram.Compiler.Language.List.Prod
@@ -203,14 +204,17 @@ instances reuse the same ordered layout; no field needs to be moved to the end
 just because it is a record. This is input registration, not extra runtime copying.
 Prepared source supports field projection, construction and returned records with
 array fields; natural-array `++` uses an actual allocation and copying call.
-For a closed record with one scalar field or two scalar fields (`Nat`/`Bool`),
-`Array.replicate length initial` reuses the existing initialized column allocator.
-The generated contract observes the original record array and preserves prior
-contents; it adds no executable map or uncharged host preprocessing. This also
-allows internal empty record arrays for default values, without adding those
-defaults to the task input. The typed-program example proves replication and
-empty-array lookup with the ordinary `program_correct` interface. More general
-record initializers, including array-valued fields, still need allocating operations.
+For supported closed records and nested products with scalar field columns,
+`Array.replicate length initial` composes the existing initialized allocators.
+This includes represented scalars such as `Char` and `Int`; there is no fixed
+arity limit. Existing single/pair allocator paths remain unchanged. The generated
+contract observes the original array and preserves prior contents through every
+actual intermediate heap, without an executable map or free host preprocessing.
+Internal empty arrays need no extra default input. The
+[composite-array example](##Complexity.Examples.CompositeArrays) proves ordinary
+replication and retained-input lookup using `program_correct`, and composes the
+triple allocator's real RAM body cost from existing leaf certificates. Initializers
+with array-valued fields still need allocating operations of their own.
 `deriving Complexity.Program.Output` also registers the record-array output
 when its field-column array already has a fixed output interface. This observes
 the actual returned columns; it does not allocate or decode them at runtime.
@@ -268,10 +272,10 @@ The fallback in this example is a nested record before a later scalar field;
 its derived prefix layout composes with the record-array input unchanged.
 
 Defaults containing arrays must themselves have actual represented storage.
-`Array.replicate length initial` for Nat/Bool scalars or scalar pairs allocates
-and initializes that storage through the existing allocator, preserving old
-contents. A pair allocates both real columns and retains the first while creating
-the second. At length zero the objects are still real, so an algorithm can construct a fallback record
+`Array.replicate length initial` for supported scalar, product or record columns
+allocates and initializes that storage through the existing allocators, preserving
+old contents. Each later column allocation retains all earlier columns.
+At length zero the objects are still real, so an algorithm can construct a fallback record
 without requiring another input array. Its model is ordinary `Array.replicate`;
 allocation and initialization remain part of the compiled computation, not free
 mathematical preprocessing. Composite reads preserve the heap but allocate no

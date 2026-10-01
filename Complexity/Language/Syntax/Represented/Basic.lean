@@ -134,10 +134,10 @@ structure ArrayReadRegistration where
   array : NativeType
   operation : Operation
 
-/-- A nominal record observation of an existing initialized column allocator. -/
+/-- Reuse an existing allocator when available, otherwise generate its column composition. -/
 structure ArrayReplicateRegistration where
   contracts : TSyntax `ident
-  base : Operation
+  base : Option Operation
   operation : Operation
 
 structure ValueModel extends BindingModel where

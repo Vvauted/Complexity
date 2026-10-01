@@ -363,18 +363,21 @@ private def arrayViewReplicateOperation (family : TSyntax `ident) (array : Nativ
     if ← sameType registration.operation.result array then return registration.operation
   let .arrayView element storage _ := array
     | throwError "array replication requires a supported initialized column layout"
-  match element with
-  | .record _ _ _ | .scalar _ _ => pure ()
-  | _ => throwError "array replication requires a checked scalar or direct field view"
-  let base ← match storage with
-    | .array kind => arrayReplicateOperation kind
-    | .arrayProd left right => arrayProdReplicateOperation left right
-    | _ => throwError "record array replication currently requires one scalar or a scalar pair"
+  unless array.hasScalarArrayColumns do
+    throwError "array replication requires supported scalar field columns"
+  let base ← match element, storage with
+    | .record _ _ _, .array kind | .scalar _ _, .array kind =>
+        pure (some (← arrayReplicateOperation kind))
+    | .record _ _ _, .arrayProd left right =>
+        pure (some (← arrayProdReplicateOperation left right))
+    | _, _ => pure none
   let contracts := mkIdentFrom family
     (family.getId ++ `Operations ++ Name.mkSimple s!"arrayReplicate{(← get).arrayReplicates.size}")
   let name (suffix : Name) := mkIdentFrom family (contracts.getId ++ suffix)
   let length ← resolveType (← `(Nat))
-  let operation : Operation := { base with
+  let operation : Operation := {
+    family := base.map (·.family) |>.getD contracts
+    sourceName := base.map (·.sourceName) |>.getD `replicate
     inputs := #[length, element], result := array
     model? := some {
       native := ⟨(mkCIdent ``Array.replicate).raw⟩, equation := none
@@ -383,6 +386,8 @@ private def arrayViewReplicateOperation (family : TSyntax `ident) (array : Nativ
       preservingRelation := some (name `replicate_eval_exists_preserving) } }
   modify fun state => { state with
     arrayReplicates := state.arrayReplicates.push ⟨contracts, base, operation⟩ }
+  if base.isNone then
+    modify fun state => { state with calledFamilies := state.calledFamilies.push contracts }
   return operation
 
 private def arrayProdGetDOperation (left right : CellTy) : PrepareM Operation := do
@@ -595,7 +600,7 @@ def operationCall? (names : DeclarationNames) (imports : ImportedPrograms)
         | .array kind => arrayReplicateOperation kind
         | .arrayProd left right => arrayProdReplicateOperation left right
         | .arrayView .int _ _ => arrayIntOperation true
-        | .arrayView (.record _ _ _) _ _ | .arrayView (.scalar _ _) _ _ =>
+        | .arrayView _ _ _ =>
             arrayViewReplicateOperation names.publicFamily array
         | _ => throwErrorAt initial "Array.replicate requires supported scalar, pair or record columns"
       return some (operation, #[length, initial])

@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import Complexity.Language.Syntax.Represented.Basic
+import Complexity.Language.Syntax.Represented.ArrayReplication
 import Complexity.Language.Buffer.GetD
 import Complexity.Language.Buffer.Ragged.GetD
 import Complexity.Language.Buffer.Prod.Replicate
@@ -336,6 +337,7 @@ def arrayReadDeclarations (registration : ArrayReadRegistration) :
 record view. No source wrapper, executable map or new cost convention is added. -/
 def arrayReplicateDeclarations (registration : ArrayReplicateRegistration) :
     TermElabM (Array Syntax) := do
+  let some base := registration.base | return ← compositeReplicateDeclarations registration
   let array := registration.operation.result
   let .arrayView element storage _ := array
     | throwError "replication requires a checked scalar or direct field view"
@@ -344,7 +346,6 @@ def arrayReplicateDeclarations (registration : ArrayReplicateRegistration) :
     | _ => throwError "replication requires a checked scalar or direct field view"
   let name (suffix : Name) := mkIdentFrom registration.contracts
     (registration.contracts.getId ++ suffix)
-  let base := registration.base
   let sourceName := base.family.getId ++ base.sourceName
   let source := mkCIdent sourceName
   let sourcePreserving := mkCIdent (sourceName.appendAfter "_eval_exists_preserving")
