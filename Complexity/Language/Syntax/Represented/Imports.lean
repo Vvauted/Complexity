@@ -153,11 +153,12 @@ structure Encoding where
 
 /-- Keep the checked representation and embedding parameters when a composed
 relation proof is inserted into a generated declaration. -/
-def Encoding.relationSyntax (encoding : Encoding) : TermElabM (TSyntax `term) := do
-  let proof ← withOptions (fun options => options.setBool `pp.explicit true) do
-    termOfExpr encoding.relation
-  let type ← termOfExpr (← inferType encoding.relation)
-  `(($proof : $type))
+def Encoding.relationSyntax (encoding : Encoding) : TermElabM (TSyntax `term) :=
+  withOptions (fun options => options.setBool `pp.explicit true) do
+    let relation ← instantiateMVars encoding.relation
+    let proof ← termOfExpr relation
+    let type ← termOfExpr (← instantiateMVars (← inferType relation))
+    `(($proof : $type))
 
 /-- Whether a native representation has an encoding independent of the heap.
 References observed as arrays or lists deliberately do not have such an encoding. -/

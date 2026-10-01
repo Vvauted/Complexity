@@ -10,7 +10,7 @@ import Complexity.Computability.Ram.Compiler.Language.Program.IntInput
 import Complexity.Computability.Ram.Compiler.Language.Program.RaggedArrayInput
 
 /-!
-# Deriving a fixed RAM input for an ordinary record
+# Deriving fixed RAM inputs for records and enumerations
 
 After deriving `Complexity.Program.Input`, a record can also derive
 `Complexity.Program.RamInput`. The handler reuses the same checked direct-field
@@ -21,6 +21,8 @@ program nor chooses capacity or a proposed runtime bound.
 The derived source input must be definitionally the direct-field presentation.
 An independently chosen manual input layout needs its own physical connection,
 not an automatic cast to a different layout.
+Enumerations reuse their checked constructor-index embedding and the existing
+natural-field layout, including arrays and input prefixes.
 -/
 
 namespace Complexity.Program.Deriving
@@ -43,7 +45,7 @@ private def deriveRamInputPrefix (instanceName : Name) (view : Expr) : TermElabM
     "Reuse the same derived physical layout before any registered input tail."
 
 private def deriveRamInput (name : Name) : TermElabM Unit := do
-  let embedding ← ensureStructureEmbedding name
+  let embedding ← ensureInterfaceEmbedding name
   let value ← mkAppM ``RamInput.comap #[embedding]
   let expected ← mkAppOptM ``RamInput #[some (mkConst name), none]
   unless ← isDefEq (← inferType value) expected do
@@ -61,7 +63,8 @@ private def deriveRamInput (name : Name) : TermElabM Unit := do
 
 private def ramInputHandler (names : Array Name) : CommandElabM Bool := do
   let env ← getEnv
-  unless names.all (fun name => (getStructureInfo? env name).isSome) do
+  unless ← names.allM (fun name => do
+      return (getStructureInfo? env name).isSome || (← isClosedEnum name)) do
     return false
   for name in names do
     liftTermElabM (deriveRamInput name)

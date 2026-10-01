@@ -190,6 +190,16 @@ private partial def scalarProduct : Ty → Bool
   | .prod left right => scalarProduct left && scalarProduct right
   | _ => false
 
+private def canonicalScalar? (type : Expr) : TermElabM (Option NativeType) := do
+  let type ← whnf type
+  if ← isDefEq type (mkConst ``Char) then
+    return some (.scalar (mkConst ``Char) (mkConst ``Representation.charEmbedding))
+  if let .const name _ := type then
+    if (getStructureInfo? (← getEnv) name).isNone &&
+        (← Complexity.Program.Deriving.isClosedEnum name) then
+      return some (.scalar type (← Complexity.Program.Deriving.ensureEnumEmbedding name))
+  return none
+
 private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
     (structuredProducts : Bool) :
     TermElabM NativeType := do
@@ -197,8 +207,7 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if type.hasFVar || type.hasMVar then
     throwError "native source types must be closed and fully inferred"
   let reduced ← whnf type
-  if ← isDefEq reduced (mkConst ``Char) then
-    return .scalar (mkConst ``Char) (mkConst ``Representation.charEmbedding)
+  if let some scalar ← canonicalScalar? reduced then return scalar
   if ← isDefEq reduced (mkConst ``Int) then return .int
   if let .app (.const name _) kind := reduced then
     if name == ``Buffer || name == ``NodeRef then
@@ -213,9 +222,8 @@ private partial def resolveNativeTypeAux (type : Expr) (records : List Name)
   if let .app (.const ``Array _) element := reduced then
     if ← isDefEq element (mkConst ``Nat) then return .array .nat
     if ← isDefEq element (mkConst ``Bool) then return .array .bool
-    if ← isDefEq element (mkConst ``Char) then
-      let embedding : Expr := mkConst ``Representation.charEmbedding
-      return .arrayView (.scalar (mkConst ``Char) embedding) (.array .nat)
+    if let some scalar@(.scalar _ embedding) ← canonicalScalar? element then
+      return .arrayView scalar (.array .nat)
         (← mkAppM ``Function.Embedding.arrayMap #[embedding])
     if ← isDefEq element (mkConst ``Int) then
       let embedding ← mkAppM ``Function.Embedding.arrayMap

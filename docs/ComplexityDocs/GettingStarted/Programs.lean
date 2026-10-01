@@ -8,6 +8,7 @@ import Examples.Language.LinkedList
 import Examples.Language.Program
 import Examples.Language.ProgramCompiled
 import Examples.Language.Characters
+import Examples.Language.Enumerations
 
 /-!
 # Correctness-and-complexity tasks
@@ -98,6 +99,16 @@ an internally allocated empty fallback and compares the result with a non-ASCII
 literal. Its `program_correct` proofs use ordinary character/array propositions.
 The real natural-cell operations and their heap frames are reused. This is not
 general string support or automatic inference of a whole-program RAM time bound.
+
+Closed enumerations with argument-free constructors can derive the same
+`Program.Input`, `Program.Output` and `Program.RamInput` interfaces, including
+supported arrays and record fields. Their fixed natural-cell layout uses Lean's
+constructor indices; invalid indices observe no constructor. The
+[enumeration example](##Examples.Language.Enumerations) uses constructors,
+equality/inequality, defaulted array reads and initialized replication, while
+`program_correct` retains ordinary enum propositions. The layout itself does not
+require `DecidableEq`; comparisons do. General enum pattern matching and a complete
+caller RAM bound are separate from this support.
 
 The typed-program example selects the existing linked-list constructor directly:
 

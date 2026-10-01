@@ -10,10 +10,12 @@ import Complexity.Program.RaggedArrayInput
 import Lean.Elab.Deriving.Basic
 import Lean.EnvExtension
 import Lean.Meta.AppBuilder
+import Lean.Meta.Constructions.CtorIdx
+import Lean.Meta.NatTable
 import Lean.Structure
 
 /-!
-# Deriving fixed program interfaces for ordinary records
+# Deriving fixed program interfaces for records and enumerations
 
 An ordinary record can use `deriving Complexity.Program.Input` or
 `deriving Complexity.Program.Output`. The handlers expose its direct fields as
@@ -31,6 +33,10 @@ parameter. Input preparation retains the preloaded invocation boundary.
 The current handlers accept closed, nondependent records without inherited
 fields. Empty records use `Unit`; a single field is not wrapped in a product.
 Each resulting tuple must already have the requested fixed interface.
+Closed enumerations with nonempty, argument-free constructors use Lean's
+constructor indices. Their checked embedding shares the existing natural layout;
+invalid indices observe no constructor. No `DecidableEq` instance is required
+for the layout itself, and no runtime decoder is registered.
 -/
 
 namespace Complexity.Program.Deriving
@@ -38,6 +44,12 @@ namespace Complexity.Program.Deriving
 open Lean Meta Elab Command
 
 private initialize structureViewExt : SimplePersistentEnvExtension Name (NameMap Name) ←
+  registerSimplePersistentEnvExtension {
+    addEntryFn := fun state name => state.insert name name
+    addImportedFn := mkStateFromImportedEntries (fun state name => state.insert name name) {}
+  }
+
+private initialize enumViewExt : SimplePersistentEnvExtension Name (NameMap Name) ←
   registerSimplePersistentEnvExtension {
     addEntryFn := fun state name => state.insert name name
     addImportedFn := mkStateFromImportedEntries (fun state name => state.insert name name) {}
@@ -140,6 +152,70 @@ def ensureStructureEmbedding (name : Name) : TermElabM Expr := do
   modifyEnv fun env => structureViewExt.addEntry env name
   return mkConst embeddingName
 
+/-- Recognize closed enumerations without replacing the existing Boolean layout.
+Universe-polymorphic singleton types keep their existing unit presentation. -/
+def isClosedEnum [Monad m] [MonadEnv m] [MonadError m] (name : Name) : m Bool := do
+  if name == ``Bool || !(← isEnumType name) then return false
+  let info ← getConstInfoInduct name
+  return info.levelParams.isEmpty && info.type == mkSort (.succ .zero)
+
+/-- Use Lean's constructor numbering for a closed enumeration. The local lookup
+table only proves injectivity; it is not a source operation or runtime decoder. -/
+def ensureEnumEmbedding (name : Name) : TermElabM Expr := do
+  let env ← getEnv
+  let embeddingName := name ++ `programEmbedding
+  if ((enumViewExt.getState env).find? name).isSome then
+    return mkConst embeddingName
+  unless ← isClosedEnum name do
+    throwError "program enumeration layouts require a closed Type with nonempty, \
+      argument-free constructors; Bool retains its existing layout"
+  let info ← getConstInfoInduct name
+  let viewName := name ++ `programView
+  let injectiveName := name ++ `programView_injective
+  for declarationName in #[viewName, injectiveName, embeddingName] do
+    if env.contains declarationName then
+      throwError "program interface deriving would overwrite '{declarationName}'"
+  let nativeType := mkConst name
+  let index := mkConst (mkCtorIdxName name)
+  addDefinition viewName (← inferType index) index
+    "The canonical constructor index used by this enumeration's program interfaces."
+  let view := mkConst viewName
+  let (inverse, inverseProof) ← if env.contains (name ++ `ofNat_ctorIdx) then
+      pure (mkConst (name ++ `ofNat), mkConst (name ++ `ofNat_ctorIdx))
+    else do
+      let constructors := info.ctors.toArray.map mkConst
+      let inverse ← withLocalDeclD `index (mkConst ``Nat) fun index => do
+        mkLambdaFVars #[index] (← mkNatLookupTable index nativeType constructors)
+      let proof ← withLocalDeclD `value nativeType fun value => do
+        let proposition ← mkEq (mkApp inverse (mkApp view value)) value
+        let motive ← mkLambdaFVars #[value] proposition
+        let cases := mkAppN (mkConst (mkCasesOnName name) [Level.zero]) #[motive, value]
+        let proof := mkAppN cases (← constructors.mapM fun constructor => mkEqRefl constructor)
+        mkLambdaFVars #[value] proof
+      pure (inverse, proof)
+  let injective ← mkAppOptM ``Function.LeftInverse.injective
+    #[some nativeType, some (mkConst ``Nat), some inverse, some view, some inverseProof]
+  let injectiveType ← mkAppM ``Function.Injective #[view]
+  withOptions (Elab.async.set · false) do
+    addDecl (.thmDecl {
+      name := injectiveName, levelParams := [], type := injectiveType, value := injective })
+    enableRealizationsForConst injectiveName
+  addDocStringCore injectiveName
+    "The constructor-index program view preserves the original enumeration's equality."
+  let embedding ← mkAppM ``Function.Embedding.mk #[view, mkConst injectiveName]
+  addDefinition embeddingName (← inferType embedding) embedding
+    "The shared checked enumeration-to-natural embedding for fixed program interfaces."
+  modifyEnv fun env => enumViewExt.addEntry env name
+  return mkConst embeddingName
+
+/-- Share canonical record fields or enumeration indices across fixed interfaces.
+Ordinary empty structures retain their existing unit layout. -/
+def ensureInterfaceEmbedding (name : Name) : TermElabM Expr := do
+  if (getStructureInfo? (← getEnv) name).isSome then
+    ensureStructureEmbedding name
+  else
+    ensureEnumEmbedding name
+
 private def deriveInputPrefix (instanceName : Name) (view : Expr) :
     TermElabM Unit := do
   let tupleType := (← inferType view).getAppArgs[1]!
@@ -181,7 +257,7 @@ private def deriveArrayInput (name : Name) (embedding : Expr) (tupleType : Expr)
   deriveInputPrefix (name ++ `instProgramArrayInputProd) view
 
 private def deriveInput (name : Name) : TermElabM Unit := do
-  let embedding ← ensureStructureEmbedding name
+  let embedding ← ensureInterfaceEmbedding name
   let type ← inferType embedding
   let tupleType := type.getAppArgs[1]!
   let input ← synthInstance (← mkAppM ``Input #[tupleType])
@@ -198,7 +274,7 @@ private def deriveInput (name : Name) : TermElabM Unit := do
   deriveArrayInput name embedding tupleType
 
 private def deriveOutput (name : Name) : TermElabM Unit := do
-  let embedding ← ensureStructureEmbedding name
+  let embedding ← ensureInterfaceEmbedding name
   let type ← inferType embedding
   let tupleType := type.getAppArgs[1]!
   let output ← synthInstance (← mkAppM ``Output #[tupleType])
@@ -221,7 +297,8 @@ private def deriveOutput (name : Name) : TermElabM Unit := do
 
 private def inputHandler (names : Array Name) : CommandElabM Bool := do
   let env ← getEnv
-  unless names.all (fun name => (getStructureInfo? env name).isSome) do
+  unless ← names.allM (fun name => do
+      return (getStructureInfo? env name).isSome || (← isClosedEnum name)) do
     return false
   for name in names do
     liftTermElabM (deriveInput name)
@@ -229,7 +306,8 @@ private def inputHandler (names : Array Name) : CommandElabM Bool := do
 
 private def outputHandler (names : Array Name) : CommandElabM Bool := do
   let env ← getEnv
-  unless names.all (fun name => (getStructureInfo? env name).isSome) do
+  unless ← names.allM (fun name => do
+      return (getStructureInfo? env name).isSome || (← isClosedEnum name)) do
     return false
   for name in names do
     liftTermElabM (deriveOutput name)

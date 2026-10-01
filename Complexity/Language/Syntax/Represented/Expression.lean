@@ -53,6 +53,22 @@ private def fieldObservation (count index : Nat) (receiver : Observation) : Obse
   for _ in [:index] do result := projectObservation false false result
   if index + 1 < count then return projectObservation false true result else return result
 
+private def enumConstructor (stx : TSyntax `term) (expected : Option NativeType) :
+    TermElabM Value := do
+  let expression ← instantiateMVars (← elabTerm stx (expected.map (·.nativeType)))
+  let .const name _ := expression
+    | throwErrorAt stx "expected a closed enumeration constructor"
+  let .ctorInfo constructor ← getConstInfo name
+    | throwErrorAt stx "expected a source local or enumeration constructor"
+  unless constructor.numFields == 0 && constructor.numParams == 0 do
+    throwErrorAt stx "enumeration constructors have no arguments"
+  let type ← resolveNativeType (← inferType expression)
+  let .scalar _ _ := type
+    | throwErrorAt stx "expected a canonical enumeration layout"
+  let native ← termOfExpr expression
+  let raw := quote constructor.cidx
+  return { type, raw, model? := some { native, model := native, rawModel := raw } }
+
 partial def value (scope : List Binding) (stx : TSyntax `term)
     (expected : Option NativeType := none) :
     TermElabM Value := withRef stx do
@@ -216,11 +232,14 @@ partial def value (scope : List Binding) (stx : TSyntax `term)
       if let .str receiver field := name.getId then
         if scope.any (fun binding => binding.name.getId.isPrefixOf receiver) then
           return ← projectRecord ⟨(mkIdent receiver).raw⟩ (Name.mkSimple field)
+      unless scope.any (fun binding => binding.name.getId == name.getId) do
+        return ← enumConstructor stx expected
       let parameter ← lookup scope name
       return {
         type := parameter.type, raw := stx
         model? := parameter.model?.map fun model => {
           toBindingModel := model, native := ⟨parameter.nativeName.raw⟩ } }
+  | `(.$_:ident) => enumConstructor stx expected
   | `($(pair).$field:fieldIdx) =>
       match field.raw.isFieldIdx? with
       | some 1 => project pair true
