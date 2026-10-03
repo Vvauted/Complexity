@@ -244,6 +244,7 @@ import Complexity.Computability.Ram.Compiler.Language.Program.IntInput
 import Complexity.Computability.Ram.Compiler.Language.Program.OptionArrayInput
 import Complexity.Computability.Ram.Compiler.Language.Program.StringInput
 import Complexity.Computability.Ram.Compiler.Language.Program.Packing
+import Complexity.Computability.Ram.Compiler.Language.Program.Parsed
 import Complexity.Computability.Ram.Compiler.Language.Program.Time
 import Complexity.Computability.Ram.Compiler.Language.Program.Wrapper
 import Complexity.Computability.Ram.Compiler.Language.Program.WrapperTactic
@@ -613,6 +614,7 @@ import Complexity.Program.OptionArrayInput
 import Complexity.Program.StringInput
 import Complexity.Program.SumOutput
 import Complexity.Program.Packing
+import Complexity.Program.Parsed
 import Complexity.Program.Syntax
 import Complexity.Tactic.Ram.Array
 import Complexity.Tactic.Ram.Basic

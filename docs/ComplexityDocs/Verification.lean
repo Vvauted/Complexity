@@ -6,6 +6,7 @@ Authors: vvauted
 import ComplexityDocs.Verification.Compilation
 import ComplexityDocs.Verification.Lists
 import ComplexityDocs.Verification.Loops
+import ComplexityDocs.Verification.ParsedPrograms
 import ComplexityDocs.Verification.Ram.Automation
 import ComplexityDocs.Verification.Ram.Contracts
 import ComplexityDocs.Verification.Ram.Models
@@ -28,6 +29,7 @@ Lean equations; mutation uses contracts about mathematical contents and the actu
 Both views describe the same declared implementation.
 
 - [Source semantics and proof views](ComplexityDocs/Verification/Source.html)
+- [Programs over input and output sequences](ComplexityDocs/Verification/ParsedPrograms.html)
 - [Represented data and collection contracts](ComplexityDocs/Verification/Representations.html)
 - [Proving linked-list programs](ComplexityDocs/Verification/Lists.html)
 - [Mutable state, scratch scopes and calls](ComplexityDocs/Verification/State.html)
