@@ -179,9 +179,13 @@ and [scoped reclamation checklist](RECLAMATION_TODO.md).
 
 Same-execution instruction bounds, structural budget composition and fixed-type
 `Program.Correct`/`Program.TimeO` interfaces are checked, including uniform
-linear time for native record append. Further operation adapters, general
-loop/recursive resource composition and source-facing space observations remain
-open. See [resource analysis](design/Resources.md) and
+linear time for native record append. `Program.SpaceBound` and `SpaceO` add
+same-execution physical-word bounds, with parsed-input, ArrayFunction and
+persistent-session interfaces. Source arena bounds transfer through separate
+heap and stack regions without charging the unused address gap. Exact
+reachable-live space, further operation adapters and general loop/recursive
+resource automation remain open. See the
+[space guide](ComplexityDocs/Verification/Space.lean), [resource analysis](design/Resources.md) and
 [container resource composition](design/ContainerResources.md).
 
 ## Evidence and backend maintenance
@@ -294,7 +298,7 @@ environment encodings or repeating source facts in a second resource proof.
    A sequence retains continuation totality at the actual intermediate state only
    on normal completion; early return neither executes nor charges the suffix.
    Transport across branches, calls and scopes remains open, as do further layouts,
-   general allocating-loop setup and source-facing space. Algorithmic/element
+   general allocating-loop setup and automatic source-space inference. Algorithmic/element
    ranges, scalar-update equations and capacity remain supplied. Recursive or
    shared-continuation proofs without published contracts remain outside the
    named range entry.
@@ -390,11 +394,14 @@ environment encodings or repeating source facts in a second resource proof.
    function. Further operations and lifetime machinery should follow concrete
    missing capabilities, not an algorithm catalog. This fragment is not a
    complete persistent collection library.
-4. Develop source-facing space observations and composition over the actual
-   execution, separating sufficient capacity, reserved storage and peak live
-   data. Keep input loading, query drivers, width policy and word-versus-bit cost
-   boundaries explicit; neither a bigger capacity assumption nor a theorem about
-   isolated preloaded calls supplies these missing claims.
+4. Extend space-proof automation over the physical-word interfaces. Their
+   fixed input seed and actual access unions cover intermediate scratch and
+   stack accesses, including persistent prepared sessions. The scoped consumer
+   bounds repeated scratch reuse without multiplying by repetition count.
+   Exact reachable-live storage still needs a distinct lifetime observation;
+   it is not implied by footprint, final cursor or sufficient capacity. Keep
+   input loading, driver, width and word-versus-bit boundaries explicit, and
+   infer routine region composition without guessing algorithmic lifetime facts.
 
 Before broadening an interface, review the complete author proof: what
 mathematical work remains, what bookkeeping disappeared, and what assumptions
