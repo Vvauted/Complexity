@@ -7,6 +7,7 @@ import Examples.Language.ScopeCompiledWork
 import Complexity.Computability.Ram.Compiler.Language.LoopTactic
 import Complexity.Computability.Ram.Compiler.Language.FragmentTactic
 import Complexity.Computability.Ram.Compiler.Language.Arena.FunctionExecution
+import Complexity.Computability.Ram.Compiler.Language.Arena.Space
 import Complexity.Computability.Ram.Compiler.Language.Realization.LocalReturn
 import Complexity.Computability.Ram.Compiler.Language.Tactic
 
@@ -22,6 +23,8 @@ The loop reuses the same arena boundary after every call. Its source proof
 supplies termination; the compiled memory guarantee concerns every real access
 of the complete call-and-halt invocation, including transient accesses and the
 call stack, rather than only the final allocator cursor.
+The seeded physical footprint also retains the original arena prefix; repeated
+scratch and stack addresses are counted once, independently of the call count.
 -/
 
 namespace Complexity.Language.Examples.Scope
@@ -254,5 +257,29 @@ theorem make_runUntil {w cursor : Nat} (count n value : Nat) {heap : Heap}
   · intro address member
     exact outcome.heapAccesses_below member
   · exact outcome.heapAccesses_card_le
+
+/-- Repeated scratch calls have a count-independent physical footprint in their
+actual halted invocation. The seed includes the complete preloaded arena prefix,
+and the access set includes transient scratch and call-frame words. Reclamation
+does not erase accesses, but reusing their addresses does not charge them again.
+This retains the original correctness and returned cursor; it is not a claim of
+exact peak-live storage or of free input loading. -/
+theorem make_spaceBound {w cursor : Nat} (count n value : Nat) {heap : Heap}
+    {entry : Ram.Source.State w} {placement : Nat → Ram.Word w}
+    (launch : FunctionArenaLaunch Implementation.Source.program Implementation.Source.makeId 1
+      (heapLimit cursor n) placement (makeArgs count n value) heap cursor entry) :
+    ∃ outcome : FunctionArenaExecution Implementation.Source.program Implementation.Source.makeId 1
+        (heapLimit cursor n) placement (makeArgs count n value) heap entry,
+      outcome.value.Contents outcome.heap (resultContents count n value) ∧
+      outcome.cursor = cursor + 1 ∧
+      Ram.SpaceBound (lowerCode Implementation.Source.program Implementation.Source.makeId)
+        outcome.result.steps
+        (Ram.LocalCompiler.Function.start (programControl Implementation.Source.program)
+          (heapLimit cursor n) (envWords placement (makeArgs count n value)) entry)
+        outcome.result.state (Ram.initialSegment w cursor) (workspaceWords cursor n) := by
+  obtain ⟨outcome, contents, cursorEq, _, _⟩ := make_runUntil count n value launch
+  refine ⟨outcome, contents, cursorEq, ?_⟩
+  exact outcome.spaceBound_regions outcome.invocation (Nat.le_refl _)
+    launch.arena.cursor_le
 
 end Complexity.Language.Examples.Scope

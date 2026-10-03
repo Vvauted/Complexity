@@ -17,7 +17,11 @@ ordinary Lean functions and mathlib supply the sums, recurrences and asymptotics
 
 For a fixed `solve : Complexity.Program Query Answer`, state successful
 correctness as `solve.Correct legal post` and time independently as
-`solve.TimeO legal size growth`. Ordinary records and arrays use the library's
+`solve.TimeO legal size growth`. Space is independent as well:
+`solve.SpaceO legal size spaceGrowth` or a fixed-width `solve.SpaceBound`.
+The [space guide](ComplexityDocs/Verification/Space.html) specifies the physical
+word footprint, its input seed, and how to combine all three claims on one run.
+Ordinary records and arrays use the library's
 fixed input/output representations; a task need not serialize every field into
 a single natural-number buffer or make the contestant prove a private decoder.
 

@@ -12,9 +12,11 @@ import Complexity.Computability.Ram.Compiler.Language.Buffer.Copy.AppendCost
 import Complexity.Computability.Ram.Compiler.Language.Buffer.GetD.Ready
 import Complexity.Computability.Ram.Compiler.Language.Buffer.Ragged.GetD.Ready
 import Complexity.Computability.Ram.Compiler.Language.Program.InputResources
+import Complexity.Computability.Ram.Compiler.Language.Program.SpaceTime
+import Complexity.Computability.Ram.Compiler.Language.Program.SpaceAsymptotics
 
 /-!
-# Uniform RAM time of native record programs
+# Uniform RAM time and space of native record programs
 
 The program is the same `program% NativeAppend.append` selected in the source
 example. Shared composition follows its actual generated packing, projections
@@ -25,6 +27,13 @@ is provided.
 The complete time theorem covers every mathematical input at every admitted
 word width. The shared width rules discharge input ranges, output allocation,
 code and stack capacity without adding them to the task's precondition.
+
+For append, the preloaded input reservation is linear in the two array lengths.
+The actual instruction bound therefore also bounds the union of that reservation
+and all addresses accessed by the same invocation. The combined theorem retains
+its mathematical output, time and physical space in one execution. This is a
+conservative distinct-address footprint, not exact peak-live storage or a charge
+for input loading.
 
 The lookup consumer combines two defaulted scalar reads and a branch at the
 actual intermediate heap. Its constant bound is for the preloaded invocation,
@@ -86,6 +95,42 @@ theorem append_timeO :
     exact append_costBound input w _
   · program_time_asymptotics [appendBodyBound_linear,
       (Asymptotics.isLittleO_const_id_atTop (1 : ℝ)).isBigO.natCast_atTop]
+
+/-- The original record append has uniform linear physical space, including its
+preloaded input prefix and every address touched by the actual invocation.
+The bound counts distinct addresses, not the capacity of the word address space. -/
+theorem append_spaceO :
+    append.SpaceO (fun _ => True) (fun input => input.left.size + input.right.size)
+      (fun n => n) := by
+  apply Program.SpaceO.of_time (inputBound := fun n => 1 + n) append_timeO
+  · intro input _
+    change RamInput.cursor (input.left, input.right) ≤
+      1 + (input.left.size + input.right.size)
+    rw [RamInput.arrayPair_cursor]
+    omega
+  · program_space_asymptotics
+      [Asymptotics.isBigO_refl (fun n : Nat => (n : ℝ)) Filter.atTop,
+        (Asymptotics.isLittleO_const_id_atTop (1 : ℝ)).isBigO.natCast_atTop]
+
+/-- Correctness and both uniform resource bounds hold for the same original
+append invocation and its actual returned value and final heap. No additional
+input-range, capacity or termination promise is required. -/
+theorem append_time_space_correct :
+    ∃ overhead : Nat, ∃ timeBound spaceBound : Nat → Nat,
+      Asymptotics.IsBigO Filter.atTop (fun n => (timeBound n : ℝ))
+        (fun n : Nat => (n : ℝ)) ∧
+      Asymptotics.IsBigO Filter.atTop (fun n => (spaceBound n : ℝ))
+        (fun n : Nat => (n : ℝ)) ∧
+      ∀ input : AppendInput, ∀ w, Program.width overhead input ≤ w →
+        ∃ depth, ∃ execution : append.Execution input w depth,
+          (∃ output, execution.Represents output ∧
+            output.values = input.left ++ input.right) ∧
+          execution.result.steps ≤ timeBound (input.left.size + input.right.size) ∧
+          execution.spaceWords ≤ spaceBound (input.left.size + input.right.size) := by
+  obtain ⟨overhead, timeBound, spaceBound, timeAsymptotic, spaceAsymptotic, runs⟩ :=
+    append_timeO.runs_space_correct append_spaceO append_correct
+  exact ⟨overhead, timeBound, spaceBound, timeAsymptotic, spaceAsymptotic,
+    fun input w admitted => runs input trivial w admitted⟩
 
 private def lookupCost : { bound : Nat //
     ∀ (input : LookupInput) (w limit : Nat),

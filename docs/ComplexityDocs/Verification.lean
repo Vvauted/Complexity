@@ -13,6 +13,7 @@ import ComplexityDocs.Verification.Ram.Models
 import ComplexityDocs.Verification.Representations
 import ComplexityDocs.Verification.Sessions
 import ComplexityDocs.Verification.Source
+import ComplexityDocs.Verification.Space
 import ComplexityDocs.Verification.State
 
 /-!
@@ -34,6 +35,7 @@ Both views describe the same declared implementation.
 - [Proving linked-list programs](ComplexityDocs/Verification/Lists.html)
 - [Mutable state, scratch scopes and calls](ComplexityDocs/Verification/State.html)
 - [Persistent sessions](ComplexityDocs/Verification/Sessions.html)
+- [Space bounds](ComplexityDocs/Verification/Space.html)
 - [Source loops and recursion](ComplexityDocs/Verification/Loops.html)
 - [Connecting source proofs to RAM](ComplexityDocs/Verification/Compilation.html)
 
