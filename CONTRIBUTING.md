@@ -13,6 +13,9 @@ Follow mathlib's [style](https://leanprover-community.github.io/contribute/style
 - Search Lean, Std and mathlib before adding definitions or lemmas.
 - Put reusable results under `Complexity/`, by subject. Keep pure mathematics
   independent of RAM, and examples under `Examples/`.
+  Infrastructure motivated by a downstream benchmark belongs here too; keep
+  problem statements, input distributions and problem-specific adapters downstream,
+  rather than maintaining private copies of generic contracts and lemmas.
 - Use focused imports, small lemmas and the natural declaration namespace.
   Prefer readable proofs over brittle unfolding or large search calls.
 - Include a module summary and document public definitions and important results.
@@ -39,6 +42,8 @@ update the [manual](https://vvauted.github.io/Complexity/ComplexityDocs.html) wh
 list the build commands.
 
 Keep commits focused. Briefly describe the change and what was checked.
+In a shared checkout, commit only your own changes and preserve concurrent work.
+When publishing is authorized, push each verified contribution to GitHub.
 A successful Lean build proves the stated theorem, not that its specification
 matches the intended algorithm. Avoid unrelated tooling and generated test scaffolding.
 

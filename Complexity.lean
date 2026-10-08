@@ -662,6 +662,10 @@ import Complexity.Computability.Ram.Space.Reparam
 import Complexity.Program.ArrayFunctionSpace
 import Complexity.Program.ParsedSpace
 import Complexity.Program.Space
+import Complexity.Program.TimeSpace
+import Complexity.Program.ParsedTimeSpace
+import Complexity.Program.ExpectedTimeSpace
+import Complexity.Probability.ProbabilityMassFunction
 import Complexity.Language.Session.Space
 
 /-!

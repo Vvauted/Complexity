@@ -188,6 +188,14 @@ resource automation remain open. See the
 [space guide](ComplexityDocs/Verification/Space.lean), [resource analysis](design/Resources.md) and
 [container resource composition](design/ContainerResources.md).
 
+`Program.ExpectedTimeSpaceOOn` and its pointwise-target variant add average
+time under a specified input PMF, with samplewise physical space for the same
+compiled executions. Parsed interfaces and deterministic-to-expected bridges
+reuse existing correctness and resource proofs; the pointwise variant requires
+a finite right-hand expectation. Correctness still covers every legal input.
+See [expected resources](ComplexityDocs/Verification/ExpectedResources.lean).
+Internal random sampling and a randomized compiler bridge remain open.
+
 ## Evidence and backend maintenance
 
 The [consumer evidence](design/Consumers.md) distinguishes source correctness,

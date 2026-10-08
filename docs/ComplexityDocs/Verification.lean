@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: vvauted
 -/
 import ComplexityDocs.Verification.Compilation
+import ComplexityDocs.Verification.ExpectedResources
 import ComplexityDocs.Verification.Lists
 import ComplexityDocs.Verification.Loops
 import ComplexityDocs.Verification.ParsedPrograms
@@ -36,6 +37,7 @@ Both views describe the same declared implementation.
 - [Mutable state, scratch scopes and calls](ComplexityDocs/Verification/State.html)
 - [Persistent sessions](ComplexityDocs/Verification/Sessions.html)
 - [Space bounds](ComplexityDocs/Verification/Space.html)
+- [Expected resources](ComplexityDocs/Verification/ExpectedResources.html)
 - [Source loops and recursion](ComplexityDocs/Verification/Loops.html)
 - [Connecting source proofs to RAM](ComplexityDocs/Verification/Compilation.html)
 
