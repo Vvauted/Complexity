@@ -196,6 +196,15 @@ a finite right-hand expectation. Correctness still covers every legal input.
 See [expected resources](ComplexityDocs/Verification/ExpectedResources.lean).
 Internal random sampling and a randomized compiler bridge remain open.
 
+Reusable natural-input preparation now retains an explicit protocol cache.
+It uses actual buffer writes and geometric allocation, with source correspondence
+and a physical heap/stack region bound on the same RAM invocations. Stateful
+prepared session contracts preserve this cache across callbacks. Old input views
+may be overwritten; candidate-owned objects are not reclaimed. The geometric
+bound controls loader reservations, not arbitrary candidate workspace or native
+RSS. See [reusable inputs](ComplexityDocs/Verification/ReusableInputs.lean).
+Automatic lifetimes for arbitrary linked or returned objects remain open.
+
 ## Evidence and backend maintenance
 
 The [consumer evidence](design/Consumers.md) distinguishes source correctness,

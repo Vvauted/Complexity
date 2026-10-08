@@ -12,6 +12,7 @@ import ComplexityDocs.Verification.Ram.Automation
 import ComplexityDocs.Verification.Ram.Contracts
 import ComplexityDocs.Verification.Ram.Models
 import ComplexityDocs.Verification.Representations
+import ComplexityDocs.Verification.ReusableInputs
 import ComplexityDocs.Verification.Sessions
 import ComplexityDocs.Verification.Source
 import ComplexityDocs.Verification.Space
@@ -36,6 +37,7 @@ Both views describe the same declared implementation.
 - [Proving linked-list programs](ComplexityDocs/Verification/Lists.html)
 - [Mutable state, scratch scopes and calls](ComplexityDocs/Verification/State.html)
 - [Persistent sessions](ComplexityDocs/Verification/Sessions.html)
+- [Reusable current inputs](ComplexityDocs/Verification/ReusableInputs.html)
 - [Space bounds](ComplexityDocs/Verification/Space.html)
 - [Expected resources](ComplexityDocs/Verification/ExpectedResources.html)
 - [Source loops and recursion](ComplexityDocs/Verification/Loops.html)

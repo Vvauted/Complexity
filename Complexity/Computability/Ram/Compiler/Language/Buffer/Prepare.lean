@@ -46,7 +46,8 @@ theorem allocationSteps_linear (length : Nat) :
   simp only [allocationSteps, LocalCompiler.Function.callSteps]
   omega
 
-private theorem allocate (length : Nat) (current : Session.State w heapLimit)
+/-- Publish the actual initialized allocation used by request-loading protocols. -/
+theorem allocate (length : Nat) (current : Session.State w heapLimit)
     (capacity : FunctionCapacity Replicate.program Replicate.replicateNatId w 0 heapLimit)
     (lengthFits : length < 2 ^ w) (space : current.cursor + length ≤ heapLimit) :
     ∃ outcome : FunctionArenaExecution Replicate.program Replicate.replicateNatId 0 heapLimit
@@ -89,7 +90,8 @@ private theorem allocate (length : Nat) (current : Session.State w heapLimit)
   rw [outcome.steps_eq, count]
   rfl
 
-private theorem write (buffer : Buffer .nat) (index value : Nat)
+/-- Realize the fixed scalar writer while retaining its exact cursor and count. -/
+theorem write (buffer : Buffer .nat) (index value : Nat)
     (current : Session.State w heapLimit) (finish : Heap)
     (capacity : FunctionCapacity writeProgram writeEntry w 0 heapLimit)
     (rooted : buffer.Rooted current.heap)
@@ -169,7 +171,8 @@ theorem Fill.agreement {values : Array Nat} {buffer : Buffer .nat}
   | succ rest bound outcome ih =>
       exact ih.trans_of_shape outcome.agreement rest.source.shape
 
-private theorem Fill.exists_run (values : Array Nat) (buffer : Buffer .nat)
+/-- Fill a valid current view through the actual counted scalar-write calls. -/
+theorem Fill.exists_run (values : Array Nat) (buffer : Buffer .nat)
     (count : Nat) (before : count ≤ values.size) (current : Session.State w heapLimit)
     (valid : buffer.Valid current.heap) (size : buffer.length = values.size)
     (capacity : FunctionCapacity writeProgram writeEntry w 0 heapLimit)
